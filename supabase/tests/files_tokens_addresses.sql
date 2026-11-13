@@ -341,3 +341,109 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(DISTINCT substr(a.local_part, length(a.local_part) - 15)) FROM public.quote_request_addresses a), (SELECT count(*) FROM public.quote_request_addresses), 'every issued address has its own random part');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_addresses a WHERE a.local_part !~ '\.[0-9a-f]{16}$'), 0::bigint, 'and every one ends in 16 hex characters');
 END $$;
+
+-- ---------- 3. a mailbox token is stored as ciphertext, and nobody but the sending function reads it ----------
+-- The only third-party token the product stores today is a broker's mailbox refresh token (broker_mailboxes). A linked-CRM token
+-- doesn't exist yet: the epic that adds linked CRMs registers its table in data_isolation.sql's secrets list (5e), which fails
+-- until the table is closed to the API and its token column is out of every caller's reach.
+CREATE FUNCTION pg_temp.as_guest() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'is_anonymous', true)::text, false);
+  PERFORM set_config('role', 'authenticated', false);
+END $$;
+CREATE FUNCTION pg_temp.as_signed_out() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  PERFORM set_config('role', 'anon', false);
+END $$;
+-- Becomes a caller by name: a person, 'guest', 'signed_out' or 'service'.
+CREATE FUNCTION pg_temp.become(who text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF who = 'guest' THEN PERFORM pg_temp.as_guest();
+  ELSIF who = 'signed_out' THEN PERFORM pg_temp.as_signed_out();
+  ELSIF who = 'service' THEN PERFORM pg_temp.as_service();
+  ELSE PERFORM pg_temp.as_user(who);
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  who text;
+  callers constant text[] := ARRAY['owner_a', 'agent_a', 'owner_b', 'agent_b', 'platform_admin', 'former_a', 'suspended_a', 'prospect_a', 'guest', 'signed_out'];
+  marker constant text := 'ZZ-TOKEN-MARKER-' || replace(gen_random_uuid()::text, '-', '');
+  seen text;
+  col text;
+  cols constant text[] := ARRAY['token_ciphertext', 'token_iv', 'user_id', 'address'];
+  tbl regclass;
+  hits text[];
+BEGIN
+  -- An owner and an agent of firm A, neither with a platform role, each connect a mailbox: the function stores its ciphertext.
+  PERFORM pg_temp.as_service();
+  PERFORM public.mailbox_store(pg_temp.id('owner_a'), 'google', 'owner@alpha.example', 'https://www.googleapis.com/auth/gmail.send', marker || '-owner', 'IV-owner');
+  PERFORM public.mailbox_store(pg_temp.id('agent_a'), 'microsoft', 'agent@alpha.example', 'Mail.Send', marker || '-agent', 'IV-agent');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes), 2::bigint, 'two mailboxes are connected');
+
+  FOREACH who IN ARRAY callers LOOP
+    PERFORM pg_temp.become(who);
+    -- The table: not readable, as rows, as a column, as a whole row, or counted; not writable.
+    PERFORM pg_temp.expect('SELECT count(*) FROM public.broker_mailboxes', '42501', who || ' counting the mailboxes');
+    FOREACH col IN ARRAY cols LOOP
+      PERFORM pg_temp.expect(format('SELECT %I FROM public.broker_mailboxes', col), '42501', who || ' reading ' || col);
+    END LOOP;
+    PERFORM pg_temp.expect('SELECT to_jsonb(m) FROM public.broker_mailboxes m', '42501', who || ' reading a mailbox row');
+    PERFORM pg_temp.expect('SELECT 1 FROM public.broker_mailboxes WHERE token_ciphertext LIKE ''%a%''', '42501', who || ' probing a token with a filter');
+    PERFORM pg_temp.expect('UPDATE public.broker_mailboxes SET address = address', '42501', who || ' changing a mailbox');
+    PERFORM pg_temp.expect('DELETE FROM public.broker_mailboxes', '42501', who || ' deleting a mailbox');
+    PERFORM pg_temp.expect(format('INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv) VALUES (%L, ''google'', ''x@y.example'', ''s'', ''c'', ''i'')', gen_random_uuid()),
+      '42501', who || ' adding a mailbox');
+    -- The functions that read and write the token are the sending function's alone.
+    PERFORM pg_temp.expect(format('SELECT public.mailbox_secret(%L)', pg_temp.id('agent_a')), CASE WHEN who = 'service' THEN 'rows:1' ELSE '42501' END, who || ' reading a token');
+    PERFORM pg_temp.expect(format('SELECT public.mailbox_store(%L, ''google'', ''a@b.example'', ''s'', ''c'', ''i'')', pg_temp.id('agent_a')), '42501', who || ' storing a token');
+    PERFORM pg_temp.expect(format('SELECT public.mailbox_delete(%L)', pg_temp.id('agent_a')), '42501', who || ' deleting a token');
+  END LOOP;
+
+  -- What a person is told of their own mailbox: that it is connected, to whom and since when; never the token, its iv or anything of it.
+  FOREACH who IN ARRAY ARRAY['owner_a', 'agent_a'] LOOP
+    PERFORM pg_temp.as_user(who);
+    SELECT public.my_mailbox()::text INTO seen;
+    PERFORM pg_temp.as_owner();
+    IF seen NOT LIKE '%"connected": true%' THEN RAISE EXCEPTION 'FAIL: % is not told their mailbox is connected: %', who, seen; END IF;
+    IF seen LIKE '%' || marker || '%' OR seen ~* 'token|cipher|"iv"|IV-' THEN RAISE EXCEPTION 'FAIL: my_mailbox told % of the token: %', who, seen; END IF;
+  END LOOP;
+  -- Nobody else is told of it, a colleague, the other firm and a platform admin included.
+  FOREACH who IN ARRAY ARRAY['owner_b', 'agent_b', 'platform_admin', 'former_a', 'prospect_a'] LOOP
+    PERFORM pg_temp.as_user(who);
+    SELECT public.my_mailbox()::text INTO seen;
+    PERFORM pg_temp.as_owner();
+    IF seen <> '{"connected": false}' THEN RAISE EXCEPTION 'FAIL: % is told of a mailbox that is not theirs: %', who, seen; END IF;
+  END LOOP;
+  PERFORM pg_temp.as_guest();
+  PERFORM pg_temp.expect('SELECT public.my_mailbox()', 'rows:1', 'a guest asking about a mailbox');
+  PERFORM pg_temp.as_owner();
+
+  -- The service role (the function that sends) gets the ciphertext and the iv, and only ever those.
+  PERFORM pg_temp.as_service();
+  SELECT public.mailbox_secret(pg_temp.id('agent_a'))::text INTO seen;
+  PERFORM pg_temp.as_owner();
+  IF seen NOT LIKE '%' || marker || '-agent%' OR seen NOT LIKE '%IV-agent%' THEN RAISE EXCEPTION 'FAIL: the sending function did not get the stored ciphertext: %', seen; END IF;
+
+  -- No view, materialised view or function hands out the table's rows: nothing depends on its token columns, no function returns its row type,
+  -- and it is in no publication that would stream it.
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class v ON v.oid = r.ev_class
+    WHERE d.refobjid = 'public.broker_mailboxes'::regclass AND d.classid = 'pg_rewrite'::regclass AND v.relkind IN ('v', 'm')), 0::bigint, 'no view reads broker_mailboxes');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.prorettype = 'public.broker_mailboxes'::regtype OR 'public.broker_mailboxes'::regtype = ANY (p.proargtypes::oid[])), 0::bigint, 'no function takes or returns a mailbox row');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_publication_tables WHERE schemaname = 'public' AND tablename = 'broker_mailboxes'), 0::bigint, 'no publication streams the mailboxes');
+
+  -- The marker lives in broker_mailboxes alone, after connecting, replacing and disconnecting: no log, record or copy keeps a token.
+  PERFORM public.mailbox_store(pg_temp.id('agent_a'), 'microsoft', 'agent@alpha.example', 'Mail.Send', marker || '-rotated', 'IV-rotated', true);
+  FOR tbl IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('public', 'auth') AND c.relkind = 'r' AND c.oid <> 'public.broker_mailboxes'::regclass LOOP
+    EXECUTE format('SELECT count(*) FROM %s t WHERE to_jsonb(t)::text LIKE %L', tbl, '%' || marker || '%') INTO seen;
+    IF seen::integer <> 0 THEN hits := hits || tbl::text; END IF;
+  END LOOP;
+  IF hits IS NOT NULL THEN RAISE EXCEPTION 'FAIL: a mailbox token is also held by %', hits; END IF;
+  PERFORM public.mailbox_delete(pg_temp.id('agent_a'));
+  PERFORM public.mailbox_delete(pg_temp.id('owner_a'));
+END $$;

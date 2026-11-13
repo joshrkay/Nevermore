@@ -46,6 +46,9 @@
 --    5d every function that runs as its owner or that the API roles can execute is registered, by name, as firm-scoped (and then
 --       probed in 4e), platform-wide by design, a person's own, public, service-only, a trigger, or deferred to a named story;
 --       a new one that isn't registered fails (by the catalogue, never by reading a function's text);
+--    5e every stored secret (a mailbox token, an invitation's hash) is listed column by column; a column named like a secret that isn't
+--       listed fails; every caller is refused when it reads, filters on or writes one, and no view, publication or function the API
+--       roles can run returns it (a linked CRM's token table fails the build until it is listed and closed, CRM-P2.2);
 --    then: every public table has row security and a row in the matrix; every function the API roles can execute is in the
 --    allowlist below with a reason; every bucket is private; the API roles hold no TRUNCATE, REFERENCES or TRIGGER; every
 --    SECURITY DEFINER function pins its search_path.
@@ -3187,6 +3190,189 @@ BEGIN
     END;
   END LOOP;
   RAISE NOTICE 'data_isolation: the function gate fails on the unregistered, unprobed and misregistered functions it should';
+END $$;
+
+-- ---------- 5e. every stored secret is listed, out of every caller's reach and returned by no function (CRM-P2.2, D-24, D-28) ----------
+-- A token, key, password or ciphertext the product stores for a third party (a broker's mailbox) or hands out once and keeps only as a hash
+-- (an invitation's link) is listed here, column by column, with what it is. The catalogue is compared with the list, so a table added
+-- later with a column named like a secret (a linked CRM's token, in the epic that adds linked CRMs) fails the build until it is listed
+-- and passes only when:
+--   * its table is registered in 5a (a firm's table with a probe, or a closed one), as every table must be;
+--   * every caller, signed out or in, is refused when it reads, writes or filters on the column (by trying, not by reading a policy);
+--   * no view depends on it, no function the API roles can run returns its table's row type, and no publication streams it;
+--   * every function the API roles can run that names its table is on the list of functions swept below, and none of them returns a value
+--     that was planted in the column, called as every caller.
+-- A function that names a secret's table and the API roles can't run is the service role's, or a trigger's: allowed.
+CREATE TEMP TABLE secret_columns (tbl text NOT NULL, col text NOT NULL, kind text NOT NULL CHECK (kind IN ('ciphertext', 'hash')), why text NOT NULL, PRIMARY KEY (tbl, col));
+INSERT INTO secret_columns VALUES
+  ('public.broker_mailboxes', 'token_ciphertext', 'ciphertext', 'a broker''s mailbox refresh token, sealed by the mailbox function; only the sending function reads it back'),
+  ('public.broker_mailboxes', 'token_iv', 'ciphertext', 'the sealing''s initialisation vector, kept with the ciphertext it belongs to'),
+  ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept');
+-- The functions the API roles can run that name a secret's table, each swept below as every caller with a statement that calls it.
+CREATE TEMP TABLE secret_readers (fn text PRIMARY KEY, call text NOT NULL);
+INSERT INTO secret_readers VALUES
+  ('my_mailbox()', $$SELECT public.my_mailbox()::text$$),
+  ('firm_pending_invitations(p_firm_id uuid)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.firm_pending_invitations({firm_a}) f$$),
+  ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)',
+   $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.invite_member({firm_a}, 'secret-probe@example.test', 'agent', NULL, repeat('b', 64)) f$$),
+  ('resend_invitation(p_invitation_id uuid, p_token_hash text)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.resend_invitation({inv_a}, repeat('a', 64)) f$$),
+  ('cancel_invitation(p_invitation_id uuid)', $$SELECT public.cancel_invitation({inv_a})::text$$),
+  ('accept_invitation(p_token_hash text, p_firm_address text)',
+   $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.accept_invitation(repeat('c', 64), (SELECT address FROM public.firms WHERE id = {firm_a})) f$$);
+
+CREATE FUNCTION pg_temp.secret_gaps() RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  gaps text := '';
+  r record;
+  who text;
+  tname text;
+  seen text;
+  marker constant text := 'c0ffeec0ffee';
+  call text;
+  inv_a uuid;
+BEGIN
+  RESET ROLE;
+  -- (a) A column named like a secret that is not listed.
+  FOR r IN SELECT 'public.' || c.relname AS tbl, a.attname AS col
+           FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+           WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
+             AND a.attname ~* '(token|secret|cipher|passw|api_?key|credential|refresh|private_?key|_iv$)'
+             AND a.atttypid IN ('text'::regtype, 'bytea'::regtype, 'jsonb'::regtype, 'varchar'::regtype)
+           ORDER BY 1, 2 LOOP
+    IF NOT EXISTS (SELECT 1 FROM secret_columns s WHERE s.tbl = r.tbl AND s.col = r.col) THEN
+      gaps := gaps || format(E'\n  %s.%s is named like a secret and is not in the secrets list: say what it holds and close it to the API', r.tbl, r.col);
+    END IF;
+  END LOOP;
+  FOR r IN SELECT * FROM secret_columns ORDER BY tbl, col LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = to_regclass(r.tbl) AND a.attname = r.col AND NOT a.attisdropped) THEN
+      gaps := gaps || format(E'\n  %s.%s is in the secrets list but there is no such column', r.tbl, r.col);
+      CONTINUE;
+    END IF;
+    -- (c) Every caller is refused, by trying: reading it, filtering on it, and writing it.
+    FOREACH who IN ARRAY pg_temp.every_caller() || ARRAY['admin'] LOOP
+      PERFORM pg_temp.become(who);
+      IF pg_temp.attempt(format('SELECT %I FROM %s', r.col, r.tbl)) LIKE 'rows:%' THEN gaps := gaps || format(E'\n  %s reads %s.%s', who, r.tbl, r.col); END IF;
+      IF pg_temp.attempt(format('SELECT 1 FROM %s WHERE %I IS NOT NULL', r.tbl, r.col)) LIKE 'rows:%' THEN gaps := gaps || format(E'\n  %s filters %s on %s', who, r.tbl, r.col); END IF;
+      IF pg_temp.attempt(format('UPDATE %s SET %I = %I', r.tbl, r.col, r.col)) LIKE 'rows:%' THEN gaps := gaps || format(E'\n  %s writes %s.%s', who, r.tbl, r.col); END IF;
+      RESET ROLE;
+    END LOOP;
+    -- (d) No view reads it.
+    IF EXISTS (SELECT 1 FROM pg_depend d JOIN pg_rewrite w ON w.oid = d.objid JOIN pg_class v ON v.oid = w.ev_class
+               WHERE d.classid = 'pg_rewrite'::regclass AND d.refobjid = to_regclass(r.tbl) AND v.relkind IN ('v', 'm')) THEN
+      gaps := gaps || format(E'\n  a view reads %s, which holds a secret (%s)', r.tbl, r.col);
+    END IF;
+    -- (e) No function the API roles can run returns the table's row type, and no publication streams it.
+    IF EXISTS (SELECT 1 FROM pg_proc p WHERE p.prorettype = to_regtype(r.tbl)
+               AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE'))) THEN
+      gaps := gaps || format(E'\n  a function the API roles can run returns a %s row, which holds a secret (%s)', r.tbl, r.col);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_publication_tables t WHERE t.schemaname || '.' || t.tablename = r.tbl) THEN
+      gaps := gaps || format(E'\n  a publication streams %s, which holds a secret (%s)', r.tbl, r.col);
+    END IF;
+  END LOOP;
+  -- (f) A function the API roles can run that names a secret's table is on the swept list.
+  FOR r IN SELECT DISTINCT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS sig, s.tbl
+           FROM pg_proc p JOIN secret_columns s ON p.prosrc ~* ('\m' || split_part(s.tbl, '.', 2) || '\M')
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+           ORDER BY 1 LOOP
+    IF NOT EXISTS (SELECT 1 FROM secret_readers s WHERE s.fn = r.sig) THEN
+      gaps := gaps || format(E'\n  %s can be run through the API and names %s, which holds a secret: sweep it in secret_readers, or revoke it', r.sig, r.tbl);
+    END IF;
+  END LOOP;
+  -- (g) Each swept function, as every caller, with a value planted in every secret column: nothing planted comes back. The plant is rolled back.
+  BEGIN
+    inv_a := (SELECT i.id FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id('firm_a') ORDER BY i.created_at LIMIT 1);
+    FOR r IN SELECT * FROM secret_columns s WHERE EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = to_regclass(s.tbl) AND a.attname = s.col AND NOT a.attisdropped) ORDER BY tbl, col LOOP
+      -- Each row gets its own value (a hash column is unique, and exactly 64 hex characters), every one of them starting with the marker.
+      EXECUTE format('UPDATE %s SET %I = %L || substr(md5(ctid::text) || md5(ctid::text || ''x'') || md5(ctid::text || ''y''), 1, %s)',
+        r.tbl, r.col, marker, CASE WHEN r.kind = 'hash' THEN 52 ELSE 32 END);
+    END LOOP;
+    -- A mailbox to sweep, if no test connected one.
+    IF NOT EXISTS (SELECT 1 FROM public.broker_mailboxes) THEN
+      INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+      VALUES (pg_temp.id('agent_2'), 'google', 'sweep@example.test', 's', marker || 'x', marker || 'y');
+    END IF;
+    FOR r IN SELECT * FROM secret_readers ORDER BY fn LOOP
+      call := replace(replace(r.call, '{firm_a}', quote_literal(pg_temp.id('firm_a'))), '{inv_a}', quote_literal(inv_a));
+      FOREACH who IN ARRAY pg_temp.every_caller() || ARRAY['admin'] LOOP
+        seen := pg_temp.call_as(who, call);
+        IF seen LIKE '%' || marker || '%' THEN gaps := gaps || format(E'\n  %s returned a stored secret to %s', r.fn, who); END IF;
+      END LOOP;
+    END LOOP;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = gaps;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLSTATE <> 'ZZ999' THEN RAISE; END IF;
+    GET STACKED DIAGNOSTICS seen = MESSAGE_TEXT;
+    gaps := seen;
+  END;
+  RESET ROLE;
+  RETURN NULLIF(gaps, '');
+END $$;
+
+DO $$
+DECLARE g text := pg_temp.secret_gaps();
+BEGIN
+  IF g IS NOT NULL THEN RAISE EXCEPTION E'FAIL: stored secrets are not kept from the API:%', g; END IF;
+  RAISE NOTICE 'data_isolation: % secret columns are closed to every caller and returned by no function', (SELECT count(*) FROM secret_columns);
+END $$;
+
+-- The gate can fail: a linked CRM's token table added with the usual care for its rows but none for its token; an open column; a view
+-- over a secret; a function that hands one out; a column the list names that is not there.
+DO $$
+DECLARE g text;
+BEGIN
+  -- An unlisted token column, on a table that is otherwise registered and closed.
+  CREATE TABLE public.probe_crm_links (id int PRIMARY KEY, crm_access_token text);
+  ALTER TABLE public.probe_crm_links ENABLE ROW LEVEL SECURITY;
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%public.probe_crm_links.crm_access_token is named like a secret and is not in the secrets list%' THEN
+    RAISE EXCEPTION E'FAIL: the gate passed an unlisted token column:%', g;
+  END IF;
+  -- Listed, and the API roles read it.
+  INSERT INTO secret_columns VALUES ('public.probe_crm_links', 'crm_access_token', 'ciphertext', 'probe');
+  GRANT SELECT, UPDATE ON public.probe_crm_links TO authenticated;
+  CREATE POLICY p ON public.probe_crm_links FOR ALL TO authenticated USING (true);
+  INSERT INTO public.probe_crm_links VALUES (1, 'x');
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%advisor reads public.probe_crm_links.crm_access_token%' OR g NOT LIKE '%advisor writes public.probe_crm_links.crm_access_token%'
+     OR g NOT LIKE '%agent_b filters public.probe_crm_links on crm_access_token%' THEN
+    RAISE EXCEPTION E'FAIL: the gate passed an open token column:%', g;
+  END IF;
+  -- Closed, but a view and a function hand it out.
+  REVOKE ALL ON public.probe_crm_links FROM PUBLIC, anon, authenticated;
+  DROP POLICY p ON public.probe_crm_links;
+  INSERT INTO registry (src, scope, why) VALUES ('public.probe_crm_links', 'closed', 'probe');
+  g := pg_temp.secret_gaps();
+  IF g IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the gate flagged a closed token column:%', g; END IF;
+  CREATE VIEW public.probe_crm_view AS SELECT id, crm_access_token FROM public.probe_crm_links;
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%a view reads public.probe_crm_links%' THEN RAISE EXCEPTION E'FAIL: the gate passed a view over a token:%', g; END IF;
+  DROP VIEW public.probe_crm_view;
+  CREATE FUNCTION public.probe_crm_token() RETURNS text LANGUAGE sql SECURITY DEFINER SET search_path = public AS $f$ SELECT crm_access_token FROM public.probe_crm_links LIMIT 1 $f$;
+  GRANT EXECUTE ON FUNCTION public.probe_crm_token() TO authenticated;
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe_crm_token() can be run through the API and names public.probe_crm_links%' THEN RAISE EXCEPTION E'FAIL: the gate passed a function over a token:%', g; END IF;
+  -- Swept, it is caught by what it returns, not only by being unlisted.
+  INSERT INTO secret_readers VALUES ('probe_crm_token()', $c$SELECT public.probe_crm_token()$c$);
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe_crm_token() returned a stored secret to advisor%' THEN RAISE EXCEPTION E'FAIL: the gate passed a function that returns a token:%', g; END IF;
+  DELETE FROM secret_readers WHERE fn = 'probe_crm_token()';
+  DROP FUNCTION public.probe_crm_token();
+  CREATE FUNCTION public.probe_crm_row() RETURNS public.probe_crm_links LANGUAGE sql SECURITY DEFINER SET search_path = public AS $f$ SELECT * FROM public.probe_crm_links LIMIT 1 $f$;
+  GRANT EXECUTE ON FUNCTION public.probe_crm_row() TO authenticated;
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%returns a public.probe_crm_links row%' THEN RAISE EXCEPTION E'FAIL: the gate passed a function that returns a token row:%', g; END IF;
+  DROP FUNCTION public.probe_crm_row();
+  -- A listed column that is not there.
+  INSERT INTO secret_columns VALUES ('public.probe_crm_links', 'no_such_token', 'hash', 'probe');
+  g := pg_temp.secret_gaps();
+  IF g IS NULL OR g NOT LIKE '%public.probe_crm_links.no_such_token is in the secrets list but there is no such column%' THEN RAISE EXCEPTION E'FAIL: the gate passed a column that is not there:%', g; END IF;
+  DELETE FROM secret_columns WHERE tbl = 'public.probe_crm_links';
+  DELETE FROM registry WHERE src = 'public.probe_crm_links';
+  DROP TABLE public.probe_crm_links;
+  IF pg_temp.secret_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the probes were left behind:%', pg_temp.secret_gaps(); END IF;
+  RAISE NOTICE 'data_isolation: the secrets gate fails on the unlisted, open and leaked tokens it should';
 END $$;
 
 -- ---------- 5. catalogue checks ----------
