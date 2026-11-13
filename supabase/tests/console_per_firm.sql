@@ -107,6 +107,8 @@
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
+\i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 SET client_min_messages = notice;
 
@@ -261,7 +263,7 @@ SELECT pg_temp.is(public.is_advisor(), false, 'a member with no platform role do
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0)), 1::bigint, 'but the console lists their firm''s submission');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_b')), 0::bigint, 'and not the other firm''s');
 SELECT pg_temp.is((SELECT count(*) FROM public.peos), 0::bigint, 'and reads no PEO of the platform''s catalogue');
-SELECT pg_temp.expect('SELECT public.advisor_add_referral_partner(''p1'', ''A partner'', ''broker'')', '42501', 'and adds no referral partner, which is the platform''s until CRM-P2.1c');
+SELECT pg_temp.is((SELECT firm_id FROM public.advisor_add_referral_partner('p1', 'A partner', 'accounting')), pg_temp.id('firm_a'), 'and adds a referral partner to their own firm, as CRM-P2.1c makes partners a firm''s own');
 SELECT pg_temp.as_user('owner_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0)), 1::bigint, 'an owner of a firm with no platform role lists their firm''s submission');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_a')), 0::bigint, 'and none of Edgar Allan Advisory''s');
