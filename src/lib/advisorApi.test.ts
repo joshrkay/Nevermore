@@ -13,13 +13,19 @@ const tables: Record<string, unknown[]> = {};
 const inFilters: { table: string; column: string; values: unknown[] }[] = [];
 /** Each `.eq(column, value)` filter a query asked for, by table. */
 const eqFilters: { table: string; column: string; value: unknown }[] = [];
+/** Each `.select(columns)` and `.order(column)` a query asked for, by table. */
+const selects: { table: string; columns: unknown }[] = [];
+const orders: { table: string; column: string }[] = [];
 const query = (table: string) => {
   /** `.eq(column, value)` filters of a referral-partner lookup, applied as the database does (the other tables' rows are returned whole). */
   const eqs: [string, unknown][] = [];
   let rows = () => tables[table] ?? [];
   const result = () => ({ data: rows(), error: null });
   const chain: Record<string, unknown> = {
-    select: () => chain,
+    select: (columns?: unknown) => {
+      selects.push({ table, columns });
+      return chain;
+    },
     eq: (column: string, value: unknown) => {
       eqs.push([column, value]);
       eqFilters.push({ table, column, value });
@@ -32,7 +38,10 @@ const query = (table: string) => {
       rows = () => before().filter((r) => values.includes((r as Record<string, unknown>)[column]));
       return chain;
     },
-    order: () => chain,
+    order: (column: string) => {
+      orders.push({ table, column });
+      return chain;
+    },
     limit: () => chain,
     maybeSingle: async () => {
       // Like PostgREST: more than one row where at most one is expected is an error.
@@ -880,7 +889,11 @@ describe("referral partners belong to a firm", () => {
 
   it("lists the firms the caller belongs to, by name", async () => {
     tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }];
+    selects.length = 0;
+    orders.length = 0;
     await expect(listMyFirms()).resolves.toEqual([{ id: "firm-a", name: "Alpha", address: "alpha" }]);
+    expect(selects).toContainEqual({ table: "firms", columns: "id, name, address" });
+    expect(orders).toContainEqual({ table: "firms", column: "name" });
   });
 
   it("asks for one firm's funnel by source, so another membership's volume cannot push its rows out", async () => {
@@ -891,11 +904,13 @@ describe("referral partners belong to a firm", () => {
     expect(rpc).toHaveBeenCalledWith("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString(), p_firm_id: "firm-b" });
   });
 
-  it("asks once for each of the caller's firms when no single firm is the page's, and joins the answers", async () => {
+  it("asks once for each of the caller's firms when no single firm is the page's, and joins the answers with the firms, the busiest source first", async () => {
     tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }, { id: "firm-b", name: "Beta", address: "beta" }];
-    rpc.mockImplementation(async (_fn: string, args: { p_firm_id: string }) => ({ data: [{ referral_code: "x", firm_id: args.p_firm_id }], error: null }));
-    const rows = await loadIntakeSourcesOfMyFirms(new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z"));
-    expect(rows.map((r) => r.firm_id)).toEqual(["firm-a", "firm-b"]);
+    const started: Record<string, number> = { "firm-a": 2, "firm-b": 7 };
+    rpc.mockImplementation(async (_fn: string, args: { p_firm_id: string }) => ({ data: [{ referral_code: "x", firm_id: args.p_firm_id, started: started[args.p_firm_id] }], error: null }));
+    const { firms, rows } = await loadIntakeSourcesOfMyFirms(new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z"));
+    expect(firms.map((f) => f.name)).toEqual(["Alpha", "Beta"]);
+    expect(rows.map((r) => r.firm_id)).toEqual(["firm-b", "firm-a"]);
     expect(rpc.mock.calls.map((c) => (c[1] as { p_firm_id: string }).p_firm_id)).toEqual(["firm-a", "firm-b"]);
   });
 });

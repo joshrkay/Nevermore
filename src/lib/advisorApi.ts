@@ -162,11 +162,15 @@ export async function loadIntakeSources(from: Date, to: Date, firmId: string): P
   return data ?? [];
 }
 
-/** The same for every firm the caller belongs to, one firm at a time (each row names its firm), for a page that is no single firm's. */
-export async function loadIntakeSourcesOfMyFirms(from: Date, to: Date): Promise<IntakeSourceResult[]> {
+/**
+ * The same for every firm the caller belongs to, one firm at a time (each row names its firm), for a page that is no single firm's.
+ * Returns the firms too, so the page can say which firm a row is about; rows are in order of intakes started, whichever firm.
+ */
+export async function loadIntakeSourcesOfMyFirms(from: Date, to: Date): Promise<{ firms: MemberFirm[]; rows: IntakeSourceResult[] }> {
   const firms = await listMyFirms();
   const perFirm = await Promise.all(firms.map((f) => loadIntakeSources(from, to, f.id)));
-  return perFirm.flat();
+  const rows = perFirm.flat().sort((a, b) => Number(b.started) - Number(a.started));
+  return { firms, rows };
 }
 
 // ---------- Referral partners (J-2.3) ----------

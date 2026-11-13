@@ -37,8 +37,8 @@ type Load =
   /** The person belongs to no firm, or the firm at this address isn't one of theirs. */
   | { kind: "no_firm" }
   /** A member of several firms, on the bare domain, has not said which. */
-  | { kind: "choose"; firms: MemberFirm[] }
-  | { kind: "ready"; firms: MemberFirm[]; firmId: string; partners: ReferralPartner[]; counts: Counts };
+  | { kind: "choose" }
+  | { kind: "ready"; firmId: string; partners: ReferralPartner[]; counts: Counts };
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 const buttonClass = "flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50";
@@ -94,10 +94,10 @@ const AdvisorPartnersPage = () => {
         }
         firm = firms[0];
       }
-      if (!firm) return atAddress === null && firms.length > 1 ? { kind: "choose", firms } : { kind: "no_firm" };
+      if (!firm) return atAddress === null && firms.length > 1 ? { kind: "choose" } : { kind: "no_firm" };
       const { from, to } = funnelRange("30d");
       const [partners, sources] = await Promise.all([listReferralPartners(firm.id), loadIntakeSources(from, to, firm.id)]);
-      return { kind: "ready", firms, firmId: firm.id, partners, counts: countsByPartner(sourceRows(sources)) };
+      return { kind: "ready", firmId: firm.id, partners, counts: countsByPartner(sourceRows(sources)) };
     })()
       .then((next) => next && !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
@@ -108,7 +108,6 @@ const AdvisorPartnersPage = () => {
   }, [attempt, atAddress, firmParam]);
 
   const reload = () => setAttempt((n) => n + 1);
-  const firms = firmList;
 
   return (
     <div className="min-h-screen bg-background">
@@ -121,7 +120,7 @@ const AdvisorPartnersPage = () => {
           see only the counts you send them, never a prospect's answers.
         </p>
 
-        {atAddress === null && firms.length > 1 && (
+        {atAddress === null && firmList.length > 1 && (
           <div className="mb-6">
             <label htmlFor="partners-firm" className="block text-xs text-muted-foreground">Firm</label>
             <select
@@ -131,7 +130,7 @@ const AdvisorPartnersPage = () => {
               className="min-h-11 bg-muted border border-border rounded-md px-3 text-sm"
             >
               {load.kind === "choose" && <option value="">Choose a firm</option>}
-              {firms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              {firmList.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
             </select>
           </div>
         )}
@@ -147,7 +146,7 @@ const AdvisorPartnersPage = () => {
         {load.kind === "no_firm" && <p role="status" className="text-sm">You aren't a member of a firm, so there are no referral partners to show.</p>}
         {load.kind === "ready" && !referralLinksWork(load.firmId) && (
           <p role="note" className="text-sm text-muted-foreground mt-6">
-            Referral links come when the firm can take intakes of its own. Until then partners and their codes are kept here, and no link is shown.
+            Referral links come when the firm can take intakes of its own. Until then referral partners and their codes are kept here, and no link is shown.
           </p>
         )}
         {load.kind === "ready" && (load.partners.length === 0 ? (

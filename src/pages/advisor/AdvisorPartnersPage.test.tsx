@@ -20,10 +20,10 @@ const api = {
 vi.mock("@/lib/advisorApi", () => api);
 
 const { default: AdvisorPartnersPage } = await import("./AdvisorPartnersPage");
+const { DEFAULT_FIRM_ID } = await import("@/data/referralPartners");
 
-// Every intake a browser starts belongs to the default firm (D-101), so only its partners' links can work today. Its id is the one
-// default_firm_id() returns (migration 20261116090000_firms.sql).
-const DEFAULT_FIRM = "00000000-0000-4000-8000-00000000eaa1";
+// Every intake a browser starts belongs to the default firm (D-101), so only its partners' links can work today.
+const DEFAULT_FIRM = DEFAULT_FIRM_ID;
 const Where = () => <p data-testid="where">{useLocation().search}</p>;
 const renderPage = (path = "/advisor/partners") =>
   render(<MemoryRouter initialEntries={[path]}><AdvisorPartnersPage /><Where /></MemoryRouter>);

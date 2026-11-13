@@ -237,14 +237,16 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
 
   // D-35: an alert's recipients are fixed when it is first prepared. When a stored one is rebuilt only because someone left, it goes to
-  // those it named who are still members; a member who joined since is not added (the rebuilt message has a new key, so the people who
+  // those it named who are still members (or, when none of them is, the current members); a member who joined since is not added (the rebuilt message has a new key, so the people who
   // already received the first would get it twice). Joiners receive every alert prepared after they joined.
   // The stored alert's age decides only whether its message and key can be replayed above, never who a rebuilt one goes to.
   let to = advisorTo;
   if (stored && isAdvisorKind(row.kind)) {
     const named = new Set(stored.message.to.map((a) => a.toLowerCase()));
-    to = advisorTo.filter((a) => named.has(a.toLowerCase()));
-    if (to.length === 0) return { outcome: "fail", reason: "no_recipients", final: false };
+    const stayers = advisorTo.filter((a) => named.has(a.toLowerCase()));
+    // When none of those it named is still a member (everyone left, or it was frozen to the shared inbox before alerts went to members),
+    // nobody now in the firm can have received it, so the current members are sent it and no one gets a duplicate.
+    if (stayers.length > 0) to = stayers;
   }
 
   const built = buildMessage(row, deps.config, to);
