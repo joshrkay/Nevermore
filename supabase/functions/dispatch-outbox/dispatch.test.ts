@@ -436,7 +436,11 @@ describe("reusing a frozen message", () => {
       ["21 hours", 21 * HOUR],
       ["a week", 168 * HOUR],
     ])("replaces a message frozen %s ago: rebuilt from the current settings, overwriting the stored one", async (_name, age) => {
-      const stored = pendingSend({ frozen_at: new Date(NOW - age).toISOString() });
+      // It names the people who are still the team: age frees the message to be rebuilt, never the recipients to change (D-35).
+      const stored = pendingSend({
+        frozen_at: new Date(NOW - age).toISOString(),
+        message: { ...pendingSend().message, to: ["new-team@example.com", "second@example.com"] },
+      });
       const { deps, sent, logs } = harness({ config: configFrom(changedEnv), advisorRecipients: vi.fn(async () => ["new-team@example.com", "second@example.com"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       const [id, attempt, message, replace] = vi.mocked(deps.freeze).mock.calls[0];
@@ -1345,6 +1349,28 @@ describe("who an advisor alert goes to", () => {
       await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       expect(sent).toHaveLength(1);
       expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("a %s frozen more than 20 hours ago is rebuilt for the people it named who are still members, not for a member who joined since or one who left (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 21 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message, replace] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(replace).toBe(true);
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+    });
+
+    it("sends nothing from an aged alert when everyone it named has left, even if others joined since (D-35)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 168 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith("evt-advisor", "no_recipients", 300, 2, false);
     });
 
     // D-35: recipients are fixed when the alert is first prepared. A later joiner is deliberately NOT added to a frozen alert: rebuilding
