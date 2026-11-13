@@ -154,6 +154,7 @@
 \i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116200001_held_mail_assign_open_only.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1995,6 +1996,18 @@ BEGIN
       RAISE EXCEPTION 'FAIL: someone who is not a platform admin assigned held mail (%)', r;
     END IF;
   END LOOP;
+  -- A quote request that closed after the admin loaded the list is no longer assignable: it is answered as one that isn't there.
+  RESET ROLE;
+  UPDATE public.quote_requests SET status = 'closed' WHERE id = qa;
+  PERFORM pg_temp.become('service');
+  FOR r IN SELECT x FROM unnest(ARRAY['plan_mail_move(%s, %s, %L)', 'apply_mail_move(%s, %s, %L, NULL)']) x LOOP
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, qa, plat)) <> 'PT404' OR pg_temp.attempt(format('SELECT public.' || r, hu, qa, plat)) <> 'PT404' THEN
+      RAISE EXCEPTION 'FAIL: held mail was assigned to a quote request that has closed (%)', r;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  UPDATE public.quote_requests SET status = 'sent' WHERE id = qa;
+  PERFORM pg_temp.become('service');
   r := pg_temp.after(format('SELECT public.apply_mail_move(%s, %s, %L, NULL)', hu, qb, plat),
     format('SELECT firm_id::text FROM public.quote_request_messages WHERE id = %s', hu));
   IF r <> fb::text THEN RAISE EXCEPTION 'FAIL: mail assigned to the second firm''s quote request is firm %', r; END IF;
