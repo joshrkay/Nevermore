@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
@@ -84,8 +83,7 @@ const AdvisorSubmissionPage = () => {
   );
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8">
         <Link to="/advisor" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
           <ArrowLeft className="w-4 h-4" /> All submissions
