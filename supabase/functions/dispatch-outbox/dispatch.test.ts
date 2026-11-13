@@ -1325,6 +1325,13 @@ describe("who an advisor alert goes to", () => {
       expect(deps.fail).toHaveBeenCalledWith("evt-advisor", "recipients_failed", 300, 2, false);
     });
 
+    it("matches addresses without regard to case, in either direction", async () => {
+      const stored = frozen(["Stayer@Firm-A.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
+    });
+
     it("still reuses a frozen message, as stored with its key, while everyone it names is a current member", async () => {
       const stored = frozen(["stayer@firm-a.example"]);
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@firm-a.example", "joined@firm-a.example"]) });

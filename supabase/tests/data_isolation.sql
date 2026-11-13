@@ -27,6 +27,9 @@
 -- 4c. One firm against the other, table by table, on the matrix's rows: what a member of one can read, change or delete of the other's.
 -- 4e. Functions, one firm against the other: every function that runs as its owner and reads or changes a firm's data is called by
 --    the other firm's members, a platform admin, a former member and a non-member, by id and by listing, and gets none of it (D-16, D-18).
+-- 4i. What has no submission behind it (CRM-P2.1c): a firm's referral partners (a code is a firm's own), held mail (addressed to a firm; a
+--    platform admin sees only File ID and PEO), the advisor alert's recipients (the intake's firm's current members), and a broker's mailbox
+--    (works only for a current member of a firm).
 -- 4d. A deletion record keeps its firm after its intake is gone.
 -- 5. The gate and the catalogue checks, so the matrix can't fall behind the schema:
 --    5a every public table and storage bucket is in the registry with what it holds (a firm's data, platform-wide data, a
