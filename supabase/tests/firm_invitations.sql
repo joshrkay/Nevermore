@@ -317,6 +317,7 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(pg_temp.id('zenith'), 'invitation_sent')), 1::bigint, 'Zenith''s invitation is recorded against Zenith');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(acme, 'invitation_sent') a WHERE a.actor_id = pg_temp.id('zenith_owner')), 0::bigint, 'and not against Acme');
+  PERFORM pg_temp.is((SELECT DISTINCT a.role FROM pg_temp.acts(pg_temp.id('zenith'), 'invitation_sent') a), 'lead', 'and it records the role that was offered');
   RAISE NOTICE 'firm_invitations: record cases passed';
 END $$;
 
@@ -528,6 +529,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT cancelled_by FROM public.firm_invitations WHERE id = inv), pg_temp.id('acme_owner'), 'recording who');
   PERFORM pg_temp.is((SELECT cancelled_at IS NOT NULL FROM public.firm_invitations WHERE id = inv), true, 'and when');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(pg_temp.id('acme'), 'invitation_withdrawn') a WHERE a.actor_id = pg_temp.id('acme_owner')), 1::bigint, 'the withdrawal is recorded with who');
+  PERFORM pg_temp.is((SELECT a.role FROM pg_temp.acts(pg_temp.id('acme'), 'invitation_withdrawn') a WHERE a.actor_id = pg_temp.id('acme_owner')), (SELECT i.role FROM public.firm_invitations i WHERE i.id = inv), 'and the role that was withdrawn');
   PERFORM pg_temp.as_user('dual');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('dual-token'), 'acme-brokers')), 'PT410: This invitation was withdrawn', 'a withdrawn link says so and opens nothing');
   PERFORM pg_temp.as_user('acme_owner');
@@ -581,6 +583,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_pending_invitations(acme) p WHERE p.email = 'no-account-yet@example.test'), 1::bigint, 'still one invitation, not two');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(acme, 'invitation_sent') a WHERE a.actor_id = pg_temp.id('acme_owner')) > before_sent, true, 'the resend is recorded with who, as another invitation sent');
+  PERFORM pg_temp.is((SELECT a.role FROM pg_temp.acts(acme, 'invitation_sent') a ORDER BY a.id DESC LIMIT 1), (SELECT i.role FROM public.firm_invitations i WHERE i.id = inv), 'with the role of the invitation');
   PERFORM pg_temp.new_user('no-account-yet');
   PERFORM pg_temp.as_user('no-account-yet');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('expiring-two'), 'acme-brokers')), 'PT404: This invitation link is not valid', 'the old link no longer works');

@@ -14,3 +14,21 @@ ALTER TABLE public.firm_activity ADD CONSTRAINT firm_activity_kind_check CHECK (
     'firm_signed_up', 'firm_approved', 'firm_refused', 'invitation_withdrawn'
     -- sync:end firm_activity_kinds
   ));
+
+-- 2. The firm's record carries the role of an invitation. record_firm_event (20261116170001) handed the entry over without the
+-- detail that holds the role, so every invitation, resend and withdrawal was stored with no role. An invitation sent (or sent
+-- again) and an invitation withdrawn now record the role that was offered, so the firm's owners see who was invited as what.
+-- Nothing else in p_detail (the address, the note, the invited email) is written, and the actor is still the caller's own sign-in.
+CREATE OR REPLACE FUNCTION public.record_firm_event(p_firm_id uuid, p_kind text, p_actor uuid, p_detail jsonb)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  PERFORM public.firm_activity_append(p_firm_id, p_kind, 'firm', p_firm_id::text, NULL,
+    CASE WHEN p_kind IN ('invitation_sent', 'invitation_withdrawn') THEN p_detail ->> 'role' END);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_firm_event(uuid, text, uuid, jsonb) FROM PUBLIC, anon, authenticated;
