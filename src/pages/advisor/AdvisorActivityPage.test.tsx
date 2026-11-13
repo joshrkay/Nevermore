@@ -144,6 +144,36 @@ describe("AdvisorActivityPage", () => {
     expect(await within(screen.getByRole("navigation", { name: "Console" })).findByRole("link", { name: "Activity" })).toHaveAttribute("href", "/advisor/activity");
   });
 
+  it("shows the role an invitation offered or withdrew, and for staff still only Nevermore", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [
+        entry({ entry_key: "k7", kind: "invitation_withdrawn", record_type: "firm", record_id: "firm-1", role: "agent" }),
+        entry({ entry_key: "k6", kind: "invitation_sent", record_type: "firm", record_id: "firm-1", role: "lead" }),
+        entry({ entry_key: "k5", kind: "firm_approved", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null, by_nevermore: true }),
+      ],
+      hasMore: false,
+    });
+    renderPage();
+    const rows = within(await screen.findByRole("table")).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("Withdrew an invitation");
+    expect(rows[0]).toHaveTextContent("as agent");
+    expect(rows[1]).toHaveTextContent("Sent an invitation");
+    expect(rows[1]).toHaveTextContent("as lead");
+    expect(rows[2]).not.toHaveTextContent(" as ");
+    expect(within(rows[2]).getAllByRole("cell")[1].textContent).toBe("Nevermore");
+  });
+
+  it("shows an invitation entry written before roles were recorded without a role, never as 'as null'", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [entry({ entry_key: "k8", kind: "invitation_sent", record_type: "firm", record_id: "firm-1", role: null })],
+      hasMore: false,
+    });
+    renderPage();
+    const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
+    expect(row).toHaveTextContent("Sent an invitation");
+    expect(row.textContent).not.toMatch(/ as |null/);
+  });
+
   it("names the person a membership change was about and their role, and never shows a missing person as blank", async () => {
     api.listFirmActivity.mockResolvedValue({
       entries: [
