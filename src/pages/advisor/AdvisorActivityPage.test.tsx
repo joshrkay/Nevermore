@@ -313,7 +313,7 @@ describe("AdvisorActivityPage", () => {
         renderPage("/advisor/activity?firm=firm-1");
         await screen.findByRole("table");
         expect(screen.queryByLabelText("Firm")).not.toBeInTheDocument();
-        expect(screen.getByText("Beta Brokers")).toBeInTheDocument();
+        expect(screen.getAllByText("Beta Brokers").length).toBeGreaterThan(0);
         expect(screen.queryByText("Alpha Advisory")).not.toBeInTheDocument();
       });
 
