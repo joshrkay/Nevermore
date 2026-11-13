@@ -156,6 +156,7 @@
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261117090000_one_firm_at_a_time.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1663,6 +1664,131 @@ BEGIN
   RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
 END $$;
 
+-- ---------- 4j. functions at a firm's address (CRM-S1.1b, D-40) ----------
+-- At a firm's address the browser sends that address in the header x-firm-address, and the membership helpers also require that a
+-- row's firm is that address's firm. The address only narrows: a header anyone can send must grant nothing. Every firm-scoped
+-- function of 4e (the referral-partner pair aside: their firm is chosen by firm_to_act_for, proven in one_firm_at_a_time.sql) is
+-- called again at an address: a member of either firm at the other firm's address, the member of both firms (`dual`, made here)
+-- at the other firm's address, and a platform admin at either, are refused or answered with nothing, by id and by listing; the
+-- firm's own member and `dual` at the firm's own address are served (the positive control).
+DO $$
+DECLARE dual uuid := pg_temp.new_user('dual@example.test', false);
+BEGIN
+  INSERT INTO fx VALUES ('dual', dual);
+  -- An agent of each firm who holds the advisor role, as the second firm's agent does.
+  INSERT INTO public.user_roles (user_id, role) VALUES (dual, 'advisor');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_a'), dual, 'agent'), (pg_temp.id('firm_b'), dual, 'agent');
+END $$;
+
+-- A call as a caller at a firm's address ('a' or 'b'), rolled back: 'ok:<value>' or the SQLSTATE. The header is cleared after.
+CREATE FUNCTION pg_temp.call_at(who text, firm text, stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  address text;
+  v text;
+  s text;
+  m text;
+BEGIN
+  RESET ROLE;
+  address := (SELECT f.address FROM public.firms f WHERE f.id = pg_temp.id('firm_' || firm));
+  PERFORM pg_temp.become(who);
+  PERFORM set_config('request.headers', jsonb_build_object('accept', 'application/json', 'x-firm-address', address)::text, false);
+  BEGIN
+    EXECUTE stmt INTO v;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = COALESCE(v, '<null>');
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    RESET ROLE;
+    PERFORM set_config('request.headers', '', false);
+    IF s = 'ZZ999' THEN RETURN 'ok:' || m; END IF;
+    RETURN s;
+  END;
+END $$;
+
+DO $$
+DECLARE
+  e record;
+  f text;
+  o text;
+  member text;
+  who text;
+  at text;
+  pair text[];
+  r text;
+  ids text;
+  expected text;
+  answers text;
+  cases integer := 0;
+BEGIN
+  -- As in 4e, the second firm's owner is a platform admin for these calls only, so the admin functions have a member of each firm.
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('owner_b'), 'admin');
+  FOR e IN SELECT * FROM fprobe WHERE fn NOT IN ('advisor_add_referral_partner', 'advisor_update_referral_partner') ORDER BY fn LOOP
+    IF e.shape = 'by_id' THEN
+      FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+        o := CASE f WHEN 'a' THEN 'b' ELSE 'a' END;
+        member := CASE WHEN e.who = 'admin' THEN CASE f WHEN 'a' THEN 'admin' ELSE 'owner_b' END ELSE CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END END;
+        -- Outsiders: the firm's own member at the other firm's address; the other firm's member (and its admin) at this firm's
+        -- address; the member of both firms at the other's; a platform admin at this firm's.
+        FOREACH pair SLICE 1 IN ARRAY ARRAY[
+          [member, o],
+          [CASE WHEN e.who = 'admin' THEN CASE o WHEN 'a' THEN 'admin' ELSE 'owner_b' END ELSE CASE o WHEN 'a' THEN 'advisor' ELSE 'agent_b' END END, f],
+          ['dual', o], ['platform_admin', f]] LOOP
+          r := pg_temp.call_at(pair[1], pair[2], pg_temp.fill(e.call, f));
+          IF NOT r = ANY (e.refused) THEN
+            RAISE EXCEPTION 'FAIL: % at the % firm''s address calling % on the % firm''s row gave %, expected a refusal (%)', pair[1], pair[2], e.fn, f, r, e.refused;
+          END IF;
+          cases := cases + 1;
+        END LOOP;
+        -- The positive control: the firm's member at its own address, and (for what any member may do) the member of both firms.
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+          r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
+          IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
+            RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
+          END IF;
+          cases := cases + 1;
+        END LOOP;
+      END LOOP;
+    ELSE
+      -- caller, address, the firm whose rows they may get there ('' for none).
+      FOREACH pair SLICE 1 IN ARRAY ARRAY[['advisor', 'a', 'a'], ['advisor', 'b', ''], ['agent_b', 'b', 'b'], ['agent_b', 'a', ''],
+                                          ['dual', 'a', 'a'], ['dual', 'b', 'b'], ['platform_admin', 'a', '']] LOOP
+        who := pair[1];
+        at := pair[2];
+        f := NULLIF(pair[3], '');
+        r := pg_temp.call_at(who, at, e.call);
+        IF r NOT LIKE 'ok:%' THEN
+          IF r <> '42501' OR f IS NOT NULL THEN RAISE EXCEPTION 'FAIL: % at the % firm''s address calling % gave %', who, at, e.fn, r; END IF;
+        ELSIF e.shape = 'list' THEN
+          ids := substr(r, 4);
+          answers := COALESCE((SELECT id::text FROM fx WHERE name = 'firm_' || f), '');
+          IF ids <> '' AND pg_temp.firms_of(ids) IS DISTINCT FROM answers THEN
+            RAISE EXCEPTION 'FAIL: % at the % firm''s address listing with % got intakes of firm(s) %, expected %', who, at, e.fn, pg_temp.firms_of(ids), COALESCE(f, 'none');
+          END IF;
+          -- A member at their own firm's address gets that firm's rows, when the plain member did in 4e.
+          IF ids = '' AND f IS NOT NULL AND (CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END) = ANY (e.positive) THEN
+            RAISE EXCEPTION 'FAIL: % at their own firm''s address got none of its rows from %', who, e.fn;
+          END IF;
+        ELSE
+          expected := '0';
+          IF f IS NOT NULL THEN
+            EXECUTE replace(e.expected, '{firm}', quote_literal(pg_temp.id('firm_' || f))) INTO expected;
+          END IF;
+          IF substr(r, 4) <> expected THEN
+            RAISE EXCEPTION 'FAIL: % at the % firm''s address counting with % got %, expected %', who, at, e.fn, substr(r, 4), expected;
+          END IF;
+        END IF;
+        cases := cases + 1;
+      END LOOP;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  DELETE FROM public.user_roles WHERE user_id = pg_temp.id('owner_b') AND role = 'admin';
+  -- Sections 4d to 4i count the firms' members as the matrix has them: the member of both firms is a member again for 5b.
+  DELETE FROM public.firm_memberships WHERE user_id = pg_temp.id('dual');
+  PERFORM set_config('request.jwt.claims', '', false);
+  PERFORM set_config('request.headers', '', false);
+  RAISE NOTICE 'data_isolation: % function cases at a firm''s address passed', cases;
+END $$;
+
 DO $$
 BEGIN
   SET LOCAL session_replication_role = replica;
@@ -2599,6 +2725,42 @@ BEGIN
   RETURN NULLIF(gaps, '');
 END $$;
 
+-- ---------- 5j. the probe at a firm's address (CRM-S1.1b, D-40) ----------
+-- The probe above also runs as callers at an address: a caller named `<who>_at_a` or `<who>_at_b` is that caller with the request
+-- made at the first or second firm's address. Each firm's members at their own address and at the other's, the member of both
+-- firms (`dual`, from 4j) at each, and a platform admin at one. At an address a caller is that firm's member only if they are one,
+-- and no other firm's, so a member of either firm at the other's address must read, count, change and delete nothing of either
+-- firm's, and the member of both reads only the address's firm. The member of both with no address reads both by design
+-- (one_firm_at_a_time.sql), so is not a caller here. The plain helpers are renamed and wrapped, so nothing above changes.
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_a'), pg_temp.id('dual'), 'agent'), (pg_temp.id('firm_b'), pg_temp.id('dual'), 'agent');
+
+ALTER FUNCTION pg_temp.become(text) RENAME TO become_plain;
+CREATE FUNCTION pg_temp.become(who text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  at text := substring(who FROM '_at_([ab])$');
+  address text;
+BEGIN
+  RESET ROLE;
+  address := (SELECT f.address FROM public.firms f WHERE f.id = pg_temp.id('firm_' || at));
+  PERFORM pg_temp.become_plain(regexp_replace(who, '_at_[ab]$', ''));
+  PERFORM set_config('request.headers',
+    CASE WHEN at IS NULL THEN '' ELSE jsonb_build_object('accept', 'application/json', 'x-firm-address', address)::text END, false);
+END $$;
+
+ALTER FUNCTION pg_temp.member_of(text) RENAME TO member_of_plain;
+CREATE FUNCTION pg_temp.member_of(who text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN t.at IS NULL THEN t.firms WHEN position(t.at IN COALESCE(t.firms, '')) > 0 THEN t.at END
+  FROM (SELECT substring(who FROM '_at_([ab])$') AS at,
+               CASE WHEN regexp_replace(who, '_at_[ab]$', '') = 'dual' THEN 'ab'
+                    ELSE pg_temp.member_of_plain(regexp_replace(who, '_at_[ab]$', '')) END AS firms) t
+$$;
+
+ALTER FUNCTION pg_temp.matrix_callers() RENAME TO matrix_callers_plain;
+CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
+  SELECT pg_temp.matrix_callers_plain()
+    || ARRAY['advisor_at_a', 'advisor_at_b', 'owner_b_at_b', 'owner_b_at_a', 'agent_b_at_a', 'dual_at_a', 'dual_at_b', 'platform_admin_at_a']
+$$;
+
 DO $$
 DECLARE gaps text := pg_temp.isolation_gaps();
 BEGIN
@@ -2864,6 +3026,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('mailbox_store', 'service_only', 'a broker''s mailbox, as the service role: only a current member of a firm may connect one (4i)'),
   ('mailbox_secret', 'service_only', 'a broker''s mailbox, as the service role: nothing for a person who is no longer a member of any firm (4i)'),
   ('mailbox_delete', 'service_only', 'a broker''s mailbox, as the service role: the person''s own');
+-- One firm at a time (CRM-S1.1b).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('address_admits_firm', 'service_only', 'whether the firm address a request was made at admits a firm: firm_role() asks it; not callable through the API');
 UPDATE fn_class SET story = 'CRM-P2.2' WHERE fn = 'intake_accepts_files';
 
 INSERT INTO fn_class (fn, class, why)
