@@ -20,6 +20,12 @@ describe("loadListProblems", () => {
     ]);
   });
 
+  it("names the first migration when a whole-suite list leaves it out, though the list reaches the newest one", () => {
+    expect(loadListProblems("t", ["20260102_b.sql", "20260103_c.sql"], ALL)).toEqual([
+      "t reaches 20260103_c.sql but does not load 20260101_a.sql",
+    ]);
+  });
+
   it("lets a list that stops early load only the migrations its story needs", () => {
     expect(loadListProblems("t", ["20260101_a.sql", "20260102_b.sql"], ALL)).toEqual([]);
   });
