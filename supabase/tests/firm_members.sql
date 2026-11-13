@@ -109,10 +109,12 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116190500_invitation_fixes.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
 \i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
+\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -861,6 +863,47 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.stored('cl_current'), true, 'but not of a current member');
   PERFORM pg_temp.is(pg_temp.stored('cl_suspended'), true, 'nor of a suspended person');
   RAISE NOTICE 'firm_members: cleanup passed';
+END $$;
+
+-- The cleanup and a person who is being given a membership again, in two sessions (D-32). The cleanup picked the person as having
+-- no membership; before it deletes, their new membership and a fresh store commit. It takes the person's lock and looks again, so it
+-- waits for that store and then finds the membership. Without the lock it deletes the row a moment after a valid store.
+-- Break caught: the cleanup deletes the mailbox a member has just connected.
+DO $$
+DECLARE zenith uuid := pg_temp.id('zenith');
+BEGIN
+  PERFORM pg_temp.new_user('cl_back');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+  VALUES (zenith, pg_temp.id('cl_back'), 'agent', now() - interval '1 day', now() + interval '1 second');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.store_mailbox('cl_back');
+  RESET ROLE;
+END $$;
+
+SELECT pg_sleep(1.5) \gset
+
+DO $$
+DECLARE zenith uuid := pg_temp.id('zenith'); pid2 integer;
+BEGIN
+  PERFORM race.dblink_connect('cl_first', pg_temp.race_dsn());
+  PERFORM race.dblink_connect('cl_second', pg_temp.race_dsn());
+  PERFORM race.dblink_exec('cl_second', 'SET lock_timeout = ''20s''');
+  SELECT t.pid INTO pid2 FROM race.dblink('cl_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('cl_first', 'BEGIN');
+  PERFORM race.dblink_exec('cl_first', format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (%L, %L, 'agent')$q$, zenith, pg_temp.id('cl_back')));
+  PERFORM * FROM race.dblink('cl_first', format($q$SELECT public.mailbox_store(%L, 'google', 'back@gmail.example', 'scope', 'NEWCIPHER', 'IV')::text$q$, pg_temp.id('cl_back'))) AS t(r text);
+  PERFORM race.dblink_exec('cl_second', 'BEGIN');
+  PERFORM race.dblink_exec('cl_second', 'SET LOCAL ROLE service_role');
+  PERFORM race.dblink_send_query('cl_second', 'SELECT public.drop_mailboxes_of_former_members()::text');
+  PERFORM pg_temp.wait_blocked_or_done('cl_second', pid2);
+  PERFORM race.dblink_exec('cl_first', 'COMMIT');
+  PERFORM * FROM race.dblink_get_result('cl_second') AS t(r text);
+  PERFORM * FROM race.dblink_get_result('cl_second') AS t(r text);
+  PERFORM race.dblink_exec('cl_second', 'COMMIT');
+  PERFORM race.dblink_disconnect('cl_first');
+  PERFORM race.dblink_disconnect('cl_second');
+  PERFORM pg_temp.is(pg_temp.stored('cl_back'), true, 'the cleanup that waited for a member''s new store keeps it');
+  RAISE NOTICE 'firm_members: two-session cleanup passed';
 END $$;
 
 -- ---------- what the person stops receiving, and what they leave behind ----------

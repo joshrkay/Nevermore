@@ -250,10 +250,11 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   // apart from the frozen message, which is thrown away when it ages out or a send is definitively refused. A message that is rebuilt
   // goes to those people who are still members, never to anyone who joined after the first preparation (adding an address changes the key,
   // so everyone who already has it would get it twice). D-102: when none of them is still a member, it is not lost: it goes to the
-  // current members, under a new key. With nothing stored it is a first preparation and goes to the firm's current members.
+  // current members, under a new key. A row older than the column falls back to the frozen message's people, whatever its age (age decides
+  // only whether the message and key can be replayed above). With nothing stored it is a first preparation and goes to the current members.
   let to = advisorTo;
   if (isAdvisorKind(row.kind)) {
-    const first = firstRecipients(row.first_recipients) ?? (stored && isFresh(stored, deps.now()) ? stored.message.to : null);
+    const first = firstRecipients(row.first_recipients) ?? stored?.message.to ?? null;
     if (first) {
       const named = new Set(first.map((a) => a.toLowerCase()));
       const stillThere = advisorTo.filter((a) => named.has(a.toLowerCase()));
