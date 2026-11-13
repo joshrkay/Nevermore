@@ -281,6 +281,22 @@ _Avoid_: department, office
 A person's place in a firm, with a role, an optional team and the dates it began and ended. It is never changed: a change ends one row and adds another, so who could see a record on a given day can be answered. A person holds one membership of a firm at a time, and a firm always keeps at least one current owner. A **current member** is one whose membership has begun and not ended; `is_firm_member` and `firm_role` answer for the caller.
 _Avoid_: seat, user (for a member)
 
+**Platform admin** (code: the `admin` role in `user_roles`):
+A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files; held mail, which belongs to no firm until one is assigned, is theirs to read.
+_Avoid_: admin (on its own, where a firm's owner could be meant), super user
+
+**Record owner**:
+The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it.
+_Avoid_: assignee, creator
+
+**Visibility helper** (code: `can_see_firm_record(firm, owner)`):
+The one question every firm-owned table asks of the caller: may they see a record of this firm that this person owns? Yes for a current member of a firm set to "everyone sees everything"; otherwise by level: an owner sees the firm's, a lead the records of members of their own team (the one on their membership) and of every team under it, an agent their own. A record with no owner, or whose owner has left, is an owner's alone. Anyone who is not a current member of the firm, a platform admin and a guest token included, sees nothing.
+_Avoid_: permission check, ACL
+
+**Firm rule** (code: the policies that call `is_firm_member` or a helper built on it):
+A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. A password sign-in that has not completed a second factor is not a member to it (D-19): `firm_role` asks the same rule as `has_role`, so no firm's data opens without it. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
+_Avoid_: tenant filter, RLS (on its own)
+
 **Owner**, **lead**, **agent** (code: `firm_memberships.role`):
 The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0011). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
 _Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)

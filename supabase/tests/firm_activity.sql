@@ -2,7 +2,7 @@
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh firm_activity
 -- The record of who did what (story CRM-P2.3 with Q-3.1; docs/BROKER_CRM_BUILD.md D-16, D-24;
--- 20261116160000_firm_activity.sql). Two firms, each with an owner, and the first with a lead and an agent; a platform
+-- 20261116160001_firm_activity.sql). Two firms, each with an owner, and the first with a lead and an agent; a platform
 -- admin who belongs to neither. Proves: an entry says who, when, what kind of thing and which record, and never holds
 -- content; the function that writes one works out the firm and the actor itself and can't be told otherwise; it is
 -- wired to a submission opened, a document or packet downloaded, a send recorded and every membership change; nobody
@@ -101,7 +101,7 @@
 \i supabase/migrations/20261116090000_firms.sql
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
-\i supabase/migrations/20261116160000_firm_activity.sql
+\i supabase/migrations/20261116160001_firm_activity.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

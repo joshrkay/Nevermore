@@ -1,5 +1,5 @@
 // A firm's record of who did what (story CRM-P2.3; docs/BROKER_CRM_BUILD.md D-16, D-24): what each kind of entry is
-// called on screen. The database holds the kinds (public.firm_activity, 20261116160000_firm_activity.sql) and
+// called on screen. The database holds the kinds (public.firm_activity, 20261116160001_firm_activity.sql) and
 // src/data/schemaSync.test.ts keeps this list equal to its check. An entry holds the kind and the id of a record, never
 // content, so these are the only words the page has for it.
 

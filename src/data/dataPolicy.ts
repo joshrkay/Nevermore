@@ -7,7 +7,7 @@
 // * public.submitted_record_retention()   submitted records (same)
 // * public.ops_event_retention()          monitoring events (20261104091000_ops_monitoring.sql)
 // * public.email_event_retention()        email delivery    (20261104092000_data_retention_and_deletion.sql)
-// * public.firm_activity_retention()     the record of who did what (20261116160000_firm_activity.sql)
+// * public.firm_activity_retention()     the record of who did what (20261116160001_firm_activity.sql)
 // * public.ai_event_retention()           AI call records   (20261103120200_ai_extraction_events.sql)
 //
 // src/data/schemaSync.test.ts keeps those equal to RETENTION, and dataPolicy.test.ts checks that every table
