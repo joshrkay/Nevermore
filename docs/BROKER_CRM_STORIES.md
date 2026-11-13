@@ -631,18 +631,98 @@ fields; everyone sees email.
 
 ---
 
+## 9a. Joining, leaving and keeping firms apart
+
+The reasoning is in `docs/BROKER_CRM_PRD.md` section 8.
+
+### CRM-P1 Coming in and going out
+
+**CRM-P1.1 Sign up a firm.** M · FS · needs P-1.1, P-1.3
+- AC: sign-up takes the firm's name, a firm address and the owner's verified email. The address is 3 to 40 letters, digits or hyphens.
+- AC: an address is refused when it is taken, was a closed firm's in the last 12 months, is a system word (www, app, api, mail, admin, status, the reply-address subdomain), or reads as Nevermore or a listed PEO.
+- AC: the person who signs up is the firm's first owner. The firm can work at once and cannot send to a PEO until a platform admin approves it (Q-1.2); every send button says so until then.
+
+**CRM-P1.2 Invite a member.** S · FS (screen 29) · needs P-1.2
+- AC: an owner invites an email address with a role and a team. The link works once, for seven days, and only when the person signs in with that address, verified.
+- AC: an invitation can be sent again or withdrawn until it is used. A used or expired link says so and opens nothing.
+- AC: accepting creates a dated membership. The new member sees only what they own.
+- AC: every invitation, acceptance and withdrawal is recorded: who, when, the role.
+
+**CRM-P1.3 Signing in.** M · FS · needs M-4.1
+- AC: a member signs in at their firm's address with Google, Microsoft, or a password and a verified email.
+- AC: a password account must add a second factor before it can open any firm's data.
+- AC: a session belongs to one firm address. A person in two firms signs in to each.
+- AC: a signed-in person who is not a member of the address's firm sees "You aren't a member of this firm" and nothing else, whichever firm they do belong to.
+- AC: exporting a whole table and changing members ask the person to sign in again if they last did more than 12 hours ago.
+
+**CRM-P1.4 Join by organisation.** S · FS · needs CRM-P1.2
+- AC: an owner can list the firm's Google domain or Microsoft tenant. A person who signs in from it at the firm's address is listed for the owner as "asked to join".
+- AC: nobody becomes a member until an owner approves them with a role and a team. The match is on what the provider vouches for, never the email text, and free-mail domains can't be listed, as today.
+
+**CRM-P1.5 Remove or suspend a member.** M · FS · needs P-1.2
+As an owner, I want someone who leaves to lose access at once and their work to stay.
+- AC: removing ends the membership with today's date, ends every session of theirs within a minute, deletes their mailbox token, and withdraws their pending invitations. It is one step: all of it or none.
+- AC: nothing they owned is deleted. Their leads, accounts and opportunities are listed under "Needs a new owner" for an owner to reassign, one by one or in bulk; until then leads and owners can see them.
+- AC: replies to mail they sent still land on the record.
+- AC: the owner is shown what the member exported in the last 30 days.
+- AC: suspending does the same except that the membership is kept and can be restored; a suspended member's records stay theirs.
+- AC: the last owner of a firm can't be removed or suspended.
+- AC: their own sign-in is kept. Signed in, they see no firm.
+
+**CRM-P1.6 Leave a firm.** S · FS
+- AC: a member can leave from Settings. It does what removing does, and tells the owners.
+
+**CRM-P1.7 Close a firm.** M · FS + OPS
+- AC: an owner asks to close the firm and is offered an export of every table first. The firm is then read-only for 30 days, during which an owner can withdraw the request.
+- AC: after 30 days the firm's leads, accounts, contacts, opportunities, activities, custom fields, saved views, imports and conversations with contacts and leads are deleted, and every member's access ends.
+- AC: intakes are not deleted by this. The firm's access to them ends, and each stays for its employer under the retention rules that apply to intakes.
+- AC: the firm address can't be taken by another firm for 12 months.
+- AC: what was deleted, when and on whose request is recorded without content.
+
+**CRM-P1.8 Suspend a firm.** S · BE + OPS
+- AC: a platform admin can suspend a firm with a reason: its members can't sign in and nothing is sent; its data is kept; mail arriving for it is still received.
+- AC: suspending and restoring are recorded and the firm's owners are emailed.
+
+### CRM-P2 Keeping data apart
+
+**CRM-P2.1 One firm can't see another.** M · BE · needs P-1.1
+- AC: every table the workspace reads carries a firm, and its row security and every function check membership of that firm. Nothing takes the firm from the browser.
+- AC: the SQL isolation tests hold two firms, with two agents and a lead in the first. For every table and function they prove that a member of one firm can't read, count, change or delete a row of the other, and that an agent can't do so to a colleague's record outside their level.
+- AC: the build fails when a table in the workspace's schema has no firm rule, or a function that returns firm data has no membership check.
+- AC: search, reports, exports, the inbox and counts in the menu are covered by the same tests.
+
+**CRM-P2.2 Files, tokens and addresses.** S · BE
+- AC: a file opens only through a link made for the person asking, lasting 60 seconds, after the same membership check.
+- AC: mailbox and linked-CRM tokens are stored encrypted, read only by the function that sends, and never returned to a browser.
+- AC: reply addresses hold an unguessable part. Mail for an address that belongs to no record goes to the holding list.
+
+**CRM-P2.3 The record of who did what.** M · BE · needs Q-3.1
+- AC: sign-ins, views of a record, downloads, exports, sends, and every membership, role and ownership change are recorded with who and when, never with content.
+- AC: a firm's owners can read their firm's record and filter it by person and by kind. Nobody can change it.
+- AC: an export of more than 500 rows, or a third export by one member within an hour, emails the firm's owners.
+
+**CRM-P2.4 Help from Nevermore.** S · FS + OPS
+- AC: a platform admin can open a firm's workspace only through a support action that asks for a reason and lasts one hour.
+- AC: each use is in the firm's record of who did what, with the admin's name and the reason.
+- AC: platform admins can't export a firm's tables or send as any member.
+
+**CRM-P2.5 The employer's side.** S · FS · needs P-2.3
+- AC: an employer sees which firm can see their intake and can end it. Ending it stops new sends and removes the intake from the firm's opportunity; the account, its contacts and the firm's own notes stay.
+
+---
+
 ## 10. Order of work
 
 | Slice | Stories | What an agent can do at the end | Needs |
 |---|---|---|---|
-| **1. The chain** | CRM-Q1.1, CRM-Q1.3, CRM-S5.1, CRM-S1.1 | Every existing and new submission sits on an account, a contact and an opportunity, seen only by its firm | P-1.1 |
+| **1. The chain and firms** | CRM-Q1.1, CRM-Q1.3, CRM-S5.1, CRM-S1.1, CRM-P1.2, CRM-P1.3, CRM-P1.5, CRM-P2.1, CRM-P2.2 | Every existing and new submission sits on an account, a contact and an opportunity, seen only by its firm | P-1.1 |
 | **2. Accounts** | CRM-S2.x, CRM-S3.1 to S3.5, CRM-S4.1, CRM-A1.x, CRM-A2.x, CRM-C1.1, CRM-O1.1, CRM-O1.2 | Work from the accounts table down to a quote | Slice 1 |
 | **3. New quote** | CRM-Q2.1 to Q2.5, CRM-Q4.1, CRM-Q1.2, CRM-Q3.2 | Start with a quote and have the records made for them | P-2.1, P-2.2 |
 | **4. Leads and import** | CRM-L1.x, CRM-L2.x, CRM-X4.1, CRM-S4.2 | Bring a book in and work leads to accounts | Slice 2 |
 | **5. Bulk and the rest of tables** | CRM-S3.6 to S3.8, CRM-S4.3, CRM-S1.2 | Change many records at once, export, merge, search | Slice 2 |
 | **6. Send and email** | CRM-Q2.6, CRM-E1.x, CRM-Q3.1 | Send from the product and see every email both ways | M-2.1, M-4.x |
 | **7. What comes back** | CRM-Q3.3, CRM-Q3.4, CRM-Q4.2, CRM-O1.3, CRM-A2.4 | Record, compare, win, and track the renewal | Epic N, Q-4.1 |
-| **8. Reports and settings** | CRM-R1.x, CRM-X1.1, CRM-X2.1, CRM-X3.1, CRM-H1 | See how the firm is doing and run it | Slices 2 to 7 |
+| **8. Reports, settings and the open door** | CRM-R1.x, CRM-X1.1, CRM-X2.1, CRM-X3.1, CRM-H1, CRM-P1.1, CRM-P1.4, CRM-P1.6 to P1.8, CRM-P2.3 to P2.5 | See how the firm is doing and run it | Slices 2 to 7 |
 
 ## 11. Questions these stories leave open
 
