@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { createBrowserRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -48,14 +48,8 @@ const TermsPage = lazy(() => import("./pages/TermsPage"));
 
 const queryClient = new QueryClient();
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AuthProvider>
-        <FirmAddressProvider>
-        <BrowserRouter>
+const AppRoutes = () => (
+  <>
           {/* The title, description and robots rule of the page at this address (src/data/seo.ts). */}
           <PageMeta />
           <ErrorBoundary>
@@ -104,7 +98,21 @@ const App = () => (
               </AuthRedirectGate>
             </Suspense>
           </ErrorBoundary>
-        </BrowserRouter>
+  </>
+);
+
+// A data router, so a form with unsaved changes can ask before the app moves to another page (CRM-S4.1, useUnsavedChangesGuard).
+// One splat route holds the whole route table below, which is unchanged.
+const router = createBrowserRouter([{ path: "*", element: <AppRoutes /> }]);
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <Sonner />
+      <AuthProvider>
+        <FirmAddressProvider>
+        <RouterProvider router={router} />
         </FirmAddressProvider>
       </AuthProvider>
     </TooltipProvider>

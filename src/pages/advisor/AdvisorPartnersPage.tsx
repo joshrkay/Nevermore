@@ -1,13 +1,17 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { z } from "zod";
+import { Input } from "@/components/ui/input";
+import {
+  choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
+} from "@/components/workspace/form";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { funnelRange } from "@/data/funnel";
 import { SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import {
   countsByPartner,
-  isReferralPartnerKind,
   PARTNER_NAME_MAX,
   partnerKindLabel,
   partnerLink,
@@ -27,7 +31,7 @@ import {
 type Counts = Map<string, { started: number; certified: number }>;
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; partners: ReferralPartner[]; counts: Counts };
 
-const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
+const CODE_RULE = "Use only lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit.";
 const buttonClass = "flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50";
 
 async function copyLink(link: string) {
@@ -93,92 +97,91 @@ const AdvisorPartnersPage = () => {
   );
 };
 
+const partnerSchema = z.object({
+  name: nameRule("Enter the partner's name.", PARTNER_NAME_MAX),
+  kind: choiceRule(REFERRAL_PARTNER_KINDS, "Choose a kind of partner."),
+});
+const addSchema = partnerSchema.extend({
+  code: z.string().min(1, "Enter the code for their link.").regex(SOURCE_CODE_PATTERN, CODE_RULE),
+});
+
+/** The database refuses a code that is already a partner's with 23505: that reason belongs to the code field, not to the form. */
+const explainAdd = (error: unknown) =>
+  (error as { code?: string }).code === "23505" ? { message: (error as Error).message, field: "code" } : undefined;
+
+const KindOptions = ({ chooseOne }: { chooseOne: boolean }) => (
+  <>
+    {chooseOne && <option value="">Choose one…</option>}
+    {REFERRAL_PARTNER_KINDS.map((k) => (
+      <option key={k} value={k}>{REFERRAL_PARTNER_KIND_LABELS[k]}</option>
+    ))}
+  </>
+);
+
 const AddPartnerForm = ({ onAdded }: { onAdded: () => void }) => {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState("");
-  const [code, setCode] = useState("");
   // Until the advisor types a code of their own, it follows the name.
   const [codeTyped, setCodeTyped] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const codeOk = SOURCE_CODE_PATTERN.test(code);
-  const ready = name.trim() !== "" && isReferralPartnerKind(kind) && codeOk;
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!ready) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const added = await addReferralPartner(code, name, kind);
+  const api = useWorkspaceForm({
+    schema: addSchema,
+    defaultValues: { name: "", kind: "", code: "" },
+    save: async (v) => {
+      const added = await addReferralPartner(v.code, v.name, v.kind);
       toast.success(`Added ${added.name}. Send them ${partnerLink(added.code)}`);
-      setName("");
-      setKind("");
-      setCode("");
+      return added;
+    },
+    onSaved: () => {
       setCodeTyped(false);
       onAdded();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
+    },
+    explain: explainAdd,
+    failureMessage: "Couldn't add the partner. Check your connection and try again.",
+  });
+  const code = (api.form.watch("code") as string) ?? "";
+  const codeOk = SOURCE_CODE_PATTERN.test(code);
 
   return (
-    <form onSubmit={submit} aria-labelledby="add-partner-heading" className="border border-border rounded-xl p-5 space-y-4">
+    <WorkspaceForm api={api} aria-labelledby="add-partner-heading" className="border border-border rounded-xl p-5" actions={<FormActions submitLabel="Add partner" savingLabel="Adding…" />}>
       <h2 id="add-partner-heading" className="font-display text-lg font-bold">Add a partner</h2>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1">
-          <label htmlFor="partner-name" className="text-sm font-medium">Name</label>
-          <input
-            id="partner-name"
-            value={name}
-            maxLength={PARTNER_NAME_MAX}
+        <Field name="name" label="Name" required>
+          {(field) => (
+            <Input
+              {...field}
+              maxLength={PARTNER_NAME_MAX}
+              onChange={(e) => {
+                field.onChange(e);
+                if (!codeTyped) api.form.setValue("code", suggestPartnerCode(e.target.value), { shouldValidate: api.form.formState.touchedFields.code === true });
+              }}
+              placeholder="Acme CFO Partners"
+            />
+          )}
+        </Field>
+        <Field name="kind" label="Kind of partner" required>
+          {(field) => <SelectInput {...field}><KindOptions chooseOne /></SelectInput>}
+        </Field>
+      </div>
+      <Field
+        name="code"
+        label="Code in their link"
+        required
+        help={code !== "" && codeOk
+          ? `Their link: ${partnerLink(code)}. It can't be changed once the partner is added.`
+          : "Lowercase letters, digits, dots, hyphens or underscores. It can't be changed once the partner is added."}
+      >
+        {(field) => (
+          <Input
+            {...field}
+            maxLength={64}
+            className="font-mono"
             onChange={(e) => {
-              setName(e.target.value);
-              if (!codeTyped) setCode(suggestPartnerCode(e.target.value));
+              e.target.value = e.target.value.toLowerCase();
+              field.onChange(e);
+              setCodeTyped(true);
             }}
-            placeholder="Acme CFO Partners"
-            className={inputClass}
           />
-        </div>
-        <div className="space-y-1">
-          <label htmlFor="partner-kind" className="text-sm font-medium">Kind of partner</label>
-          <select id="partner-kind" value={kind} onChange={(e) => setKind(e.target.value)} className={inputClass}>
-            <option value="">Choose one…</option>
-            {REFERRAL_PARTNER_KINDS.map((k) => (
-              <option key={k} value={k}>{REFERRAL_PARTNER_KIND_LABELS[k]}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <div className="space-y-1">
-        <label htmlFor="partner-code" className="text-sm font-medium">Code in their link</label>
-        <input
-          id="partner-code"
-          value={code}
-          maxLength={64}
-          onChange={(e) => {
-            setCode(e.target.value.toLowerCase());
-            setCodeTyped(true);
-          }}
-          aria-describedby="partner-code-help"
-          className={`${inputClass} font-mono`}
-        />
-        <p id="partner-code-help" className="text-xs text-muted-foreground">
-          {code === "" || codeOk
-            ? code === ""
-              ? "Lowercase letters, digits, dots, hyphens or underscores. It can't be changed once the partner is added."
-              : `Their link: ${partnerLink(code)}. It can't be changed once the partner is added.`
-            : "Use only lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit."}
-        </p>
-      </div>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <button type="submit" disabled={!ready || saving} className={buttonClass}>
-        {saving && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />} Add partner
-      </button>
-    </form>
+        )}
+      </Field>
+    </WorkspaceForm>
   );
 };
 
@@ -206,42 +209,37 @@ const PartnerTable = ({ partners, counts, onChanged }: { partners: ReferralPartn
 
 const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; onChanged: () => void }) => {
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(partner.name);
-  const [kind, setKind] = useState(partner.kind);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const link = partnerLink(partner.code);
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await updateReferralPartner(partner.code, name, kind);
+  const api = useWorkspaceForm({
+    schema: partnerSchema,
+    defaultValues: { name: partner.name, kind: partner.kind },
+    save: async (v) => {
+      await updateReferralPartner(partner.code, v.name, v.kind);
       toast.success("Partner saved");
+    },
+    savedValues: (_, v) => v,
+    onSaved: () => {
       setEditing(false);
       onChanged();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
+    },
+    failureMessage: "Couldn't save the partner. Check your connection and try again.",
+    onCancel: () => setEditing(false),
+  });
 
   return (
+    <WorkspaceFormProvider api={api}>
     <tr className="border-b border-border/60 align-top">
       <th scope="row" className="py-3 pr-4 font-normal text-left">
         {editing ? (
-          <div className="space-y-2 min-w-48">
-            <label htmlFor={`name-${partner.code}`} className="sr-only">Name</label>
-            <input id={`name-${partner.code}`} value={name} maxLength={PARTNER_NAME_MAX} onChange={(e) => setName(e.target.value)} className={inputClass} />
-            <label htmlFor={`kind-${partner.code}`} className="sr-only">Kind of partner</label>
-            <select id={`kind-${partner.code}`} value={kind} onChange={(e) => setKind(e.target.value)} className={inputClass}>
-              {REFERRAL_PARTNER_KINDS.map((k) => (
-                <option key={k} value={k}>{REFERRAL_PARTNER_KIND_LABELS[k]}</option>
-              ))}
-            </select>
-            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          </div>
+          <WorkspaceForm api={api} actions={null} aria-label={`Edit ${partner.name}`} className="space-y-2 min-w-48">
+            <Field name="name" label="Name" required>
+              {/* Focus lands in the first field when "Edit" opens the row, so the keyboard can carry on from there. */}
+              {(field) => <Input {...field} maxLength={PARTNER_NAME_MAX} autoFocus />}
+            </Field>
+            <Field name="kind" label="Kind of partner" required>
+              {(field) => <SelectInput {...field}><KindOptions chooseOne={false} /></SelectInput>}
+            </Field>
+          </WorkspaceForm>
         ) : (
           <>
             <span className="block font-medium">{partner.name}</span>
@@ -266,23 +264,7 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
       <td className="py-3 pr-4 text-right tabular-nums">{(counts?.certified ?? 0).toLocaleString("en-US")}</td>
       <td className="py-3 text-right">
         {editing ? (
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => void save()} disabled={saving || name.trim() === ""} className={buttonClass}>
-              {saving && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />} Save
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setName(partner.name);
-                setKind(partner.kind);
-                setError(null);
-              }}
-              className={buttonClass}
-            >
-              Cancel
-            </button>
-          </div>
+          <FormActions className="min-w-44" />
         ) : (
           <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
             Edit
@@ -290,6 +272,7 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
         )}
       </td>
     </tr>
+    </WorkspaceFormProvider>
   );
 };
 

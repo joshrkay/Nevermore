@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
+import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
@@ -137,12 +138,135 @@ describe("FirmInvitationsPage", () => {
   });
 
   it("shows why the server refused, and keeps what was typed", async () => {
-    api.inviteMember.mockRejectedValue(new Error("That person is already a member of this firm"));
+    api.inviteMember.mockRejectedValue(new Error("Something went wrong. Try again."));
     renderPage();
     fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "hire@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("That person is already a member of this firm");
+    const alert = await within(screen.getByRole("form", { name: "Invite someone" })).findByRole("alert");
+    expect(alert).toHaveTextContent("Something went wrong. Try again.");
+    // Next to the buttons, not under a field.
+    expect(alert.parentElement).toContainElement(screen.getByRole("button", { name: "Send invitation" }));
     expect(screen.getByLabelText("Email address")).toHaveValue("hire@example.test");
+    expect(screen.getByRole("button", { name: "Send invitation" })).toBeEnabled();
+  });
+
+  // Catches: an address that is already invited or a member shown away from the address field, or the form cleared.
+  it.each([
+    "That person is already a member of this firm",
+    "That email already has a pending invitation to this firm. Resend it instead.",
+  ])("shows %j under the email field and puts the cursor there", async (reason) => {
+    api.inviteMember.mockRejectedValue(new Error(reason));
+    renderPage();
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
+    await user.click(screen.getByRole("button", { name: "Send invitation" }));
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    expect(screen.getByLabelText("Email address")).toHaveAccessibleDescription(new RegExp(reason.slice(0, 20)));
+    await waitFor(() => expect(screen.getByLabelText("Email address")).toHaveFocus());
+    expect(screen.getByLabelText("Email address")).toHaveValue("hire@example.test");
+    expect(within(screen.getByRole("form", { name: "Invite someone" })).getAllByRole("alert")).toHaveLength(1);
+  });
+
+  describe("the invite form's rules", () => {
+    const open = async () => {
+      renderPage();
+      const user = userEvent.setup();
+      const email = await screen.findByLabelText("Email address");
+      return { user, email };
+    };
+
+    it("marks the email as Required in words, tied to the field; the role is always chosen so it is not", async () => {
+      const { email } = await open();
+      expect(email).toHaveAttribute("aria-required", "true");
+      expect(email).toHaveAccessibleDescription("Required");
+      expect(screen.getByLabelText("Role")).not.toHaveAccessibleDescription(/Required/);
+    });
+
+    // Catches: Send disabled until an address is typed (the old behaviour).
+    it("leaves Send invitation enabled with nothing typed; pressing it asks for the address under the field and takes focus there", async () => {
+      const { user, email } = await open();
+      const send = screen.getByRole("button", { name: "Send invitation" });
+      expect(send).toBeEnabled();
+      await user.click(send);
+      expect(await screen.findByText("Enter the email address to invite.")).toHaveAttribute("role", "alert");
+      expect(send).toBeEnabled();
+      expect(api.inviteMember).not.toHaveBeenCalled();
+      expect(email).toHaveAttribute("aria-invalid", "true");
+      expect(email).toHaveAccessibleDescription(/Enter the email address to invite\./);
+      await waitFor(() => expect(email).toHaveFocus());
+    });
+
+    it("says an address that doesn't look like one isn't, when the person leaves the field, without sending", async () => {
+      const { user, email } = await open();
+      await user.type(email, "not-an-address");
+      expect(screen.queryByText(/Enter an email address like/)).not.toBeInTheDocument();
+      await user.tab();
+      expect(await screen.findByText("Enter an email address like name@example.com.")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Send invitation" }));
+      expect(api.inviteMember).not.toHaveBeenCalled();
+      await user.clear(email);
+      await user.type(email, "ok@example.test");
+      expect(screen.queryByText(/Enter an email address like/)).not.toBeInTheDocument();
+    });
+
+    it("is filled in and sent by keyboard alone: the address, then the role, then Send invitation", async () => {
+      const { user } = await open();
+      await user.tab();
+      while (document.activeElement !== screen.getByLabelText("Email address")) await user.tab();
+      await user.keyboard("hire@example.test");
+      await user.tab();
+      expect(screen.getByLabelText("Role")).toHaveFocus();
+      await user.tab();
+      expect(screen.getByRole("button", { name: "Send invitation" })).toHaveFocus();
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(api.inviteMember).toHaveBeenCalledWith({ firmId: "f1", email: "hire@example.test", role: "agent" }));
+    });
+
+    it("disables Send invitation only while sending, and says Sending…", async () => {
+      let finish: (v: unknown) => void = () => {};
+      api.inviteMember.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+      const { user, email } = await open();
+      await user.type(email, "hire@example.test");
+      await user.click(screen.getByRole("button", { name: "Send invitation" }));
+      const busy = await screen.findByRole("button", { name: "Sending…" });
+      expect(busy).toBeDisabled();
+      finish({ invitationId: "i9", delivery: "sent" });
+      expect(await screen.findByRole("button", { name: "Send invitation" })).toBeEnabled();
+    });
+
+    it("asks before the page is left with an address typed, and not when nothing was typed or once it was sent", async () => {
+      const leave = () => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      const { user, email } = await open();
+      expect(leave()).toBe(false);
+      await user.type(email, "hire@example.test");
+      expect(leave()).toBe(true);
+      await user.click(screen.getByRole("button", { name: "Send invitation" }));
+      await waitFor(() => expect(email).toHaveValue(""));
+      expect(leave()).toBe(false);
+    });
+
+    it("asks before the app moves to another page with an address typed", async () => {
+      const router = createMemoryRouter(
+        [
+          { path: "/firm/invitations", element: <><Link to="/elsewhere">Elsewhere</Link><FirmInvitationsPage /></> },
+          { path: "/elsewhere", element: <p>Elsewhere page</p> },
+        ],
+        { initialEntries: ["/firm/invitations"] },
+      );
+      render(<RouterProvider router={router} />);
+      const user = userEvent.setup();
+      await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
+      await user.click(screen.getByRole("link", { name: "Elsewhere" }));
+      const ask = await screen.findByRole("alertdialog");
+      expect(ask).toHaveTextContent("Discard your changes?");
+      expect(screen.queryByText("Elsewhere page")).not.toBeInTheDocument();
+      await user.click(within(ask).getByRole("button", { name: "Discard changes" }));
+      expect(await screen.findByText("Elsewhere page")).toBeInTheDocument();
+    });
   });
 
   it("resends one invitation, and withdraws one", async () => {
