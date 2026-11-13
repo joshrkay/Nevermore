@@ -10,6 +10,7 @@ import type { OutboxStatus } from "@/data/outbox";
 import type { BrowserActivityKind, BrowserActivityRecord } from "@/data/firmActivity";
 import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
+import { parsePeoCatalog } from "@/data/peoProfiles";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 import type { QuoteNoteKind } from "@/data/quoteRequests";
@@ -1004,6 +1005,38 @@ export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
         .map((v) => parseProfileVersion(p.name, v, contacts))
         .sort((a, b) => b.version - a.version),
     }));
+}
+
+/**
+ * Whether the signed-in person holds a platform role (advisor or admin), from the database's own check. It decides only which
+ * way the PEO page reads: the platform-wide tables for a role holder, the prospect-safe catalogue for a member without one.
+ * It is not a guard: nothing here opens or refuses a page.
+ */
+export async function fetchHasPlatformRole(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("is_advisor");
+  if (error) fail(error, "Couldn't check your access.");
+  return data === true;
+}
+
+/**
+ * The PEOs as a member of a firm who holds no platform role may read them (ADR 0010, peo_catalog()): each with the version
+ * in use and nothing else. No draft, no history, no contact, and no name of a person at a PEO: the tables behind the
+ * directory above are the platform's and refuse this reader, so this never reads them. Alphabetical, as peo_catalog() gives them.
+ */
+export async function loadPeoCatalogDirectory(): Promise<PeoDirectoryEntry[]> {
+  const { data, error } = await supabase.rpc("peo_catalog");
+  if (error) fail(error, "Couldn't load the PEOs.");
+  return parsePeoCatalog(data).flatMap((p): PeoDirectoryEntry[] => {
+    if (p.id === undefined) return [];
+    const raw = ((data as Record<string, unknown>[]).find((e) => Number(e.id) === p.id)?.profile ?? null) as Record<string, unknown> | null;
+    return [{
+      id: p.id,
+      name: p.name,
+      listed: p.listed,
+      // peo_catalog() drops the status because it only ever returns the published version.
+      versions: raw ? [parseProfileVersion(p.name, { ...raw, status: "published" }, [])] : [],
+    }];
+  });
 }
 
 /** The contacts each of these profile versions names, in order, by version id: for a PEO's history. */

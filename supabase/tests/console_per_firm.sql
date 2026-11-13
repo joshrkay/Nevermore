@@ -107,7 +107,11 @@
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
+\i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116190500_invitation_fixes.sql
+\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
+\i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -261,7 +265,16 @@ SELECT pg_temp.is(public.is_advisor(), false, 'a member with no platform role do
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0)), 1::bigint, 'but the console lists their firm''s submission');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_b')), 0::bigint, 'and not the other firm''s');
 SELECT pg_temp.is((SELECT count(*) FROM public.peos), 0::bigint, 'and reads no PEO of the platform''s catalogue');
-SELECT pg_temp.expect('SELECT public.advisor_add_referral_partner(''p1'', ''A partner'', ''broker'')', '42501', 'and adds no referral partner, which is the platform''s until CRM-P2.1c');
+SELECT pg_temp.is((SELECT firm_id FROM public.advisor_add_referral_partner('p1', 'A partner', 'accounting')), pg_temp.id('firm_a'), 'and adds a referral partner to their own firm, as CRM-P2.1c makes partners a firm''s own');
+SELECT pg_temp.is((SELECT name FROM public.advisor_update_referral_partner('p1', 'Renamed partner', 'accounting')), 'Renamed partner', 'edits it');
+SELECT pg_temp.as_owner();
+INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (pg_temp.id('firm_b'), 'b1', 'Other firm''s partner', 'accounting');
+SELECT pg_temp.as_user('roleless_a');
+SELECT pg_temp.is((SELECT string_agg(code, ',' ORDER BY code) FROM public.referral_partners), 'p1', 'lists their firm''s partners and none of the other firm''s');
+SELECT pg_temp.expect('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'')', 'PT404', 'cannot edit the other firm''s partner by its code');
+SELECT pg_temp.expect(format('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'', %L)', pg_temp.id('firm_b')), '42501', 'nor by naming that firm');
+SELECT pg_temp.is((SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_add_referral_partner'), 1, 'only one way to add a partner exists: the three-argument version that ignores the firm is gone');
+SELECT pg_temp.is((SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_update_referral_partner'), 1, 'and only one way to edit one');
 SELECT pg_temp.as_user('owner_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0)), 1::bigint, 'an owner of a firm with no platform role lists their firm''s submission');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_a')), 0::bigint, 'and none of Edgar Allan Advisory''s');
@@ -296,4 +309,16 @@ SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'one who has done
 SELECT pg_temp.as_user_with('nobody', 'password', 'aal1');
 SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'a person with no role and no membership is never asked');
 SELECT pg_temp.as_owner();
+-- ---------- 4. A mailbox is a current member's, whether or not they hold a platform role ----------
+-- The mailbox function stores for a person the edge function has already checked (their membership and the second factor,
+-- through my_firms()); the database refuses anyone who is no current member of a firm, a platform role or not.
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(public.mailbox_store(pg_temp.id('roleless_a'), 'microsoft', 'pat@alpha.example', 'Mail.Send', 'cipher', 'iv')::text, '{"connected": true}', 'a member with no platform role connects a mailbox');
+SELECT pg_temp.as_user('roleless_a');
+SELECT pg_temp.is(public.my_mailbox() ->> 'connected', 'true', 'and is told it is connected');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(public.mailbox_secret(pg_temp.id('roleless_a')) ->> 'address', 'pat@alpha.example', 'and it is sent through');
+SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('platform_admin')), '42501', 'a platform admin who belongs to no firm connects none (D-16)');
+SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('nobody')), '42501', 'nor does a person with no membership');
+SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('former_a')), '42501', 'nor a former member');
 \echo console_per_firm: ok
