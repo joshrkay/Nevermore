@@ -437,8 +437,8 @@ BEGIN
   -- Firms (20261116090000): the migration seeded Edgar Allan Advisory before these accounts held their roles, so
   -- the advisor and the admin join it here as it would have joined them (D-15), with one team.
   INSERT INTO public.firm_memberships (firm_id, user_id, role)
-  VALUES ('00000000-0000-4000-8000-00000000eaa1', adv, 'agent'), ('00000000-0000-4000-8000-00000000eaa1', adm, 'owner');
-  INSERT INTO public.firm_teams (firm_id, name) VALUES ('00000000-0000-4000-8000-00000000eaa1', 'Sales');
+  VALUES (public.default_firm_id(), adv, 'agent'), (public.default_firm_id(), adm, 'owner');
+  INSERT INTO public.firm_teams (firm_id, name) VALUES (public.default_firm_id(), 'Sales');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
@@ -768,6 +768,9 @@ INSERT INTO callable VALUES
   ('is_advisor()',                             'anyone',  NULL, 'row security policies and RequireAdvisor call it; answers about the caller only'),
   ('firm_role(p_firm_id uuid)',               'own',     NULL, 'the caller''s own current role in a firm, NULL for anyone not a member; signed-out callers can''t call it'),
   ('is_firm_member(p_firm_id uuid)',          'own',     NULL, 'whether the caller is a current member of a firm; about the caller only; signed-out callers can''t call it'),
+  ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
+  ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
+                                                                     'pure: whether a membership has begun and not ended, as of now; reads nothing'),
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),

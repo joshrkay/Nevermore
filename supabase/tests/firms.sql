@@ -8,6 +8,9 @@
 -- firm address rules, teams that stay inside their firm, memberships that are dated and never overwritten, a
 -- firm that always keeps a current owner, and the helpers later stories call to ask whether the caller is a
 -- current member of a firm, and with what role.
+-- The list of earlier migrations below is pinned on purpose to what existed before firms (the file loads
+-- firms.sql itself after it). Stories that change the firm tables' policies later add their firm assertions in
+-- their own test files, not here: this file keeps testing P-1.1's version.
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -291,6 +294,16 @@ BEGIN
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinet-partners')$q$, '23514', 'an address naming TriNet');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-totalsource')$q$, '23514', 'an address naming ADP TotalSource');
   PERFORM pg_temp.expect($q$UPDATE public.firms SET address = 'insperity' WHERE address = 'acme'$q$, '23514', 'a firm changing its address to Insperity');
+  -- The first word alone reads as the PEO, matched as a whole hyphen-separated word, never as a piece of one.
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp')$q$, '23514', 'an address that is just ADP');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-benefits')$q$, '23514', 'an address starting with ADP');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-total-source')$q$, '23514', 'ADP TotalSource with hyphens');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pet', 'petrinetwork')$q$, 'rows:1', 'an address holding TriNet inside another word');
+  -- A listed PEO whose name leaves nothing (or almost nothing) to compare holds no address back.
+  INSERT INTO public.peos (name) VALUES ('Ö'), ('A1');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Zed', 'zzz-brokers')$q$, 'rows:1', 'an address with a PEO named Ö listed');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Zed', 'a1-brokers')$q$, 'rows:1', 'an address with a PEO named A1 listed');
+  UPDATE public.peos SET listed = false WHERE name IN ('Ö', 'A1');
   -- A PEO that is no longer listed (a name, not an offer) doesn't hold a name back.
   UPDATE public.peos SET listed = false WHERE name = 'Justworks';
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'justworks-fans')$q$, 'rows:1', 'an address naming a PEO no longer listed');
@@ -414,6 +427,23 @@ BEGIN
   INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
   VALUES (pg_temp.id('dormant'), a_lead, 'owner', now() - interval '2 days', now() - interval '1 day');
   PERFORM pg_temp.expect(format($q$DELETE FROM public.firm_memberships WHERE firm_id = %L$q$, pg_temp.id('dormant')), 'rows:1', 'deleting a membership that was over already');
+  -- Only an owner with no end date lets another owner go: one with an end date will lapse and leave nobody.
+  INSERT INTO public.firms (name, address) VALUES ('Lapse Co', 'lapse-co'), ('Later Co', 'later-co'), ('Nobody Co', 'nobody-co');
+  INSERT INTO fx SELECT 'lapse', id FROM public.firms WHERE address = 'lapse-co';
+  INSERT INTO fx SELECT 'later', id FROM public.firms WHERE address = 'later-co';
+  INSERT INTO fx SELECT 'nobody', id FROM public.firms WHERE address = 'nobody-co';
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('later'), pg_temp.id('acme_owner'), 'owner');
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_until) VALUES (%L, %L, 'owner', now() + interval '1 day')$q$,
+    pg_temp.id('nobody'), a_lead), '23514', 'a first owner who already has an end date');
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_until) VALUES (%L, %L, 'owner', now() + interval '1 day')$q$,
+    pg_temp.id('later'), a_lead), 'rows:1', 'a second owner with an end date, beside an open-ended one');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L$q$, pg_temp.id('later'), pg_temp.id('acme_owner')),
+    '23514', 'ending the open-ended owner while the other has an end date');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('lapse'), pg_temp.id('acme_owner'), 'owner'), (pg_temp.id('lapse'), pg_temp.new_user('lapse_owner_2'), 'owner');
+  UPDATE public.firm_memberships SET valid_until = now() + interval '1 second'
+  WHERE firm_id = pg_temp.id('lapse') AND user_id = pg_temp.id('lapse_owner_2');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L$q$, pg_temp.id('lapse'), pg_temp.id('acme_owner')),
+    '23514', 'ending the other owner once one has a future end');
   RAISE NOTICE 'firms: owner cases passed';
 END $$;
 
