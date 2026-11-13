@@ -9,7 +9,8 @@ import { localToday } from "@/data/peoProfiles";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
-import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
+import { recordSubmissionFileDownload } from "@/lib/activityReports";
+import { manuscriptUrl, recordActivity, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
 import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import { formatDateTime } from "./format";
@@ -69,7 +70,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },
       });
       const pdf = buildManuscriptPdf(manuscript, { revealSensitive });
-      await saveManuscriptVersion({
+      const saved = await saveManuscriptVersion({
         sessionId: detail.id,
         version,
         pdf: pdf.blob,
@@ -89,6 +90,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
           certified_signed_at: detail.submission?.signed_at ?? "",
         }),
       );
+      void recordActivity("packet_downloaded", "manuscript", saved.id);
       toast.success(`Packet v${version} saved.`);
       onChanged();
     } catch (err) {
@@ -109,6 +111,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
     setOpening(v.id);
     try {
       window.location.assign(await manuscriptUrl(v, versionFilename(detail.data.company_name, v)));
+      void recordActivity("packet_downloaded", "manuscript", v.id);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -182,7 +185,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
               corrections, the notes or a PEO's own answers. */}
           {answersJson && (
             <div className="border-t border-border pt-3">
-              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} />
+              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} onDownloaded={() => recordSubmissionFileDownload(detail.id)} />
             </div>
           )}
         </div>

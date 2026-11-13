@@ -21,6 +21,8 @@ interface CensusDownloadProps {
   builtFrom: BuiltFrom;
   /** Reads a PEO template workbook's file (only a clean one can be read); the app's unless a test supplies one. */
   readTemplate?: (peoId: number, templateId: number) => Promise<Uint8Array | null>;
+  /** Called once the file has been handed to the browser (not when the click was refused or the file couldn't be made). */
+  onDownloaded?: () => void;
 }
 
 /** What the file is, in a sentence, before the click. */
@@ -42,7 +44,7 @@ const readFromStorage = async (peoId: number, templateId: number) => (await impo
  * file is, which certified version it comes from, the columns it leaves blank, and why a template workbook can't take
  * this census (its headers don't match, or an employee would go over what it holds) are said before the click.
  */
-const CensusDownload = ({ census, fileId, version, peo, catalog, builtFrom, readTemplate = readFromStorage }: CensusDownloadProps) => {
+const CensusDownload = ({ census, fileId, version, peo, catalog, builtFrom, readTemplate = readFromStorage, onDownloaded }: CensusDownloadProps) => {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // A template workbook is read and checked as soon as the download is shown, so a refusal comes before the click.
@@ -91,7 +93,10 @@ const CensusDownload = ({ census, fileId, version, peo, catalog, builtFrom, read
       }
       const file = await censusFile(census, layout, { fileId, version, template: bytes });
       if (file.ok === false) setProblem(file.message);
-      else downloadBlob(file.blob, file.filename);
+      else {
+        downloadBlob(file.blob, file.filename);
+        onDownloaded?.();
+      }
     } catch {
       setProblem("The census file couldn't be made. Try again.");
     } finally {

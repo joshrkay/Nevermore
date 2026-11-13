@@ -12,7 +12,7 @@ import { buildSupplementPdf } from "@/lib/supplementPdf";
  * built is said, as the packet's download does. Busy while the certification is checked again (a tab can outlive it:
  * `builtFrom`) and the PDF is made.
  */
-const SupplementDownload = ({ supplement, builtFrom }: { supplement: Supplement; builtFrom: BuiltFrom }) => {
+const SupplementDownload = ({ supplement, builtFrom, onDownloaded }: { supplement: Supplement; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
   const [busy, setBusy] = useState(false);
   const { rows, notAnswered } = supplement;
   const download = async () => {
@@ -21,6 +21,7 @@ const SupplementDownload = ({ supplement, builtFrom }: { supplement: Supplement;
       if (!(await unchangedSinceOpened(builtFrom))) return;
       const pdf = buildSupplementPdf(supplement);
       downloadBlob(pdf.blob, pdf.filename);
+      onDownloaded?.();
     } catch (err) {
       console.error("Failed to generate a PEO's supplement PDF:", err);
       toast.error("We couldn't generate the PDF. Please try again.");

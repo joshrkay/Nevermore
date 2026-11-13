@@ -75,6 +75,12 @@ const {
   reissueQuoteRequestAddress,
   openQuoteRequestThread,
   mailAttachmentUrl,
+  recordActivity,
+  fetchOwnedFirms,
+  listFirmActivity,
+  listFirmActivityPeople,
+  NEVERMORE_FILTER,
+  FIRM_ACTIVITY_PAGE_SIZE,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -384,6 +390,26 @@ describe("loadSubmission", () => {
     tables.documents = [doc("d1"), doc("d3")];
   });
 
+  // CRM-P2.3: a submission opened is written by the database where it hands the submission over, never reported.
+  it("opens a submission through the database function that records the opening, and refreshing does not", async () => {
+    tables.chamber_sessions = [row()];
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [row()], error: null });
+    const d = (await loadSubmission("s1", true))!;
+    expect(rpc).toHaveBeenCalledWith("open_submission", { p_session_id: "s1" });
+    expect(d.certified).toBe(true);
+    rpc.mockClear();
+    await loadSubmission("s1");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("finds nothing when the database hands over no row on opening", async () => {
+    tables.chamber_sessions = [row()];
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [], error: null });
+    expect(await loadSubmission("s1", true)).toBeNull();
+  });
+
   it("shows a certified intake as certified: its answers, its stored answers, its conversation and its documents", async () => {
     tables.chamber_sessions = [row()];
     const d = (await loadSubmission("s1"))!;
@@ -690,5 +716,79 @@ describe("documentFile: an uploaded document's file, for a bundle", () => {
     const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
     expect(err.message).toBe("Your session has expired. Sign in again to continue.");
     expect(err.unauthenticated).toBe(true);
+  });
+});
+
+describe("the firm's record of who did what", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("reports a file downloaded by the kind and the record's id alone", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    await recordActivity("document_downloaded", "document", "d1");
+    expect(rpc).toHaveBeenCalledWith("record_member_activity", { p_kind: "document_downloaded", p_record_type: "document", p_record_id: "d1" });
+  });
+
+  it("never fails the caller when the record can't be written", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "You are not a member of that record's firm", code: "42501" } });
+    await expect(recordActivity("document_downloaded", "document", "d1")).resolves.toBeUndefined();
+    rpc.mockRejectedValueOnce(new Error("offline"));
+    await expect(recordActivity("packet_downloaded", "manuscript", "v1")).resolves.toBeUndefined();
+  });
+
+  it("asks which firms the caller currently owns, by name, so the page can say which one it wants", async () => {
+    rpc.mockResolvedValueOnce({ data: [{ firm_id: "firm-1", name: "Alpha" }, { firm_id: "firm-2", name: "Beta" }], error: null });
+    await expect(fetchOwnedFirms()).resolves.toEqual([{ firm_id: "firm-1", name: "Alpha" }, { firm_id: "firm-2", name: "Beta" }]);
+    expect(rpc).toHaveBeenCalledWith("my_owner_firms");
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchOwnedFirms()).resolves.toEqual([]);
+  });
+
+  const row = (id: number) => ({ entry_key: `k${id}`, at: `2026-11-12T10:00:${String(id % 60).padStart(2, "0")}Z`, actor_id: "u1", actor_email: "a@x.test", kind: "submission_viewed", record_type: "submission", record_id: `s${id}`, subject_user_id: null, subject_email: null, role: null });
+
+  it("asks for the first page with the filters it was given, and one more row to know whether another page follows", async () => {
+    rpc.mockResolvedValue({ data: [row(3), row(2), row(1)], error: null });
+    const page = await listFirmActivity("firm-1", { person: "u1", kind: "send_recorded", after: null });
+    expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
+      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: null, p_before_key: null, p_nevermore: false,
+    });
+    expect(page.entries.map((e) => e.entry_key)).toEqual(["k3", "k2", "k1"]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("asks for the page after the last entry the reader saw, by its time and key, never by a count of rows", async () => {
+    rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE + 1 }, (_, i) => row(100 - i)), error: null });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, after: { at: "2026-11-12T09:00:00Z", key: "k77" } });
+    expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
+      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: "2026-11-12T09:00:00Z", p_before_key: "k77", p_nevermore: false,
+    });
+    expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
+    expect(page.hasMore).toBe(true);
+    expect(page.entries.at(-1)?.entry_key).toBe(`k${100 - (FIRM_ACTIVITY_PAGE_SIZE - 1)}`);
+  });
+
+  it("says no page follows when the record ends exactly at the end of a page", async () => {
+    rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE }, (_, i) => row(100 - i)), error: null });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, after: null });
+    expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("is refused for anyone who isn't an owner of the firm, and says so as a refusal", async () => {
+    failWith({ message: "Only a firm's owners can read its record", code: "42501" });
+    expect((await caught(() => listFirmActivity("firm-1", { person: null, kind: null, after: null }))).forbidden).toBe(true);
+  });
+
+  it("filters by Nevermore with the filter's own flag, never by an id, and by a person with their id and no flag", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    await listFirmActivity("firm-1", { person: NEVERMORE_FILTER, kind: null, after: null });
+    expect(rpc).toHaveBeenLastCalledWith("firm_activity_list", expect.objectContaining({ p_person: null, p_nevermore: true }));
+    await listFirmActivity("firm-1", { person: "u1", kind: null, after: null });
+    expect(rpc).toHaveBeenLastCalledWith("firm_activity_list", expect.objectContaining({ p_person: "u1", p_nevermore: false }));
+  });
+
+  it("lists the people who appear in the record", async () => {
+    rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test", is_nevermore: false }], error: null });
+    await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test", is_nevermore: false }]);
+    expect(rpc).toHaveBeenCalledWith("firm_activity_people", { p_firm_id: "firm-1" });
   });
 });

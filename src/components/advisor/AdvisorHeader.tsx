@@ -3,9 +3,14 @@ import { LogOut } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { useAuth } from "@/hooks/useAuth";
 import LegalLinks from "@/components/LegalLinks";
+import { useOwnedFirms } from "@/hooks/useOwnedFirms";
 
 const AdvisorHeader = () => {
   const { user, signOut } = useAuth();
+  // The record of who did what is for a firm's owners: the link is offered only once the database says the person owns a
+  // firm. Until then, or if that can't be asked, it isn't shown (the page is refused to anyone else anyway).
+  const firms = useOwnedFirms();
+  const ownsAFirm = firms !== null && firms.length > 0;
   return (
     <header className="border-b border-border bg-card">
       <div className="container mx-auto px-6 min-h-14 py-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
@@ -70,6 +75,14 @@ const AdvisorHeader = () => {
           >
             Organisations
           </NavLink>
+          {ownsAFirm && (
+            <NavLink
+              to="/advisor/activity"
+              className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+            >
+              Activity
+            </NavLink>
+          )}
         </nav>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <LegalLinks compact />

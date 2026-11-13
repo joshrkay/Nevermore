@@ -7,6 +7,7 @@ import { parseTranscript, type ChatMessage } from "@/data/chat";
 import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
+import type { BrowserActivityKind, BrowserActivityRecord } from "@/data/firmActivity";
 import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
@@ -323,13 +324,14 @@ interface RecordedCertification {
   extra_answers?: Json | null;
 }
 
-export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
+export async function loadSubmission(id: string, opening = false): Promise<SubmissionDetail | null> {
+  // Opening a submission goes through the database function that hands it over and writes the entry in the firm's record
+  // (CRM-P2.3), so a browser never reports a view; a refresh after a change reads the table and is no opening.
+  const sessionRead = opening
+    ? supabase.rpc("open_submission", { p_session_id: id }).then(({ data, error }) => ({ data: data?.[0] ?? null, error }))
+    : supabase.from("chamber_sessions").select("*").eq("id", id).maybeSingle();
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
-    supabase
-      .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
-      .eq("id", id)
-      .maybeSingle(),
+    sessionRead,
     supabase
       .from("submission_workflow")
       .select("status, needs_action, needs_action_note, needs_action_at, needs_action_by, needs_action_by_email, won_quote_request_id")
@@ -781,6 +783,80 @@ export async function reviewField(
     p_answer: answer === undefined ? {} : { value: answer },
   });
   if (error) fail(error, "Couldn't save the review.");
+}
+
+/**
+ * Tells the firm's record of who did what that the caller downloaded a file or built one in the browser (CRM-P2.3); a
+ * submission opened is written by the database itself (loadSubmission). Only the
+ * kind and the record's id are sent: the database works out the firm and the person, and refuses a record that isn't in
+ * a firm the caller belongs to. Best effort: a failure is never shown and never stops what the advisor was doing.
+ */
+export async function recordActivity<K extends Exclude<BrowserActivityKind, "sign_in">>(
+  kind: K,
+  recordType: BrowserActivityRecord<K>,
+  recordId: string,
+): Promise<void> {
+  try {
+    await supabase.rpc("record_member_activity", { p_kind: kind, p_record_type: recordType, p_record_id: recordId });
+  } catch {
+    // Not recorded; the advisor's work goes on.
+  }
+}
+
+export type FirmActivityEntry = Database["public"]["Functions"]["firm_activity_list"]["Returns"][number];
+export type OwnedFirm = Database["public"]["Functions"]["my_owner_firms"]["Returns"][number];
+export type FirmActivityPerson = Database["public"]["Functions"]["firm_activity_people"]["Returns"][number];
+/**
+ * The person filter's value for everyone at Nevermore together (D-33): a firm is never given a Nevermore person's id, so
+ * this is what stands for them. A real user id is a uuid, so it can't be mistaken for this.
+ */
+export const NEVERMORE_FILTER = "nevermore";
+/** Entries on a page of the firm's record. */
+export const FIRM_ACTIVITY_PAGE_SIZE = 25;
+
+/** The firms the signed-in person currently owns, by name: only an owner reads a firm's record, and says which firm. */
+export async function fetchOwnedFirms(): Promise<OwnedFirm[]> {
+  const { data, error } = await supabase.rpc("my_owner_firms");
+  if (error) fail(error, "Couldn't check your role in your firm.");
+  return data ?? [];
+}
+
+/** Who appears as the doer in the firm's record, for the person filter. Owners only. */
+export async function listFirmActivityPeople(firmId: string): Promise<FirmActivityPerson[]> {
+  const { data, error } = await supabase.rpc("firm_activity_people", { p_firm_id: firmId });
+  if (error) fail(error, "Couldn't load the people in the record.");
+  return data ?? [];
+}
+
+/** Where a page of the record starts: after the last entry the reader saw, by the two things the record is ordered by. */
+export interface ActivityCursor {
+  at: string;
+  /** The entry's random key: never the table's number, which is shared by every firm. */
+  key: string;
+}
+
+/**
+ * One page of the firm's record, newest first, filtered by the person who did it and the kind (null keeps all). A page
+ * starts after the entry `after` names (null for the first), so an entry arriving meanwhile never repeats or skips a
+ * row. One more row than a page is asked for, to say whether another page follows. Owners only: for anyone else the
+ * database refuses (code 42501, `forbidden` on the error).
+ */
+export async function listFirmActivity(
+  firmId: string,
+  opts: { person: string | null; kind: string | null; after: ActivityCursor | null },
+): Promise<{ entries: FirmActivityEntry[]; hasMore: boolean }> {
+  const { data, error } = await supabase.rpc("firm_activity_list", {
+    p_firm_id: firmId,
+    p_person: opts.person === NEVERMORE_FILTER ? null : opts.person,
+    p_nevermore: opts.person === NEVERMORE_FILTER,
+    p_kind: opts.kind,
+    p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1,
+    p_before_at: opts.after?.at ?? null,
+    p_before_key: opts.after?.key ?? null,
+  });
+  if (error) fail(error, "Couldn't load the record.");
+  const rows = data ?? [];
+  return { entries: rows.slice(0, FIRM_ACTIVITY_PAGE_SIZE), hasMore: rows.length > FIRM_ACTIVITY_PAGE_SIZE };
 }
 
 /** How long a link to a stored file works. src/lib/fileLinks.test.ts holds every link to this. */

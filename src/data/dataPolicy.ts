@@ -7,6 +7,7 @@
 // * public.submitted_record_retention()   submitted records (same)
 // * public.ops_event_retention()          monitoring events (20261104091000_ops_monitoring.sql)
 // * public.email_event_retention()        email delivery    (20261104092000_data_retention_and_deletion.sql)
+// * public.firm_activity_retention()     the record of who did what (20261116160001_firm_activity.sql)
 // * public.ai_event_retention()           AI call records   (20261103120200_ai_extraction_events.sql)
 //
 // src/data/schemaSync.test.ts keeps those equal to RETENTION, and dataPolicy.test.ts checks that every table
@@ -81,6 +82,8 @@ export const RETENTION = {
   heldMailDays: 30,
   /** Operational monitoring events. */
   opsEventDays: 90,
+  /** A firm's record of who did what: kinds and ids, never content. The window operational events have (D4). */
+  firmActivityDays: 90,
   /** Email delivery events (sent, delivered, bounced, complained). */
   emailEventDays: 365,
   /** AI rate-limit records. */
@@ -413,6 +416,15 @@ export const DATA_CLASSES: DataClass[] = [
     stored: { tables: ["firms", "firm_teams", "firm_memberships"], buckets: [], elsewhere: [] },
     retention: "For good: a membership is never changed, only ended, so who could see a record on a given day can always be answered.",
     deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. Closing a firm is built in a later story (docs/DATA_HANDLING.md).",
+  },
+  {
+    id: "firm_activity",
+    label: "A firm's record of who did what",
+    sensitivity: "internal",
+    examples: "For each firm, who did what and when: a sign-in to the firm's console, a submission opened, a file downloaded, a send recorded, an export, an invitation, a removal, support access, and every change to who belongs to the firm and in what role. The kind of thing and the id of the record only: never an answer, a name, an email's text or a file's contents.",
+    stored: { tables: ["firm_activity"], buckets: [], elsewhere: [] },
+    retention: `${RETENTION.firmActivityDays} days, the window for operational events (D4); no one can change or delete an entry before then, an admin included. The window is a draft (D4): counsel may ask for longer.`,
+    deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included; an entry made by a platform admin from outside the firm reads as \"Nevermore\" (no name, email or id), D-33.",
   },
 ];
 

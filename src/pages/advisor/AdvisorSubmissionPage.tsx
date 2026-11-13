@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
@@ -26,6 +26,7 @@ import { describeSource } from "@/data/referralPartners";
 import { lastCertifiedVersion } from "@/data/peoCompleteness";
 import type { FieldKey } from "@/data/provenance";
 import type { ExtraQuestionRef } from "@/data/extraAnswers";
+import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
 
@@ -39,6 +40,8 @@ const AdvisorSubmissionPage = () => {
   const { id = "" } = useParams();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  // The submission whose opening the database has recorded, so a reload after a change is not another opening.
+  const openedRef = useRef<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
 
@@ -56,7 +59,13 @@ const AdvisorSubmissionPage = () => {
     let cancelled = false;
     // Keep showing the current detail while refreshing after a change.
     setLoad((prev) => (prev.kind === "ready" && prev.detail.id === id ? prev : { kind: "loading" }));
-    loadSubmission(id)
+    // The first load of a submission on screen is its opening, which the database records; a reload after a change is not.
+    const opening = openedRef.current !== id;
+    loadSubmission(id, opening)
+      .then((detail) => {
+        openedRef.current = id;
+        return detail;
+      })
       .then((detail) => !cancelled && setLoad(detail ? { kind: "ready", detail } : { kind: "not_found" }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
@@ -338,7 +347,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
         own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
-        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} />
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} onDownloaded={() => recordSubmissionFileDownload(detail.id)} />
       </div>
     )}
     {detail.data.census.length === 0 ? (
