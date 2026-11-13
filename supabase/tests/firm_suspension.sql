@@ -544,3 +544,36 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'firm_suspension: the admin''s list cases passed';
 END $$;
+
+-- ---------- an admin who is also a member of the firm, and a refused firm ----------
+-- Break caught: a platform admin who also belongs to a firm suspends it or lifts its suspension (D-16: an admin acts on firms they do
+-- not belong to, as when deciding on one); a member of a refused firm that is also suspended is told it is suspended (a refused firm
+-- behaves as an address no firm holds, D-31).
+DO $$
+DECLARE fe uuid; fd uuid := (SELECT id FROM public.firms WHERE address = 'delta-dealers');
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Echo Eaters', 'echo-eaters', now(), 'approved', now()) RETURNING id INTO fe;
+  PERFORM pg_temp.new_user('dual');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('dual'), 'admin');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fe, pg_temp.id('dual'), 'owner');
+  PERFORM pg_temp.as_user('dual');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_suspend_firm(%L, 'my own')$q$, fe)), '42501', 'an admin who belongs to the firm does not suspend it');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_suspend_firm(fe, 'Review');
+  PERFORM pg_temp.as_user('dual');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_lift_firm_suspension(%L)$q$, fe)), '42501', 'nor lift the suspension of a firm they belong to');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_suspensions WHERE firm_id = fe AND lifted_at IS NULL), 1::bigint, 'it is still suspended');
+
+  -- Delta Dealers is refused and suspended (the block above). Its member is told nothing of its state.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fd, pg_temp.id('outsider'), 'owner');
+  PERFORM pg_temp.as_user('outsider');
+  PERFORM pg_temp.is(public.my_suspended_firm_at_address('delta-dealers'), false, 'a member of a refused firm is not told it is suspended');
+  RESET ROLE;
+  UPDATE public.firms SET decision = 'approved', approved_at = now() WHERE id = fd;
+  PERFORM pg_temp.as_user('outsider');
+  PERFORM pg_temp.is(public.my_suspended_firm_at_address('delta-dealers'), true, 'the same member of the same firm once it is not refused is (the control)');
+  RESET ROLE;
+  RAISE NOTICE 'firm_suspension: admin member and refused firm cases passed';
+END $$;
