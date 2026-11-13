@@ -855,7 +855,7 @@ export type Database = {
       // The firms the caller currently belongs to, with their role in each, for a caller past the second factor.
       my_firms: {
         Args: Record<PropertyKey, never>
-        Returns: { firm_id: string; name: string; address: string; role: string }[]
+        Returns: { firm_id: string; name: string; address: string; role: string; refused: boolean }[]
       }
       // The firms the caller currently owns, by name.
       my_owner_firms: {

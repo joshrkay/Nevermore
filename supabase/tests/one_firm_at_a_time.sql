@@ -24,7 +24,7 @@
 --      another firm's address;
 --  12. the list of a person's own firms is not narrowed; the list of the firms they own is (so a page at an address offers
 --      only that address's firm);
---  13. the helpers are STABLE, run with a fixed search_path, build no SQL and are not callable through the API.
+--  13. the helper is STABLE, run with a fixed search_path, builds no SQL and is not callable through the API.
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -131,6 +131,9 @@
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
 \i supabase/migrations/20261117090000_one_firm_at_a_time.sql
+\i supabase/migrations/20261117090500_one_firm_at_a_time_fixes.sql
+\i supabase/migrations/20261117100000_queue_query.sql
+\i supabase/migrations/20261117120000_table_settings.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -399,6 +402,9 @@ SELECT pg_temp.as_user('two');
 SELECT pg_temp.raw_headers('{"x-firm-address": "alpha-advisory"');
 SELECT pg_temp.expect('SELECT count(*)::text FROM public.chamber_sessions', '22P02', 'headers that are not JSON: the read is refused');
 SELECT pg_temp.expect('SELECT count(*)::text FROM public.firm_memberships', '22P02', 'every firm read is');
+-- Not even when the text does not mention the address: whether headers can be read is never guessed from their text.
+SELECT pg_temp.raw_headers('{not json at all');
+SELECT pg_temp.expect('SELECT count(*)::text FROM public.chamber_sessions', '22P02', 'headers that are not JSON and name no address: refused too');
 
 -- ---------- 5. an address no firm holds shows nothing ----------
 DO $$
@@ -463,7 +469,8 @@ SELECT pg_temp.is(pg_temp.sight(), pg_temp.all_of('b'), 'an address in capitals,
 
 -- ---------- 9. callers who are no person; a person's own rows ----------
 SELECT pg_temp.as_owner();
-SELECT pg_temp.is(public.request_firm_address(), NULL::text, 'a job with no request has no address');
+SELECT pg_temp.is(public.address_admits_firm(pg_temp.id('bravo')) AND public.address_admits_firm(pg_temp.id('alpha')), true,
+  'a job with no request has no address: every firm is admitted, as before');
 SELECT set_config('request.jwt.claims', '{"role":"service_role"}', false), pg_temp.at('alpha-advisory'), set_config('role', 'service_role', false);
 SELECT pg_temp.is((SELECT count(*) FROM public.chamber_sessions) >= 4, true, 'the service role reads every firm''s intakes whatever address is sent');
 SELECT pg_temp.is(public.outbox_alert_recipients(pg_temp.id('intake_bravo')),
@@ -532,14 +539,23 @@ SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRA
 SELECT pg_temp.as_user('two', 'nowhere-at-all');
 SELECT pg_temp.is((SELECT count(*) FROM public.my_firms()), 2::bigint, 'at an address no firm holds, the person''s own firms are still listed');
 
--- ---------- 13. the helpers ----------
+-- A refused firm is still the person's (its address stays taken, D-31), but its address shows nothing, so "Choose a firm"
+-- leaves it out: my_firms says which of the person's firms were refused.
+SELECT pg_temp.as_user('founder_r');
+SELECT pg_temp.is((SELECT array_agg(refused) FROM public.my_firms()), ARRAY[true], 'my_firms says a refused firm was refused');
+SELECT pg_temp.as_user('two');
+SELECT pg_temp.is((SELECT array_agg(refused) FROM public.my_firms()), ARRAY[false, false], 'and that approved firms were not');
+SELECT pg_temp.as_user('founder_w');
+SELECT pg_temp.is((SELECT array_agg(refused) FROM public.my_firms()), ARRAY[false], 'nor a firm still waiting for approval');
+
+-- ---------- 13. the helper ----------
 SELECT pg_temp.as_owner();
 DO $$
 DECLARE
   f record;
 BEGIN
   FOR f IN SELECT p.oid, p.proname, p.provolatile, p.prosecdef, p.proconfig, p.prosrc
-           FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('request_firm_address', 'address_admits_firm') LOOP
+           FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'address_admits_firm' LOOP
     IF f.provolatile <> 's' THEN RAISE EXCEPTION 'FAIL: % is not STABLE', f.proname; END IF;
     IF NOT EXISTS (SELECT 1 FROM unnest(f.proconfig) c WHERE c LIKE 'search_path=%') THEN RAISE EXCEPTION 'FAIL: % has no fixed search_path', f.proname; END IF;
     IF f.prosrc ~* '\mexecute\M|format\s*\(' THEN RAISE EXCEPTION 'FAIL: % builds SQL', f.proname; END IF;
@@ -548,8 +564,8 @@ BEGIN
       RAISE EXCEPTION 'FAIL: % is callable through the API', f.proname;
     END IF;
   END LOOP;
-  IF (SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('request_firm_address', 'address_admits_firm')) <> 2 THEN
-    RAISE EXCEPTION 'FAIL: the two helpers are not both there';
+  IF (SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'address_admits_firm') <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the helper is not there';
   END IF;
 END $$;
 \echo one_firm_at_a_time: ok

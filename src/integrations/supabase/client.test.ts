@@ -72,6 +72,31 @@ describe("the Supabase client", () => {
       expect(headers.get("apikey")).toBe("k");
     });
 
+    it.each([
+      ["with no trailing slash", SUPABASE],
+      ["with a trailing slash", `${SUPABASE}/`],
+      ["with spaces around it", ` ${SUPABASE}/ `],
+    ])("names the address whichever way the project's address is written (%s)", async (_how, configured) => {
+      // supabase-js resolves `rest/v1/` against the project's address with one trailing slash, so a database request
+      // always goes to `<project>/rest/v1/...` however VITE_SUPABASE_URL ends. A prefix built by plain string joining
+      // (`<project>//rest/v1/`) would never match it, and the header would silently never be sent.
+      vi.stubEnv("VITE_SUPABASE_URL", configured);
+      const options = await clientAt("alpha-advisory");
+      const headers = await sentHeaders(options, `${SUPABASE}/rest/v1/rpc/my_firms`, { method: "POST" });
+      expect(headers.get("x-firm-address")).toBe("alpha-advisory");
+    });
+
+    it("refuses to send a database request without the address at a firm's address, rather than let it answer for every firm", async () => {
+      // A request to the database that the client can't recognise as one (a path written another way) must not go out
+      // unnarrowed: the guard has already let a member of several firms in on the strength of the address.
+      vi.stubEnv("VITE_SUPABASE_URL", SUPABASE);
+      const options = await clientAt("alpha-advisory");
+      const network = vi.fn(async () => new Response("[]"));
+      vi.stubGlobal("fetch", network);
+      await expect(options.global!.fetch!(`https://other-project.supabase.example/rest/v1/chamber_sessions`)).rejects.toThrow(/firm address/);
+      expect(network).not.toHaveBeenCalled();
+    });
+
     it("sends no address on the bare domain, so the database answers as it always has", async () => {
       const options = await clientAt(null);
       const headers = await sentHeaders(options, `${SUPABASE}/rest/v1/rpc/my_firms`, { method: "POST" });
@@ -85,7 +110,7 @@ describe("the Supabase client", () => {
         const headers = await sentHeaders(options, `${SUPABASE}${path}`, { method: "POST" });
         expect(headers.has("x-firm-address")).toBe(false);
       }
-      const elsewhere = await sentHeaders(options, "https://elsewhere.example/rest/v1/x");
+      const elsewhere = await sentHeaders(options, "https://elsewhere.example/api/x");
       expect(elsewhere.has("x-firm-address")).toBe(false);
     });
   });

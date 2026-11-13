@@ -273,7 +273,7 @@ What a firm's address shows before anyone signs in: the firm's name, and nothing
 **Not a member screen**:
 What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only, and false for a refused firm's address. The database, not this screen, refuses them the data (D-18).
 
-**Address narrowing** (code: `x-firm-address`, `address_admits_firm`, `request_firm_address`):
+**Address narrowing** (code: `x-firm-address`, `address_admits_firm`):
 At a firm's address the browser names the address on every request to the database, and the membership helper (`firm_role`, so `is_firm_member` and every firm rule built on it) then answers only for the firm that holds that address (D-40, ADR 0016). It only narrows: membership is still the lock (D-18), so another firm's address, an address no firm holds or a refused firm's address shows nothing, and a header anyone can send grants nothing. A request with no address (the bare domain, the service role, a scheduled job) is answered as before. The list of a person's own firms (`my_firms`) is not narrowed.
 _Avoid_: firm switcher, firm context (no firm is put in the session or the token)
 
