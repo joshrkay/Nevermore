@@ -155,6 +155,7 @@
 \i supabase/migrations/20261116180000_function_firm_scope.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116190500_invitation_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

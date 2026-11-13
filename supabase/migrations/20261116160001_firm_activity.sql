@@ -61,7 +61,7 @@ CREATE TABLE public.firm_activity (
     'sign_in', 'submission_viewed', 'document_downloaded', 'packet_downloaded', 'send_recorded',
     'member_added', 'member_ended', 'owner_added', 'owner_ended',
     'export_made', 'invitation_sent', 'member_removed', 'support_access',
-    'firm_signed_up', 'firm_approved', 'firm_refused', 'invitation_withdrawn'
+    'firm_signed_up', 'firm_approved', 'firm_refused'
     -- sync:end firm_activity_kinds
   )),
   CONSTRAINT firm_activity_record_check CHECK (
