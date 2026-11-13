@@ -153,3 +153,276 @@ BEGIN
     LIMIT 200;
 END;
 $function$;
+
+-- ---------- 2. Held mail ----------
+-- Inbound mail that matched no live quote request is held. Held mail is addressed to a firm when its address once belonged to
+-- one (a revoked reply address) or when one of the firm's own members moved it off a thread; mail to an address nobody ever
+-- held belongs to no firm, and so is read by no one (a platform admin sees only its File ID and PEO, D-16, below).
+-- Every message carries its firm. A message on a quote request has the firm of that request's intake, whatever the writer says;
+-- held mail keeps the firm it had, and mail held for a revoked address takes the address's.
+ALTER TABLE public.quote_request_messages ADD COLUMN firm_id uuid REFERENCES public.firms (id);
+
+UPDATE public.quote_request_messages m SET firm_id = s.firm_id
+FROM public.chamber_sessions s WHERE s.id = m.session_id;
+UPDATE public.quote_request_messages m SET firm_id = s.firm_id
+FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id
+WHERE m.quote_request_id IS NULL AND m.moved_from_quote_request_id = q.id;
+UPDATE public.quote_request_messages m SET firm_id = s.firm_id
+FROM public.quote_request_addresses a JOIN public.chamber_sessions s ON s.id = a.session_id
+WHERE m.quote_request_id IS NULL AND m.firm_id IS NULL AND m.held_reason = 'revoked_address' AND a.local_part = lower(m.address_local_part);
+
+ALTER TABLE public.quote_request_messages ADD CONSTRAINT quote_request_messages_firm_check
+  CHECK (quote_request_id IS NULL OR firm_id IS NOT NULL);
+CREATE INDEX quote_request_messages_by_firm_held ON public.quote_request_messages (firm_id) WHERE quote_request_id IS NULL;
+
+CREATE FUNCTION public.stamp_message_firm()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE
+  by_address uuid;
+BEGIN
+  IF NEW.quote_request_id IS NOT NULL THEN
+    SELECT s.firm_id INTO NEW.firm_id
+    FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id
+    WHERE q.id = NEW.quote_request_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- Held mail keeps the firm it had, including a message moved off a thread.
+    NEW.firm_id := OLD.firm_id;
+  ELSE
+    -- New held mail: the firm of the revoked address it was sent to. A writer that names a firm (only the service role writes
+    -- here) is believed when no address says otherwise; the API roles can't insert.
+    IF NEW.held_reason = 'revoked_address' THEN
+      SELECT s.firm_id INTO by_address
+      FROM public.quote_request_addresses a JOIN public.chamber_sessions s ON s.id = a.session_id
+      WHERE a.local_part = lower(NEW.address_local_part);
+      NEW.firm_id := COALESCE(by_address, NEW.firm_id);
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.stamp_message_firm() FROM PUBLIC, anon, authenticated;
+
+CREATE TRIGGER quote_request_messages_stamp_firm
+  BEFORE INSERT OR UPDATE ON public.quote_request_messages
+  FOR EACH ROW EXECUTE FUNCTION public.stamp_message_firm();
+
+-- May the caller read a message of PEO mail? One on a quote request: that request's firm's members. Held mail: the members of the
+-- firm it is addressed to; held mail addressed to no firm is read by nobody (a platform admin gets admin_held_mail() instead).
+DROP POLICY quote_request_messages_firm_read ON public.quote_request_messages;
+DROP POLICY quote_request_message_attachments_firm_read ON public.quote_request_message_attachments;
+DROP FUNCTION public.can_read_peo_mail(bigint);
+CREATE FUNCTION public.can_read_peo_mail(p_quote_request_id bigint, p_firm_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE WHEN p_quote_request_id IS NULL THEN COALESCE(public.is_firm_member(p_firm_id), false)
+              ELSE public.quote_request_in_my_firm(p_quote_request_id) END
+$$;
+REVOKE ALL ON FUNCTION public.can_read_peo_mail(bigint, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_read_peo_mail(bigint, uuid) TO authenticated;
+
+CREATE POLICY quote_request_messages_firm_read ON public.quote_request_messages
+  FOR SELECT TO authenticated USING (public.can_read_peo_mail(quote_request_id, firm_id));
+CREATE POLICY quote_request_message_attachments_firm_read ON public.quote_request_message_attachments
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.quote_request_messages m
+    WHERE m.id = quote_request_message_attachments.message_id AND public.can_read_peo_mail(m.quote_request_id, m.firm_id)
+  ));
+
+-- A held message's files sit under held/<message>/: the firm's members read them as they read the message.
+DROP POLICY "Firm members can read PEO mail attachments" ON storage.objects;
+CREATE POLICY "Firm members can read PEO mail attachments" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'peo-mail'
+    AND EXISTS (
+      SELECT 1
+      FROM public.quote_request_message_attachments a
+      JOIN public.quote_request_messages m ON m.id = a.message_id
+      WHERE a.storage_bucket = 'peo-mail' AND a.storage_path = objects.name AND a.status = 'stored'
+        AND public.can_read_peo_mail(m.quote_request_id, m.firm_id)
+    )
+  );
+
+-- Moving a message off a thread asks the actor's current membership of the message's firm (an advisor role alone, or a platform
+-- admin's, opens no firm's mail: D-16). Assigning held mail is a platform admin's, who belongs to no firm and sees only File IDs
+-- and PEOs (admin_held_mail), so mail addressed to a firm may go only to that firm's own quote request: another firm's is
+-- answered as a quote request that isn't there. Mail addressed to no firm may go to any.
+CREATE OR REPLACE FUNCTION public.plan_mail_move(p_message_id bigint, p_target bigint, p_actor uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  msg public.quote_request_messages;
+  target public.quote_requests;
+  target_firm uuid;
+  prefix text;
+BEGIN
+  SELECT * INTO msg FROM public.quote_request_messages WHERE id = p_message_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Message not found' USING ERRCODE = 'PT404';
+  END IF;
+  IF p_target IS NULL THEN
+    IF NOT public.held_mail_actor_has(p_actor, 'advisor') OR NOT EXISTS (
+      SELECT 1 FROM public.firm_memberships f
+      WHERE f.user_id = p_actor AND f.firm_id = msg.firm_id AND public.membership_is_current(f.valid_from, f.valid_until)
+    ) THEN
+      RAISE EXCEPTION 'Advisor access required' USING ERRCODE = '42501';
+    END IF;
+    IF msg.quote_request_id IS NULL THEN
+      RAISE EXCEPTION 'That message is already on the holding list' USING ERRCODE = '55000';
+    END IF;
+    prefix := 'held';
+  ELSE
+    IF NOT public.held_mail_actor_has(p_actor, 'admin') THEN
+      RAISE EXCEPTION 'Admin access required' USING ERRCODE = '42501';
+    END IF;
+    IF msg.quote_request_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Only a held message can be assigned' USING ERRCODE = '55000';
+    END IF;
+    SELECT * INTO target FROM public.quote_requests WHERE id = p_target;
+    SELECT s.firm_id INTO target_firm FROM public.chamber_sessions s WHERE s.id = target.session_id;
+    IF NOT FOUND OR (msg.firm_id IS NOT NULL AND msg.firm_id IS DISTINCT FROM target_firm) THEN
+      RAISE EXCEPTION 'Quote request not found' USING ERRCODE = 'PT404';
+    END IF;
+    prefix := target.session_id::text;
+  END IF;
+  RETURN jsonb_build_object('moves', COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('attachment_id', a.id, 'from', a.storage_path, 'to', public.held_mail_path(a.storage_path, prefix)) ORDER BY a.id)
+    FROM public.quote_request_message_attachments a
+    WHERE a.message_id = msg.id AND a.status = 'stored' AND a.storage_path IS NOT NULL
+      AND split_part(a.storage_path, '/', 1) <> prefix
+  ), '[]'::jsonb));
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.apply_mail_move(p_message_id bigint, p_target bigint, p_actor uuid, p_note text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  msg public.quote_request_messages;
+  target public.quote_requests;
+  target_firm uuid;
+  actor_email text;
+  prefix text;
+  fresh boolean := false;
+  clean_note text := NULLIF(left(btrim(COALESCE(p_note, '')), 500), '');
+BEGIN
+  SELECT * INTO msg FROM public.quote_request_messages WHERE id = p_message_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Message not found' USING ERRCODE = 'PT404';
+  END IF;
+  SELECT u.email INTO actor_email FROM auth.users u WHERE u.id = p_actor;
+
+  IF p_target IS NULL THEN
+    IF NOT public.held_mail_actor_has(p_actor, 'advisor') OR NOT EXISTS (
+      SELECT 1 FROM public.firm_memberships f
+      WHERE f.user_id = p_actor AND f.firm_id = msg.firm_id AND public.membership_is_current(f.valid_from, f.valid_until)
+    ) THEN
+      RAISE EXCEPTION 'Advisor access required' USING ERRCODE = '42501';
+    END IF;
+    IF msg.quote_request_id IS NULL THEN
+      RAISE EXCEPTION 'That message is already on the holding list' USING ERRCODE = '55000';
+    END IF;
+    prefix := 'held';
+    UPDATE public.quote_request_messages
+    SET quote_request_id = NULL, session_id = NULL, held_reason = 'moved_by_advisor', held_at = now(),
+        moved_by = p_actor, moved_by_email = actor_email, moved_from_quote_request_id = msg.quote_request_id, moved_note = clean_note,
+        new_sender = false
+    WHERE id = msg.id;
+    INSERT INTO public.quote_request_events (quote_request_id, session_id, field, new_value, changed_by, changed_by_email)
+    VALUES (msg.quote_request_id, msg.session_id, 'mail_moved_off', msg.id::text, p_actor, actor_email);
+  ELSE
+    IF NOT public.held_mail_actor_has(p_actor, 'admin') THEN
+      RAISE EXCEPTION 'Admin access required' USING ERRCODE = '42501';
+    END IF;
+    IF msg.quote_request_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Only a held message can be assigned' USING ERRCODE = '55000';
+    END IF;
+    SELECT * INTO target FROM public.quote_requests WHERE id = p_target;
+    SELECT s.firm_id INTO target_firm FROM public.chamber_sessions s WHERE s.id = target.session_id;
+    IF NOT FOUND OR (msg.firm_id IS NOT NULL AND msg.firm_id IS DISTINCT FROM target_firm) THEN
+      RAISE EXCEPTION 'Quote request not found' USING ERRCODE = 'PT404';
+    END IF;
+    prefix := target.session_id::text;
+    IF msg.direction = 'received' AND NOT msg.is_automatic THEN
+      fresh := NOT EXISTS (
+        SELECT 1 FROM public.quote_request_messages m
+        WHERE m.quote_request_id = target.id
+          AND (m.from_address = msg.from_address OR msg.from_address = ANY (m.to_addresses) OR msg.from_address = ANY (m.cc_addresses))
+      );
+    END IF;
+    -- It joins the thread now, so it counts as mail nobody has opened yet (recorded_at is what "new" is measured by).
+    UPDATE public.quote_request_messages
+    SET quote_request_id = target.id, session_id = target.session_id, held_reason = NULL, held_at = NULL,
+        moved_by = NULL, moved_by_email = NULL, moved_from_quote_request_id = NULL, moved_note = NULL,
+        new_sender = fresh, recorded_at = now()
+    WHERE id = msg.id;
+    INSERT INTO public.quote_request_events (quote_request_id, session_id, field, new_value, changed_by, changed_by_email)
+    VALUES (target.id, target.session_id, 'mail_assigned', msg.id::text, p_actor, actor_email);
+  END IF;
+
+  UPDATE public.quote_request_message_attachments a
+  SET storage_path = public.held_mail_path(a.storage_path, prefix), updated_at = now()
+  WHERE a.message_id = msg.id AND a.status = 'stored' AND a.storage_path IS NOT NULL;
+
+  RETURN jsonb_build_object('message_id', msg.id, 'quote_request_id', p_target, 'held', p_target IS NULL);
+END;
+$$;
+
+-- What a platform admin, who is a member of no firm, sees of the holding list (D-16): which message, why it is held, since when, and
+-- the File ID and PEO of the quote request its address belonged to (null when it belonged to none). Never a sender, subject,
+-- text, address or file name.
+CREATE FUNCTION public.admin_held_mail()
+RETURNS TABLE (message_id bigint, held_reason text, held_at timestamptz, file_id text, peo_name text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  IF NOT public.has_role('admin') THEN
+    RAISE EXCEPTION 'Admin access required' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    SELECT m.id, m.held_reason, m.held_at, s.file_id, q.peo_name
+    FROM public.quote_request_messages m
+    LEFT JOIN public.quote_request_addresses a ON m.held_reason = 'revoked_address' AND a.local_part = lower(m.address_local_part)
+    LEFT JOIN public.quote_requests q ON q.id = COALESCE(m.moved_from_quote_request_id, a.quote_request_id)
+    LEFT JOIN public.chamber_sessions s ON s.id = q.session_id
+    WHERE m.quote_request_id IS NULL
+    ORDER BY m.held_at, m.id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.admin_held_mail() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_held_mail() TO authenticated;
+
+-- The quote requests a platform admin may assign held mail to, by File ID and PEO alone (D-16).
+CREATE FUNCTION public.admin_assignable_quote_requests()
+RETURNS TABLE (quote_request_id bigint, file_id text, peo_name text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+#variable_conflict use_column
+BEGIN
+  IF NOT public.has_role('admin') THEN
+    RAISE EXCEPTION 'Admin access required' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    SELECT q.id, s.file_id, q.peo_name
+    FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id
+    WHERE q.status <> 'closed'
+    ORDER BY q.id DESC
+    LIMIT 1000;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.admin_assignable_quote_requests() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_assignable_quote_requests() TO authenticated;

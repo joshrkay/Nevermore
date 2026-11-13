@@ -534,6 +534,23 @@ BEGIN
   SELECT m.id, 'att_b2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
   INSERT INTO storage.objects (bucket_id, name)
   SELECT 'peo-mail', pb_cert || '/' || m.id || '/1-terms.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  -- Mail to an address that was revoked (the advisor issued a new one) is held for the firm the address belonged to: one for each firm.
+  -- The unknown address above belongs to no firm. The receive-mail function records them as the service role.
+  RESET ROLE;
+  CREATE TEMP TABLE old_addresses AS
+    SELECT q.session_id, a.local_part FROM public.quote_requests q JOIN public.quote_request_addresses a ON a.quote_request_id = q.id
+    WHERE q.session_id IN (pa_cert, pb_cert) AND a.revoked_at IS NULL;
+  GRANT SELECT ON old_addresses TO authenticated, service_role;
+  PERFORM pg_temp.become('advisor');
+  PERFORM public.advisor_reissue_quote_request_address((SELECT id FROM public.quote_requests WHERE session_id = pa_cert));
+  PERFORM pg_temp.become('agent_b');
+  PERFORM public.advisor_reissue_quote_request_address((SELECT id FROM public.quote_requests WHERE session_id = pb_cert));
+  PERFORM pg_temp.become('service');
+  PERFORM public.record_inbound_mail('matrix_held_a', ARRAY[(SELECT local_part FROM old_addresses WHERE session_id = pa_cert)], 'late@trinet.example', 'Late reply',
+    NULL, NULL, 'Late: our quote', 'Held for the first firm', false, NULL, false, NULL);
+  PERFORM public.record_inbound_mail('matrix_held_b', ARRAY[(SELECT local_part FROM old_addresses WHERE session_id = pb_cert)], 'late@justworks.example', 'Late reply',
+    NULL, NULL, 'Late: our terms', 'Held for the second firm', false, NULL, false, NULL);
+  RESET ROLE;
   -- An advisor opened each thread (20261111120000), so the mark has a row to protect.
   INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
   SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id IN (pa_cert, pb_cert);
@@ -607,12 +624,14 @@ INSERT INTO matrix VALUES
   -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
   -- members' alone. The prospect never sees a quote request, even on their own submission.
   ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
-  ('public.quote_request_events',                       '{}', '{"A":5,"B":5}'),
+  ('public.quote_request_events',                       '{}', '{"A":6,"B":6}'),
   ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
-  ('public.quote_request_addresses',                    '{}', '{"A":1,"B":1}'),
-  -- Mail on a quote request reaches the firm's members; held mail (one here, and it belongs to no firm) only platform admins,
-  -- the admin here included. The prospect reads none.
-  ('public.quote_request_messages',                     '{"admin":2,"platform_admin":1}', '{"A":1,"B":1}'),
+  ('public.quote_request_addresses',                    '{}', '{"A":2,"B":2}'),
+  -- Mail on a quote request reaches the firm's members, and so does held mail addressed to their firm (CRM-P2.1c): one of each for
+  -- each firm here. Held mail that matches no firm (one here) is read by nobody, platform admins included (D-16); they see only a
+  -- File ID and a PEO, through admin_held_mail(). The prospect reads none.
+  ('public.quote_request_messages',                     '{}', '{"A":2,"B":2}'),
+  ('public.quote_request_messages WHERE quote_request_id IS NULL', '{}', '{"A":1,"B":1}'),
   ('public.quote_request_message_attachments',          '{}', '{"A":2,"B":2}'),
   ('public.quote_request_thread_reads',                 '{}', '{"A":1,"B":1}'),
   -- A broker's connected mailbox (20261113090000): the encrypted token. Nobody reads it through the API, admins included;
@@ -913,7 +932,7 @@ INSERT INTO callable VALUES
   ('intake_in_my_firm(p_session_id uuid)',    'own',     NULL, 'row security policies call it as the caller: whether an intake is of a firm the caller currently belongs to; false for anyone else'),
   ('intake_folder_in_my_firm(p_folder text)', 'own',     NULL, 'the storage policies call it as the caller: the same for the intake a folder names; false for anything that is not an intake''s id'),
   ('quote_request_in_my_firm(p_quote_request_id bigint)', 'own', NULL, 'row security policies call it as the caller: whether a quote request is on an intake of a firm the caller currently belongs to'),
-  ('can_read_peo_mail(p_quote_request_id bigint)', 'own', NULL, 'the mail policies call it as the caller: a message on a quote request is its firm''s members''; held mail (none) is a platform admin''s'),
+  ('can_read_peo_mail(p_quote_request_id bigint, p_firm_id uuid)', 'own', NULL, 'the mail policies call it as the caller: a message on a quote request is its firm''s members''; held mail is the members'' of the firm its address belonged to, and nobody''s when it matches no firm'),
   ('intake_owner_in_my_firm(p_user_id uuid)', 'own',     NULL, 'the consent and profile policies call it as the caller: whether a person owns an intake of a firm the caller currently belongs to'),
   ('colleague_in_my_firm(p_user_id uuid)',    'own',     NULL, 'the profile policy calls it as the caller: whether a person is a current member of a firm the caller currently belongs to'),
   ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
@@ -1021,6 +1040,8 @@ INSERT INTO callable VALUES
   ('claim_advisor_role_by_organisation()', 'own', NULL, 'the advisor role for a sign-in whose provider-vouched organisation an admin allowed; reads only the caller''s own sign-in claims, grants nothing to a guest or anyone else'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
+  ('admin_held_mail()',                      'admin',   'SELECT count(*) FROM public.admin_held_mail()', 'the holding list for a platform admin: File ID and PEO only (D-16)'),
+  ('admin_assignable_quote_requests()',      'admin',   'SELECT count(*) FROM public.admin_assignable_quote_requests()', 'the quote requests held mail may be assigned to: File ID and PEO only (D-16)'),
   ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
   ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile; never a contact or an admin''s id, and for anyone but an advisor no person''s name'),
   ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
@@ -1345,15 +1366,15 @@ BEGIN
   END IF;
   RESET ROLE;
 
-  -- A platform admin is a member of no firm (D-16): their role opens nothing of either firm's; held mail, which belongs to no firm, is theirs.
+  -- A platform admin is a member of no firm (D-16): their role opens nothing of either firm's, held mail included.
   PERFORM pg_temp.become('platform_admin');
   IF pg_temp.visible('public.chamber_sessions') + pg_temp.visible('public.documents') + pg_temp.visible('public.advisor_notes')
      + pg_temp.visible('public.quote_requests') + pg_temp.visible('public.profiles WHERE user_id <> auth.uid()')
      + pg_temp.visible('storage.objects WHERE bucket_id IN (''documents'', ''manuscripts'', ''peo-mail'')') <> 0 THEN
     RAISE EXCEPTION 'FAIL: a platform admin who is a member of no firm reads a firm''s intakes, notes, quote requests, profiles or files';
   END IF;
-  IF pg_temp.visible('public.quote_request_messages WHERE quote_request_id IS NULL') <> 1 THEN
-    RAISE EXCEPTION 'FAIL: a platform admin can''t read held mail';
+  IF pg_temp.visible('public.quote_request_messages') + pg_temp.visible('public.quote_request_message_attachments') <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a platform admin who is a member of no firm reads held mail or any mail''s content';
   END IF;
   -- A former member, with the advisor role still, reads nothing either.
   PERFORM pg_temp.become('former_agent');
@@ -1862,6 +1883,135 @@ BEGIN
   RAISE NOTICE 'data_isolation: referral partner cases passed';
 END $$;
 
+-- 4i-2. Held mail: a message that matched no quote request is its address's firm's, and the actor's own role and membership decide
+-- who moves, assigns or discards it. The held-mail function calls these as the service role with the person's id (the actor).
+-- What a statement leaves behind, read by `after`, then rolled back.
+CREATE FUNCTION pg_temp.after(stmt text, q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v text; s text; m text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    EXECUTE q INTO v;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = COALESCE(v, '<null>');
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    IF s = 'ZZ999' THEN RETURN m; END IF;
+    RETURN s;
+  END;
+END $$;
+
+DO $$
+DECLARE
+  fa constant uuid := pg_temp.id('firm_a');
+  fb constant uuid := pg_temp.id('firm_b');
+  ha constant bigint := (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_held_a');
+  hb constant bigint := (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_held_b');
+  hu constant bigint := (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_held');
+  ma constant bigint := (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_1');
+  qa constant bigint := (SELECT quote_request_id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_1');
+  qb constant bigint := (SELECT quote_request_id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_b1');
+  adv_a constant uuid := pg_temp.id('advisor');
+  adv_b constant uuid := pg_temp.id('agent_b');
+  plat constant uuid := pg_temp.id('platform_admin');
+  gone constant uuid := pg_temp.id('former_agent');
+  admin_a constant uuid := pg_temp.id('admin');
+  file_a constant text := (SELECT file_id FROM public.chamber_sessions WHERE id = pg_temp.id('pa_cert'));
+  r text;
+  cols text;
+BEGIN
+  -- The firm of a message is never the writer's: on a quote request it is that request's firm, held it is the firm its address
+  -- belonged to, and an address no firm ever had gives the message no firm.
+  IF (SELECT firm_id FROM public.quote_request_messages WHERE id = ha) IS DISTINCT FROM fa
+     OR (SELECT firm_id FROM public.quote_request_messages WHERE id = hb) IS DISTINCT FROM fb
+     OR (SELECT firm_id FROM public.quote_request_messages WHERE id = hu) IS NOT NULL
+     OR (SELECT firm_id FROM public.quote_request_messages WHERE id = ma) IS DISTINCT FROM fa THEN
+    RAISE EXCEPTION 'FAIL: a message does not take its firm from its quote request or from the address it was sent to';
+  END IF;
+  r := pg_temp.after(format('INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, firm_id)
+    SELECT ''forged'', q.id, q.session_id, ''received'', ''x@example.test'', %L FROM public.quote_requests q WHERE q.id = %s', fb, qa),
+    $q$SELECT firm_id::text FROM public.quote_request_messages WHERE provider_message_id = 'forged'$q$);
+  IF r <> fa::text THEN RAISE EXCEPTION 'FAIL: a message on the first firm''s quote request was given firm %', r; END IF;
+  r := pg_temp.after(format('INSERT INTO public.quote_request_messages (provider_message_id, held_reason, direction, from_address)
+    VALUES (''revoked-unknown'', ''revoked_address'', ''received'', ''x@example.test'')'),
+    $q$SELECT COALESCE(firm_id::text, 'none') FROM public.quote_request_messages WHERE provider_message_id = 'revoked-unknown'$q$);
+  IF r <> 'none' THEN RAISE EXCEPTION 'FAIL: held mail with no address got firm %', r; END IF;
+  -- A message on a quote request must have its firm: a message with none is refused.
+  BEGIN
+    SET LOCAL session_replication_role = replica;
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
+    SELECT 'no-firm', q.id, q.session_id, 'received', 'x@example.test' FROM public.quote_requests q WHERE q.id = qa;
+    RESET session_replication_role;
+    RAISE EXCEPTION 'FAIL: a message on a quote request was accepted with no firm';
+  EXCEPTION WHEN check_violation THEN RESET session_replication_role;
+  END;
+
+  PERFORM pg_temp.become('service');
+  -- Moving a message off a thread: a current member of its firm; not the other firm's agent, not a platform admin who belongs to
+  -- no firm, not a former member.
+  FOR r IN SELECT x FROM unnest(ARRAY['plan_mail_move(%s, NULL, %L)', 'apply_mail_move(%s, NULL, %L, NULL)']) x LOOP
+    IF pg_temp.attempt(format('SELECT public.' || r, ma, adv_a)) <> 'rows:1' THEN RAISE EXCEPTION 'FAIL: the firm''s own advisor can''t move its mail off (%)', r; END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ma, admin_a)) <> 'rows:1' THEN RAISE EXCEPTION 'FAIL: the firm''s own admin can''t move its mail off (%)', r; END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ma, adv_b)) <> '42501' THEN RAISE EXCEPTION 'FAIL: another firm''s agent moved mail off a thread (%): %', r, pg_temp.attempt(format('SELECT public.' || r, ma, adv_b)); END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ma, plat)) <> '42501' THEN RAISE EXCEPTION 'FAIL: a platform admin who is no firm''s member moved mail off a thread (%)', r; END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ma, gone)) <> '42501' THEN RAISE EXCEPTION 'FAIL: a former member moved mail off a thread (%)', r; END IF;
+  END LOOP;
+  -- The message that was moved off stays its firm's.
+  r := pg_temp.after(format('SELECT public.apply_mail_move(%s, NULL, %L, NULL)', ma, adv_a),
+    format('SELECT COALESCE(firm_id::text, ''none'') || '':'' || COALESCE(quote_request_id::text, ''held'') FROM public.quote_request_messages WHERE id = %s', ma));
+  IF r <> fa || ':held' THEN RAISE EXCEPTION 'FAIL: mail moved off a thread is %, expected held for the first firm', r; END IF;
+
+  -- Assigning is a platform admin's, and held mail of a firm goes only to that firm's own quote request; mail of no firm to any.
+  FOR r IN SELECT x FROM unnest(ARRAY['plan_mail_move(%s, %s, %L)', 'apply_mail_move(%s, %s, %L, NULL)']) x LOOP
+    IF pg_temp.attempt(format('SELECT public.' || r, hu, qa, plat)) <> 'rows:1' OR pg_temp.attempt(format('SELECT public.' || r, hu, qb, plat)) <> 'rows:1' THEN
+      RAISE EXCEPTION 'FAIL: a platform admin can''t assign held mail that belongs to no firm (%)', r;
+    END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, qa, plat)) <> 'rows:1' THEN RAISE EXCEPTION 'FAIL: a platform admin can''t assign a firm''s held mail to that firm''s quote request (%)', r; END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, qb, plat)) <> 'PT404' THEN
+      RAISE EXCEPTION 'FAIL: the first firm''s held mail was assigned to the second firm''s quote request (%): %', r, pg_temp.attempt(format('SELECT public.' || r, ha, qb, plat));
+    END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, hb, qa, plat)) <> 'PT404' THEN RAISE EXCEPTION 'FAIL: the second firm''s held mail was assigned to the first firm''s quote request (%)', r; END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, qa, adv_a)) <> '42501' OR pg_temp.attempt(format('SELECT public.' || r, ha, qa, gone)) <> '42501' THEN
+      RAISE EXCEPTION 'FAIL: someone who is not a platform admin assigned held mail (%)', r;
+    END IF;
+  END LOOP;
+  r := pg_temp.after(format('SELECT public.apply_mail_move(%s, %s, %L, NULL)', hu, qb, plat),
+    format('SELECT firm_id::text FROM public.quote_request_messages WHERE id = %s', hu));
+  IF r <> fb::text THEN RAISE EXCEPTION 'FAIL: mail assigned to the second firm''s quote request is firm %', r; END IF;
+  -- Discarding is a platform admin's.
+  FOR r IN SELECT x FROM unnest(ARRAY['plan_held_mail_discard(%s, %L)', 'finish_held_mail_discard(%s, %L)']) x LOOP
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, plat)) <> 'rows:1' THEN RAISE EXCEPTION 'FAIL: a platform admin can''t discard held mail (%)', r; END IF;
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, adv_b)) <> '42501' OR pg_temp.attempt(format('SELECT public.' || r, ha, adv_a)) <> '42501' THEN
+      RAISE EXCEPTION 'FAIL: an advisor discarded held mail (%)', r;
+    END IF;
+  END LOOP;
+
+  -- What a platform admin who is no firm's member sees of held mail: which message, why, since when, and a File ID and a PEO. Nothing
+  -- of the sender, subject, text or files.
+  PERFORM pg_temp.become('platform_admin');
+  IF (SELECT count(*) FROM public.admin_held_mail()) <> 3 THEN RAISE EXCEPTION 'FAIL: a platform admin does not see the holding list''s 3 messages'; END IF;
+  SELECT string_agg(a, ',' ORDER BY a) INTO cols FROM (SELECT unnest(p.proargnames[(p.pronargs + 1):]) a FROM pg_proc p
+    WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'admin_held_mail') x;
+  IF cols <> 'file_id,held_at,held_reason,message_id,peo_name' THEN RAISE EXCEPTION 'FAIL: the holding list for a platform admin shows %', cols; END IF;
+  IF (SELECT count(*) FROM public.admin_held_mail() h
+      WHERE h.message_id = ha AND h.file_id = file_a AND h.peo_name = 'TriNet') <> 1
+     OR (SELECT count(*) FROM public.admin_held_mail() h WHERE h.message_id = hu AND h.file_id IS NULL AND h.peo_name IS NULL) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the holding list does not name the File ID and PEO an address belonged to';
+  END IF;
+  SELECT string_agg(a, ',' ORDER BY a) INTO cols FROM (SELECT unnest(p.proargnames[(p.pronargs + 1):]) a FROM pg_proc p
+    WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'admin_assignable_quote_requests') x;
+  IF cols <> 'file_id,peo_name,quote_request_id' THEN RAISE EXCEPTION 'FAIL: the quote requests a platform admin may assign to show %', cols; END IF;
+  IF (SELECT count(*) FROM public.admin_assignable_quote_requests()) <> 2 THEN RAISE EXCEPTION 'FAIL: a platform admin does not get both firms'' quote requests by File ID and PEO'; END IF;
+  FOREACH r IN ARRAY ARRAY['advisor', 'agent_b', 'former_agent', 'prospect_a', 'guest_a', 'signed_out'] LOOP
+    IF pg_temp.call_as(r, 'SELECT count(*)::text FROM public.admin_held_mail()') <> '42501'
+       OR pg_temp.call_as(r, 'SELECT count(*)::text FROM public.admin_assignable_quote_requests()') <> '42501' THEN
+      RAISE EXCEPTION 'FAIL: % reads the platform admin''s holding list', r;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: held mail cases passed';
+END $$;
+
 -- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
 -- The check that a table "has a firm rule" is by behaviour, never by reading a policy's text: a policy can mention a firm
 -- helper without tying it to the row being read, and a text check passes on a table that is open across firms.
@@ -1875,6 +2025,7 @@ END $$;
 --              quote_request_id column unless names_intakes says a failure report may name the intake
 --   own        a person's own rows only (the matrix shows each caller reads just theirs)
 --   closed     no policy at all: the API roles read and write nothing, only functions and the service role do
+-- A kind of row of one table may be registered beside the table (held mail, in the messages' table: `public.t WHERE ...`).
 -- A table or bucket that isn't registered fails the build, as does a firm one with no make_row, one whose probe did not run,
 -- and one the probe finds open across firms.
 CREATE TEMP TABLE registry (src text PRIMARY KEY, scope text NOT NULL CHECK (scope IN ('firm', 'platform', 'own', 'closed')), why text NOT NULL,
@@ -1931,7 +2082,7 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
    $m$INSERT INTO public.quote_request_events (quote_request_id, session_id, field) VALUES ({qr}, {intake}, 'note') RETURNING ctid::text$m$),
   ('public.quote_request_message_attachments', 'firm', 'by message',
    $m$INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status) VALUES ({msg}, 'probe-{tag}', 'probe.pdf', 1, 'pending') RETURNING ctid::text$m$),
-  ('public.quote_request_messages', 'firm', 'by quote request; held mail is a platform admin''s',
+  ('public.quote_request_messages', 'firm', 'by quote request',
    $m$SELECT ctid::text FROM public.quote_request_messages WHERE id = {msg}$m$),
   ('public.quote_request_notes', 'firm', 'by quote request',
    $m$INSERT INTO public.quote_request_notes (quote_request_id, session_id, kind, noted_on, body) VALUES ({qr}, {intake}, 'call', current_date, 'probe {tag}') RETURNING ctid::text$m$),
@@ -1957,6 +2108,8 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 INSERT INTO registry (src, scope, why, make_row) VALUES
+  ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
+   $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
   ('public.referral_partners', 'firm', 'its own firm_id',
    $m$INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES ({firm}, 'probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$);
 -- How a caller who is not a member writes into a firm's records (foreign_insert, when make_row is not itself an INSERT), and the
@@ -1964,7 +2117,8 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
-UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
+  'public.quote_request_messages WHERE quote_request_id IS NULL');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -2225,7 +2379,7 @@ BEGIN
     END IF;
   END LOOP;
   FOR r IN SELECT * FROM registry ORDER BY src LOOP
-    IF r.src LIKE 'public.%' AND NOT EXISTS (SELECT 1 FROM pg_class cl WHERE cl.relnamespace = 'public'::regnamespace AND cl.relkind IN ('r', 'p') AND 'public.' || cl.relname = r.src) THEN
+    IF r.src LIKE 'public.%' AND NOT EXISTS (SELECT 1 FROM pg_class cl WHERE cl.relnamespace = 'public'::regnamespace AND cl.relkind IN ('r', 'p') AND 'public.' || cl.relname = pg_temp.src_table(r.src)) THEN
       gaps := gaps || format(E'\n  %s is in the registry but there is no such table', r.src);
       CONTINUE;
     END IF;
@@ -2508,17 +2662,18 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
-  ('can_read_peo_mail', 'deferred', 'held mail belongs to no firm yet: a platform admin''s until it is assigned'),
-  ('apply_mail_move', 'deferred', 'held mail: assigning it to a firm''s quote request'),
-  ('plan_mail_move', 'deferred', 'held mail'),
-  ('plan_held_mail_discard', 'deferred', 'held mail'),
-  ('finish_held_mail_discard', 'deferred', 'held mail'),
-  ('held_mail_due', 'deferred', 'held mail'),
-  ('held_mail_actor_has', 'deferred', 'held mail'),
-  ('mailbox_store', 'deferred', 'mailboxes'),
-  ('mailbox_secret', 'deferred', 'mailboxes'),
-  ('mailbox_delete', 'deferred', 'mailboxes');
-UPDATE fn_class SET story = 'CRM-P2.1c' WHERE class = 'deferred';
+  ('can_read_peo_mail', 'own', 'row security helper: whether a message is a firm''s the caller belongs to; held mail is its firm''s, and a held message that matches no firm is read by nobody'),
+  ('admin_held_mail', 'platform_wide', 'the holding list as a platform admin sees it (D-16): which messages wait, why, since when, and the File ID and PEO an address belonged to; never a sender, subject, text or file name'),
+  ('admin_assignable_quote_requests', 'platform_wide', 'the quote requests a platform admin may assign held mail to, by File ID and PEO alone (D-16)'),
+  ('apply_mail_move', 'service_only', 'held mail, as the service role: moving a message off a thread asks the actor''s membership of its firm; assigning asks the admin role and the message''s own firm (4i)'),
+  ('plan_mail_move', 'service_only', 'held mail: the same checks, before anything is moved'),
+  ('plan_held_mail_discard', 'service_only', 'held mail: discarding is a platform admin''s, the schedule''s with no actor'),
+  ('finish_held_mail_discard', 'service_only', 'held mail: the same'),
+  ('held_mail_due', 'service_only', 'held mail the schedule discards: ids only'),
+  ('held_mail_actor_has', 'service_only', 'held mail: whether an actor holds a platform role'),
+  ('mailbox_store', 'service_only', 'a broker''s mailbox, as the service role: only a current member of a firm may connect one (4i)'),
+  ('mailbox_secret', 'service_only', 'a broker''s mailbox, as the service role: nothing for a person who is no longer a member of any firm (4i)'),
+  ('mailbox_delete', 'service_only', 'a broker''s mailbox, as the service role: the person''s own');
 UPDATE fn_class SET story = 'CRM-P2.2' WHERE fn = 'intake_accepts_files';
 
 INSERT INTO fn_class (fn, class, why)
@@ -2551,7 +2706,7 @@ SELECT unnest(ARRAY[
   'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',
-  'snapshot_certified_evidence', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',
+  'snapshot_certified_evidence', 'stamp_message_firm', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',
   'track_intake_milestones', 'validate_certification'
 ]), 'trigger', 'a trigger function: not executable through the API';
 
@@ -2653,8 +2808,8 @@ BEGIN
      'UPDATE fn_class SET class = ''own'' WHERE fn = ''advisor_list_submissions''',
      'registered as neither firm-scoped, platform-wide nor deferred: advisor_list_submissions'),
     ('a deferred function naming no story',
-     'UPDATE fn_class SET story = NULL WHERE fn = ''mailbox_store''',
-     'name no story: mailbox_store'),
+     'UPDATE fn_class SET story = NULL WHERE fn = ''intake_accepts_files''',
+     'name no story: intake_accepts_files'),
     ('an overloaded name',
      'CREATE FUNCTION public.has_role(x int) RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$',
      'overloaded: has_role')
