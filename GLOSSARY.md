@@ -369,6 +369,16 @@ What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_d
 The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM. Since the firms stories it is **the firm's console**: it opens for a current member of a firm (never because of a platform role: **Firm guard**), and shows only that firm's records. The routes keep their `/advisor` paths until the screens that replace them ship (D-8).
 _Avoid_: CRM, admin queue
 
+**Table query** (code: `queue_list_submissions`, `queue_view_counts`; the shapes in `src/lib/tableQuery.ts`):
+How a workspace table asks the database for its rows (D-44): a list of **filters**, one **sort**, a page number and the search, answered with one page of 50 rows and how many match in all. The database holds each table's **fields**, a fixed list naming each field's kind (text, number, date, one choice, several choices, yes or no, person), and refuses a field, operator or value it doesn't take, with the reason; it never drops one, since a dropped filter shows more rows than were asked for. Built first for the submissions queue (CRM-S3.3b); the accounts, leads and quotes tables copy it.
+_Avoid_: dynamic query, search (a search is the words typed in the search box, which is one part of the query)
+
+**Filter** (code: `{field, op, value}`, checked by `workspace_filter_check`):
+One condition on one field of a table, by an operator its kind takes: text (contains, is, is empty), number (is, more than, less than, between), date (on, before, after, between, in the next or last N days, each a day in the person's time zone), one or several choices (any of, none of, is empty), yes or no (is), person (any of, me, my team: refused until records have an owner, CRM-A1.1). Text and choices ignore case; a between takes its ends in either order. A table's filters combine with "and".
+
+**View count** (code: `queue_view_counts`):
+The number on a view's tab: how many rows that view's filters match, under the same rules as the table, for several views in one call.
+
 **Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
 The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner, for the firm's record of who did what), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
 _Avoid_: advisor guard, role check
