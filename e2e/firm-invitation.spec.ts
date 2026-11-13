@@ -33,9 +33,11 @@ test("an invited person signs in with the invited email, joins the firm, and the
     });
 
     await test.step("after signing in with the invited email they come back to the link, and join", async () => {
+      // The sign-in page opens on creating an account for someone sent here with none; this person has one.
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
       await page.getByLabel("Email").fill(email);
       await page.getByLabel("Password").fill(PASSWORD);
-      await page.getByRole("button", { name: "Sign In" }).click();
+      await page.getByRole("button", { name: "Sign In", exact: true }).click();
       await expect(page.getByRole("button", { name: "Join Invited Brokers" })).toBeVisible();
       await expect(page.getByText(email)).toBeVisible();
       await page.getByRole("button", { name: "Join Invited Brokers" }).click();
