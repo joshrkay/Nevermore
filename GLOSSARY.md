@@ -393,8 +393,12 @@ A person or firm outside the advisory team who sends employers to the site with 
 _Avoid_: partner on its own, affiliate, referrer
 
 **Referral code**:
-The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
+The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted. A code is matched to a partner only within the intake's own firm, so another firm's code on an intake attributes it to nobody. See **Referral link**.
 _Avoid_: promo code, tracking code
+
+**Referral link** (code: `partnerLink`, `referralLinksWork`):
+The site's front page with a referral partner's code. Every intake a browser starts belongs to the default firm (D-101), so a link reaches only the default firm: the Referral Partners page shows and copies one only for that firm. For any other firm it keeps the partner and its code and says links come when the firm can take intakes (New quote, Epic 5).
+_Avoid_: tracking link, affiliate link
 
 **Second factor**:
 The extra step, after a password, that proves it is the advisor signing in: the 6-digit code from an authenticator app. It is required when *this sign-in* used a password, not whenever the account has one; a sign-in through Google or Microsoft relies on that provider's and is never asked. Without it a password sign-in opens nothing of the Advisor Console, and the database refuses it, not only the screen. Prospects and guests are never asked: no employer is ever asked for a second factor.
