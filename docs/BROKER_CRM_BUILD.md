@@ -39,6 +39,51 @@ rules every story's build follows. Where this page and a story disagree, this pa
 | 10 | Reports | `crm/epic-10-reports` | CRM-R1.1 to R1.3 |
 | 11 | Home | `crm/epic-11-home` | CRM-H1 |
 
+## Epic 1 decisions (2026-11-13)
+
+The founder said to take the recommended answer on each decision a scout finds before an epic, and keep going.
+These came from reading Epic 1's stories against the code.
+
+| # | Decision |
+|---|---|
+| D-15 | In Edgar Allan Advisory, today's admins become owners and today's advisors become agents, and that firm is set to "everyone sees everything", so nobody loses sight of a submission. Submissions get no owner in Epic 1 |
+| D-16 | A platform `admin` is not a member of any firm and stops reading firms' intakes. Assigning held mail shows only the File ID and the PEO |
+| D-17 | Firm addresses (subdomains) are built in Epic 1. The code reads the host; the DNS, hosting and sign-in provider settings it needs are listed in the pull request for the founder to apply |
+| D-18 | The database checks that the caller is a member of the record's firm. The address only chooses what the screen shows; it is never the lock |
+| D-19 | A second factor is asked for when this sign-in used a password, not whenever the account has one |
+| D-20 | The teams table and the visibility rules are built in Epic 1. No screen shows a team field until CRM-X1.1 |
+| D-21 | Q-1.2 is built as the admin's approval of a firm only. No licence check, since nothing records a producer number yet |
+| D-22 | CRM-P2.5 (the employer ends a firm's access) moves to Epic 5, after firm links exist |
+| D-23 | CRM-P1.4 replaces the admin's organisation list: `/advisor/organisations` and `claim_advisor_role_by_organisation` are retired in that story |
+| D-24 | An acceptance criterion about something a later epic creates (exports, send buttons, the Settings page, tables for leads, accounts, opportunities and quotes) is met in the story that creates that thing. The Epic 1 story builds the mechanism and applies it to what exists, and its pull request lists what was deferred and to which story |
+
+### Epic 1 build order
+
+P-1.1 says roles are owner and member; D-5 wins: owner, lead, agent. P-1.2 and P-1.3 are replaced by CRM-P1.2,
+CRM-P1.5 and CRM-P1.1.
+
+| # | Story | What it covers | Built by |
+|---|---|---|---|
+| 1 | P-1.1 | Firms, teams, dated memberships, the parent column, a firm on every intake; Edgar Allan Advisory seeded with its members and every existing submission | Opus |
+| 2 | CRM-P2.1a (with CRM-S5.1) | The visibility helper; every table policy and storage policy scoped to the firm; two firms, two agents and a lead in the SQL tests; the check that fails on a table with no firm rule | Opus |
+| 3 | CRM-P2.1b | Every advisor and admin function that reads or changes firm data filters by the caller's firm | Opus |
+| 4 | CRM-P2.1c | What has no submission behind it: referral partners, the advisor alert's recipients, the new-mail mark, mailboxes, held mail (D-16) | Opus |
+| 5 | P-1.4 | The existing console pages show only the firm's records; the front end asks "is a member", not "is an advisor" | Opus |
+| 6 | CRM-P1.3a | The firm address: the host chooses the firm shown; "You aren't a member of this firm"; a session per address | Opus |
+| 7 | CRM-P1.3b | A second factor for password sign-ins, including the test gateway's password sign-in | Opus |
+| 8 | CRM-P2.3 with Q-3.1 | The record of who did what, read by owners; export alerts when exports exist | Opus |
+| 9 | CRM-P1.2 | Invite a member | Sonnet |
+| 10 | CRM-P1.5 | Remove or suspend a member | Opus |
+| 11 | CRM-P1.6 | Leave a firm | Sonnet |
+| 12 | CRM-P1.4 | Join by organisation (D-23) | Opus |
+| 13 | CRM-P1.1 with Q-1.2 | Sign up a firm; an admin approves it | Opus |
+| 14 | CRM-P1.8 | Suspend a firm | Opus |
+| 15 | CRM-P1.7 | Close a firm | Opus |
+| 16 | CRM-P2.2 | Files, tokens and reply addresses | Opus |
+| 17 | CRM-P2.4 | Help from Nevermore, logged | Opus |
+
+New migration files are named to sort after `20261115140000`.
+
 ## Rules for building one story
 
 1. **Branch.** `crm/<epic number>/<story id in lower case>` (for example `crm/01/crm-p1.2`), cut from the epic's
