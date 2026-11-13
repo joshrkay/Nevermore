@@ -13,6 +13,7 @@
 --   agent_b, owner_b  the second firm's agent (who also holds the advisor role) and owner
 --   platform_admin    holds the admin role and a membership of no firm (D-16)
 --   former_agent      holds the advisor role; their membership of the first firm has ended
+--   suspended_agent   holds the advisor role; an owner of the first firm suspended them (CRM-P1.5): the same as a former member for every rule
 --   advisor_pw        the advisor signed in with a password and no second factor; advisor_pw_mfa, with one (D-19)
 --   advisor_as_guest  the advisor's account presenting a guest token (must count as a guest)
 --   service           the service role (what the scheduled jobs and edge functions use)
@@ -159,6 +160,7 @@
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
+\i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -288,7 +290,7 @@ END $$;
 -- firm's own members read its intakes, so they are outsiders only to the second firm's.
 CREATE FUNCTION pg_temp.outsiders(owner text, firm text) RETURNS SETOF text LANGUAGE sql AS $$
   SELECT c
-  FROM unnest(ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest', 'platform_admin', 'former_agent']
+  FROM unnest(ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest', 'platform_admin', 'former_agent', 'suspended_agent']
               || CASE WHEN firm = 'a' THEN ARRAY['agent_b', 'owner_b'] ELSE ARRAY['advisor', 'admin', 'agent_2', 'lead_1'] END) c
   WHERE c <> owner
 $$;
@@ -314,6 +316,7 @@ DECLARE
   owb uuid := pg_temp.new_user('owner_b@example.test', false);
   pad uuid := pg_temp.new_user('platform_admin@example.test', false);
   fag uuid := pg_temp.new_user('former_agent@example.test', false);
+  sag uuid := pg_temp.new_user('suspended_agent@example.test', false);
   team_a uuid := gen_random_uuid();
   team_b uuid := gen_random_uuid();
   ready constant text := '{"company_name":"%s","states":["CA"],"pay_frequency":"Bi-weekly","employee_count":3}';
@@ -324,9 +327,9 @@ DECLARE
   r text;
 BEGIN
   INSERT INTO fx VALUES ('guest_a', ga), ('guest_b', gb), ('prospect_a', pa), ('prospect_b', pb), ('advisor', adv), ('admin', adm),
-    ('agent_2', ag2), ('lead_1', ld1), ('agent_b', agb), ('owner_b', owb), ('platform_admin', pad), ('former_agent', fag),
+    ('agent_2', ag2), ('lead_1', ld1), ('agent_b', agb), ('owner_b', owb), ('platform_admin', pad), ('former_agent', fag), ('suspended_agent', sag),
     ('firm_a', firm_a), ('firm_b', firm_b);
-  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor'), (adm, 'admin'), (agb, 'advisor'), (pad, 'admin'), (fag, 'advisor');
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor'), (adm, 'admin'), (agb, 'advisor'), (pad, 'admin'), (fag, 'advisor'), (sag, 'advisor');
   INSERT INTO public.firms (id, name, address, visibility, approved_at) VALUES (firm_b, 'Second Brokers', 'second-brokers', 'by_level', now());
   INSERT INTO public.firm_teams (id, firm_id, name) VALUES (team_a, firm_a, 'Sales'), (team_b, firm_b, 'Brokers');
   INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
@@ -334,6 +337,12 @@ BEGIN
     (firm_b, owb, 'owner', NULL), (firm_b, agb, 'agent', team_b);
   INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
   VALUES (firm_a, fag, 'agent', now() - interval '30 days', now() - interval '1 day');
+  -- suspended_agent was an agent of the first firm until the admin, an owner of it, suspended them (CRM-P1.5): through the function an
+  -- owner calls, so the suspension is the real thing and not a stand-in.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (firm_a, sag, 'agent');
+  PERFORM pg_temp.become('admin');
+  PERFORM public.suspend_member(firm_a, sag);
+  RESET ROLE;
   -- A pending invitation to each firm (20261116190000): reached only through the invite functions, by nobody directly.
   INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, invited_by, expires_at) VALUES
     (firm_a, 'invitee_a@example.test', 'agent', encode(extensions.digest('invitation-a', 'sha256'), 'hex'), adm, now() + interval '7 days'),
@@ -621,8 +630,8 @@ INSERT INTO matrix VALUES
   ('storage.buckets',                                   '{}', NULL),
   -- Everyone sees their own profile (the advisor's account behind a guest token is still that account); a firm's
   -- members also see the profiles of its current members and of the owners of its intakes, no one else's.
-  ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor_as_guest":1,"platform_admin":1,"former_agent":1}', '{"A":7,"B":3}'),
-  ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1,"agent_b":1,"platform_admin":1,"former_agent":1}', NULL),
+  ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor_as_guest":1,"platform_admin":1,"former_agent":1,"suspended_agent":1}', '{"A":7,"B":3}'),
+  ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1,"agent_b":1,"platform_admin":1,"former_agent":1,"suspended_agent":1}', NULL),
   ('public.intake_consents',                            '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":3,"B":1}'),
   ('public.submission_workflow',                        '{}', '{"A":7,"B":3}'),
   ('public.submission_status_history',                  '{}', '{"A":10,"B":7}'),
@@ -664,13 +673,13 @@ INSERT INTO matrix VALUES
   -- these tables (a version names people at the PEO and admins): peo_catalog() is their only way in, checked in part 4.
   -- Signed-out callers read nothing: public pages never name a PEO. They hold no firm's data, so a platform admin reads
   -- them and an advisor of either firm does.
-  ('public.peos',                                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
-  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all","agent_b":1,"platform_admin":"all","former_agent":1}', NULL),
-  ('public.peo_contacts',                               '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
+  ('public.peos',                                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all","suspended_agent":"all"}', NULL),
+  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all","agent_b":1,"platform_admin":"all","former_agent":1,"suspended_agent":1}', NULL),
+  ('public.peo_contacts',                               '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all","suspended_agent":"all"}', NULL),
   -- PEO template workbooks (20261115140000): advisors read the records; anyone signed in reads a clean one's file
   -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
-  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
-  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all","agent_2":"all","lead_1":"all","agent_b":"all","owner_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
+  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all","suspended_agent":"all"}', NULL),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all","agent_2":"all","lead_1":"all","agent_b":"all","owner_b":"all","platform_admin":"all","former_agent":"all","suspended_agent":"all"}', NULL),
   -- Firms, their teams and dated memberships (20261116090000): a current member reads their own firm and its teams, and
   -- their own membership; nobody else, prospects, guests and platform admins included.
   ('public.firms',                                      '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
@@ -678,10 +687,12 @@ INSERT INTO matrix VALUES
   ('public.firm_memberships',                           '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
   -- The record of who did what (20261116160001): a firm's current owners read their own firm's entries, nobody else, platform
   -- admins and agents included (the two-firm probe below and firm_activity.sql prove the firms apart).
-  ('public.firm_activity',                              '{"advisor":0,"admin":6,"agent_2":0,"lead_1":0,"agent_b":0,"owner_b":3,"advisor_pw_mfa":0}', NULL),
+  ('public.firm_activity',                              '{"advisor":0,"admin":8,"agent_2":0,"lead_1":0,"agent_b":0,"owner_b":3,"advisor_pw_mfa":0}', NULL),
   -- Invitations to join a firm (20261116190000): nobody reads them through the API, owners included; an owner reaches
   -- the pending ones through firm_pending_invitations(), and the token's hash is never returned (supabase/tests/firm_invitations.sql).
   ('public.firm_invitations',                           '{}', NULL),
+  -- A firm's suspended members (CRM-P1.5): closed to the API; an owner reads them through firm_members() (supabase/tests/firm_members.sql).
+  ('public.firm_member_suspensions',                    '{}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
   ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
   -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
@@ -701,7 +712,7 @@ INSERT INTO matrix VALUES
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
-               'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'advisor_pw', 'advisor_pw_mfa', 'service']
+               'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'suspended_agent', 'advisor_pw', 'advisor_pw_mfa', 'service']
 $$;
 
 DO $$
@@ -959,6 +970,10 @@ INSERT INTO callable VALUES
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('sign_up_firm(p_name text, p_address text)', 'own',     NULL, 'a signed-in person with a verified email makes a firm of their own and becomes its owner; refuses guests and unverified accounts; acts only for the caller'),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (supabase/tests/firm_invitations.sql)'),
+  ('remove_member(p_firm_id uuid, p_user_id uuid)', 'own', NULL, 'a current owner of the firm ends a member''s membership now (or closes a suspended person''s); refused for every other caller, another firm''s owner, a platform admin who is no member, a former member and a suspended one included (supabase/tests/firm_members.sql)'),
+  ('suspend_member(p_firm_id uuid, p_user_id uuid)', 'own', NULL, 'a current owner of the firm suspends a member: the membership ends now and the suspension is kept so it can be lifted; refused for every other caller (supabase/tests/firm_members.sql)'),
+  ('lift_member_suspension(p_firm_id uuid, p_user_id uuid)', 'own', NULL, 'a current owner of the firm lifts a suspension: a membership begins now with the role and team the person had; refused for every other caller, the suspended person included (supabase/tests/firm_members.sql)'),
+  ('firm_members(p_firm_id uuid)', 'own', NULL, 'a current owner reads their own firm''s current and suspended members; 42501 for every other caller (supabase/tests/firm_members.sql)'),
   ('firm_pending_invitations(p_firm_id uuid)', 'own',   NULL, 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (supabase/tests/firm_invitations.sql)'),
   ('cancel_invitation(p_invitation_id uuid)', 'own',    NULL, 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist'),
   ('resend_invitation(p_invitation_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the invitation''s firm sends it again with a new token; the same refusal for another firm''s invitation as for one that does not exist'),
@@ -1415,6 +1430,16 @@ BEGIN
   IF pg_temp.visible('public.chamber_sessions') + pg_temp.visible('public.advisor_notes') + pg_temp.visible('public.firms') <> 0 THEN
     RAISE EXCEPTION 'FAIL: a former member reads their old firm''s records';
   END IF;
+  -- A suspended member, with the advisor role still, reads nothing either: the membership is kept on the firm's list, and grants nothing.
+  PERFORM pg_temp.become('suspended_agent');
+  IF pg_temp.visible('public.chamber_sessions') + pg_temp.visible('public.advisor_notes') + pg_temp.visible('public.firms')
+     + pg_temp.visible('public.quote_requests') + pg_temp.visible('public.firm_memberships WHERE user_id <> auth.uid()')
+     + pg_temp.visible('storage.objects WHERE bucket_id IN (''documents'', ''manuscripts'', ''peo-mail'')') <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a suspended member reads their firm''s records';
+  END IF;
+  IF public.is_firm_member(pg_temp.id('firm_a')) OR public.firm_role(pg_temp.id('firm_a')) IS NOT NULL OR EXISTS (SELECT 1 FROM public.my_firms()) THEN
+    RAISE EXCEPTION 'FAIL: a suspended member is still a member of their firm';
+  END IF;
   -- A membership that ends closes the firm to its member at once, and a new one opens it again.
   RESET ROLE;
   UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('agent_2') AND valid_until IS NULL;
@@ -1499,7 +1524,7 @@ $$;
 -- The callers every function is tried as; the first firm's, the second's, and nobody's.
 CREATE FUNCTION pg_temp.every_caller() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor_as_guest', 'advisor', 'admin', 'agent_2', 'lead_1', 'agent_b', 'owner_b',
-               'platform_admin', 'former_agent']
+               'platform_admin', 'former_agent', 'suspended_agent']
 $$;
 
 INSERT INTO fprobe (fn, who, shape, call) VALUES
@@ -1530,7 +1555,18 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('invite_member', 'admin', 'by_id', $$SELECT public.invite_member({firm}, 'probe@example.test', 'agent', NULL, repeat('a', 64))::text$$),
   ('resend_invitation', 'admin', 'by_id', $$SELECT public.resend_invitation({inv}, repeat('b', 64))::text$$),
   ('cancel_invitation', 'admin', 'by_id', $$SELECT public.cancel_invitation({inv})::text$$),
-  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$);
+  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$),
+  -- Removing, suspending and lifting (CRM-P1.5): only a current owner of the firm. The firm's first current agent is the one acted on (an id
+  -- read as the superuser: a caller can't read the membership table or the suspensions); the suspended person (the fixtures' suspended_agent,
+  -- in the first firm; a made-up id in the second, which has none) is the one lifted. Every other caller, the other firm's owner, a
+  -- platform admin, a former member and a suspended one included, is refused before anything is looked up (D-16, D-18).
+  ('remove_member', 'admin', 'by_id', $$SELECT public.remove_member({firm}, {agent})::text$$),
+  ('suspend_member', 'admin', 'by_id', $$SELECT public.suspend_member({firm}, {agent})::text$$),
+  ('lift_member_suspension', 'admin', 'by_id', $$SELECT public.lift_member_suspension({firm}, {suspended})::text$$),
+  ('firm_members', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_members({firm})$$);
+-- The second firm has nobody suspended: its owner is let in and finds nothing to lift, which is not a refusal.
+UPDATE fprobe SET refused = ARRAY['42501'], member_ok = '^(ok:.*|PT404)$' WHERE fn = 'lift_member_suspension';
+UPDATE fprobe SET refused = ARRAY['42501'] WHERE fn IN ('remove_member', 'suspend_member', 'firm_members');
 INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
   ('advisor_list_submissions', 'advisor', 'list',
    $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)$$, ARRAY['advisor', 'agent_b']),
@@ -1580,6 +1616,10 @@ BEGIN
       (f, 'firm', pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)::text),
       (f, 'partner', CASE f WHEN 'a' THEN 'acme-cfo' ELSE 'beta-cfo' END),
       (f, 'inv', (SELECT i.id::text FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY i.created_at LIMIT 1)),
+      (f, 'agent', (SELECT m.user_id::text FROM public.firm_memberships m WHERE m.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)
+                    AND m.role = 'agent' AND m.valid_until IS NULL ORDER BY m.id LIMIT 1)),
+      (f, 'suspended', COALESCE((SELECT x.user_id::text FROM public.firm_member_suspensions x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)
+                                 AND x.ended_at IS NULL ORDER BY x.id LIMIT 1), gen_random_uuid()::text)),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
@@ -1707,7 +1747,7 @@ BEGIN
   IF pg_temp.visible(format('public.intake_deletions WHERE id = %L AND status = %L', d, 'done')) <> 1 THEN
     RAISE EXCEPTION 'FAIL: the firm''s members can''t read a deletion record once its intake is gone';
   END IF;
-  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin', 'former_agent', 'prospect_b'] LOOP
+  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin', 'former_agent', 'suspended_agent', 'prospect_b'] LOOP
     PERFORM pg_temp.become(r);
     IF pg_temp.visible(format('public.intake_deletions WHERE id = %L', d)) <> 0 THEN
       RAISE EXCEPTION 'FAIL: % reads another firm''s deletion record', r;
@@ -1828,14 +1868,14 @@ DECLARE
   r text;
 BEGIN
   SELECT id INTO other FROM public.chamber_sessions WHERE firm_id = pg_temp.id('firm_b') LIMIT 1;
-  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin', 'former_agent', 'guest_a'] LOOP
+  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin', 'former_agent', 'suspended_agent', 'guest_a'] LOOP
     PERFORM pg_temp.become(r);
     IF NOT public.report_client_event('app_error', 'xfirm_' || r, NULL, '/x', other) THEN RAISE EXCEPTION 'setup: report dropped'; END IF;
   END LOOP;
   PERFORM pg_temp.become('agent_b');
   IF NOT public.report_client_event('app_error', 'xfirm_own', NULL, '/x', other) THEN RAISE EXCEPTION 'setup: report dropped'; END IF;
   RESET ROLE;
-  IF EXISTS (SELECT 1 FROM public.ops_events WHERE code IN ('xfirm_advisor', 'xfirm_platform_admin', 'xfirm_former_agent', 'xfirm_guest_a') AND session_id IS NOT NULL) THEN
+  IF EXISTS (SELECT 1 FROM public.ops_events WHERE code IN ('xfirm_advisor', 'xfirm_platform_admin', 'xfirm_former_agent', 'xfirm_suspended_agent', 'xfirm_guest_a') AND session_id IS NOT NULL) THEN
     RAISE EXCEPTION 'FAIL: a failure report was tied to another firm''s intake';
   END IF;
   IF (SELECT session_id FROM public.ops_events WHERE code = 'xfirm_own') IS DISTINCT FROM other THEN
@@ -1872,7 +1912,7 @@ BEGIN
   IF r <> 'ok:' || fb THEN RAISE EXCEPTION 'FAIL: the second firm''s agent added a partner to %', r; END IF;
 
   -- No firm, no partner: a platform admin who belongs to none (D-16), a former member, a prospect, a guest, signed out.
-  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'prospect_a', 'guest_a', 'signed_out', 'advisor_as_guest'] LOOP
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent', 'prospect_a', 'guest_a', 'signed_out', 'advisor_as_guest'] LOOP
     r := pg_temp.call_as(who, $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('nobody-test', 'Nobody', 'other')$q$);
     IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % adding a partner with no firm named gave %, expected a refusal', who, r; END IF;
     r := pg_temp.call_as(who, $q$SELECT code FROM public.advisor_update_referral_partner('acme-cfo', 'Nobody', 'other')$q$);
@@ -2037,7 +2077,7 @@ BEGIN
   INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
   VALUES (ha, 'held-att', 'held.pdf', 1, 'stored', 'clean', 'peo-mail', 'held/' || ha || '/held.pdf');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', 'held/' || ha || '/held.pdf');
-  FOREACH r IN ARRAY ARRAY['advisor', 'admin', 'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'prospect_a', 'guest_a', 'signed_out'] LOOP
+  FOREACH r IN ARRAY ARRAY['advisor', 'admin', 'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'suspended_agent', 'prospect_a', 'guest_a', 'signed_out'] LOOP
     PERFORM pg_temp.become(r);
     want := CASE WHEN r IN ('advisor', 'admin', 'agent_2', 'lead_1') THEN 1 ELSE 0 END;
     IF pg_temp.visible(format('storage.objects WHERE bucket_id = ''peo-mail'' AND name = %L', 'held/' || ha || '/held.pdf')) <> want
@@ -2065,7 +2105,7 @@ BEGIN
     WHERE p.pronamespace = 'public'::regnamespace AND p.proname = 'admin_assignable_quote_requests') x;
   IF cols <> 'file_id,peo_name,quote_request_id' THEN RAISE EXCEPTION 'FAIL: the quote requests a platform admin may assign to show %', cols; END IF;
   IF (SELECT count(*) FROM public.admin_assignable_quote_requests()) <> 2 THEN RAISE EXCEPTION 'FAIL: a platform admin does not get both firms'' quote requests by File ID and PEO'; END IF;
-  FOREACH r IN ARRAY ARRAY['advisor', 'agent_b', 'former_agent', 'prospect_a', 'guest_a', 'signed_out'] LOOP
+  FOREACH r IN ARRAY ARRAY['advisor', 'agent_b', 'former_agent', 'suspended_agent', 'prospect_a', 'guest_a', 'signed_out'] LOOP
     IF pg_temp.call_as(r, 'SELECT count(*)::text FROM public.admin_held_mail()') <> '42501'
        OR pg_temp.call_as(r, 'SELECT count(*)::text FROM public.admin_assignable_quote_requests()') <> '42501' THEN
       RAISE EXCEPTION 'FAIL: % reads the platform admin''s holding list', r;
@@ -2143,7 +2183,7 @@ BEGIN
   IF pg_temp.attempt(format(call, pg_temp.id('advisor'))) <> 'rows:1' OR pg_temp.attempt(format(call, pg_temp.id('agent_b'))) <> 'rows:1' THEN
     RAISE EXCEPTION 'FAIL: a current member of a firm can''t connect a mailbox';
   END IF;
-  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'prospect_a'] LOOP
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent', 'prospect_a'] LOOP
     r := pg_temp.attempt(format(call, pg_temp.id(who)));
     IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % connected a mailbox without being a member of a firm (%)', who, r; END IF;
   END LOOP;
@@ -2152,13 +2192,13 @@ BEGIN
   RESET ROLE;
   INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
   SELECT pg_temp.id(w), 'google', w || '@mailbox.test', 'gmail.send', 'ciphertext-' || w, 'iv'
-  FROM unnest(ARRAY['advisor', 'agent_b', 'platform_admin', 'former_agent']) w
+  FROM unnest(ARRAY['advisor', 'agent_b', 'platform_admin', 'former_agent', 'suspended_agent']) w
   ON CONFLICT (user_id) DO NOTHING;
   PERFORM pg_temp.become('service');
   FOREACH who IN ARRAY ARRAY['advisor', 'agent_b'] LOOP
     IF public.mailbox_secret(pg_temp.id(who)) IS NULL THEN RAISE EXCEPTION 'FAIL: the sending function can''t read the mailbox of %, a member', who; END IF;
   END LOOP;
-  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent'] LOOP
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent'] LOOP
     IF public.mailbox_secret(pg_temp.id(who)) IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the sending function reads the mailbox of %, who belongs to no firm', who; END IF;
   END LOOP;
   -- Ending a membership closes the mailbox at once, and a person's mailbox is theirs: nobody's but their own is asked for.
@@ -2172,7 +2212,7 @@ BEGIN
     PERFORM pg_temp.become(who);
     IF NOT COALESCE((public.my_mailbox() ->> 'connected')::boolean, false) THEN RAISE EXCEPTION 'FAIL: % is not told their mailbox is connected', who; END IF;
   END LOOP;
-  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent'] LOOP
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent'] LOOP
     PERFORM pg_temp.become(who);
     IF (public.my_mailbox() ->> 'connected')::boolean IS DISTINCT FROM false THEN RAISE EXCEPTION 'FAIL: % who belongs to no firm is told their mailbox is connected', who; END IF;
   END LOOP;
@@ -2281,6 +2321,11 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   ('public.firm_invitations', 'firm', 'its own firm_id; closed to the API, owners read the pending ones through a function',
    $m$INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at)
       VALUES ({firm}, 'probe-{tag}@example.test', 'agent', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '7 days') RETURNING ctid::text$m$, false),
+  -- A firm's suspension: its own firm_id. Closed to the API, owners included (an owner reads who is suspended through firm_members()), so no
+  -- positive control. The probe row is an ended one so it never meets the one-open-per-person index of the fixtures' real suspension.
+  ('public.firm_member_suspensions', 'firm', 'its own firm_id; closed to the API, owners read who is suspended through a function',
+   $m$INSERT INTO public.firm_member_suspensions (firm_id, user_id, membership_id, role, ended_at, ended_how)
+      SELECT m.firm_id, m.user_id, m.id, 'agent', now(), 'lifted' FROM public.firm_memberships m WHERE m.firm_id = {firm} ORDER BY m.id LIMIT 1 RETURNING ctid::text$m$, false),
   ('public.firm_activity', 'firm', 'its own firm_id; only its owners read it (not every member), and nobody changes or deletes an entry',
    $m$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES ({firm}, 'invitation_sent', 'firm', {firm}::text) RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
@@ -2296,7 +2341,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_member_suspensions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -2796,6 +2841,10 @@ SELECT unnest(ARRAY[
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
 INSERT INTO fn_class (fn, class, why) VALUES
   ('invite_member', 'firm_scoped', 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_invitations.sql)'),
+  ('remove_member', 'firm_scoped', 'a current owner of the firm ends a member''s membership now; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_members.sql)'),
+  ('suspend_member', 'firm_scoped', 'a current owner of the firm suspends a member; refused for every other caller (4e; supabase/tests/firm_members.sql)'),
+  ('lift_member_suspension', 'firm_scoped', 'a current owner of the firm lifts a suspension; refused for every other caller, the suspended person included (4e; supabase/tests/firm_members.sql)'),
+  ('firm_members', 'firm_scoped', 'a current owner reads their own firm''s current and suspended members; 42501 for every other caller (4e; supabase/tests/firm_members.sql)'),
   ('resend_invitation', 'firm_scoped', 'a current owner of the invitation''s firm sends it again with a new link; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
   ('cancel_invitation', 'firm_scoped', 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
   ('firm_pending_invitations', 'firm_scoped', 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (4e)');
@@ -2898,7 +2947,7 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
-  'record_membership_change', 'record_send_activity',
+  'record_membership_change', 'record_send_activity', 'keep_suspension', 'drop_mailbox_when_membership_ends',
   'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',

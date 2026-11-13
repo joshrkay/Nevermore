@@ -236,7 +236,17 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   const stored = parsePending(row.pending_send);
   if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
 
-  const built = buildMessage(row, deps.config, advisorTo);
+  // D-35: the people an alert goes to are fixed when it is first prepared. A message that was written down and is still fresh, but names someone who has
+  // since left, is rebuilt for that reason only: it goes to the people it named who are still members, never to anyone who joined after it was
+  // written (adding an address changes the key, so everyone who already has it would get it twice). A message with nothing usable stored is a first
+  // preparation and goes to the firm's current members.
+  let to = advisorTo;
+  if (isAdvisorKind(row.kind) && stored && isFresh(stored, deps.now())) {
+    const named = new Set(stored.message.to.map((a) => a.toLowerCase()));
+    to = advisorTo.filter((a) => named.has(a.toLowerCase()));
+    if (to.length === 0) return { outcome: "fail", reason: "no_recipients", final: false };
+  }
+  const built = buildMessage(row, deps.config, to);
   if (!built.ok) return { outcome: "fail", reason: built.reason, final: built.final };
 
   // Whatever is stored but unusable (too old, or not the shape we write) must be overwritten; the
