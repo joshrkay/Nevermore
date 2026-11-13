@@ -1101,6 +1101,7 @@ BEGIN
     format('SELECT public.plan_held_mail_discard(0, %L)', nobody),
     format('SELECT public.finish_held_mail_discard(0, %L)', nobody),
     'SELECT count(*) FROM public.held_mail_due(1)',
+    format('SELECT public.outbox_alert_recipients(%L)', nobody),
     format('SELECT public.mailbox_store(%L, ''google'', ''advisor@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')', pg_temp.id('advisor')),
     format('SELECT public.mailbox_secret(%L)', nobody),
     format('SELECT public.mailbox_delete(%L)', nobody),
@@ -2012,6 +2013,60 @@ BEGIN
   RAISE NOTICE 'data_isolation: held mail cases passed';
 END $$;
 
+-- 4i-3. The advisor alert's recipients: the people told about a new submission or new PEO mail are the current members of the firm
+-- the intake belongs to (the dispatch-outbox function asks for them as the service role): never another firm's people, a platform
+-- admin who belongs to no firm, or a former member, and a member who leaves stops receiving at once.
+-- Who an intake's alert goes to after a change made as the superuser, rolled back.
+CREATE FUNCTION pg_temp.recipients_after(stmt text, sid uuid) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v text; m text; st text;
+BEGIN
+  RESET ROLE;
+  BEGIN
+    EXECUTE stmt;
+    PERFORM pg_temp.become('service');
+    v := array_to_string(public.outbox_alert_recipients(sid), ',');
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = v;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    RESET ROLE;
+    IF st = 'ZZ999' THEN RETURN m; END IF;
+    RETURN st || ' ' || m;
+  END;
+END $$;
+
+DO $$
+DECLARE
+  sid_a constant uuid := pg_temp.id('pa_cert');
+  sid_b constant uuid := pg_temp.id('pb_cert');
+  a text[];
+  b text[];
+  r text;
+BEGIN
+  PERFORM pg_temp.become('service');
+  a := public.outbox_alert_recipients(sid_a);
+  b := public.outbox_alert_recipients(sid_b);
+  IF a IS DISTINCT FROM ARRAY['admin@example.test', 'advisor@example.test', 'agent_2@example.test', 'lead_1@example.test'] THEN
+    RAISE EXCEPTION 'FAIL: the first firm''s alert goes to %, expected its four current members', a;
+  END IF;
+  IF b IS DISTINCT FROM ARRAY['agent_b@example.test', 'owner_b@example.test'] THEN
+    RAISE EXCEPTION 'FAIL: the second firm''s alert goes to %, expected its two current members', b;
+  END IF;
+  -- An intake nobody has gets nobody; so does one that doesn't exist.
+  IF public.outbox_alert_recipients(gen_random_uuid()) <> ARRAY[]::text[] THEN RAISE EXCEPTION 'FAIL: an alert for no intake has recipients'; END IF;
+  -- A member who has left stops receiving at once; one who has not yet begun does not receive either.
+  r := pg_temp.recipients_after(format('UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L AND firm_id = %L AND valid_until IS NULL', pg_temp.id('agent_2'), pg_temp.id('firm_a')), sid_a);
+  IF r LIKE '%agent_2@%' OR r NOT LIKE '%advisor@%' THEN RAISE EXCEPTION 'FAIL: a member who left still gets the alert, or the others lost it: %', r; END IF;
+  r := pg_temp.recipients_after(format('INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from) VALUES (%L, %L, ''agent'', now() + interval ''1 day'')', pg_temp.id('firm_a'), pg_temp.id('platform_admin')), sid_a);
+  IF r LIKE '%platform_admin@%' THEN RAISE EXCEPTION 'FAIL: someone whose membership has not begun gets the alert'; END IF;
+  -- Nobody but the service role asks.
+  PERFORM pg_temp.become('advisor');
+  r := pg_temp.attempt(format('SELECT public.outbox_alert_recipients(%L)', sid_a));
+  IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: an advisor reads the alert''s recipients (%)', r; END IF;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: alert recipient cases passed';
+END $$;
+
 -- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
 -- The check that a table "has a firm rule" is by behaviour, never by reading a policy's text: a policy can mention a firm
 -- helper without tying it to the row being read, and a text check passes on a table that is open across firms.
@@ -2671,6 +2726,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('finish_held_mail_discard', 'service_only', 'held mail: the same'),
   ('held_mail_due', 'service_only', 'held mail the schedule discards: ids only'),
   ('held_mail_actor_has', 'service_only', 'held mail: whether an actor holds a platform role'),
+  ('outbox_alert_recipients', 'service_only', 'who a firm''s alert goes to, as the service role: the current members of the intake''s firm and nobody else (4i)'),
   ('mailbox_store', 'service_only', 'a broker''s mailbox, as the service role: only a current member of a firm may connect one (4i)'),
   ('mailbox_secret', 'service_only', 'a broker''s mailbox, as the service role: nothing for a person who is no longer a member of any firm (4i)'),
   ('mailbox_delete', 'service_only', 'a broker''s mailbox, as the service role: the person''s own');

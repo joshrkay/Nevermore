@@ -426,3 +426,25 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.admin_assignable_quote_requests() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_assignable_quote_requests() TO authenticated;
+
+-- ---------- 3. Who is told about a new submission ----------
+-- The advisor alert and the new-PEO-mail alert went to one list set by the platform (ADVISORY_NOTIFY_EMAIL), the same for every
+-- firm. They go to the current members of the firm the intake belongs to, and to no one else: not another firm's people, not a
+-- platform admin who belongs to no firm, not a former member. Asked by dispatch-outbox, as the service role, each time it builds
+-- or resends one, so a member who leaves stops receiving at once. (Intakes have no owner in Epic 1, D-15, so every current member
+-- is told; when owned records exist, who is told follows who can see the record, CRM-P2.1a's can_see_firm_record.)
+CREATE FUNCTION public.outbox_alert_recipients(p_session_id uuid)
+RETURNS text[]
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  SELECT COALESCE(array_agg(DISTINCT lower(btrim(u.email)) ORDER BY lower(btrim(u.email))), ARRAY[]::text[])
+  FROM public.chamber_sessions s
+  JOIN public.firm_memberships m ON m.firm_id = s.firm_id AND public.membership_is_current(m.valid_from, m.valid_until)
+  JOIN auth.users u ON u.id = m.user_id
+  WHERE s.id = p_session_id AND COALESCE(btrim(u.email), '') <> ''
+$$;
+REVOKE ALL ON FUNCTION public.outbox_alert_recipients(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.outbox_alert_recipients(uuid) TO service_role;
