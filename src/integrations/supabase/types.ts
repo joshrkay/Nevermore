@@ -595,6 +595,8 @@ export type Database = {
           code: string
           created_at: string
           created_by_email: string | null
+          // The firm the partner belongs to (20261116200000); a code is unique within it.
+          firm_id: string
           // One of REFERRAL_PARTNER_KINDS (src/data/referralPartners.ts).
           kind: string
           name: string
@@ -825,7 +827,7 @@ export type Database = {
       }
       // Adds a referral partner under a new code; a code already taken is refused (23505).
       advisor_add_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string }
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
       // A page of one firm's record (p_firm_id), newest first, for that firm's current owners only (20261116160001).
@@ -872,7 +874,7 @@ export type Database = {
       }
       // Renames a referral partner or changes its kind; the code never changes.
       advisor_update_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string }
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
       advisor_list_outbox_events: {

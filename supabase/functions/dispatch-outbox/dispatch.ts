@@ -86,6 +86,11 @@ export interface DispatchDeps {
   fail: (id: string, error: string, retryInSeconds: number | null, attempt: number, definitive: boolean) => Promise<void>;
   /** Pushes a dead event to engineering. Resolves to whether it was delivered; optional, since not every deployment has a channel. */
   alertDead?: (event: DeadEvent) => Promise<boolean>;
+  /**
+   * The addresses of the current members of the firm the intake belongs to: who an advisor alert or a new-PEO-mail notice goes to
+   * (never a platform-wide list). Asked each time one is built or resent, so a member who has left stops receiving at once.
+   */
+  advisorRecipients: (sessionId: string) => Promise<string[]>;
   log: (line: string) => void;
 }
 
@@ -121,13 +126,13 @@ export interface DispatchSummary {
 type Built = { ok: true; message: EmailMessage } | { ok: false; reason: string; final: boolean };
 
 /** The email for an event, or why there is none. A bad payload can never succeed, so it is final. */
-function buildMessage(row: OutboxRow, config: DispatchConfig): Built {
+function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[]): Built {
   if (row.kind === "advisor_notification") {
     if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseAdvisorNotification(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
     const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(row.session_id)}`;
-    return { ok: true, message: { from: config.advisor.from, to: config.advisor.to, ...renderAdvisorNotification(n, { reviewUrl }) } };
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderAdvisorNotification(n, { reviewUrl }) } };
   }
   if (row.kind === "peo_mail_arrived") {
     if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
@@ -135,7 +140,7 @@ function buildMessage(row: OutboxRow, config: DispatchConfig): Built {
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
     // The thread is on the submission page, behind advisor sign-in.
     const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(row.session_id)}`;
-    return { ok: true, message: { from: config.advisor.from, to: config.advisor.to, ...renderPeoMailArrived(n, { reviewUrl }) } };
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderPeoMailArrived(n, { reviewUrl }) } };
   }
   if (row.kind === "prospect_confirmation") {
     if (!config.prospect.ok) return { ok: false, reason: "not_configured", final: false };
@@ -197,6 +202,15 @@ export function parsePending(raw: unknown): PendingSend | null {
 
 const isFresh = (pending: PendingSend, nowMs: number) => nowMs - Date.parse(pending.frozen_at) < FROZEN_MAX_AGE_MS;
 
+const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived";
+
+/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member. */
+function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
+  if (!isAdvisorKind(kind)) return true;
+  const members = new Set(current.map((a) => a.toLowerCase()));
+  return pending.message.to.every((a) => members.has(a.toLowerCase()));
+}
+
 /** `frozen`: the message an earlier attempt wrote down. `fresh`: built from the current settings for this attempt. */
 type MessageOrigin = "frozen" | "fresh";
 
@@ -207,10 +221,22 @@ type Prepared =
 
 /** The frozen send to use for a claimed row: the stored one if it is usable, else a new one built from the current settings and frozen. */
 async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
-  const stored = parsePending(row.pending_send);
-  if (stored && isFresh(stored, deps.now())) return { outcome: "send", pending: stored, origin: "frozen" };
+  // An advisor alert goes to the current members of the intake's firm, asked for now: a stored message that names someone who has
+  // since left is not sent, and nothing is sent when the firm has no one to tell or the answer can't be had.
+  let advisorTo: string[] = [];
+  if (isAdvisorKind(row.kind)) {
+    try {
+      advisorTo = await deps.advisorRecipients(row.session_id);
+    } catch {
+      return { outcome: "fail", reason: "recipients_failed", final: false };
+    }
+    if (advisorTo.length === 0) return { outcome: "fail", reason: "no_recipients", final: false };
+  }
 
-  const built = buildMessage(row, deps.config);
+  const stored = parsePending(row.pending_send);
+  if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
+
+  const built = buildMessage(row, deps.config, advisorTo);
   if (!built.ok) return { outcome: "fail", reason: built.reason, final: built.final };
 
   // Whatever is stored but unusable (too old, or not the shape we write) must be overwritten; the
