@@ -229,6 +229,14 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.sees('lead_n', 'north', 'agent_gone'), false, 'a lead seeing a record of someone who has left their team');
   PERFORM pg_temp.is(pg_temp.sees('owner_n', 'north', 'agent_gone'), true, 'an owner seeing a record of someone who has left');
 
+  -- A lead who moved from one team to another sees the new team's records, and no longer the old one's.
+  PERFORM pg_temp.new_user('lead_mover');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id, valid_from, valid_until) VALUES
+    (north, pg_temp.id('lead_mover'), 'lead', pg_temp.id('support'), now() - interval '2 days', now() - interval '1 day'),
+    (north, pg_temp.id('lead_mover'), 'lead', pg_temp.id('sales'), now() - interval '1 day', NULL);
+  PERFORM pg_temp.is(pg_temp.sees('lead_mover', 'north', 'agent_sales'), true, 'a lead seeing the team they moved to');
+  PERFORM pg_temp.is(pg_temp.sees('lead_mover', 'north', 'agent_support'), false, 'a lead still seeing the team they moved from');
+
   -- A lead with no team sees their own only.
   RESET ROLE;
   PERFORM pg_temp.new_user('lead_loose');
