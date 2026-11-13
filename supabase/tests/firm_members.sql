@@ -998,3 +998,26 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'firm_members: firm address passed';
 END $$;
+
+-- ---------- the hourly schedule of the cleanup ----------
+-- Stand-in for pg_cron's schedule (same name and signature), as supabase/tests/outbox_schedule.sql uses. The migration is written to be run
+-- again, so it is run twice here: the job is made once, hourly, calling the cleanup, and an existing job of that name is left as it is.
+-- Break caught: the cleanup is never scheduled, runs on another cadence, or is scheduled twice.
+CREATE SCHEMA cron;
+CREATE TABLE cron.job (jobid serial PRIMARY KEY, jobname text UNIQUE, schedule text NOT NULL, command text NOT NULL);
+CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURNS bigint LANGUAGE sql AS $$
+  INSERT INTO cron.job (jobname, schedule, command) VALUES (job_name, schedule, command)
+  ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+  RETURNING jobid::bigint
+$$;
+\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
+\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
+DO $$
+DECLARE job cron.job;
+BEGIN
+  PERFORM pg_temp.is((SELECT count(*) FROM cron.job)::integer, 1, 'the cleanup is scheduled once');
+  SELECT * INTO job FROM cron.job WHERE jobname = 'drop-former-members-mailboxes';
+  PERFORM pg_temp.is(job.schedule ~ '^[0-9]+ \* \* \* \*$', true, 'every hour');
+  PERFORM pg_temp.is(job.command, 'select public.drop_mailboxes_of_former_members()', 'and it runs the cleanup');
+  RAISE NOTICE 'firm_members: cleanup schedule passed';
+END $$;

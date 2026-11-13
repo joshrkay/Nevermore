@@ -141,6 +141,13 @@ describe("the members page", () => {
     expect(screen.getByText("lead@acme.example is suspended.")).toBeInTheDocument();
   });
 
+  it("names an agent with the right article in the suspend question", async () => {
+    renderPage();
+    await screen.findByRole("table", { name: "Members" });
+    fireEvent.click(within(row("agent@acme.example")).getByRole("button", { name: "Suspend agent@acme.example" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("stay on this list as an agent until you lift the suspension.");
+  });
+
   it("asks before lifting a suspension, and gives the person their access back as a member once confirmed", async () => {
     renderPage();
     await screen.findByRole("table", { name: "Members" });
