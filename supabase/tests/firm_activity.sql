@@ -101,6 +101,7 @@
 \i supabase/migrations/20261116090000_firms.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_activity.sql
+\i supabase/migrations/20261116160001_firm_activity_hardening.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -209,7 +210,6 @@ INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
   (pg_temp.id('firm_a'), pg_temp.id('agent_a'), 'agent'),
   (pg_temp.id('firm_b'), pg_temp.id('owner_b'), 'owner'),
   (pg_temp.id('firm_b'), pg_temp.id('agent_b'), 'agent');
-DELETE FROM public.firm_activity WHERE false;
 
 -- ---------- 1. A person opening a submission is recorded, in the submission's firm, as that person ----------
 SELECT pg_temp.as_user('agent_a');
@@ -245,10 +245,16 @@ BEGIN
   UPDATE public.firm_memberships SET valid_until = valid_until WHERE user_id = pg_temp.id('lead_a') AND firm_id = pg_temp.id('firm_a');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity), before_count, 'an update that ends nothing is not a change');
 END $$;
--- Removing an account removes its memberships; the record of them stays.
+-- Removing an account removes its memberships; the record of them stays, once, and only for those still current.
 DELETE FROM auth.users WHERE id = pg_temp.id('agent_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'member_ended' AND subject_user_id = pg_temp.id('agent_b')
   AND firm_id = pg_temp.id('firm_b')), 1::bigint, 'a membership removed with its account is recorded');
+SELECT pg_temp.new_user('former_a');
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_a'), pg_temp.id('former_a'), 'agent');
+UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('former_a');
+DELETE FROM auth.users WHERE id = pg_temp.id('former_a');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'member_ended' AND subject_user_id = pg_temp.id('former_a')), 1::bigint,
+  'removing the account of someone whose membership had already ended records no second end');
 SELECT pg_temp.as_owner();
 
 -- ---------- 3. A recorded send is recorded ----------
@@ -324,6 +330,47 @@ SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)',
   '42501', 'a guest token reporting a view');
 SELECT pg_temp.as_owner();
 
+-- A browser reports only the pairs of kind and record that can happen: a mismatched pair is a false entry.
+SELECT pg_temp.as_user('agent_a');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'document_downloaded', 'membership',
+  (SELECT m.id FROM public.firm_memberships m WHERE m.user_id = pg_temp.id('owner_a'))), '42501', 'a download of a membership');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a view of a firm');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'packet_downloaded', 'document', pg_temp.id('doc_a')),
+  '42501', 'a packet download of a document');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'document', pg_temp.id('doc_a')),
+  '42501', 'a view of a document');
+-- A download of the submission's own files (census, answers, applications, bundle) is a document download of the submission.
+SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'submission'
+  AND actor_id = pg_temp.id('agent_a')), 1::bigint, 'a file of a submission downloaded is recorded against the submission');
+-- The same person reporting the same thing again straight away is one entry, so a loop can't flood the record.
+SELECT pg_temp.as_user('agent_a');
+SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
+SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'submission'
+  AND actor_id = pg_temp.id('agent_a')), 1::bigint, 'reporting the same download again within moments adds nothing');
+-- A browser is not told the number of the entry it wrote: numbering is shared by every firm.
+SELECT pg_temp.is((SELECT prorettype::regtype::text FROM pg_proc WHERE proname = 'record_member_activity'), 'void',
+  'the browser function hands back nothing, so ids cannot be used to count other firms'' entries');
+
+-- A server function acting for a signed-in member records that member as the actor, never a person it names who isn't one.
+SELECT pg_temp.as_service();
+SELECT public.record_firm_activity_as(pg_temp.id('lead_a'), 'export_made', 'firm', pg_temp.id('firm_a')::text);
+SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('agent_b'), 'export_made', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a server function naming someone who is not a member of the record''s firm');
+SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('prospect_b'), 'export_made', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a server function naming a guest');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = pg_temp.id('firm_a')
+  AND actor_id = pg_temp.id('lead_a')), 1::bigint, 'a server-path entry carries the member as the actor');
+SELECT pg_temp.as_user('owner_a');
+SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('lead_a'), 'export_made', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a browser naming an actor through the server function');
+SELECT pg_temp.as_owner();
+
 -- The service writes any kind and is no one: its entry has no actor, and it can't name one.
 SELECT pg_temp.as_service();
 SELECT public.record_firm_activity('export_made', 'firm', pg_temp.id('firm_a')::text);
@@ -374,23 +421,30 @@ BEGIN
   PERFORM set_config('eaa.pruning_firm_activity', '', false);
   PERFORM pg_temp.as_owner();
   PERFORM set_config('eaa.pruning_firm_activity', 'on', false);
+  PERFORM pg_temp.expect('DELETE FROM public.firm_activity WHERE id = (SELECT id FROM one_entry)', '42501', 'delete by the table owner who says it is a prune');
+  PERFORM pg_temp.as_service();
+  PERFORM set_config('eaa.pruning_firm_activity', 'on', false);
+  PERFORM pg_temp.expect('DELETE FROM public.firm_activity WHERE id = (SELECT id FROM one_entry)', '42501', 'delete by the service who says it is a prune');
+  PERFORM pg_temp.as_owner();
+  PERFORM set_config('eaa.pruning_firm_activity', 'on', false);
   PERFORM pg_temp.expect('UPDATE public.firm_activity SET kind = ''sign_in'' WHERE id = (SELECT id FROM one_entry)', '42501', 'an update, whatever is said');
   PERFORM set_config('eaa.pruning_firm_activity', '', false);
 END $$;
 SELECT pg_temp.as_owner();
 
 -- ---------- 7. A firm's owners read their firm's record, filtered and paged, newest first ----------
-CREATE FUNCTION pg_temp.ids(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL, lim integer DEFAULT 50, off integer DEFAULT 0)
+CREATE FUNCTION pg_temp.ids(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL, lim integer DEFAULT 50, after_id bigint DEFAULT NULL)
 RETURNS bigint[] LANGUAGE sql AS $$
   SELECT COALESCE(array_agg(e.id ORDER BY ord), '{}') FROM public.firm_activity_list(pg_temp.id(p_firm),
-    CASE WHEN p_person IS NULL THEN NULL ELSE pg_temp.id(p_person) END, p_kind, lim, off) WITH ORDINALITY AS e(id, at, actor_id, actor_email, kind, record_type,
+    CASE WHEN p_person IS NULL THEN NULL ELSE pg_temp.id(p_person) END, p_kind, lim,
+    (SELECT c.at FROM public.firm_activity c WHERE c.id = after_id), after_id) WITH ORDINALITY AS e(id, at, actor_id, actor_email, kind, record_type,
     record_id, subject_user_id, subject_email, role, ord);
 $$;
 CREATE FUNCTION pg_temp.truth(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL) RETURNS bigint[] LANGUAGE sql AS $$
   SELECT COALESCE(array_agg(a.id ORDER BY a.at DESC, a.id DESC), '{}') FROM public.firm_activity a
   WHERE a.firm_id = pg_temp.id(p_firm) AND (p_person IS NULL OR a.actor_id = pg_temp.id(p_person)) AND (p_kind IS NULL OR a.kind = p_kind);
 $$;
-GRANT EXECUTE ON FUNCTION pg_temp.ids(text, text, text, integer, integer), pg_temp.truth(text, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION pg_temp.ids(text, text, text, integer, bigint), pg_temp.truth(text, text, text) TO authenticated;
 -- Entries at known times, so "newest first" is not just the order they were inserted in.
 SELECT pg_temp.as_owner();
 ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
@@ -409,12 +463,23 @@ SELECT pg_temp.is(cardinality(pg_temp.ids('firm_a', 'agent_a')) > 0 AND cardinal
 SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, 'document_downloaded'), pg_temp.truth('firm_a', NULL, 'document_downloaded'), 'filtered by kind');
 SELECT pg_temp.is(pg_temp.ids('firm_a', 'lead_a', 'packet_downloaded'), pg_temp.truth('firm_a', 'lead_a', 'packet_downloaded'), 'filtered by person and kind');
 SELECT pg_temp.is(cardinality(pg_temp.ids('firm_a', 'agent_a', 'packet_downloaded')), 0, 'a person and kind that never met match nothing');
-SELECT pg_temp.is((SELECT at FROM public.firm_activity_list(pg_temp.id('firm_a'), NULL, NULL, 1, 0)), (SELECT max(at) FROM public.firm_activity), 'the newest entry is first');
+SELECT pg_temp.is((SELECT at FROM public.firm_activity_list(pg_temp.id('firm_a'), NULL, NULL, 1, NULL, NULL)), (SELECT max(at) FROM public.firm_activity), 'the newest entry is first');
 SELECT pg_temp.is((SELECT l.kind FROM public.firm_activity_list(pg_temp.id('firm_a')) l ORDER BY l.at ASC LIMIT 1), 'packet_downloaded', 'an old entry made late sorts by when it happened, not by when it was written');
-SELECT pg_temp.is((SELECT l.kind FROM public.firm_activity_list(pg_temp.id('firm_a'), NULL, NULL, 1, cardinality(pg_temp.truth('firm_a')) - 1) l), 'packet_downloaded', 'the oldest entry is last');
-SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 2, 0) || pg_temp.ids('firm_a', NULL, NULL, 2, 2), (pg_temp.truth('firm_a'))[1:4], 'pages follow one another without a gap or a repeat');
-SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 101, 0)', pg_temp.id('firm_a')), '22023', 'a page of more than 100');
-SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, -1)', pg_temp.id('firm_a')), '22023', 'a page before the first');
+SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 1, (pg_temp.truth('firm_a'))[cardinality(pg_temp.truth('firm_a')) - 1]),
+  ARRAY[(pg_temp.truth('firm_a'))[cardinality(pg_temp.truth('firm_a'))]], 'the oldest entry is last');
+SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 2) || pg_temp.ids('firm_a', NULL, NULL, 2, (pg_temp.ids('firm_a', NULL, NULL, 2))[2]),
+  (pg_temp.truth('firm_a'))[1:4], 'pages follow one another without a gap or a repeat');
+-- Entries that arrive between two pages change neither: the next page starts after the last entry the reader saw.
+SELECT set_config('test.page_one', pg_temp.ids('firm_a', NULL, NULL, 2)::text, false);
+SELECT set_config('test.page_rest', (pg_temp.truth('firm_a'))[3:4]::text, false);
+SELECT pg_temp.as_owner();
+INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (pg_temp.id('firm_a'), 'invitation_sent', 'firm', pg_temp.id('firm_a')::text);
+SELECT pg_temp.as_user('owner_a');
+SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 2, (current_setting('test.page_one')::bigint[])[2])::text, current_setting('test.page_rest'),
+  'an entry arriving between two pages makes the next page neither repeat nor skip a row');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 101, NULL, NULL)', pg_temp.id('firm_a')), '22023', 'a page of more than 100');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, now(), NULL)', pg_temp.id('firm_a')), '22023', 'a cursor with a time and no id');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, NULL, 5)', pg_temp.id('firm_a')), '22023', 'a cursor with an id and no time');
 SELECT pg_temp.is((SELECT actor_email FROM public.firm_activity_list(pg_temp.id('firm_a'), pg_temp.id('lead_a'), 'packet_downloaded')), 'lead_a@example.test',
   'an entry names its person');
 SELECT pg_temp.is((SELECT array_agg(email ORDER BY email) FROM public.firm_activity_people(pg_temp.id('firm_a'))),
@@ -422,14 +487,32 @@ SELECT pg_temp.is((SELECT array_agg(email ORDER BY email) FROM public.firm_activ
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity), (SELECT count(*) FROM public.firm_activity WHERE firm_id = pg_temp.id('firm_a')),
   'reading the table directly shows only their own firm''s rows');
 
--- Which firm's record a signed-in person reads: the firm they are a current owner of, none for anyone else.
-SELECT pg_temp.is(public.my_owner_firm(), pg_temp.id('firm_a'), 'an owner is told their firm');
+-- Which firms a signed-in person may read the record of: those they currently own, none for anyone else. The firm to read is
+-- always named by the caller, and the read checks they own that one, so an owner of two firms reaches both.
+SELECT pg_temp.as_owner();
+SELECT pg_temp.new_user('owner_ab');
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
+  (pg_temp.id('firm_a'), pg_temp.id('owner_ab'), 'owner'), (pg_temp.id('firm_b'), pg_temp.id('owner_ab'), 'owner');
+SELECT pg_temp.as_user('owner_a');
+SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_a')], 'an owner is told their firm');
+SELECT pg_temp.as_user('owner_ab');
+SELECT pg_temp.is((SELECT array_agg(firm_id ORDER BY name) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_b'), pg_temp.id('firm_a')],
+  'an owner of two firms is told both, by name');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_a'))) > 0, true, 'an owner of two firms reads the first firm''s record');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b'))) > 0, true, 'and the second firm''s');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b')) WHERE record_id = pg_temp.id('intake_a')::text), 0::bigint,
+  'each firm''s read holds only that firm''s entries');
 SELECT pg_temp.as_user('agent_a');
-SELECT pg_temp.is(public.my_owner_firm(), NULL::uuid, 'an agent is told no firm');
+SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 0::bigint, 'an agent is told no firm');
 SELECT pg_temp.as_user('platform_admin');
-SELECT pg_temp.is(public.my_owner_firm(), NULL::uuid, 'a platform admin who is no owner is told no firm');
+SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 0::bigint, 'a platform admin who is no owner is told no firm');
 SELECT pg_temp.as_user('lead_a');
-SELECT pg_temp.is(public.my_owner_firm(), pg_temp.id('firm_b'), 'a lead in one firm and owner of another is told the one they own');
+SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_b')], 'a lead in one firm and owner of another is told the one they own');
+SELECT pg_temp.expect('SELECT public.my_owner_firm()', '42883', 'the old function that picked a firm for the caller is gone');
+SELECT pg_temp.as_owner();
+RESET ROLE;
+SELECT set_config('role', 'anon', false);
+SELECT pg_temp.expect('SELECT * FROM public.my_owner_firms()', '42501', 'someone signed out asking which firms they own');
 SELECT pg_temp.as_user('owner_a');
 
 -- Role is per firm: lead_a is an owner of firm B and only a lead in firm A.
@@ -464,6 +547,11 @@ SELECT pg_temp.expect('SELECT public.prune_firm_activity()', '42501', 'an owner 
 SELECT pg_temp.as_service();
 SELECT pg_temp.is(public.prune_firm_activity(), 1, 'the retention job removes the entry past the window and reports how many');
 SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE proname = 'prune_firm_activity')::text, 'firm_activity_pruner',
+  'the retention function runs as the role that alone may delete');
+SELECT pg_temp.is((SELECT rolcanlogin OR rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = 'firm_activity_pruner'), false, 'and that role cannot sign in');
+SELECT pg_temp.is((SELECT count(*) FROM pg_auth_members WHERE roleid = 'firm_activity_pruner'::regrole AND member IN
+  (SELECT oid FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role'))), 0::bigint, 'no API role is a member of it');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'sign_in' AND at < now() - interval '90 days'), 0::bigint, 'nothing past the window is left');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'sign_in' AND at > now() - interval '90 days'), 1::bigint, 'an entry inside the window is kept');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind <> 'sign_in'), (SELECT count(*) FROM public.firm_activity WHERE kind <> 'sign_in' AND at > now() - interval '90 days'), 'the job left everything else');
