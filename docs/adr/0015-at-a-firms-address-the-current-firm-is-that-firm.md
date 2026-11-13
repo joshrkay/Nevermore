@@ -8,9 +8,9 @@ ADR 0014 kept a member of several firms out of the whole console. The guard did 
 
 ## Decision
 
-At a known firm address the current firm is that address's firm. The person must be a current member of it; the role that counts is the one they hold there (a member route asks for a membership, an owner route for the role owner at that firm). The refusal "member of several firms" now applies only where there is no firm address to choose by, the bare domain. `currentFirm()` is the one place that says so, and the guards, the header's links and the badge all ask it.
+At a known firm address the current firm is that address's firm. The person must be a current member of it; the role that counts is the one they hold there (a member route asks for a membership, an owner route for the role owner at that firm). `currentFirm()` returns that firm and whether the person belongs to several. The member guard keeps refusing "member of several firms" (the member pages do not filter by the address); only the owner guard, the Activity link and the badge accept it, because the Activity page checks the address's firm itself. On the bare domain there is no address to choose by, so several firms is refused everywhere. `currentFirm()` is the one place that says so.
 
 ## Consequences
 
-- The database still narrows each answer to the firms a person belongs to, not to the one an address names (D-18). A member of two firms at one firm's address therefore has pages that may list the other firm's records too until the workspace shell (Epic 2) makes the database answer for one firm. Owner-only access is not affected: it is decided by the role at the address's firm.
-- A person who is an agent at Alpha and an owner at Beta is refused Activity at Alpha's address and reaches Alpha's member pages.
+- The database still narrows each answer to the firms a person belongs to, not to the one an address names (D-18). A member of several firms therefore stays out of the member pages (queue, submission, funnel, outbox, partners) until the workspace shell (Epic 2) makes the database answer for one firm, as ADR 0014 accepted. Owner-only access is decided by the role at the address's firm.
+- A person who is an agent at Alpha and an owner at Beta is refused Activity at Alpha's address and is kept out of the member pages as a member of several firms.

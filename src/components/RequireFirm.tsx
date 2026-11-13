@@ -78,7 +78,8 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
       check={async () => {
         const firms = await loadMyFirms(userId, sessionKey);
         const here = currentFirm(firms, address);
-        seen.current = { firms, refusal: "firm" in here ? null : here.refusal };
+        // Member pages are not narrowed to the address's firm, so a member of several firms stays out of them (ADR 0015).
+        seen.current = { firms, refusal: "firm" in here ? (here.several ? "several" : null) : here.refusal };
         return seen.current.refusal === null;
       }}
       deniedCode="firm_member_route"

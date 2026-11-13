@@ -6,7 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import LegalLinks from "@/components/LegalLinks";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { useMyFirms } from "@/hooks/useOwnedFirms";
-import { currentFirm, isOwnerHere } from "@/lib/currentFirm";
+import { currentFirm } from "@/lib/currentFirm";
 import { fetchIsAdmin } from "@/lib/advisorApi";
 
 const AdvisorHeader = () => {
@@ -19,7 +19,8 @@ const AdvisorHeader = () => {
   const isMember = mine !== null && mine.length > 0;
   // The record of who did what is for the owners of the firm the console is showing (the same firm the guard and the page
   // use), not for anyone who owns some firm: until the database says so, or if it can't be asked, the link isn't shown.
-  const ownsThisFirm = mine !== null && isOwnerHere(mine, address);
+  const here = mine ? currentFirm(mine, address) : null;
+  const ownsThisFirm = here !== null && "firm" in here && here.firm.role === "owner";
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -28,8 +29,7 @@ const AdvisorHeader = () => {
       cancelled = true;
     };
   }, [user?.id]);
-  // The firm's name when there is one firm; the console shows one firm at a time.
-  const here = mine ? currentFirm(mine, address) : null;
+  // The current firm's name (currentFirm: the address's firm, or the only firm on the bare domain).
   const badge = here && "firm" in here ? here.firm.name : isAdmin && mine?.length === 0 ? "Platform" : "Firm";
   return (
     <header className="border-b border-border bg-card">
