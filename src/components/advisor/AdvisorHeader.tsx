@@ -64,6 +64,12 @@ const AdvisorHeader = () => {
             Mailbox
           </NavLink>
           <NavLink
+            to="/advisor/firms"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Firms
+          </NavLink>
+          <NavLink
             to="/advisor/organisations"
             className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
           >

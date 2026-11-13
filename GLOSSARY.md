@@ -258,11 +258,20 @@ _Avoid_: subdomain, slug, URL
 **Firm host** (code: `firmAddressFromHost`, `src/lib/firmHost.ts`):
 The firm address read out of the host the app is served on: `name.nevermorepeo.com`, or `name.localhost` for local development and the end-to-end tests. The bare domain, `www` and any other host name no firm and keep today's behaviour; a name with more than one label in front of the domain matches no firm and shows as not found. It only picks what the screen shows (D-17, D-18).
 
+**Firm sign-up** (code: `sign_up_firm`, `/firms/new`):
+A signed-in person with a verified email gives a firm name and a firm address and becomes the firm's first owner in one step. The firm exists at once and its members can work, but it is waiting for approval: it cannot send to a PEO until a platform admin approves it (Q-1.2). The address is read as every firm address is (lower case, no surrounding spaces) and the address rules of the table apply. A person has one firm waiting for approval at a time: signing up another is refused until the first is decided (D-30).
+
+**Waiting for approval** (code: `firms.approved_at` empty and `firms.decision` empty):
+A firm that has signed up and has no decision yet. A platform admin sees these through `admin_waiting_firms`, oldest first, and no other way (D-16). Each shows who signed the firm up, kept on the firm (`firms.signed_up_by`) when it was signed up: it stays that person if ownership later passes to someone else.
+
+**Firm decision** (code: `admin_decide_firm`, `firms.decision`, `decided_at`, `decided_by`, `decision_note`):
+A platform admin's approval or refusal of a waiting firm, with an optional note. Approving sets `approved_at`; refusing leaves it empty. A firm is decided once, and an admin does not decide on a firm they belong to. A refused firm is hidden at its address and its founder is not let in there, yet the address stays taken (D-31). The event is written through `record_firm_event`, the one small function the record of who did what (CRM-P2.3) takes over.
+
 **Public firm name** (code: `firm_public_name`):
-What a firm's address shows before anyone signs in: the firm's name, and nothing else, for any firm that exists, approved or still waiting for approval (a waiting firm's members can work before approval; approval gates sending, not signing in). Only an address no firm holds gives nothing, and it shows a plain not-found page to everyone, with no sign-in and no sign-in callback pages (D-27). Firms have no logo field yet.
+What a firm's address shows before anyone signs in: the firm's name, and nothing else, for any firm that exists and is not refused, approved or still waiting for approval (a waiting firm's members can work before approval; approval gates sending, not signing in). An address no firm holds, or one a refused firm holds (D-31), gives nothing, and it shows a plain not-found page to everyone, with no sign-in and no sign-in callback pages (D-27). Firms have no logo field yet.
 
 **Not a member screen**:
-What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only. The database, not this screen, refuses them the data (D-18).
+What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only, and false for a refused firm's address. The database, not this screen, refuses them the data (D-18).
 
 **Session per address**:
 A sign-in belongs to one firm address: the browser keeps its session per origin, so signing in at one firm's address does not sign the person in at another's, and the provider sends them back to the address they started from. A person in two firms signs in to each. Signing out on a firm's address ends only that address's session; on the bare domain and www it is a plain sign-out that ends every session of that person, as before (D-27). If a session exists at an address no firm holds, the not-found page carries a sign-out.
