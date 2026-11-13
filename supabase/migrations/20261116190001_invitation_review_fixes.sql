@@ -1,4 +1,9 @@
--- Review fixes to invitations (story CRM-P1.2; docs/BROKER_CRM_BUILD.md D-29, D-32, D-34).
+-- Review fixes to invitations (story CRM-P1.2; docs/BROKER_CRM_BUILD.md D-29, D-32, D-34), on top of 20261116190000_firm_invitations.sql:
+--   * accept_invitation takes the address the link was opened at and joins nothing unless it is the invitation's firm's;
+--   * the firm's approval decision limits what it can do with invitations (a waiting firm: at most five pending, under a lock
+--     with a two-connection test; a refused firm: no inviting, no resending, nothing to accept);
+--   * the address rule of the table is the mail sender's own, so nothing that can't be emailed is kept;
+--   * how an invitation's email fared is recorded against the link that was sent (its token hash), as sent, failed or unknown.
 
 -- Accepting is bound to the firm's own address (D-34): the call is given the address it was opened at and joins nothing, and
 -- spends nothing, unless that is the address of the invitation's firm. It is checked here, in the same call, so no caller can

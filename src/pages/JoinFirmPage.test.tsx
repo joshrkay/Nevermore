@@ -24,7 +24,7 @@ const openLink = (url = "/join#token=the-token") => window.history.replaceState(
 const renderAt = (url: string | null = "/join#token=the-token") => {
   if (url !== null) openLink(url);
   return render(
-    <MemoryRouter initialEntries={["/join"]}>
+    <MemoryRouter initialEntries={[url ?? "/join"]}>
       <Routes>
         <Route path="/join" element={<JoinFirmPage />} />
         <Route path="/login" element={<LoginProbe />} />
@@ -53,6 +53,7 @@ describe("JoinFirmPage", () => {
     expect(screen.getByRole("heading", { name: "Join Acme Brokers" })).toBeInTheDocument();
     expect(screen.getByText(/sign in or create your account with the email address this invitation was sent to/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Sign in or create an account" }));
+    // Back to the page, and not to an address that carries the secret again.
     expect(await screen.findByText("Sign-in page, back to /join")).toBeInTheDocument();
     expect(api.acceptInvitation).not.toHaveBeenCalled();
   });
