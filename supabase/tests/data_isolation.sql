@@ -1088,6 +1088,12 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.admin_register_census_template(0, ''x.xlsx'', 1, NULL)', 'recording an upload of a PEO template workbook, before its scan'),
   ('is_clean_census_template_file(p_name text)', 'signed_in', NULL, 'the storage policy on peo-templates: whether a file is a clean template''s; names no one'),
   ('clean_template_workbook_path(p_peo_id bigint, p_template_id bigint)', 'signed_in', NULL, 'where a clean PEO template workbook''s file is, to read it; a PEO''s blank form, names no one');
+-- CRM-S3.3b (20261117100000_queue_query.sql): the queue's query.
+INSERT INTO callable VALUES
+  ('queue_list_submissions(p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'advisor',
+                                                                     'SELECT public.queue_list_submissions(''[]'', ''company_name'', ''asc'', 1)', 'the queue: one page, filtered and sorted in the database (D-44)'),
+  ('queue_view_counts(p_views jsonb, p_search text, p_time_zone text)', 'advisor',
+                                                                     'SELECT count(*) FROM public.queue_view_counts(''[{"name":"All"}]'')', 'the count on each of the queue''s view tabs');
 
 DO $$
 DECLARE
@@ -1559,6 +1565,15 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    ARRAY['42501', 'ok:false'], '^ok:true$');
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:{}'], member_ok = '^ok:\{company_name\}$' WHERE fn = 'session_verified_fields';
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:false'], member_ok = '^ok:true$' WHERE fn = 'retry_intake_deletion';
+-- CRM-S3.3b: the queue's query. The list returns only the caller's firm's intakes; each count equals the caller's own firm's.
+INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
+  ('queue_list_submissions', 'advisor', 'list',
+   $$SELECT COALESCE(string_agg(r ->> 'session_id', ','), '') FROM jsonb_array_elements(public.queue_list_submissions('[]', NULL, 'asc', 1) -> 'rows') r$$,
+   ARRAY['advisor', 'agent_b']);
+INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
+  ('queue_view_counts', 'advisor', 'count',
+   $$SELECT total::text FROM public.queue_view_counts('[{"name":"Submitted","filters":[{"field":"intake_status","op":"any_of","value":["submitted"]}]}]')$$,
+   $$SELECT count(*)::text FROM public.chamber_sessions s JOIN public.submission_workflow w ON w.session_id = s.id WHERE s.firm_id = {firm} AND s.status = 'submitted'$$);
 
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
@@ -3070,6 +3085,13 @@ SELECT unnest(ARRAY[
   'snapshot_certified_evidence', 'stamp_message_firm', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',
   'track_intake_milestones', 'validate_certification'
 ]), 'trigger', 'a trigger function: not executable through the API';
+
+-- CRM-S3.3b (20261117100000_queue_query.sql): the queue's query. The two functions the browser calls read the queue's rows through
+-- advisor_list_submissions (its firm rule); the filter, sort and row helpers they call are executable by no API role, so they are
+-- not privileged and need no entry.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
+  ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)');
 
 -- Everything wrong between the registry and the catalogue, one per line, or NULL. It reads which functions exist and who may
 -- execute them, never what a function says.

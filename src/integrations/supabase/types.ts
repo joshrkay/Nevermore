@@ -1097,6 +1097,22 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: { version: number; storage_path: string; generated_at: string; corrections_applied: number }[]
       }
+      // CRM-S3.3b: the queue's query (20261117100000_queue_query.sql). The page's shape is typed in src/lib/queueApi.ts.
+      queue_list_submissions: {
+        Args: {
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      queue_view_counts: {
+        Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
       record_intake_consent: {
         Args: { p_text: string; p_version: string }
         // When the server received the agreement (the first one, when agreeing again).

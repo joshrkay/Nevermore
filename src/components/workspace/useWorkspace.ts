@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { useMyFirms } from "@/hooks/useOwnedFirms";
@@ -26,8 +26,8 @@ function firmShown(firms: MyFirm[] | null, address: string | null): MyFirm | nul
   return "firm" in here ? here.firm : null;
 }
 
-/** Which firm and role the workspace is showing, who the person is, and whether they are a platform admin. */
-export function useWorkspace(): Workspace {
+/** Asks the database once; read through `WorkspaceProvider`, never called by the parts of the shell themselves. */
+function useLoadWorkspace(): Workspace {
   const { user } = useAuth();
   const firmAddress = useFirmAddress();
   const mine = useMyFirms();
@@ -48,4 +48,18 @@ export function useWorkspace(): Workspace {
     isPlatformAdmin,
     person: named?.trim() ?? user?.email ?? "",
   };
+}
+
+const WorkspaceContext = createContext<Workspace | null>(null);
+
+/** Loads the workspace state once for everything inside the shell (one platform-admin question, not one per reader). */
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  return createElement(WorkspaceContext.Provider, { value: useLoadWorkspace() }, children);
+}
+
+/** Which firm and role the workspace is showing, who the person is, and whether they are a platform admin. */
+export function useWorkspace(): Workspace {
+  const workspace = useContext(WorkspaceContext);
+  if (!workspace) throw new Error("useWorkspace must be used inside the workspace shell.");
+  return workspace;
 }

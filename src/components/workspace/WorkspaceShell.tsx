@@ -10,7 +10,7 @@ import {
 import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
 import { MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
-import { useWorkspace } from "./useWorkspace";
+import { useWorkspace, WorkspaceProvider } from "./useWorkspace";
 
 // The class of the grey-and-blue look (D-41, src/index.css). It goes on the page's root element, not on the shell's own
 // element, so dialogs, sheets and messages drawn outside the shell take the same look. Removed when the shell unmounts.
@@ -18,13 +18,13 @@ export const WORKSPACE_THEME_CLASS = "theme-workspace";
 
 const initial = (name: string) => name.trim().charAt(0).toUpperCase() || "?";
 
-const Item = ({ item, pathname, search }: { item: MenuItem; pathname: string; search: URLSearchParams }) => {
+const Item = ({ item, pathname, search, onChoose }: { item: MenuItem; pathname: string; search: URLSearchParams; onChoose: () => void }) => {
   const here = item.isCurrent(pathname, search);
   const Icon = item.icon;
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={here}>
-        <Link to={item.to} aria-current={here ? "page" : undefined}>
+        <Link to={item.to} onClick={onChoose} aria-current={here ? "page" : undefined}>
           <Icon aria-hidden="true" />
           <span>{item.label}</span>
         </Link>
@@ -34,7 +34,9 @@ const Item = ({ item, pathname, search }: { item: MenuItem; pathname: string; se
 };
 
 const MenuBody = () => {
-  const { isMobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
+  // Choosing an item closes the menu opened over the page, including the item for the page already shown.
+  const close = () => setOpenMobile(false);
   const { pathname, search } = useLocation();
   const params = new URLSearchParams(search);
   const { signOut } = useAuth();
@@ -43,7 +45,7 @@ const MenuBody = () => {
     <>
       {isMobile && <SheetTitle className="sr-only">Menu</SheetTitle>}
       <SidebarHeader className="p-3">
-        <Link to="/advisor" className="flex items-center gap-3 rounded-md p-1 outline-none ring-sidebar-ring focus-visible:ring-2">
+        <Link to="/advisor" onClick={close} className="flex items-center gap-3 rounded-md p-1 outline-none ring-sidebar-ring focus-visible:ring-2">
           <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-sidebar-primary font-semibold text-sidebar-primary-foreground">
             {firm ? initial(firm.name) : ""}
           </span>
@@ -57,17 +59,17 @@ const MenuBody = () => {
         <SidebarGroup className="flex-1">
           <nav aria-label="Workspace" className="flex h-full flex-col">
             <SidebarMenu>
-              {MENU_ITEMS.map((item) => <Item key={item.key} item={item} pathname={pathname} search={params} />)}
+              {MENU_ITEMS.map((item) => <Item key={item.key} item={item} pathname={pathname} search={params} onChoose={close} />)}
             </SidebarMenu>
             <SidebarMenu className="mt-auto">
               {isPlatformAdmin && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <Link to="/advisor/firms"><ShieldCheck aria-hidden="true" /><span>Nevermore admin</span></Link>
+                    <Link to="/advisor/firms" onClick={close}><ShieldCheck aria-hidden="true" /><span>Nevermore admin</span></Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              <Item item={SETTINGS_ITEM} pathname={pathname} search={params} />
+              <Item item={SETTINGS_ITEM} pathname={pathname} search={params} onChoose={close} />
             </SidebarMenu>
           </nav>
         </SidebarGroup>
@@ -136,7 +138,17 @@ const WorkspaceShell = () => {
     document.documentElement.classList.add(WORKSPACE_THEME_CLASS);
     return () => document.documentElement.classList.remove(WORKSPACE_THEME_CLASS);
   }, []);
+  // Ctrl/Cmd+B is the menu provider's shortcut for hiding the menu, and a hidden desktop menu has no button to bring it back.
+  // This sees the key first (capture phase) and keeps it from the provider, without taking it from the browser.
+  useEffect(() => {
+    const keepMenuOpen = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "b" && (event.ctrlKey || event.metaKey)) event.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", keepMenuOpen, true);
+    return () => window.removeEventListener("keydown", keepMenuOpen, true);
+  }, []);
   return (
+    <WorkspaceProvider>
     <SidebarProvider>
       <CloseOnNavigate />
       <Sidebar collapsible="offcanvas">
@@ -148,6 +160,7 @@ const WorkspaceShell = () => {
         <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
       </div>
     </SidebarProvider>
+    </WorkspaceProvider>
   );
 };
 
