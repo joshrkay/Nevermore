@@ -554,7 +554,7 @@ INSERT INTO matrix VALUES
   ('public.documents',                                  '{"guest_a":2,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":5,"B":1}'),
   ('storage.objects WHERE bucket_id = ''documents''',   '{"guest_a":2,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":6,"B":1}'),
   -- A prospect reads one stored Manuscript: their final one (the latest version, built from their current
-  -- certification; prospect_final_manuscript). Every other file in the bucket is the firm's advisors'.
+  -- certification; prospect_final_manuscript). Every other file in the bucket is the firm's members'.
   ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
   -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
   ('storage.objects WHERE bucket_id = ''quarantine''',  '{}', NULL),
@@ -572,13 +572,13 @@ INSERT INTO matrix VALUES
   ('public.advisor_field_reviews',                      '{}', '{"A":1,"B":1}'),
   ('public.advisor_review_events',                      '{}', '{"A":1,"B":1}'),
   ('public.manuscript_versions',                        '{}', '{"A":1,"B":1}'),
-  -- Who added, removed, renamed or re-categorised each document, and when: the firm's advisors' audit trail.
+  -- Who added, removed, renamed or re-categorised each document, and when: the firm's members' audit trail.
   ('public.document_events',                            '{}', '{"A":5,"B":1}'),
   -- What advisors asked prospects for (20261105090000): the prospect reads their own open request only through
   -- prospect_information_request(), never the table.
   ('public.information_requests',                       '{}', '{"A":1,"B":1}'),
   -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
-  -- advisors' alone. The prospect never sees a quote request, even on their own submission.
+  -- members' alone. The prospect never sees a quote request, even on their own submission.
   ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
   ('public.quote_request_events',                       '{}', '{"A":5,"B":5}'),
   ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
@@ -622,7 +622,7 @@ INSERT INTO matrix VALUES
   -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
   ('public.ops_events',                                 '{"admin":"all","platform_admin":"all"}', NULL),
   ('public.ops_alerts',                                 '{"admin":"all","platform_admin":"all"}', NULL),
-  -- AI call records (US-2.4a) are for a firm's advisors investigating its intake.
+  -- AI call records (US-2.4a) are for a firm's members investigating its intake.
   ('public.ai_extraction_events',                       '{"admin":2,"platform_admin":1}', '{"A":1,"B":1}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
   ('public.outbox_events',                              '{}', NULL),
@@ -1432,6 +1432,8 @@ CREATE FUNCTION pg_temp.firm_rule_gaps() RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
   firm_fn constant text := '(is_firm_member|firm_role|can_see_firm_record|intake_in_my_firm|intake_folder_in_my_firm|quote_request_in_my_firm|can_read_peo_mail|intake_owner_in_my_firm|colleague_in_my_firm)\(';
   by_role constant text := '(is_advisor|has_role)\(';
+  held_mail constant text := 'CASE\s+WHEN \(?\w+ IS NULL\)?\s+THEN (public\.)?has_role\(''admin''(::\w+)?\)';
+  own_row constant text := '(\w+ = \(?(SELECT )?auth\.uid\(\))|(auth\.uid\(\)( AS uid\))? = \w+)';
   c record;
   sc table_scope%ROWTYPE;
   pol record;
@@ -1451,8 +1453,14 @@ BEGIN
     FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expr FROM pg_policies p
                WHERE p.schemaname = 'public' AND p.tablename = c.relname LOOP
       IF pol.expr ~ firm_fn THEN firm_rule := true; END IF;
-      IF sc.scope = 'firm' AND pol.expr ~ by_role AND pol.expr !~ firm_fn THEN
+      -- A role check anywhere in a firm table's policy opens every firm's rows to that role, whatever else the policy says
+      -- (`is_advisor() OR intake_in_my_firm(...)`). The one allowance is held mail: `CASE WHEN <col> IS NULL THEN has_role('admin')`.
+      IF sc.scope = 'firm' AND regexp_replace(pol.expr, held_mail, '', 'g') ~ by_role THEN
         gaps := gaps || format(E'\n  %s: policy "%s" opens a firm''s rows by role, not by membership', c.relname, pol.policyname);
+      END IF;
+      -- Permissive policies are ORed: one that names no membership helper and is not about the caller's own row opens the table.
+      IF sc.scope = 'firm' AND pol.expr !~ firm_fn AND pol.expr !~ own_row THEN
+        gaps := gaps || format(E'\n  %s: policy "%s" is not about a firm''s membership or the caller''s own row', c.relname, pol.policyname);
       END IF;
       IF sc.scope = 'own' AND (pol.expr ~ by_role OR pol.expr !~ 'auth\.uid\(\)') THEN
         gaps := gaps || format(E'\n  %s: policy "%s" is not about the caller''s own rows', c.relname, pol.policyname);
@@ -1470,7 +1478,7 @@ BEGIN
   -- is the prospect, by the folder of their own intake or their final Manuscript; PEO template workbooks hold no firm's data.
   FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expr FROM pg_policies p
              WHERE p.schemaname = 'storage' AND p.tablename = 'objects' LOOP
-    IF pol.expr ~ by_role AND pol.expr !~ firm_fn THEN
+    IF regexp_replace(pol.expr, held_mail, '', 'g') ~ by_role THEN
       gaps := gaps || format(E'\n  storage.objects: policy "%s" opens files by role, not by membership of their firm', pol.policyname);
     END IF;
   END LOOP;
@@ -1493,22 +1501,32 @@ BEGIN
   CREATE TABLE public.probe_by_role (id int, session_id uuid);
   ALTER TABLE public.probe_by_role ENABLE ROW LEVEL SECURITY;
   CREATE POLICY probe_by_role_read ON public.probe_by_role FOR SELECT TO authenticated USING (is_advisor());
+  CREATE TABLE public.probe_mixed (id int, session_id uuid);
+  ALTER TABLE public.probe_mixed ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY probe_mixed_read ON public.probe_mixed FOR SELECT TO authenticated USING (is_advisor() OR intake_in_my_firm(session_id));
+  CREATE TABLE public.probe_open_extra (id int, session_id uuid);
+  ALTER TABLE public.probe_open_extra ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY probe_open_extra_firm ON public.probe_open_extra FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY probe_open_extra_all ON public.probe_open_extra FOR SELECT TO authenticated USING (true);
   CREATE TABLE public.probe_no_rule (id int, session_id uuid);
   ALTER TABLE public.probe_no_rule ENABLE ROW LEVEL SECURITY;
   CREATE POLICY probe_no_rule_read ON public.probe_no_rule FOR SELECT TO authenticated USING (auth.uid() IS NOT NULL);
   CREATE POLICY probe_storage_by_role ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'documents' AND is_advisor());
-  INSERT INTO table_scope (tbl, scope, why) VALUES ('probe_platform', 'platform', 'probe'), ('probe_by_role', 'firm', 'probe'), ('probe_no_rule', 'firm', 'probe');
+  INSERT INTO table_scope (tbl, scope, why) VALUES ('probe_platform', 'platform', 'probe'), ('probe_by_role', 'firm', 'probe'), ('probe_no_rule', 'firm', 'probe'), ('probe_mixed', 'firm', 'probe'), ('probe_open_extra', 'firm', 'probe');
   probed := pg_temp.firm_rule_gaps();
   IF probed IS NULL
      OR probed NOT LIKE '%probe_undeclared is not declared%'
      OR probed NOT LIKE '%probe_platform has a firm_id%'
      OR probed NOT LIKE '%probe_by_role: policy "probe_by_role_read" opens a firm%'
+     OR probed NOT LIKE '%probe_mixed: policy "probe_mixed_read" opens a firm%'
+     OR probed NOT LIKE '%probe_open_extra: policy "probe_open_extra_all" is not about a firm%'
+     OR probed LIKE '%probe_open_extra: policy "probe_open_extra_firm"%'
      OR probed NOT LIKE '%probe_no_rule holds firm data and has no firm rule%'
      OR probed NOT LIKE '%storage.objects: policy "probe_storage_by_role" opens files by role%' THEN
     RAISE EXCEPTION E'FAIL: the firm rule check missed a table with no firm rule: %', probed;
   END IF;
   DROP POLICY probe_storage_by_role ON storage.objects;
-  DROP TABLE public.probe_undeclared, public.probe_platform, public.probe_by_role, public.probe_no_rule;
+  DROP TABLE public.probe_undeclared, public.probe_platform, public.probe_by_role, public.probe_no_rule, public.probe_mixed, public.probe_open_extra;
   DELETE FROM table_scope WHERE tbl LIKE 'probe\_%';
   IF pg_temp.firm_rule_gaps() IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the firm rule probes were left behind'; END IF;
   RAISE NOTICE 'data_isolation: every table that holds firm data has a firm rule';

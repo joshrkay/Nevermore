@@ -125,7 +125,7 @@ AS $$
 $$;
 
 -- May the caller read a message of PEO mail? One on a quote request: its firm's members. Held mail belongs to no firm yet
--- (it is assigned to one by an admin, CRM-P2.1c): a platform admin's alone.
+-- (it is assigned to one by a platform admin, CRM-P2.1c): a platform admin's alone.
 CREATE FUNCTION public.can_read_peo_mail(p_quote_request_id bigint)
 RETURNS boolean
 LANGUAGE sql

@@ -62,7 +62,7 @@ intakes, files or advisor work lets a person read a row only if they are a curre
 roles they hold in `user_roles`; the firm is the intake's own and never comes from the browser. A password sign-in without a
 second factor is not a member of any firm either (D-19). A platform admin is not
 thereby a member of any firm. The tables that hold nothing of any firm's stay platform-wide: the PEO list with its profiles,
-contacts and template workbooks (every firm reads the same, an admin keeps them), `ops_events` and `ops_alerts`,
+contacts and template workbooks (every firm reads the same, a platform admin keeps them), `ops_events` and `ops_alerts`,
 `allowed_organisations` and `advisor_role_events`. Mail that arrived for no quote request is held for platform admins until
 one is assigned. A record of a deletion (`intake_deletions`) carries its firm, so it stays readable by that firm after the
 intake it names is gone. `supabase/tests/data_isolation.sql` proves it with two firms and fails a table that holds firm data
