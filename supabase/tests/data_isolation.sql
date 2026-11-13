@@ -30,9 +30,13 @@
 --    5a every public table and storage bucket is in the registry with what it holds (a firm's data, platform-wide data, a
 --       person's own data, or nothing the API reaches); a table or bucket missing from it fails (D-28);
 --    5b every firm table and bucket is probed: a row is made for each of two firms and every caller (the other firm's members,
---       a non-member, a former member, a platform admin) reads, counts, changes and deletes none of it; no policy text is read;
---    5c the gate's own negative cases: the two shapes a text check was fooled by, a second open policy, a rule that shows
---       nothing to the firm, a table with no way to make a row, one whose probe cannot run, an unregistered table and bucket;
+--       a non-member, a former member, a platform admin) reads, counts, changes, deletes none of it, inserts none into it, and a
+--       member can neither move their firm's row to the other firm nor take the other firm's for their own. Only a refusal
+--       (no row matched, or insufficient privilege) counts as safe; no policy text is read;
+--    5c the gate's own negative cases: the two shapes a text check was fooled by, a second open policy, an open insert, an open
+--       update, a delete a foreign key stops, a rule that shows nothing to the firm, a table with no way to make a row, a maker
+--       that finds no row, one whose probe cannot run, a platform table with a firm column, a closed table with a policy, an
+--       unregistered table and bucket;
 --    then: every public table has row security and a row in the matrix; every function the API roles can execute is in the
 --    allowlist below with a reason; every bucket is private; the API roles hold no TRUNCATE, REFERENCES or TRIGGER; every
 --    SECURITY DEFINER function pins its search_path.
@@ -1412,7 +1416,14 @@ CREATE TEMP TABLE registry (src text PRIMARY KEY, scope text NOT NULL CHECK (sco
   -- false when a member of the firm legitimately reads only some rows of it (a membership: their own)
   member_reads boolean NOT NULL DEFAULT true,
   -- true when only Edgar Allan Advisory can have such a row until a later story gives the table a firm
-  firm_a_only boolean NOT NULL DEFAULT false);
+  firm_a_only boolean NOT NULL DEFAULT false,
+  -- an INSERT a caller who is not a member of the firm tries into that firm's records ({intake}, {qr}, {msg}, {firm}, {u} are the
+  -- firm's); it must be refused. Defaults to make_row when that is an INSERT, without its RETURNING (which row security would
+  -- check against the caller's read rule and so refuse an insert whose write rule is open).
+  foreign_insert text,
+  -- a SET clause that moves a row to the other firm ({intake}, {qr}, {msg}, {firm}, {u} are the other firm's); a member of the
+  -- row's firm must be refused. It names no column of the table on its right side, so it is a write that reads nothing.
+  move_to text);
 CREATE TEMP TABLE probe_ran (src text PRIMARY KEY, ran boolean NOT NULL, detail text);
 
 INSERT INTO registry (src, scope, why, make_row) VALUES
@@ -1481,6 +1492,33 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
 INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
   ('public.referral_partners', 'firm', 'Edgar Allan Advisory''s until CRM-P2.1c gives them a firm',
    $m$INSERT INTO public.referral_partners (code, name, kind) VALUES ('probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$, true);
+-- How a caller who is not a member writes into a firm's records (foreign_insert, when make_row is not itself an INSERT), and the
+-- SET clause that moves a row to another firm (move_to). Both are tried as callers who must be refused (5b).
+UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
+  'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
+  'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions');
+UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
+  'public.quote_request_thread_reads', 'public.quote_request_messages');
+UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
+UPDATE registry SET move_to = 'message_id = {msg}' WHERE src = 'public.quote_request_message_attachments';
+UPDATE registry SET move_to = 'id = {firm}' WHERE src = 'public.firms';
+UPDATE registry SET move_to = 'code = ''moved-{tag}''' WHERE src = 'public.referral_partners';
+UPDATE registry SET move_to = 'name = {u} || ''/'' || {intake} || ''/moved-{tag}.csv''' WHERE src = 'storage.objects WHERE bucket_id = ''documents''';
+UPDATE registry SET move_to = 'name = {intake} || ''/v99-moved-{tag}.pdf''' WHERE src = 'storage.objects WHERE bucket_id = ''manuscripts''';
+UPDATE registry SET move_to = 'name = {intake} || ''/'' || {msg} || ''/moved-{tag}.pdf''' WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.chamber_certifications (session_id, user_id, signer_name, signer_title, consent_version, consent_text, signed_at, data_sha256, file_id)
+  VALUES ({intake}, {u}, 'Probe', 'CEO', 'v1', 'I certify.', now(), 'x{tag}', 'EAA-9998-' || upper('{tag}'))$m$ WHERE src = 'public.chamber_certifications';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES ({u}, {firm}, '{}')$m$ WHERE src = 'public.chamber_sessions';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.intake_consents (user_id, consent_version, consent_text) VALUES ({u}, 'v1', 'I agree.')$m$ WHERE src = 'public.intake_consents';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.profiles (user_id, company_name) VALUES ({u}, 'Probe')$m$ WHERE src = 'public.profiles';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES ({intake}, 'Probe PEO', 'sent')$m$ WHERE src = 'public.quote_requests';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
+  VALUES ('x-{tag}', {qr}, {intake}, 'received', 'probe@example.test')$m$ WHERE src = 'public.quote_request_messages';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
+UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
+  WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
 INSERT INTO registry (src, scope, why, names_intakes) VALUES
   ('public.allowed_organisations', 'platform', 'who may claim the advisor role: a platform admin''s', false),
   ('public.advisor_role_events', 'platform', 'the log of those grants: a platform admin''s', false),
@@ -1522,7 +1560,9 @@ BEGIN
   RETURN r;
 END $$;
 
-CREATE FUNCTION pg_temp.make_row(make text, firm text) RETURNS text LANGUAGE plpgsql AS $$
+-- What a firm's probe row hangs off, as one firm's context: a new person {u}, a new intake of the firm owned by them, and what the
+-- statements in `need` ask for: a quote request on it ({qr}), a message on that ({msg}). Made as the superuser.
+CREATE FUNCTION pg_temp.make_ctx(need text, firm text) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
   tag text := substr(md5(random()::text), 1, 10);
   fid uuid := pg_temp.id('firm_' || firm);
@@ -1530,26 +1570,41 @@ DECLARE
   s uuid;
   q bigint;
   m bigint;
-  sql text := make;
-  r text;
 BEGIN
   RESET ROLE;
   u := pg_temp.new_user('probe_' || tag || '@example.test', false);
-  IF make LIKE '%{intake}%' OR make LIKE '%{qr}%' OR make LIKE '%{msg}%' OR make LIKE '%intake_consents%' OR make LIKE '%chamber_sessions%' OR make LIKE '%profiles%' THEN
+  IF need LIKE '%{intake}%' OR need LIKE '%{qr}%' OR need LIKE '%{msg}%' OR need LIKE '%intake_consents%' OR need LIKE '%chamber_sessions%' OR need LIKE '%profiles%' THEN
     INSERT INTO public.intake_consents (user_id, consent_version, consent_text) VALUES (u, 'v1', 'I agree.');
     INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (u, '{"company_name":"Probe"}') RETURNING id INTO s;
     UPDATE public.chamber_sessions SET firm_id = fid WHERE id = s;
   END IF;
-  IF make LIKE '%{qr}%' OR make LIKE '%{msg}%' THEN
+  IF need LIKE '%{qr}%' OR need LIKE '%{msg}%' THEN
     INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (s, 'Probe PEO', 'sent') RETURNING id INTO q;
   END IF;
-  IF make LIKE '%{msg}%' THEN
+  IF need LIKE '%{msg}%' THEN
     INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
     VALUES ('probe-' || tag, q, s, 'received', 'probe@example.test') RETURNING id INTO m;
   END IF;
-  sql := replace(replace(replace(replace(replace(replace(sql, '{firm}', quote_literal(fid)), '{u}', quote_literal(u)),
-           '{intake}', COALESCE(quote_literal(s), 'NULL')), '{qr}', COALESCE(q::text, 'NULL')), '{msg}', COALESCE(m::text, 'NULL')), '{tag}', tag);
-  EXECUTE sql INTO r;
+  RETURN jsonb_build_object('firm', fid, 'u', u, 'intake', s, 'qr', q, 'msg', m, 'tag', tag);
+END $$;
+
+-- A statement with a firm's context filled in. A fresh tag keeps what a caller tries from colliding with the probe's own rows.
+CREATE FUNCTION pg_temp.fill(stmt text, ctx jsonb, fresh_tag boolean DEFAULT false) RETURNS text LANGUAGE sql AS $$
+  SELECT replace(replace(replace(replace(replace(replace(stmt,
+    '{firm}', quote_literal(ctx ->> 'firm')), '{u}', quote_literal(ctx ->> 'u')),
+    '{intake}', COALESCE(quote_literal(ctx ->> 'intake'), 'NULL')), '{qr}', COALESCE(ctx ->> 'qr', 'NULL')),
+    '{msg}', COALESCE(ctx ->> 'msg', 'NULL')),
+    '{tag}', CASE WHEN fresh_tag THEN 'x' || substr(md5(random()::text), 1, 9) ELSE ctx ->> 'tag' END)
+$$;
+
+-- Makes the row of the registry's make_row for one firm as the superuser and returns its ctid. A maker that returns no row is a
+-- failure: the probe would have nothing to test.
+CREATE FUNCTION pg_temp.make_row(make text, ctx jsonb) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  RESET ROLE;
+  EXECUTE pg_temp.fill(make, ctx) INTO r;
+  IF r IS NULL THEN RAISE EXCEPTION 'the statement that makes a row returned none'; END IF;
   RETURN r;
 END $$;
 
@@ -1560,6 +1615,27 @@ CREATE FUNCTION pg_temp.member_of(who text) RETURNS text LANGUAGE sql IMMUTABLE 
               WHEN who IN ('agent_b', 'owner_b') THEN 'b' END
 $$;
 
+-- Runs a statement that names no row (so row security applies only the write rule, not the read rule a WHERE would also invoke)
+-- as the caller, then, as the superuser, whether any of the rows at ids was touched: a deleted or updated row is no longer at its
+-- ctid. Rolls it back. 'touched', 'untouched', or the SQLSTATE the statement raised.
+CREATE FUNCTION pg_temp.touches(stmt text, tbl text, ids text[]) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+  s text;
+  m text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RESET ROLE;
+    EXECUTE format('SELECT count(*) FROM %s WHERE ctid::text = ANY (%L)', tbl, ids) INTO n;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = CASE WHEN n < cardinality(ids) THEN 'touched' ELSE 'untouched' END;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    IF s = 'ZZ999' THEN RETURN m; END IF;
+    RETURN s;
+  END;
+END $$;
+
 CREATE FUNCTION pg_temp.count_ids(tbl text, ids text[]) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE n bigint;
 BEGIN
@@ -1568,28 +1644,36 @@ BEGIN
 EXCEPTION WHEN insufficient_privilege THEN RETURN 0;
 END $$;
 
--- Makes a row for each firm in one registered table or bucket, then as every caller: reads it, counts it, tries to change it
--- and to delete it. Only a current member of the row's own firm may read it. Nothing is left behind. Returns what is wrong,
--- or NULL; sets ran when the probe reached its end.
-CREATE FUNCTION pg_temp.probe_firm(p_src text, p_make text, p_member_reads boolean, p_firm_a_only boolean, OUT problems text, OUT ran boolean)
+-- Makes a row for each firm in one registered table or bucket, then as every caller: reads it, counts it, tries to change it,
+-- to delete it, to insert into the firm's records and (for a member) to move the firm's own row to the other firm. Only a current
+-- member of the row's own firm may read it. Only an explicit refusal counts as safe: no row matched, or insufficient privilege;
+-- any other error (a foreign key, a unique index) was raised after row security let the statement through, so it is a problem.
+-- Nothing is left behind. Returns what is wrong, or NULL; sets ran when the probe reached its end.
+CREATE FUNCTION pg_temp.probe_firm(p_src text, p_make text, p_member_reads boolean, p_firm_a_only boolean, p_foreign_insert text, p_move_to text,
+  OUT problems text, OUT ran boolean)
 LANGUAGE plpgsql AS $$
 DECLARE
   tbl text := pg_temp.src_table(p_src);
-  col text := pg_temp.src_column(p_src);
+  need text := p_make || COALESCE(p_foreign_insert, '') || COALESCE(p_move_to, '');
+  ctx_of jsonb := '{}';
   rows_of jsonb := '{}';
   f text;
+  o text;
   who text;
   side text;
   ids text[];
   one text[];
   res text;
+  firm_name text;
+  other_name text;
 BEGIN
   problems := '';
   ran := false;
   BEGIN
     FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
       IF f = 'b' AND p_firm_a_only THEN CONTINUE; END IF;
-      rows_of := rows_of || jsonb_build_object(f, pg_temp.make_row(p_make, f));
+      ctx_of := ctx_of || jsonb_build_object(f, pg_temp.make_ctx(need, f));
+      rows_of := rows_of || jsonb_build_object(f, pg_temp.make_row(p_make, ctx_of -> f));
     END LOOP;
     FOREACH who IN ARRAY pg_temp.matrix_callers() LOOP
       CONTINUE WHEN who = 'service';
@@ -1597,18 +1681,48 @@ BEGIN
       PERFORM pg_temp.become(who);
       ids := pg_temp.row_ids(p_src);
       FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
-        CONTINUE WHEN rows_of ->> f IS NULL;
+        CONTINUE WHEN f = 'b' AND p_firm_a_only;
+        firm_name := CASE f WHEN 'a' THEN 'first' ELSE 'second' END;
         one := ARRAY[rows_of ->> f];
         IF f IS DISTINCT FROM side THEN
-          IF (rows_of ->> f) = ANY (ids) THEN problems := problems || format(E'\n    %s reads a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
-          IF pg_temp.count_ids(tbl, one) <> 0 THEN problems := problems || format(E'\n    %s counts a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
-          res := pg_temp.attempt(format('UPDATE %s SET %I = %I WHERE ctid::text = ANY (%L)', tbl, col, col, one));
-          IF res LIKE 'rows:%' AND res <> 'rows:0' THEN problems := problems || format(E'\n    %s changes a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
-          res := pg_temp.attempt(format('DELETE FROM %s WHERE ctid::text = ANY (%L)', tbl, one));
-          IF res LIKE 'rows:%' AND res <> 'rows:0' THEN problems := problems || format(E'\n    %s deletes a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
-        ELSIF p_member_reads AND NOT (rows_of ->> f) = ANY (ids) THEN
-          -- A positive control: a rule that shows a firm's rows to nobody would pass every check above.
-          problems := problems || format(E'\n    %s, a member of the %s firm, cannot read its row', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END);
+          IF (rows_of ->> f) = ANY (ids) THEN problems := problems || format(E'\n    %s reads a row of the %s firm', who, firm_name); END IF;
+          IF pg_temp.count_ids(tbl, one) <> 0 THEN problems := problems || format(E'\n    %s counts a row of the %s firm', who, firm_name); END IF;
+          -- Changing and deleting name no row: a WHERE on a column would also invoke the read rule, which hides rows from a
+          -- caller whose write rule is open. The statements run over the whole table and the row must come out untouched.
+          res := pg_temp.touches(format('UPDATE %s SET %s', tbl, pg_temp.fill(p_move_to, ctx_of -> f, true)), tbl, one);
+          IF res = 'untouched' OR res = '42501' THEN NULL;
+          ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s changes a row of the %s firm', who, firm_name);
+          ELSE problems := problems || format(E'\n    %s''s change of a row of the %s firm raised %s rather than being refused', who, firm_name, res); END IF;
+          res := pg_temp.touches(format('DELETE FROM %s', tbl), tbl, one);
+          IF res = 'untouched' OR res = '42501' THEN NULL;
+          ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s deletes a row of the %s firm', who, firm_name);
+          ELSE problems := problems || format(E'\n    %s''s delete of a row of the %s firm raised %s rather than being refused', who, firm_name, res); END IF;
+          -- A member taking another firm's row for their own firm: the same write, with their firm's context.
+          IF side IS NOT NULL AND ctx_of ? side THEN
+            res := pg_temp.touches(format('UPDATE %s SET %s', tbl, pg_temp.fill(p_move_to, ctx_of -> side, true)), tbl, one);
+            IF res = 'untouched' OR res = '42501' THEN NULL;
+            ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s takes a row of the %s firm for their own', who, firm_name);
+            ELSE problems := problems || format(E'\n    %s''s taking of a row of the %s firm for their own raised %s rather than being refused', who, firm_name, res); END IF;
+          END IF;
+          -- A row put into the firm's records: the insert must be refused by privilege or row security, never run.
+          res := pg_temp.attempt(pg_temp.fill(p_foreign_insert, ctx_of -> f, true));
+          IF res = '42501' THEN NULL;
+          ELSIF res LIKE 'rows:%' THEN problems := problems || format(E'\n    %s inserts into the %s firm''s records', who, firm_name);
+          ELSE problems := problems || format(E'\n    %s''s insert into the %s firm''s records raised %s rather than being refused', who, firm_name, res); END IF;
+        ELSE
+          IF p_member_reads AND NOT (rows_of ->> f) = ANY (ids) THEN
+            -- A positive control: a rule that shows a firm's rows to nobody would pass every check above.
+            problems := problems || format(E'\n    %s, a member of the %s firm, cannot read its row', who, firm_name);
+          END IF;
+          -- A member moving their firm's own row onto the other firm: the new row must be refused too.
+          o := CASE f WHEN 'a' THEN 'b' ELSE 'a' END;
+          IF ctx_of ? o THEN
+            other_name := CASE o WHEN 'a' THEN 'first' ELSE 'second' END;
+            res := pg_temp.touches(format('UPDATE %s SET %s', tbl, pg_temp.fill(p_move_to, ctx_of -> o, true)), tbl, one);
+            IF res = 'untouched' OR res = '42501' THEN NULL;
+            ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s moves a row of the %s firm to the %s firm', who, firm_name, other_name);
+            ELSE problems := problems || format(E'\n    %s''s move of a row of the %s firm to the %s firm raised %s rather than being refused', who, firm_name, other_name, res); END IF;
+          END IF;
         END IF;
       END LOOP;
       RESET ROLE;
@@ -1658,7 +1772,16 @@ BEGIN
         gaps := gaps || format(E'\n  %s holds a firm''s data and has no way to make a row, so no probe', r.src);
         CONTINUE;
       END IF;
-      SELECT * INTO pr FROM pg_temp.probe_firm(r.src, r.make_row, r.member_reads, r.firm_a_only);
+      IF COALESCE(r.foreign_insert, CASE WHEN r.make_row ~* '^\s*INSERT' THEN r.make_row END) IS NULL THEN
+        gaps := gaps || format(E'\n  %s has no way to insert into a firm''s records as someone else, so its writes are not probed', r.src);
+        CONTINUE;
+      END IF;
+      IF r.move_to IS NULL THEN
+        gaps := gaps || format(E'\n  %s has no way to move a row to another firm, so its updates are not probed', r.src);
+        CONTINUE;
+      END IF;
+      SELECT * INTO pr FROM pg_temp.probe_firm(r.src, r.make_row, r.member_reads, r.firm_a_only,
+        COALESCE(r.foreign_insert, regexp_replace(r.make_row, '\s+RETURNING\s+ctid::text\s*$', '', 'i')), r.move_to);
       INSERT INTO probe_ran VALUES (r.src, pr.ran, pr.problems);
       IF pr.ran AND pr.problems IS NOT NULL THEN gaps := gaps || format(E'\n  %s is open across firms:%s', r.src, pr.problems); END IF;
     ELSIF r.scope = 'closed' AND r.src LIKE 'public.%' THEN
@@ -1705,6 +1828,14 @@ BEGIN
   CREATE TABLE public.probe_unregistered (id int, session_id uuid);
   CREATE TABLE public.probe_bad_maker (id int, session_id uuid);
   CREATE TABLE public.probe_fine (id int, session_id uuid);
+  CREATE TABLE public.probe_empty_maker (id int, session_id uuid);
+  CREATE TABLE public.probe_platform (id int, firm_id uuid);
+  CREATE TABLE public.probe_closed (id int);
+  CREATE TABLE public.probe_insert_open (id int, session_id uuid);
+  CREATE TABLE public.probe_update_open (id int, session_id uuid);
+  CREATE TABLE public.probe_takeover (id int, session_id uuid);
+  CREATE TABLE public.probe_delete_fk (id int PRIMARY KEY, session_id uuid);
+  CREATE TABLE public.probe_delete_fk_child (id int, parent_id int REFERENCES public.probe_delete_fk (id));
   ALTER TABLE public.probe_exists_firms ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.probe_exists_session ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.probe_second_policy ENABLE ROW LEVEL SECURITY;
@@ -1713,6 +1844,15 @@ BEGIN
   ALTER TABLE public.probe_unregistered ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.probe_bad_maker ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.probe_fine ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_empty_maker ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_platform ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_closed ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_insert_open ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_update_open ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_takeover ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_delete_fk ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_delete_fk_child ENABLE ROW LEVEL SECURITY;
+  GRANT ALL ON public.probe_takeover, public.probe_empty_maker, public.probe_insert_open, public.probe_update_open, public.probe_delete_fk, public.probe_delete_fk_child TO anon, authenticated;
   GRANT ALL ON public.probe_exists_firms, public.probe_exists_session, public.probe_second_policy, public.probe_no_maker,
     public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered, public.probe_fine TO anon, authenticated;
   -- Any member of any firm reads every firm's rows: the helper is asked about firms the caller can see, not about the row.
@@ -1731,7 +1871,32 @@ BEGIN
   CREATE POLICY p ON public.probe_bad_maker FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
   -- What the real schema does: the helper is given the row's own column.
   CREATE POLICY p ON public.probe_fine FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  -- A maker that finds no row: the probe never had a row to test, so it did not run.
+  CREATE POLICY p ON public.probe_empty_maker FOR ALL TO authenticated USING (true);
+  CREATE POLICY p ON public.probe_platform FOR ALL TO authenticated USING (true);
+  CREATE POLICY p ON public.probe_closed FOR ALL TO authenticated USING (true);
+  -- Reads are tied to the row; a caller can still put a row into another firm's records.
+  CREATE POLICY p_read ON public.probe_insert_open FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p_ins ON public.probe_insert_open FOR INSERT TO authenticated WITH CHECK (true);
+  -- The new row of an update must pass the read policy too, so a rule that lets a member move a row to another firm is one whose
+  -- read policy shows it there: both are open here, and the probe must name the move as well as the read.
+  CREATE POLICY p_read ON public.probe_update_open FOR SELECT TO authenticated USING (true);
+  CREATE POLICY p_upd ON public.probe_update_open FOR UPDATE TO authenticated USING (intake_in_my_firm(session_id)) WITH CHECK (true);
+  -- Reads are tied to the row, and so is the new row of an update; but any member may update any firm's row, so a member can
+  -- take another firm's row for their own firm.
+  CREATE POLICY p_read ON public.probe_takeover FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p_upd ON public.probe_takeover FOR UPDATE TO authenticated USING (true) WITH CHECK (intake_in_my_firm(session_id));
+  -- Anyone may delete the row, but another table's foreign key stops it: that error is not a refusal by row security, and
+  -- must not be read as one.
+  CREATE POLICY p ON public.probe_delete_fk FOR ALL TO authenticated USING (true);
   INSERT INTO registry (src, scope, why, make_row) VALUES
+    ('public.probe_empty_maker', 'firm', 'probe', $m$SELECT ctid::text FROM public.probe_empty_maker WHERE session_id = {intake}$m$),
+    ('public.probe_takeover', 'firm', 'probe', $m$INSERT INTO public.probe_takeover (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_insert_open', 'firm', 'probe', $m$INSERT INTO public.probe_insert_open (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_update_open', 'firm', 'probe', $m$INSERT INTO public.probe_update_open (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_delete_fk', 'firm', 'probe',
+     $m$WITH p AS (INSERT INTO public.probe_delete_fk (id, session_id) VALUES (abs(hashtext('{tag}')), {intake}) RETURNING id, ctid::text AS c),
+        k AS (INSERT INTO public.probe_delete_fk_child (id, parent_id) SELECT 1, id FROM p) SELECT c FROM p$m$),
     ('public.probe_exists_firms', 'firm', 'probe', $m$INSERT INTO public.probe_exists_firms (id, firm_id) VALUES (1, {firm}) RETURNING ctid::text$m$),
     ('public.probe_exists_session', 'firm', 'probe', $m$INSERT INTO public.probe_exists_session (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
     ('public.probe_second_policy', 'firm', 'probe', $m$INSERT INTO public.probe_second_policy (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
@@ -1740,19 +1905,31 @@ BEGIN
     ('public.probe_bad_maker', 'firm', 'probe', $m$INSERT INTO public.probe_bad_maker (id, nothing) VALUES (1, {intake}) RETURNING ctid::text$m$),
     ('public.probe_shows_nobody', 'firm', 'probe', $m$INSERT INTO public.probe_shows_nobody (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
     ('public.probe_fine', 'firm', 'probe', $m$INSERT INTO public.probe_fine (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$);
+  -- A firm_id column on a table registered as platform-wide, and a policy on one registered as closed.
+  INSERT INTO registry (src, scope, why) VALUES ('public.probe_platform', 'platform', 'probe'), ('public.probe_closed', 'closed', 'probe'),
+    ('public.probe_delete_fk_child', 'closed', 'probe');
+  -- How the probe writes into each, and moves a row of each to the other firm.
+  UPDATE registry SET move_to = 'session_id = {intake}' WHERE src LIKE 'public.probe\_%' AND src NOT IN ('public.probe_exists_firms', 'public.probe_platform', 'public.probe_closed', 'public.probe_delete_fk_child');
+  UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src = 'public.probe_exists_firms';
+  UPDATE registry SET foreign_insert = $m$INSERT INTO public.probe_delete_fk (id, session_id) VALUES (abs(hashtext('{tag}')), {intake})$m$ WHERE src = 'public.probe_delete_fk';
+  UPDATE registry SET foreign_insert = $m$INSERT INTO public.probe_empty_maker (id, session_id) VALUES (1, {intake})$m$ WHERE src = 'public.probe_empty_maker';
   g := pg_temp.isolation_gaps();
   IF g IS NULL
-     OR g NOT LIKE '%probe_exists_firms%'
-     OR g NOT LIKE '%probe_exists_session%'
-     OR g NOT LIKE '%probe_second_policy%'
+     -- Each case is matched on its own table's whole gap, so a probe that did not run cannot satisfy it.
+     OR g NOT LIKE '%public.probe_exists_firms is open across firms:%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%public.probe_exists_session is open across firms:%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%public.probe_second_policy is open across firms:%agent_b reads a row of the first firm%'
      OR g NOT LIKE '%probe_no_maker holds a firm''s data and has no way to make a row%'
      OR g NOT LIKE '%probe_bad_maker: no probe ran%'
-     OR g NOT LIKE '%probe_shows_nobody is open across firms:%advisor, a member of the first firm, cannot read its row%'
-     OR g NOT LIKE '%advisor reads a row of the second firm%'
-     OR g NOT LIKE '%advisor counts a row of the second firm%'
-     OR g NOT LIKE '%advisor changes a row of the second firm%'
-     OR g NOT LIKE '%advisor deletes a row of the second firm%'
-     OR g NOT LIKE '%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%probe_empty_maker: no probe ran%'
+     OR g NOT LIKE '%public.probe_insert_open is open across firms:%agent_b inserts into the first firm''s records%'
+     OR g NOT LIKE '%public.probe_update_open is open across firms:%agent_b moves a row of the second firm to the first firm%'
+     OR g NOT LIKE '%public.probe_takeover is open across firms:%agent_b takes a row of the first firm for their own%'
+     OR g NOT LIKE '%public.probe_delete_fk is open across firms:%advisor''s delete of a row of the second firm raised 23503 rather than being refused%'
+     OR g NOT LIKE '%public.probe_platform has a firm_id, session_id or quote_request_id column but is declared platform%'
+     OR g NOT LIKE '%public.probe_closed is declared closed but has a policy%'
+     OR g NOT LIKE '%public.probe_shows_nobody is open across firms:%advisor, a member of the first firm, cannot read its row%'
+     OR g NOT LIKE '%public.probe_exists_firms is open across firms:%advisor reads a row of the second firm%advisor counts a row of the second firm%advisor changes a row of the second firm%advisor deletes a row of the second firm%'
      OR g NOT LIKE '%platform_admin reads a row of the first firm%'
      OR g NOT LIKE '%former_agent reads a row of the first firm%'
      OR g NOT LIKE '%prospect_a reads a row of the first firm%'
@@ -1761,8 +1938,10 @@ BEGIN
     RAISE EXCEPTION E'FAIL: the gate did not name exactly the open, unprobed and unregistered tables:%', g;
   END IF;
   -- Each alone makes it fail.
-  DELETE FROM registry WHERE src IN ('public.probe_exists_session', 'public.probe_second_policy', 'public.probe_no_maker', 'public.probe_shows_nobody', 'public.probe_bad_maker');
-  DROP TABLE public.probe_exists_session, public.probe_second_policy, public.probe_no_maker, public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered;
+  DELETE FROM registry WHERE src IN ('public.probe_exists_session', 'public.probe_second_policy', 'public.probe_no_maker', 'public.probe_shows_nobody', 'public.probe_bad_maker',
+    'public.probe_empty_maker', 'public.probe_insert_open', 'public.probe_update_open', 'public.probe_takeover', 'public.probe_delete_fk', 'public.probe_delete_fk_child', 'public.probe_platform', 'public.probe_closed');
+  DROP TABLE public.probe_exists_session, public.probe_second_policy, public.probe_no_maker, public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered,
+    public.probe_empty_maker, public.probe_insert_open, public.probe_update_open, public.probe_takeover, public.probe_delete_fk_child, public.probe_delete_fk, public.probe_platform, public.probe_closed;
   g := pg_temp.isolation_gaps();
   IF g IS NULL OR g NOT LIKE '%probe_exists_firms%' OR g LIKE '%probe_fine%' THEN RAISE EXCEPTION E'FAIL: the gate passed a policy that asks is_firm_member about the firms the caller can see:%', g; END IF;
   DELETE FROM registry WHERE src = 'public.probe_exists_firms';
