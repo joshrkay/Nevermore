@@ -290,25 +290,31 @@ BEGIN
   -- Anything that reads as Nevermore.
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Brand', 'nevermore-brokers')$q$, '23514', 'an address naming Nevermore');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Brand', 'never-more')$q$, '23514', 'an address spelling Nevermore with a hyphen');
-  -- Anything that reads as a listed PEO.
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinet-partners')$q$, '23514', 'an address naming TriNet');
+  -- D-26: an address is a PEO's only when, with everything but letters and digits removed, it is exactly a
+  -- listed PEO's name or short name (the name cut to 20 characters). Exact, so a name that merely contains or starts with one is the firm's own.
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinet')$q$, '23514', 'an address that is TriNet');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-totalsource')$q$, '23514', 'an address naming ADP TotalSource');
-  PERFORM pg_temp.expect($q$UPDATE public.firms SET address = 'insperity' WHERE address = 'acme'$q$, '23514', 'a firm changing its address to Insperity');
-  -- The first word alone reads as the PEO, matched as a whole hyphen-separated word, never as a piece of one.
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp')$q$, '23514', 'an address that is just ADP');
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-benefits')$q$, '23514', 'an address starting with ADP');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-total-source')$q$, '23514', 'ADP TotalSource with hyphens');
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pet', 'petrinetwork')$q$, 'rows:1', 'an address holding TriNet inside another word');
-  -- A PEO's name with letters glued on at either end still reads as the PEO.
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinetpartners')$q$, '23514', 'TriNet with a word glued on');
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinethr')$q$, '23514', 'TriNet with letters glued on');
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'insperityhr')$q$, '23514', 'Insperity with letters glued on');
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'justworks1')$q$, '23514', 'Justworks with a digit glued on');
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'myinsperity')$q$, '23514', 'Insperity with a word in front');
-  -- A common first word of a PEO an admin adds says nothing about which PEO is meant.
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'tri-net')$q$, '23514', 'TriNet with a hyphen');
+  PERFORM pg_temp.expect($q$UPDATE public.firms SET address = 'insperity' WHERE address = 'acme'$q$, '23514', 'a firm changing its address to Insperity');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pet', 'petrinet')$q$, 'rows:1', 'an address ending with TriNet');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Adj', 'adjustworks')$q$, 'rows:1', 'an address holding Justworks-like letters');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Trip', 'trippling')$q$, 'rows:1', 'an address holding Rippling');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Adp', 'adpbenefits')$q$, 'rows:1', 'an address starting with ADP');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Adp', 'adp')$q$, 'rows:1', 'an address that is only the first word of a PEO');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Tri', 'trinetpartners')$q$, 'rows:1', 'TriNet with a word glued on');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Tri', 'my-trinet-benefits')$q$, 'rows:1', 'TriNet as a word of the address');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Ins', 'myinsperity')$q$, 'rows:1', 'Insperity with a word in front');
+  -- A PEO an admin adds is matched the same way, spaces and punctuation ignored.
   INSERT INTO public.peos (name) VALUES ('The Marathon Group');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Smith', 'the-smith-agency')$q$, 'rows:1', 'an address starting with a common first word');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Mar', 'the-marathon-group')$q$, '23514', 'an address spelling the whole name');
+  -- A PEO's short name is its cleaned name cut to 20 characters, as the reply addresses cut it (D-26).
+  INSERT INTO public.peos (name) VALUES ('Paychex Business Solutions');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusinesssolut')$q$, '23514', 'an address equal to a long PEO name''s short name');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychex-business-solutions')$q$, '23514', 'a long PEO name with hyphens');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusinesssolutio')$q$, 'rows:1', 'an address longer than the short name but not the name');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusiness')$q$, 'rows:1', 'an address shorter than the short name');
   -- A listed PEO whose name leaves nothing (or almost nothing) to compare holds no address back.
   INSERT INTO public.peos (name) VALUES ('Ö'), ('A1');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Zed', 'zzz-brokers')$q$, 'rows:1', 'an address with a PEO named Ö listed');
@@ -316,7 +322,7 @@ BEGIN
   UPDATE public.peos SET listed = false WHERE name IN ('Ö', 'A1');
   -- A PEO that is no longer listed (a name, not an offer) doesn't hold a name back.
   UPDATE public.peos SET listed = false WHERE name = 'Justworks';
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'justworks-fans')$q$, 'rows:1', 'an address naming a PEO no longer listed');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'justworks')$q$, 'rows:1', 'an address that is a PEO no longer listed');
   UPDATE public.peos SET listed = true WHERE name = 'Justworks';
   RAISE NOTICE 'firms: firm address cases passed';
 END $$;
@@ -620,4 +626,31 @@ BEGIN
   SELECT count(*) INTO left_owners FROM public.firm_memberships WHERE firm_id = f AND role = 'owner' AND valid_until IS NULL;
   PERFORM pg_temp.is(left_owners, 1::bigint, 'owners left after two were ended at once');
   RAISE NOTICE 'firms: two-session owner race passed';
+END $$;
+
+-- ---------- an owner change does not hold up inserts that reference the firm ----------
+-- The guard locks the firm row FOR NO KEY UPDATE, which waits for another owner change but not for a foreign-key
+-- insert (it only share-locks the firm). A FOR UPDATE lock would make this insert wait: here it runs on a second
+-- connection with a short lock timeout while the first holds an uncommitted owner change.
+DO $$
+DECLARE
+  f uuid;
+  o1 uuid := pg_temp.new_user('lock_owner_1');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+BEGIN
+  INSERT INTO public.firms (name, address) VALUES ('Lock Firm', 'lock-firm') RETURNING id INTO f;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (f, o1, 'owner'), (f, pg_temp.new_user('lock_owner_2'), 'owner');
+  COMMIT;
+  PERFORM race.dblink_connect('lock_first', dsn);
+  PERFORM race.dblink_connect('lock_second', dsn);
+  PERFORM race.dblink_exec('lock_second', 'SET lock_timeout = ''3s''');
+  PERFORM race.dblink_exec('lock_first', 'BEGIN');
+  PERFORM race.dblink_exec('lock_first', format('UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L', f, o1));
+  PERFORM race.dblink_exec('lock_second', format('INSERT INTO public.firm_teams (firm_id, name) VALUES (%L, %L)', f, 'Added during an owner change'));
+  PERFORM race.dblink_exec('lock_first', 'COMMIT');
+  PERFORM race.dblink_disconnect('lock_first');
+  PERFORM race.dblink_disconnect('lock_second');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_teams WHERE firm_id = f), 1::bigint, 'teams added while an owner change was open');
+  RAISE NOTICE 'firms: insert during an owner change passed';
 END $$;

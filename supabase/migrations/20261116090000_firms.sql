@@ -80,29 +80,16 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE peo text;
 BEGIN
-  -- An address reads as a listed PEO when, with its hyphens taken out, it starts or ends with the PEO's whole
-  -- name (trinetpartners, trinethr, trinet-partners), or when one of its hyphen-separated words is the whole name
-  -- (my-trinet-benefits). For a PEO of several words the first word counts too, as a hyphen-separated word
-  -- (adp, adp-benefits) or as the start of the address (adpbenefits), unless it is a common word ('the', 'first')
-  -- that says nothing about which PEO is meant. A name buried inside another word (petrinetwork) is not TriNet.
-  -- A name with fewer than 3 letters or digits once cleaned ('&', 'A1') has nothing to compare and holds back nothing.
+  -- D-26: an address is refused as a PEO's only when, with everything but letters and digits removed and in lower
+  -- case, it is exactly a listed PEO's name or short name treated the same way. The short name is the cleaned name
+  -- cut to 20 characters, as the quote reply addresses cut it. Nothing else is partial: a name that merely contains or
+  -- starts or ends with a PEO's (petrinet, adpbenefits) is the firm's own. Platform admins approve each firm before
+  -- it can send (Q-1.2), which is where a look-alike is caught.
   SELECT p.name INTO peo
   FROM public.peos p
-  CROSS JOIN LATERAL (
-    SELECT regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g') AS whole,
-           regexp_replace(lower(split_part(btrim(p.name), ' ', 1)), '[^a-z0-9]', '', 'g') AS first_word,
-           btrim(p.name) LIKE '% %' AS several_words,
-           replace(NEW.address, '-', '') AS flat,
-           string_to_array(NEW.address, '-') AS words
-  ) c
   WHERE p.listed
-    AND ((char_length(c.whole) >= 3
-          AND (left(c.flat, char_length(c.whole)) = c.whole OR right(c.flat, char_length(c.whole)) = c.whole
-               OR c.whole = ANY (c.words)))
-      OR (c.several_words AND char_length(c.first_word) >= 3
-          AND c.first_word <> ALL (ARRAY['the', 'and', 'first', 'new', 'national', 'american', 'united', 'global', 'general'])
-          AND (c.first_word = ANY (c.words)
-               OR (char_length(c.first_word) >= 4 AND left(c.flat, char_length(c.first_word)) = c.first_word))))
+    AND regexp_replace(lower(NEW.address), '[^a-z0-9]', '', 'g')
+      IN (regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g'), left(regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g'), 20))
   LIMIT 1;
   IF FOUND THEN
     RAISE EXCEPTION 'A firm address can''t read as a PEO (%)', peo USING ERRCODE = '23514';
