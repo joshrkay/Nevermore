@@ -4,15 +4,19 @@ import type { MyFirm } from "@/lib/advisorApi";
 export type Refusal = "none" | "not_this_firm" | "several";
 
 /**
- * The one firm the console acts for, from the person's own memberships and the address they are at (story P-1.4). The
- * console shows one firm's records, and the database narrows each answer to the firms the person belongs to and no further
- * (D-18), so a person in two firms would see both firms' records at once: they have no current firm until the console can
- * tell the two apart. At a firm's address the firm must be one of theirs; on the bare domain a member of exactly one firm
- * has that firm. Every guard, link and page that asks "is this person a member / an owner here" asks this and nothing else.
+ * The one firm the console acts for, from the person's own memberships and the address they are at (story P-1.4). At a
+ * firm's address the current firm is that address's firm, whatever other firms the person belongs to: it must be one of
+ * theirs, and the person's role is the one they hold there. Only where there is no address to choose by (the bare domain) is
+ * a member of several firms kept out, because the database narrows each answer to the firms the person belongs to and no
+ * further (D-18), so the console cannot tell which of them is meant; a member of exactly one has that firm. Every guard, link
+ * and page that asks "is this person a member / an owner here" asks this and nothing else.
  */
 export function currentFirm(firms: MyFirm[], address: string | null): { firm: MyFirm } | { refusal: Refusal } {
   if (firms.length === 0) return { refusal: "none" };
-  if (address !== null && !firms.some((f) => f.address === address)) return { refusal: "not_this_firm" };
+  if (address !== null) {
+    const here = firms.find((f) => f.address === address);
+    return here ? { firm: here } : { refusal: "not_this_firm" };
+  }
   if (firms.length > 1) return { refusal: "several" };
   return { firm: firms[0] };
 }
