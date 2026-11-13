@@ -84,7 +84,7 @@ CREATE TRIGGER firm_activity_no_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION public.reject_audit_change();
 
 ALTER TABLE public.firm_activity ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.firm_activity FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.firm_activity FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.firm_activity TO authenticated;
 
 CREATE POLICY firm_activity_owners_read ON public.firm_activity
@@ -237,3 +237,110 @@ REVOKE ALL ON FUNCTION public.record_send_activity() FROM PUBLIC, anon, authenti
 CREATE TRIGGER quote_requests_record_send
   AFTER INSERT OR UPDATE OF sent_on, sent_version ON public.quote_requests
   FOR EACH ROW EXECUTE FUNCTION public.record_send_activity();
+
+-- ---------- Reading ----------
+
+-- A page of a firm's record, newest first, for the firm's owners only. Filtered by the person who did it and by kind
+-- (null keeps all); a page is at most 100 rows from p_offset. A platform admin who is not an owner of the firm is
+-- refused like anyone else: the platform doesn't read a firm's record through this (D-16).
+CREATE FUNCTION public.firm_activity_list(
+  p_firm_id uuid, p_person uuid DEFAULT NULL, p_kind text DEFAULT NULL, p_limit integer DEFAULT 50, p_offset integer DEFAULT 0)
+RETURNS TABLE (
+  id bigint, at timestamptz, actor_id uuid, actor_email text, kind text, record_type text, record_id text,
+  subject_user_id uuid, subject_email text, role text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' THEN
+    RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
+  END IF;
+  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 OR p_offset IS NULL OR p_offset < 0 THEN
+    RAISE EXCEPTION 'A page is 1 to 100 entries from 0 or later' USING ERRCODE = '22023';
+  END IF;
+  RETURN QUERY
+    SELECT a.id, a.at, a.actor_id, u.email::text, a.kind, a.record_type, a.record_id, a.subject_user_id, su.email::text, a.role
+    FROM public.firm_activity a
+    LEFT JOIN auth.users u ON u.id = a.actor_id
+    LEFT JOIN auth.users su ON su.id = a.subject_user_id
+    WHERE a.firm_id = p_firm_id
+      AND (p_person IS NULL OR a.actor_id = p_person)
+      AND (p_kind IS NULL OR a.kind = p_kind)
+    ORDER BY a.at DESC, a.id DESC
+    LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, integer) TO authenticated;
+
+-- The people who appear as the doer in a firm's record: what the person filter offers. For the firm's owners only.
+CREATE FUNCTION public.firm_activity_people(p_firm_id uuid)
+RETURNS TABLE (user_id uuid, email text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' THEN
+    RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    SELECT a.actor_id, u.email::text
+    FROM (SELECT DISTINCT f.actor_id FROM public.firm_activity f WHERE f.firm_id = p_firm_id AND f.actor_id IS NOT NULL) a
+    LEFT JOIN auth.users u ON u.id = a.actor_id
+    ORDER BY u.email;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.firm_activity_people(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.firm_activity_people(uuid) TO authenticated;
+
+-- ---------- Retention ----------
+
+-- Removes entries past the window and reports how many. The one statement that may delete a row: it says so for itself
+-- and no one else can (guard_firm_activity also refuses the API roles whatever they say). Scheduled daily below.
+CREATE FUNCTION public.prune_firm_activity()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  removed integer;
+BEGIN
+  PERFORM set_config('eaa.pruning_firm_activity', 'on', true);
+  DELETE FROM public.firm_activity WHERE at < now() - public.firm_activity_retention();
+  GET DIAGNOSTICS removed = ROW_COUNT;
+  PERFORM set_config('eaa.pruning_firm_activity', '', true);
+  RETURN removed;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.prune_firm_activity() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.prune_firm_activity() TO service_role;
+
+-- Daily at 03:53 UTC, with the other retention jobs (20261104092000_data_retention_and_deletion.sql): needs pg_cron only.
+-- Without it, run `select public.prune_firm_activity();` from any scheduler with the service role. A job of the same name
+-- already there is left as it is.
+DO $$
+BEGIN
+  IF to_regprocedure('cron.schedule(text,text,text)') IS NULL THEN
+    BEGIN
+      CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'firm activity: pg_cron is not available (%); run public.prune_firm_activity() another way', SQLERRM;
+      RETURN;
+    END;
+  END IF;
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'prune-firm-activity') THEN
+    RAISE NOTICE 'firm activity: a prune-firm-activity job already exists; leaving it as it is';
+    RETURN;
+  END IF;
+  PERFORM cron.schedule('prune-firm-activity', '53 3 * * *', 'select public.prune_firm_activity();');
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'firm activity: could not schedule prune-firm-activity (%); run public.prune_firm_activity() another way', SQLERRM;
+END $$;
