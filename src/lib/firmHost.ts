@@ -46,3 +46,8 @@ export function firmUrlFrom(
   }
   return firmUrl(address, siteDomain);
 }
+
+/** Leaves this page for a firm's address (a new origin, with its own session), replacing this page in the history. */
+export function openFirmAddress(url: string): void {
+  window.location.replace(url);
+}

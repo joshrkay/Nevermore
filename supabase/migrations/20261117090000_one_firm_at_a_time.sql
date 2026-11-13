@@ -12,7 +12,7 @@
 -- role, a scheduled job, a server function that does not pass the header on) behaves exactly as before.
 --
 -- What this file changes, and why each:
---   * address_admits_firm(): reads the address from the request and says whether it admits a firm.
+--   * request_firm_address(), address_admits_firm(): read the address from the request and say whether it admits a firm.
 --   * firm_role(): asks address_admits_firm() too. Every firm rule and every function that asks is_firm_member(),
 --     intake_in_my_firm(), can_see_firm_record() or firm_to_act_for() is narrowed through it, so a write "for the caller's
 --     firm" (firm_to_act_for) at firm B's address acts for B and never for A.
@@ -27,38 +27,40 @@
 -- all, and what holds them back; every row behind the console is narrowed), the service role's functions that take an actor
 -- (held mail, mailboxes, alert recipients), and the triggers that stamp a firm's record.
 
--- Does the request's firm address admit a row of this firm? Yes when the request carries no address: no headers at all (a
--- job, the service role's own connection), headers without the address, or an empty one, as before this story. Otherwise only
--- for the one firm that holds the address, read as the database reads one (lower case, no surrounding spaces), and is not
--- refused (D-31: a refused firm's address is no firm's). It narrows, never widens: a caller must still be a member, which
--- firm_role() asks beside it. Headers that are not JSON raise an error (22P02), so a request that can't be read is refused
--- rather than taken as one with no address. firm_role() runs once per row of every firm rule, so the headers are read once
--- per call and a request without them returns at once. Internal.
+-- The firm address this request was made at, as the database reads one (lower case, no surrounding spaces), or NULL when the
+-- request carries none: no headers at all (a job, the service role's own connection), headers without the address, or an
+-- empty one. Headers that are not JSON raise an error, so a request that can't be read is refused rather than taken as one
+-- with no address. Internal: called by address_admits_firm() only.
+CREATE FUNCTION public.request_firm_address()
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT NULLIF(lower(btrim(NULLIF(current_setting('request.headers', true), '')::jsonb ->> 'x-firm-address')), '')
+$$;
+
+REVOKE ALL ON FUNCTION public.request_firm_address() FROM PUBLIC, anon, authenticated, service_role;
+
+-- Does this request's address admit a row of this firm? Yes when the request carries no address (as before this story).
+-- Otherwise only for the one firm that holds the address and is not refused (D-31: a refused firm's address is no firm's).
+-- It narrows, never widens: a caller must still be a member, which firm_role() asks beside it. Internal.
 CREATE FUNCTION public.address_admits_firm(p_firm_id uuid)
 RETURNS boolean
-LANGUAGE plpgsql
+LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-DECLARE
-  headers text := current_setting('request.headers', true);
-  wanted text;
-BEGIN
-  IF headers IS NULL OR headers = '' THEN
-    RETURN true;
-  END IF;
-  wanted := NULLIF(lower(btrim(headers::jsonb ->> 'x-firm-address')), '');
-  IF wanted IS NULL THEN
-    RETURN true;
-  END IF;
-  RETURN EXISTS (
-    SELECT 1 FROM public.firms f
-    WHERE f.id = p_firm_id
-      AND f.address = wanted
-      AND f.decision IS DISTINCT FROM 'refused'
-  );
-END;
+  SELECT CASE
+    WHEN public.request_firm_address() IS NULL THEN true
+    ELSE EXISTS (
+      SELECT 1 FROM public.firms f
+      WHERE f.id = p_firm_id
+        AND f.address = public.request_firm_address()
+        AND f.decision IS DISTINCT FROM 'refused'
+    )
+  END
 $$;
 
 REVOKE ALL ON FUNCTION public.address_admits_firm(uuid) FROM PUBLIC, anon, authenticated, service_role;

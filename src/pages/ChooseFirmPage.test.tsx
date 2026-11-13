@@ -19,12 +19,16 @@ vi.mock("@/lib/advisorApi", () => ({
   fetchNeedsSecondFactor: () => fetchNeedsSecondFactor(),
 }));
 vi.mock("@/lib/monitoring", () => ({ reportOpsEvent: vi.fn() }));
+// Leaving for a firm's address is a page load the test can't make; it records where the page sent the person instead.
+const openFirmAddress = vi.fn();
+vi.mock("@/lib/firmHost", async (original) => ({ ...(await original<typeof import("@/lib/firmHost")>()), openFirmAddress: (url: string) => openFirmAddress(url) }));
 
 const { clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: ChooseFirmPage } = await import("./ChooseFirmPage");
 
-const alpha = { firm_id: "f1", name: "Alpha Advisory", address: "alpha-advisory", role: "agent" };
-const bravo = { firm_id: "f2", name: "Bravo Brokers", address: "bravo-brokers", role: "owner" };
+const alpha = { firm_id: "f1", name: "Alpha Advisory", address: "alpha-advisory", role: "agent", refused: false };
+const bravo = { firm_id: "f2", name: "Bravo Brokers", address: "bravo-brokers", role: "owner", refused: false };
+const refusedFirm = { firm_id: "f3", name: "Refused Brokers", address: "refused-brokers", role: "owner", refused: true };
 
 const renderPage = () =>
   render(
@@ -46,6 +50,7 @@ beforeEach(() => {
   clearMyFirms();
   fetchMyFirms.mockReset();
   fetchNeedsSecondFactor.mockReset().mockResolvedValue(false);
+  openFirmAddress.mockReset();
 });
 
 describe("Choose a firm (CRM-S1.1b, D-40)", () => {
@@ -71,6 +76,31 @@ describe("Choose a firm (CRM-S1.1b, D-40)", () => {
     expect(screen.getByRole("link", { name: "Terms of Use" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Sign in with another account" }));
     expect(auth.signOut).toHaveBeenCalled();
+  });
+
+  it("leaves out a refused firm, whose address shows nothing (D-31)", async () => {
+    fetchMyFirms.mockResolvedValue([alpha, refusedFirm, bravo]);
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Your firms" });
+    const links = await within(list).findAllByRole("link");
+    expect(links).toHaveLength(2);
+    expect(screen.queryByText("Refused Brokers")).not.toBeInTheDocument();
+    expect(openFirmAddress).not.toHaveBeenCalled();
+  });
+
+  it("goes straight to the one firm left when the others were refused, as a member of one firm would", async () => {
+    fetchMyFirms.mockResolvedValue([refusedFirm, bravo]);
+    renderPage();
+    const { protocol, port } = window.location;
+    await vi.waitFor(() => expect(openFirmAddress).toHaveBeenCalledWith(`${protocol}//bravo-brokers.localhost${port ? `:${port}` : ""}/advisor`));
+    expect(screen.queryByRole("list", { name: "Your firms" })).not.toBeInTheDocument();
+  });
+
+  it("tells a person whose only firms were refused that they aren't a member of any firm", async () => {
+    fetchMyFirms.mockResolvedValue([refusedFirm]);
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "You aren't a member of any firm" })).toBeInTheDocument();
+    expect(openFirmAddress).not.toHaveBeenCalled();
   });
 
   it("tells a person who belongs to no firm so", async () => {

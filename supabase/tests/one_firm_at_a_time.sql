@@ -536,6 +536,15 @@ SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRA
 SELECT pg_temp.as_user('two', 'nowhere-at-all');
 SELECT pg_temp.is((SELECT count(*) FROM public.my_firms()), 2::bigint, 'at an address no firm holds, the person''s own firms are still listed');
 
+-- A refused firm is still the person's (its address stays taken, D-31), but its address shows nothing, so "Choose a firm"
+-- leaves it out: my_firms says which of the person's firms were refused.
+SELECT pg_temp.as_user('founder_r');
+SELECT pg_temp.is((SELECT array_agg(refused) FROM public.my_firms()), ARRAY[true], 'my_firms says a refused firm was refused');
+SELECT pg_temp.as_user('two');
+SELECT pg_temp.is((SELECT array_agg(refused) FROM public.my_firms()), ARRAY[false, false], 'and that approved firms were not');
+SELECT pg_temp.as_user('founder_w');
+SELECT pg_temp.is((SELECT array_agg(refused) FROM public.my_firms()), ARRAY[false], 'nor a firm still waiting for approval');
+
 -- ---------- 13. the helper ----------
 SELECT pg_temp.as_owner();
 DO $$
