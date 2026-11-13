@@ -7,7 +7,7 @@ const auth = { user: { id: "u1", email: "owner@example.test" } as { id: string; 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const firm = { current: { status: "known", address: "acme-brokers", name: "Acme Brokers" } as Record<string, unknown> };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 const api = { fetchMyFirm: vi.fn(), fetchPendingInvitations: vi.fn(), inviteMember: vi.fn(), resendInvitation: vi.fn(), cancelInvitation: vi.fn() };
 vi.mock("@/lib/invitationApi", () => api);
 
@@ -16,7 +16,7 @@ const { default: FirmInvitationsPage } = await import("./FirmInvitationsPage");
 const renderPage = () => render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter>);
 const pending = (over: Record<string, unknown> = {}) => ({
   id: "i1", email: "newcomer@example.test", role: "agent", invitedAt: "2026-11-16T10:00:00Z", expiresAt: "2099-11-23T10:00:00Z", expired: false,
-  resentAt: null, emailSent: true, emailError: null, ...over,
+  resentAt: null, delivery: "sent", emailError: null, ...over,
 });
 
 // An owner invites people by email with a role, sees who is still pending, and resends or withdraws an invitation (story CRM-P1.2).
@@ -26,9 +26,9 @@ describe("FirmInvitationsPage", () => {
     auth.loading = false;
     firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
     api.fetchMyFirm.mockReset().mockResolvedValue({ id: "f1", name: "Acme Brokers", role: "owner" });
-    api.fetchPendingInvitations.mockReset().mockResolvedValue([pending(), pending({ id: "i2", email: "late@example.test", role: "lead", expired: true, expiresAt: "2026-11-01T10:00:00Z" }), pending({ id: "i3", email: "lost@example.test", emailSent: false, emailError: "provider_error" })]);
-    api.inviteMember.mockReset().mockResolvedValue({ invitationId: "i9", emailed: true });
-    api.resendInvitation.mockReset().mockResolvedValue({ invitationId: "i1", emailed: true });
+    api.fetchPendingInvitations.mockReset().mockResolvedValue([pending(), pending({ id: "i2", email: "late@example.test", role: "lead", expired: true, expiresAt: "2026-11-01T10:00:00Z" }), pending({ id: "i3", email: "lost@example.test", delivery: "failed", emailError: "provider_error" })]);
+    api.inviteMember.mockReset().mockResolvedValue({ invitationId: "i9", delivery: "sent" });
+    api.resendInvitation.mockReset().mockResolvedValue({ invitationId: "i1", delivery: "sent" });
     api.cancelInvitation.mockReset().mockResolvedValue(undefined);
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();
@@ -93,11 +93,47 @@ describe("FirmInvitationsPage", () => {
   });
 
   it("says when the invitation was saved but its email did not go, and that it can be resent", async () => {
-    api.inviteMember.mockResolvedValue({ invitationId: "i9", emailed: false });
+    api.inviteMember.mockResolvedValue({ invitationId: "i9", delivery: "failed" });
     renderPage();
     fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "hire@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The invitation is saved but the email didn't go out. Resend it from the list."));
+  });
+
+  it("says it is not known whether the email was delivered, rather than that it did not go, and that a new link replaces the first", async () => {
+    api.inviteMember.mockResolvedValue({ invitationId: "i9", delivery: "unknown" });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "hire@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(
+      "We couldn't confirm the email to hire@example.test was delivered. It may have arrived. Sending again makes a new link, and the first one then stops working.",
+    ));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("says the same for a resend whose delivery is not known", async () => {
+    api.resendInvitation.mockResolvedValue({ invitationId: "i1", delivery: "unknown" });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Resend invitation to newcomer@example.test" }));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(
+      "We couldn't confirm the email to newcomer@example.test was delivered. It may have arrived. Sending again makes a new link, and the first one then stops working.",
+    ));
+  });
+
+  it("lists an invitation whose delivery is not known as that, not as one that did not go out", async () => {
+    api.fetchPendingInvitations.mockResolvedValue([pending({ delivery: "unknown", emailError: "timeout" })]);
+    renderPage();
+    const [item] = await within(await screen.findByRole("list", { name: "Pending invitations" })).findAllByRole("listitem");
+    expect(item).toHaveTextContent("Not sure the email was delivered");
+    expect(item).not.toHaveTextContent("did not go out");
+  });
+
+  it("treats an invitation with no recorded send as not known to have been delivered", async () => {
+    api.fetchPendingInvitations.mockResolvedValue([pending({ delivery: null })]);
+    renderPage();
+    const [item] = await within(await screen.findByRole("list", { name: "Pending invitations" })).findAllByRole("listitem");
+    expect(item).toHaveTextContent("Not sure the email was delivered");
   });
 
   it("shows why the server refused, and keeps what was typed", async () => {

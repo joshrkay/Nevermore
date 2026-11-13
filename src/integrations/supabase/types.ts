@@ -985,6 +985,7 @@ export type Database = {
           resent_at: string | null
           email_sent_at: string | null
           email_error: string | null
+          email_outcome: string | null
         }[]
       }
       cancel_invitation: {
@@ -992,7 +993,7 @@ export type Database = {
         Returns: undefined
       }
       accept_invitation: {
-        Args: { p_token_hash: string }
+        Args: { p_token_hash: string; p_firm_address: string }
         Returns: { firm_id: string; firm_address: string; role: string }[]
       }
       is_member_of_firm_address: {

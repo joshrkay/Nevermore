@@ -9,12 +9,23 @@ import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import {
   cancelInvitation, fetchMyFirm, fetchPendingInvitations, inviteMember, resendInvitation,
-  type FirmRole, type PendingInvitation,
+  type Delivery, type FirmRole, type PendingInvitation,
 } from "@/lib/invitationApi";
 
 const input = "w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 const ROLE_LABELS: Record<FirmRole, string> = { agent: "Agent", lead: "Lead", owner: "Owner" };
+
+/**
+ * What an owner is told once an invitation's email has been tried. "Unknown" is its own answer: the mail provider may have accepted
+ * the message, so it is not said to have failed, and the owner is told that sending again replaces the first link.
+ */
+function tellDelivery(delivery: Delivery, email: string, sentWords: string, failedWords: string) {
+  if (delivery === "sent") toast.success(sentWords);
+  else if (delivery === "unknown") {
+    toast.warning(`We couldn't confirm the email to ${email} was delivered. It may have arrived. Sending again makes a new link, and the first one then stops working.`);
+  } else toast.error(failedWords);
+}
 
 type Load =
   | { kind: "loading" }
@@ -68,8 +79,7 @@ const FirmInvitationsPage = () => {
     try {
       const typed = email.trim();
       const result = await inviteMember({ firmId: load.firm.id, email: typed, role });
-      if (result.emailed) toast.success(`Invitation sent to ${typed}.`);
-      else toast.error("The invitation is saved but the email didn't go out. Resend it from the list.");
+      tellDelivery(result.delivery, typed, `Invitation sent to ${typed}.`, "The invitation is saved but the email didn't go out. Resend it from the list.");
       setEmail("");
       await refresh();
     } catch (err) {
@@ -82,8 +92,7 @@ const FirmInvitationsPage = () => {
     setBusy(i.id);
     try {
       const result = await resendInvitation(i.id);
-      if (result.emailed) toast.success(`Invitation sent again to ${i.email}.`);
-      else toast.error("The invitation is saved but the email didn't go out. Try again.");
+      tellDelivery(result.delivery, i.email, `Invitation sent again to ${i.email}.`, "The invitation is saved but the email didn't go out. Try again.");
       await refresh();
     } catch (err) {
       toast.error((err as Error).message);
@@ -104,7 +113,10 @@ const FirmInvitationsPage = () => {
   };
 
   const status = (i: PendingInvitation) =>
-    i.expired ? `Expired ${formatDateTime(i.expiresAt)}` : !i.emailSent ? "The email did not go out" : `Expires ${formatDateTime(i.expiresAt)}`;
+    i.expired ? `Expired ${formatDateTime(i.expiresAt)}`
+      : i.delivery === "failed" ? "The email did not go out"
+      : i.delivery === "unknown" || i.delivery === null ? "Not sure the email was delivered. If it didn't arrive, resend: the new link replaces this one."
+      : `Expires ${formatDateTime(i.expiresAt)}`;
 
   return (
     <div className="min-h-screen bg-background">
@@ -169,7 +181,7 @@ const FirmInvitationsPage = () => {
                   <li key={i.id} className="border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                     <span className="font-semibold break-all">{i.email}</span>
                     <span className="text-xs border border-border rounded px-1.5 py-0.5">{ROLE_LABELS[i.role]}</span>
-                    <span className={`text-xs ${i.expired || !i.emailSent ? "text-destructive" : "text-muted-foreground"}`}>{status(i)}</span>
+                    <span className={`text-xs ${i.expired || i.delivery === "failed" ? "text-destructive" : "text-muted-foreground"}`}>{status(i)}</span>
                     <span className="ml-auto flex items-center gap-2">
                       <button className={button} disabled={busy !== null} onClick={() => void resend(i)} aria-label={`Resend invitation to ${i.email}`}>Resend</button>
                       <button className={button} disabled={busy !== null} onClick={() => void withdraw(i)} aria-label={`Withdraw invitation to ${i.email}`}>Withdraw</button>

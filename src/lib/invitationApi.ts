@@ -5,6 +5,7 @@ import { hashInvitationToken } from "../../supabase/functions/_shared/invitation
 // decides every rule (who may invite, one pending invitation per email, who may accept); these only put its refusals into words.
 
 export type FirmRole = "owner" | "lead" | "agent";
+export type Delivery = "sent" | "failed" | "unknown";
 
 export interface PendingInvitation {
   id: string;
@@ -14,8 +15,8 @@ export interface PendingInvitation {
   expiresAt: string;
   expired: boolean;
   resentAt: string | null;
-  /** Whether the email went out. An invitation that did not go out can be resent. */
-  emailSent: boolean;
+  /** How the email of the current link fared: sent, failed (certainly not delivered), unknown (the provider may have accepted it), or null when no send has been recorded. */
+  delivery: Delivery | null;
   emailError: string | null;
 }
 
@@ -29,15 +30,16 @@ async function serverReason(error: { context?: unknown }): Promise<string | null
   return typeof body?.error === "string" ? body.error : null;
 }
 
-async function callServer(body: Record<string, unknown>): Promise<{ invitationId: string; emailed: boolean }> {
+async function callServer(body: Record<string, unknown>): Promise<{ invitationId: string; delivery: Delivery }> {
   const { data, error } = await supabase.functions.invoke("invite-member", { body });
   if (error) throw new Error((await serverReason(error as { context?: unknown })) ?? "Couldn't send the invitation. Try again.");
-  const reply = data as { invitation_id?: string; emailed?: boolean } | null;
+  const reply = data as { invitation_id?: string; delivery?: string } | null;
   if (!reply?.invitation_id) throw new Error("Couldn't send the invitation. Try again.");
-  return { invitationId: reply.invitation_id, emailed: reply.emailed === true };
+  // An answer that does not say it went is not a success.
+  return { invitationId: reply.invitation_id, delivery: reply.delivery === "sent" || reply.delivery === "failed" ? reply.delivery : "unknown" };
 }
 
-/** Invites an email address to a firm with a role (and, later, a team). Resolves with whether the email went out: the invitation is kept either way. */
+/** Invites an email address to a firm with a role (and, later, a team). Resolves with how the email fared (sent, failed, or unknown when the mail provider may have accepted it): the invitation is kept either way. */
 export function inviteMember(input: { firmId: string; email: string; role: FirmRole; teamId?: string | null }) {
   return callServer({ action: "invite", firm_id: input.firmId, email: input.email, role: input.role, ...(input.teamId ? { team_id: input.teamId } : {}) });
 }
@@ -59,7 +61,7 @@ export async function fetchPendingInvitations(firmId: string): Promise<PendingIn
     expiresAt: i.expires_at,
     expired: i.expired,
     resentAt: i.resent_at,
-    emailSent: i.email_sent_at !== null,
+    delivery: i.email_outcome === "sent" || i.email_outcome === "failed" || i.email_outcome === "unknown" ? i.email_outcome : null,
     emailError: i.email_error,
   }));
 }
@@ -85,15 +87,19 @@ function acceptanceRefusal(error: DbError): string {
       if (/withdrawn/i.test(said)) return `This invitation was withdrawn. ${ASK_AGAIN}`;
       return "This invitation has already been used.";
     case "PT403": return "This invitation was sent to a different email address than the one you are signed in with. Sign out, then sign in or create your account with the address it was sent to.";
+    case "PT422": return "This invitation is for a different firm's address. Open the link from your email as it was sent.";
     case "PT409": return "You're already a member of this firm.";
     case "42501": return "Sign in with a verified email address to accept an invitation.";
     default: return "Couldn't accept the invitation. Try again.";
   }
 }
 
-/** Accepts the invitation a link carries, as the signed-in person. The database is given the token's hash, never the token. */
-export async function acceptInvitation(token: string): Promise<{ firmAddress: string; role: FirmRole }> {
-  const { data, error } = await supabase.rpc("accept_invitation", { p_token_hash: await hashInvitationToken(token) });
+/**
+ * Accepts the invitation a link carries, as the signed-in person, at the firm address the link was opened at: the database
+ * joins nothing unless that is the address of the invitation's firm (D-34). It is given the token's hash, never the token.
+ */
+export async function acceptInvitation(token: string, firmAddress: string): Promise<{ firmAddress: string; role: FirmRole }> {
+  const { data, error } = await supabase.rpc("accept_invitation", { p_token_hash: await hashInvitationToken(token), p_firm_address: firmAddress });
   if (error) throw new Error(acceptanceRefusal(error));
   const joined = Array.isArray(data) ? data[0] : data;
   if (!joined) throw new Error("Couldn't accept the invitation. Try again.");
