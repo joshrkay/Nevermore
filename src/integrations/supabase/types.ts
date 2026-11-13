@@ -1064,6 +1064,29 @@ export type Database = {
         Args: { p_invitation_id: string }
         Returns: undefined
       }
+      remove_member: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      suspend_member: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      lift_member_suspension: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      firm_members: {
+        Args: { p_firm_id: string }
+        Returns: {
+          user_id: string
+          email: string
+          role: string
+          state: string
+          since: string
+          is_you: boolean
+        }[]
+      }
       accept_invitation: {
         Args: { p_token_hash: string; p_firm_address: string }
         Returns: { firm_id: string; firm_address: string; role: string }[]
