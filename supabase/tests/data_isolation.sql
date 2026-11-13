@@ -159,6 +159,7 @@
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
+\i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
 \i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
 SET client_min_messages = notice;
 

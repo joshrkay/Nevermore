@@ -253,15 +253,36 @@ describe("the members page", () => {
       expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
     });
 
-    it("at the address of the firm the owner owns, with another firm they only belong to as an agent, acts for the address's firm", async () => {
+    it("at the address of the firm the owner owns, with another firm they belong to as an agent, acts for the address's firm and no other", async () => {
       db.firms = [
         { firm_id: "f1", name: "Acme Brokers", address: "acme", role: "owner" },
         { firm_id: "f2", name: "Zenith Benefits", address: "zenith", role: "agent" },
       ];
       firmAddress = { status: "known", address: "acme", name: "Acme Brokers" };
       renderPage();
-      // The console can't yet tell two firms apart (P-1.4): a person in two is kept out rather than shown both.
-      expect(await screen.findByRole("heading", { name: /more than one firm/ })).toBeInTheDocument();
+      // The page names the firm in every call, so it is let in as the owner of the firm at the address (ADR 0015).
+      await screen.findByRole("table", { name: "Members" });
+      expect(db.calls.filter(([fn]) => fn === "firm_members")).toEqual([["firm_members", { p_firm_id: "f1" }]]);
+    });
+
+    it("at the address of a firm where the owner is only an agent, though they own another, they are kept out", async () => {
+      db.firms = [
+        { firm_id: "f1", name: "Acme Brokers", address: "acme", role: "owner" },
+        { firm_id: "f2", name: "Zenith Benefits", address: "zenith", role: "agent" },
+      ];
+      firmAddress = { status: "known", address: "zenith", name: "Zenith Benefits" };
+      renderPage();
+      expect(await screen.findByRole("heading", { name: "For a firm's owners" })).toBeInTheDocument();
+      expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
+    });
+
+    it("on the bare domain a member of several firms has no current firm, and is kept out", async () => {
+      db.firms = [
+        { firm_id: "f1", name: "Acme Brokers", address: "acme", role: "owner" },
+        { firm_id: "f2", name: "Zenith Benefits", address: "zenith", role: "owner" },
+      ];
+      renderPage();
+      expect(await screen.findByRole("heading", { name: /more than one firm|For a firm's owners/ })).toBeInTheDocument();
       expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
     });
   });

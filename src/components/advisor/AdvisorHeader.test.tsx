@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = { user: { id: "u1", email: "advisor@example.com" }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -52,6 +52,15 @@ describe("the advisor header's Activity link", () => {
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
   });
 
+  it("is offered to an owner of two firms at the address of one of them, as the real route lets them in there", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), owner(betaFirm)]);
+    renderHeader();
+    expect(await screen.findByRole("link", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Submissions" })).toBeInTheDocument();
+  });
+
   it("is not offered at the address of a firm the owner of another firm does not belong to", async () => {
     firmAddress = { status: "known", address: "beta", name: "Beta" };
     api.fetchMyFirms.mockResolvedValue([owner(alphaFirm)]);
@@ -99,6 +108,10 @@ describe("the advisor header's Members link", () => {
     api.fetchOwnedFirms.mockReset();
     api.fetchMyFirms.mockReset().mockResolvedValue([{ ...alphaFirm, role: "agent" }]);
     api.fetchIsAdmin.mockReset().mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    firmAddress = { status: "none" };
   });
 
   it("is offered to the owner of the firm the console shows", async () => {
