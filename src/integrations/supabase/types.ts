@@ -814,6 +814,8 @@ export type Database = {
           email_verified: number
           certified: number
           manuscript_downloaded: number
+          // The firm the row is about (20261116200002): a code is unique within a firm, not across firms.
+          firm_id: string
         }[]
       }
       // Adds a referral partner under a new code; a code already taken is refused (23505).

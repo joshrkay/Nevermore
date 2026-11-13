@@ -155,6 +155,7 @@
 \i supabase/migrations/20261116180000_function_firm_scope.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116200001_held_mail_assign_open_only.sql
+\i supabase/migrations/20261116200002_funnel_by_source_names_firm.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1892,7 +1893,13 @@ BEGIN
   IF r <> 'ok:Acme CFO Partners' THEN RAISE EXCEPTION 'FAIL: the first firm''s funnel named partner(s) %', r; END IF;
   r := pg_temp.call_as('agent_b', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
   IF r <> 'ok:Beta CFO Partners' THEN RAISE EXCEPTION 'FAIL: the second firm''s funnel named partner(s) %', r; END IF;
+  -- A member of both firms gets one row for the code in each firm, each saying whose it is, never one merged row.
   RESET ROLE;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fa, pg_temp.id('agent_b'), 'agent');
+  r := pg_temp.call_as('agent_b', $q$SELECT string_agg(firm_id::text || '=' || partner_name, ',' ORDER BY partner_name) FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  IF r <> format('ok:%s=Acme CFO Partners,%s=Beta CFO Partners', fa, fb) THEN RAISE EXCEPTION 'FAIL: a member of both firms was given %', r; END IF;
+  RESET ROLE;
+  DELETE FROM public.firm_memberships WHERE firm_id = fa AND user_id = pg_temp.id('agent_b');
   SET LOCAL session_replication_role = replica;
   UPDATE public.intake_milestones SET referral_code = NULL WHERE referral_code = 'acme-cfo';
   RESET session_replication_role;
