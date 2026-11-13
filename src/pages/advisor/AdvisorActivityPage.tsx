@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { useAuth } from "@/hooks/useAuth";
@@ -97,8 +96,7 @@ const AdvisorActivityPage = () => {
   const filtered = person !== null || kind !== null;
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-5xl space-y-6">
         <div>
           <h1 className="font-display text-3xl font-bold mb-1">Who did what</h1>

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
@@ -15,6 +15,8 @@ vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }))
 
 const { clearOwnedFirms, clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorActivityPage } = await import("./AdvisorActivityPage");
+const { default: WorkspaceShell } = await import("@/components/workspace/WorkspaceShell");
+const { default: AdvisorSettingsPage } = await import("./AdvisorSettingsPage");
 const { AdvisorApiError, NEVERMORE_FILTER } = await import("@/lib/advisorApi");
 
 const renderPage = (at = "/advisor/activity") => render(<MemoryRouter initialEntries={[at]}><AdvisorActivityPage /></MemoryRouter>);
@@ -138,10 +140,22 @@ describe("AdvisorActivityPage", () => {
     expect(api.fetchOwnedFirms).toHaveBeenCalledTimes(2);
   });
 
-  it("is reached from the console's navigation", async () => {
-    renderPage();
+  it("sits inside the workspace menu, under Settings, which links to it for an owner", async () => {
+    render(
+      <MemoryRouter initialEntries={["/advisor/activity"]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="/advisor/activity" element={<AdvisorActivityPage />} />
+            <Route path="/settings" element={<AdvisorSettingsPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
     await screen.findByRole("table");
-    expect(await within(screen.getByRole("navigation", { name: "Console" })).findByRole("link", { name: "Activity" })).toHaveAttribute("href", "/advisor/activity");
+    const nav = screen.getByRole("navigation", { name: "Workspace" });
+    expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(within(nav).getByRole("link", { name: "Settings" }));
+    expect(await screen.findByRole("link", { name: /Activity/ })).toHaveAttribute("href", "/advisor/activity");
   });
 
   it("names the person a membership change was about and their role, and never shows a missing person as blank", async () => {

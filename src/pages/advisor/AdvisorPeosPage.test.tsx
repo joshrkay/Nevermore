@@ -115,12 +115,6 @@ describe("AdvisorPeosPage", () => {
     expect(within(profile).getByRole("region", { name: "Contacts · advisors only" })).toHaveTextContent("dana@trinet.example");
   });
 
-  it("is in the console's navigation", async () => {
-    renderPage();
-    const nav = await screen.findByRole("navigation", { name: "Console" });
-    expect(await within(nav).findByRole("link", { name: "PEOs" })).toHaveAttribute("href", "/advisor/peos");
-  });
-
   it("shows an advisor who isn't an admin the version in use, whatever an admin is drafting", async () => {
     api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 } }));
     renderPage("/advisor/peos?peo=5");
