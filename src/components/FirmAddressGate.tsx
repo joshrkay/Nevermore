@@ -16,8 +16,9 @@ type Membership = "checking" | "member" | "not_member" | "error";
 
 /**
  * What a firm's address shows (story CRM-P1.3a, D-17, D-18). On the bare domain it changes nothing. At a firm's address:
- * an address no approved firm holds is a plain not-found page, except to a signed-in member of the firm waiting for
- * approval there; a signed-out visitor reaches the sign-in screens; and
+ * a signed-out visitor reaches the sign-in screens (with no firm name where no approved firm holds the address); a
+ * signed-in person at an address no approved firm holds sees a plain not-found page, unless they are a member of the
+ * firm waiting for approval there; and
  * a signed-in person who is not a current member of that firm sees "You aren't a member of this firm" and nothing
  * else, whichever firm they do belong to. This decides only what to render: the database refuses the data to a
  * non-member anyway, and no firm is put in the token.
@@ -50,10 +51,12 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   }, [address, userId, signedIn, asked, attempt]);
 
   if (firm.status === "none") return <>{children}</>;
-  if (firm.status !== "unknown" && SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
+  if (SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
   if (firm.status === "checking" || loading) return <Checking />;
   if (firm.status === "unknown") {
-    if (!signedIn) return <NotFound />;
+    // A session is kept per address, so the member of a firm waiting for approval has to sign in here. The sign-in
+    // screens show no firm name at an unknown address (FirmName), so nothing tells it from an address nobody holds.
+    if (!signedIn) return <>{children}</>;
     // Nothing tells a non-member (or a failed check) from a visitor at an address nobody holds.
     return membership === "checking" ? <Checking /> : membership === "member" ? <>{children}</> : <NotFound />;
   }

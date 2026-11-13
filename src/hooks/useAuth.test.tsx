@@ -183,11 +183,11 @@ describe("useAuth session ending", () => {
     }
   });
 
-  it("ends every session of the person when signing out on the bare domain", async () => {
+  it("ends only this address's session when signing out on the bare domain too, so a firm address's session stays", async () => {
     const { result } = await mountAuth();
     authApi.signOut.mockClear();
     await act(async () => { await result.current.signOut(); });
-    expect(authApi.signOut).toHaveBeenCalledWith({ scope: "global" });
+    expect(authApi.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 
   it("calls a deliberate sign-out a sign-out", async () => {

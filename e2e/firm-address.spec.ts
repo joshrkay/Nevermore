@@ -50,10 +50,15 @@ async function signInWithPassword(page: Page, address: string, email: string) {
 test("a member signs in at their firm's address and reaches the console; at another firm's address they are told they aren't a member", async ({ page, request }) => {
   const email = await setUp(request);
 
-  await test.step("an address no firm holds is a plain not-found page", async () => {
+  await test.step("an address no firm holds shows the sign-in with no firm name, and signing in there ends in not-found", async () => {
     await page.goto(`${firmUrl(NOWHERE)}/advisor`);
+    await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toBeVisible();
+    await expect(page.getByTestId("firm-name")).toHaveCount(0);
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign In" }).click();
     await expect(page.getByText("Oops! Page not found")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Submissions" })).toHaveCount(0);
   });
 
   await test.step("the sign-in at the firm's address names the firm", async () => {
@@ -105,4 +110,29 @@ test("a member signs in at their firm's address and reaches the console; at anot
     const res = await request.post(`${GATEWAY_URL}/auth/v1/token?grant_type=refresh_token`, { headers: { apikey: ANON_KEY }, data: { refresh_token: refreshToken } });
     expect(res.status()).toBe(200);
   });
+});
+
+test("a member of a firm waiting for approval signs in at its address and works there, with no firm name shown before sign-in", async ({ page, request }) => {
+  const waiting = `waiting-${stamp}`;
+  const email = `waiting-member-${stamp}@example.test`;
+  const res = await request.post(`${GATEWAY_URL}/auth/v1/signup`, { headers: { apikey: ANON_KEY }, data: { email, password: PASSWORD } });
+  expect(res.status()).toBe(200);
+  const { user } = (await res.json()) as { user: { id: string } };
+  await withDb(async (client) => {
+    const firm = await client.query("INSERT INTO public.firms (name, address) VALUES ('Waiting Brokers', $1) RETURNING id", [waiting]);
+    await client.query("INSERT INTO public.user_roles (user_id, role) VALUES ($1, 'advisor')", [user.id]);
+    await client.query("INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ($1, $2, 'owner')", [firm.rows[0].id, user.id]);
+  });
+
+  await page.goto(`${firmUrl(waiting)}/advisor`);
+  await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toBeVisible();
+  await expect(page.getByTestId("firm-name")).toHaveCount(0);
+  await expect(page.getByText("Waiting Brokers")).toHaveCount(0);
+  await signInWithPassword(page, waiting, email);
+  await expect(page.getByRole("heading", { name: "Add a second step to your sign-in" })).toBeVisible();
+  const secret = (await page.locator("span.font-mono").innerText()).trim();
+  await page.getByLabel(/6-digit code/).fill(totpCode(secret));
+  await page.getByRole("button", { name: "Turn on and continue" }).click();
+  await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`^${firmUrl(waiting)}/advisor$`));
 });

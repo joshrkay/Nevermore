@@ -1,4 +1,3 @@
-import { firmAddressFromHost } from "@/lib/firmHost";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { EmailOtpType, User, Session } from "@supabase/supabase-js";
@@ -161,9 +160,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     requestedEnd.current = reason;
     // Unsaved answers kept in this browser go with the person who chose to leave it.
     if (reason === "signed_out") clearAllBackups();
-    // A session belongs to one firm address: signing out at one must not end the person's session at another firm's
-    // address (the default scope revokes every refresh token they hold).
-    await supabase.auth.signOut({ scope: firmAddressFromHost(window.location.hostname) ? "local" : "global" });
+    // A session belongs to one address: a deliberate sign-out ends this address's session only, never the person's
+    // session at another (the default scope revokes every refresh token they hold).
+    await supabase.auth.signOut({ scope: "local" });
   };
 
   return (

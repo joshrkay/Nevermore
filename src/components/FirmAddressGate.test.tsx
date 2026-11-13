@@ -52,14 +52,23 @@ describe("the firm address gate", () => {
     expect(fetchIsMemberOfFirmAddress).not.toHaveBeenCalled();
   });
 
-  it("shows a plain not-found page at an address no approved firm holds, to a visitor who is not a member", async () => {
+  it("lets a signed-out visitor reach the sign-in screens at an address no approved firm holds, without a firm name, so a waiting firm's member can sign in there", async () => {
     fetchFirmName.mockResolvedValue(null);
-    renderAt("no-such-firm.nevermorepeo.com");
-    expect(await screen.findByText("Oops! Page not found")).toBeInTheDocument();
-    expect(screen.queryByText("The console")).not.toBeInTheDocument();
-    expect(fetchFirmName).toHaveBeenCalledWith("no-such-firm");
+    const { container } = renderAt("no-such-firm.nevermorepeo.com");
+    expect(await screen.findByText("The console")).toBeInTheDocument();
+    expect(screen.queryByText("Oops! Page not found")).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain("Acme Brokers");
     // A signed-out visitor is never asked about membership.
     expect(fetchIsMemberOfFirmAddress).not.toHaveBeenCalled();
+  });
+
+  it("leaves the sign-in landing pages mounted for a signed-out visitor at an address no approved firm holds", async () => {
+    fetchFirmName.mockResolvedValue(null);
+    for (const path of ["/broker/callback", "/auth/callback"]) {
+      const view = renderAt("waiting-firm.nevermorepeo.com", path);
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      view.unmount();
+    }
   });
 
   it("shows the same not-found page to a signed-in person who is not a member of the firm waiting at that address", async () => {
