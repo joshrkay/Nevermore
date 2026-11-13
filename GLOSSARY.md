@@ -274,8 +274,19 @@ The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0
 _Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)
 
 **Firm activity** (code: `firm_activity`):
-A firm's record of who did what: one row for each sign-in to the firm's console, submission opened, file downloaded, send recorded, export, invitation, removal, support access and membership, role or ownership change, with who did it, when, the kind and the id of the record it was about. Never content: no answer, name, email text or file. Nobody can change or delete a row, an admin included; the daily retention job removes entries after 90 days (D4). A firm's current owners read their own firm's and nobody else does, a platform admin included (D-16). Written only through `record_firm_activity`, which works out the firm from the record and the person from the caller's own sign-in.
+A firm's record of who did what: one row for each sign-in to the firm's console, submission opened, file downloaded, send recorded, export, invitation, removal, support access and membership, role or ownership change, with who did it, when, the kind and the id of the record it was about. Never content: no answer, name, email text or file. Nobody can change or delete a row, an admin included; the daily retention job removes entries after 90 days (D4). A firm's current owners read their own firm's and nobody else does, a platform admin included (D-16). Written only through `record_firm_activity` (server code and triggers; no actor argument), `record_member_activity` (a browser, for exact pairs of kind and record only) and `record_firm_activity_as` (a server function vouching for a signed-in member of the record's firm), which work out the firm from the record and never take it from the caller. Read a page at a time by a cursor, never by an offset.
 _Avoid_: audit log, access log, activity feed, history (a submission's status history is a different record)
+
+**Retention role** (code: `firm_activity_pruner`):
+The one database role allowed to delete a firm-record entry, and only past the window. It cannot sign in, no API role belongs to it, and only `prune_firm_activity()` runs as it; a delete is allowed by who is running it, never by a setting a caller can make (ADR 0012).
+_Avoid_: admin delete, purge flag
+
+**Record cursor**:
+Where a page of the firm's record starts: after the entry with a given time and id, the two things the record is ordered by, so an entry arriving between two pages never repeats or skips a row.
+_Avoid_: offset, page number (as the way a page is found)
+
+**Owned firm**:
+A firm the caller is a current owner of, as the database answers (`my_owner_firms()`). A page that reads a firm's record says which firm it wants, and the database checks the caller currently owns that one; there is no "the caller's firm" for someone who owns two.
 
 **Entry kind** (code: `firm_activity.kind`):
 What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.

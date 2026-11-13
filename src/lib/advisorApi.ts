@@ -795,15 +795,16 @@ export async function recordActivity(
 }
 
 export type FirmActivityEntry = Database["public"]["Functions"]["firm_activity_list"]["Returns"][number];
+export type OwnedFirm = Database["public"]["Functions"]["my_owner_firms"]["Returns"][number];
 export type FirmActivityPerson = Database["public"]["Functions"]["firm_activity_people"]["Returns"][number];
 /** Entries on a page of the firm's record. */
 export const FIRM_ACTIVITY_PAGE_SIZE = 25;
 
-/** The firm the signed-in person currently owns, or null: only an owner reads a firm's record. */
-export async function fetchOwnedFirm(): Promise<string | null> {
-  const { data, error } = await supabase.rpc("my_owner_firm");
+/** The firms the signed-in person currently owns, by name: only an owner reads a firm's record, and says which firm. */
+export async function fetchOwnedFirms(): Promise<OwnedFirm[]> {
+  const { data, error } = await supabase.rpc("my_owner_firms");
   if (error) fail(error, "Couldn't check your role in your firm.");
-  return data ?? null;
+  return data ?? [];
 }
 
 /** Who appears as the doer in the firm's record, for the person filter. Owners only. */
@@ -813,22 +814,29 @@ export async function listFirmActivityPeople(firmId: string): Promise<FirmActivi
   return data ?? [];
 }
 
+/** Where a page of the record starts: after the last entry the reader saw, by the two things the record is ordered by. */
+export interface ActivityCursor {
+  at: string;
+  id: number;
+}
+
 /**
- * One page of the firm's record, newest first, filtered by the person who did it and the kind (null keeps all). Pages
- * count from 1. One more row than a page is asked for, to say whether another page follows. Owners only: for anyone else
- * the database refuses (code 42501, `forbidden` on the error).
+ * One page of the firm's record, newest first, filtered by the person who did it and the kind (null keeps all). A page
+ * starts after the entry `after` names (null for the first), so an entry arriving meanwhile never repeats or skips a
+ * row. One more row than a page is asked for, to say whether another page follows. Owners only: for anyone else the
+ * database refuses (code 42501, `forbidden` on the error).
  */
 export async function listFirmActivity(
   firmId: string,
-  opts: { person: string | null; kind: string | null; page: number },
+  opts: { person: string | null; kind: string | null; after: ActivityCursor | null },
 ): Promise<{ entries: FirmActivityEntry[]; hasMore: boolean }> {
-  const page = Math.max(1, Math.floor(opts.page));
   const { data, error } = await supabase.rpc("firm_activity_list", {
     p_firm_id: firmId,
     p_person: opts.person,
     p_kind: opts.kind,
     p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1,
-    p_offset: (page - 1) * FIRM_ACTIVITY_PAGE_SIZE,
+    p_before_at: opts.after?.at ?? null,
+    p_before_id: opts.after?.id ?? null,
   });
   if (error) fail(error, "Couldn't load the record.");
   const rows = data ?? [];

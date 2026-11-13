@@ -1,19 +1,21 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { ENTRY_KINDS, kindLabel, recordLabel } from "@/data/firmActivity";
 import {
-  fetchOwnedFirm, listFirmActivity, listFirmActivityPeople,
-  type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson,
+  fetchOwnedFirms, listFirmActivity, listFirmActivityPeople,
+  type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
 } from "@/lib/advisorApi";
 
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
   | { kind: "not_allowed" }
-  | { kind: "ready"; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean };
+  | { kind: "choose"; firms: OwnedFirm[] }
+  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean };
 
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -30,31 +32,52 @@ function recordText(e: FirmActivityEntry): string {
 
 /**
  * The firm's record of who did what (story CRM-P2.3), for its owners: when, who, what kind of thing and which record,
- * never content. Filtered by person and kind, newest first, a page at a time. Anyone else is told it is for owners; the
- * database refuses them anyway.
+ * never content. Filtered by person and kind, newest first, a page at a time. The firm is named by the address
+ * (?firm=<id>, which the firm's own address will supply); an owner of one firm needn't name it, an owner of several is
+ * asked. Anyone else is told it is for owners; the database refuses them anyway.
  */
 const AdvisorActivityPage = () => {
+  const [params, setParams] = useSearchParams();
+  const firmParam = params.get("firm");
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [person, setPerson] = useState<string | null>(null);
   const [kind, setKind] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
+  // Where each page after the first starts: after the last entry the reader saw on the page before.
+  const [trail, setTrail] = useState<ActivityCursor[]>([]);
+  const page = trail.length + 1;
+  const after = trail.length > 0 ? trail[trail.length - 1] : null;
 
   useEffect(() => {
     let cancelled = false;
     setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
     (async (): Promise<Load> => {
-      const firmId = await fetchOwnedFirm();
-      if (!firmId) return { kind: "not_allowed" };
-      const [people, result] = await Promise.all([listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, page })]);
-      return { kind: "ready", firmId, people, entries: result.entries, hasMore: result.hasMore };
+      const firms = await fetchOwnedFirms();
+      const firmId = firmParam ?? (firms.length === 1 ? firms[0].firm_id : null);
+      if (firmId === null) return firms.length > 1 ? { kind: "choose", firms } : { kind: "not_allowed" };
+      if (!firms.some((f) => f.firm_id === firmId)) return { kind: "not_allowed" };
+      const [people, result] = await Promise.all([listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, after })]);
+      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore };
     })()
       .then((next) => !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad((error as Partial<AdvisorApiError>).forbidden ? { kind: "not_allowed" } : { kind: "error", error }));
     return () => {
       cancelled = true;
     };
-  }, [attempt, person, kind, page]);
+  }, [attempt, person, kind, after, firmParam]);
+
+  const chooseFirm = (firmId: string) => {
+    setPerson(null);
+    setKind(null);
+    setTrail([]);
+    setParams(firmId ? { firm: firmId } : {}, { replace: true });
+  };
+
+  const older = () => {
+    if (load.kind !== "ready" || load.entries.length === 0) return;
+    const last = load.entries[load.entries.length - 1];
+    setTrail((t) => [...t, { at: last.at, id: last.id }]);
+  };
 
   const filtered = person !== null || kind !== null;
 
@@ -80,6 +103,16 @@ const AdvisorActivityPage = () => {
           <p role="status" className="text-sm">Only a firm's owners can read its record of who did what.</p>
         )}
 
+        {(load.kind === "choose" || (load.kind === "ready" && load.firms.length > 1)) && (
+          <div>
+            <label htmlFor="activity-firm" className="block text-xs text-muted-foreground">Firm</label>
+            <select id="activity-firm" value={firmParam ?? ""} onChange={(e) => chooseFirm(e.target.value)} className={select}>
+              {load.kind === "choose" && <option value="">Choose a firm</option>}
+              {load.firms.map((f) => <option key={f.firm_id} value={f.firm_id}>{f.name}</option>)}
+            </select>
+          </div>
+        )}
+
         {load.kind === "ready" && (
           <>
             <div className="flex flex-wrap gap-4 items-end">
@@ -88,7 +121,7 @@ const AdvisorActivityPage = () => {
                 <select
                   id="activity-person"
                   value={person ?? ""}
-                  onChange={(e) => { setPerson(e.target.value || null); setPage(1); }}
+                  onChange={(e) => { setPerson(e.target.value || null); setTrail([]); }}
                   className={select}
                 >
                   <option value="">Everyone</option>
@@ -100,7 +133,7 @@ const AdvisorActivityPage = () => {
                 <select
                   id="activity-kind"
                   value={kind ?? ""}
-                  onChange={(e) => { setKind(e.target.value || null); setPage(1); }}
+                  onChange={(e) => { setKind(e.target.value || null); setTrail([]); }}
                   className={select}
                 >
                   <option value="">Every kind</option>
@@ -140,9 +173,9 @@ const AdvisorActivityPage = () => {
 
             {(page > 1 || load.hasMore) && (
               <div className="flex items-center gap-3">
-                <button type="button" className={button} disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>Newer</button>
+                <button type="button" className={button} disabled={page <= 1} onClick={() => setTrail((t) => t.slice(0, -1))}>Newer</button>
                 <span className="text-sm text-muted-foreground">Page {page}</span>
-                <button type="button" className={button} disabled={!load.hasMore} onClick={() => setPage((n) => n + 1)}>Older</button>
+                <button type="button" className={button} disabled={!load.hasMore} onClick={older}>Older</button>
               </div>
             )}
           </>

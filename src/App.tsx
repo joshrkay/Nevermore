@@ -11,6 +11,7 @@ import Navbar from "./components/Navbar";
 import PageMeta from "./components/PageMeta";
 import RequireAuth from "./components/RequireAuth";
 import RequireAdvisor from "./components/RequireAdvisor";
+import RequireFirmOwner from "./components/RequireFirmOwner";
 import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
@@ -86,7 +87,7 @@ const App = () => (
                 <Route path="/advisor/held" element={<RequireAdvisor><AdvisorHeldMailPage /></RequireAdvisor>} />
                 <Route path="/advisor/mailbox" element={<RequireAdvisor><AdvisorMailboxPage /></RequireAdvisor>} />
                 <Route path="/advisor/organisations" element={<RequireAdvisor><AdvisorOrganisationsPage /></RequireAdvisor>} />
-                <Route path="/advisor/activity" element={<RequireAdvisor><AdvisorActivityPage /></RequireAdvisor>} />
+                <Route path="/advisor/activity" element={<RequireFirmOwner><AdvisorActivityPage /></RequireFirmOwner>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
               </AuthRedirectGate>

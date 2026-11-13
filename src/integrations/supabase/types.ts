@@ -818,7 +818,7 @@ export type Database = {
       }
       // A page of the caller's firm's record, newest first, for the firm's owners only (20261116160000).
       firm_activity_list: {
-        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_offset?: number }
+        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_id?: number | null }
         Returns: {
           actor_email: string | null
           actor_id: string | null
@@ -836,15 +836,15 @@ export type Database = {
         Args: { p_firm_id: string }
         Returns: { email: string | null; user_id: string }[]
       }
-      // The firm the caller currently owns, or null.
-      my_owner_firm: {
+      // The firms the caller currently owns, by name.
+      my_owner_firms: {
         Args: Record<PropertyKey, never>
-        Returns: string | null
+        Returns: { firm_id: string; name: string }[]
       }
       // A browser reporting a submission opened or a file downloaded; the firm and the person are worked out by the database.
       record_member_activity: {
         Args: { p_kind: string; p_record_id: string; p_record_type: string }
-        Returns: number
+        Returns: undefined
       }
       // Renames a referral partner or changes its kind; the code never changes.
       advisor_update_referral_partner: {

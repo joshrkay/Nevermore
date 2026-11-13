@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "owner@example.com" }, signOut: vi.fn() }) }));
 // The page's calls to the database, by the names advisorApi gives them; AdvisorApiError is the real one, so a refusal is read as it is.
-const api = { fetchOwnedFirm: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
+const api = { fetchOwnedFirms: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
 const { default: AdvisorActivityPage } = await import("./AdvisorActivityPage");
 const { AdvisorApiError } = await import("@/lib/advisorApi");
 
-const renderPage = () => render(<MemoryRouter><AdvisorActivityPage /></MemoryRouter>);
+const renderPage = (at = "/advisor/activity") => render(<MemoryRouter initialEntries={[at]}><AdvisorActivityPage /></MemoryRouter>);
 const entry = (over: Record<string, unknown> = {}) => ({
   id: 1, at: "2026-11-12T15:30:00Z", actor_id: "u1", actor_email: "agent@example.com", kind: "submission_viewed",
   record_type: "submission", record_id: "0b5c1f2e-1111-4222-8333-444455556666", subject_user_id: null, subject_email: null, role: null, ...over,
@@ -20,7 +20,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
 describe("AdvisorActivityPage", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
-    api.fetchOwnedFirm.mockResolvedValue("firm-1");
+    api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
     api.listFirmActivityPeople.mockResolvedValue([{ user_id: "u1", email: "agent@example.com" }, { user_id: "u2", email: "lead@example.com" }]);
     api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
   });
@@ -44,11 +44,11 @@ describe("AdvisorActivityPage", () => {
     expect(rows[1]).toHaveTextContent("agent@example.com");
     expect(rows[1]).toHaveTextContent("Downloaded a document");
     expect(rows[1]).toHaveTextContent("Document doc-9");
-    expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: null, kind: null, page: 1 });
+    expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: null, kind: null, after: null });
   });
 
   it("says who may read it, and loads nothing, when the person owns no firm", async () => {
-    api.fetchOwnedFirm.mockResolvedValue(null);
+    api.fetchOwnedFirms.mockResolvedValue([]);
     renderPage();
     expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
     expect(api.listFirmActivity).not.toHaveBeenCalled();
@@ -123,7 +123,7 @@ describe("AdvisorActivityPage", () => {
     expect(within(person).getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "agent@example.com", "lead@example.com"]);
     api.listFirmActivity.mockResolvedValue({ entries: [entry({ id: 9, actor_email: "lead@example.com", kind: "send_recorded" })], hasMore: false });
     fireEvent.change(person, { target: { value: "u2" } });
-    await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: null, page: 1 }));
+    await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: null, after: null }));
     expect(await within(await screen.findByRole("table")).findByText("Recorded a send")).toBeInTheDocument();
   });
 
@@ -134,7 +134,7 @@ describe("AdvisorActivityPage", () => {
     expect(options).toHaveLength(14);
     expect(options.slice(0, 3)).toEqual(["Every kind", "Signed in", "Opened a submission"]);
     fireEvent.change(kind, { target: { value: "packet_downloaded" } });
-    await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "packet_downloaded", page: 1 }));
+    await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "packet_downloaded", after: null }));
   });
 
   it("says when no entry matches the filters, and leaves the filters in place to change", async () => {
@@ -147,29 +147,78 @@ describe("AdvisorActivityPage", () => {
     expect(screen.getByLabelText("Kind")).toHaveValue("export_made");
   });
 
-  it("pages through the record and goes back to the first page when a filter changes", async () => {
+  it("pages through the record by where the last entry seen was, and goes back to the first page when a filter changes", async () => {
     // Two pages: the first has another after it, the second has none.
-    api.listFirmActivity.mockImplementation(async (_firm: string, o: { page: number }) => ({ entries: [entry({ id: o.page })], hasMore: o.page < 2 }));
+    const first = entry({ id: 30, at: "2026-11-12T12:00:00Z" });
+    api.listFirmActivity.mockImplementation(async (_firm: string, o: { after: { id: number } | null }) =>
+      o.after ? { entries: [entry({ id: 20, at: "2026-11-12T11:00:00Z" })], hasMore: false } : { entries: [first], hasMore: true });
     renderPage();
     await screen.findByRole("table");
     expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
     expect(screen.getByText("Page 1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Older" }));
     await screen.findByText("Page 2");
-    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, page: 2 });
+    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: { at: "2026-11-12T12:00:00Z", id: 30 } });
     expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Newer" }));
     await screen.findByText("Page 1");
+    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: null });
     fireEvent.click(screen.getByRole("button", { name: "Older" }));
     await screen.findByText("Page 2");
     fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
     await screen.findByText("Page 1");
-    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", page: 1 });
+    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", after: null });
     fireEvent.click(screen.getByRole("button", { name: "Older" }));
     await screen.findByText("Page 2");
     fireEvent.change(screen.getByLabelText("Person"), { target: { value: "u2" } });
     await screen.findByText("Page 1");
-    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: "sign_in", page: 1 });
+    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: "sign_in", after: null });
+  });
+
+  describe("an owner of more than one firm", () => {
+    const firms = [{ firm_id: "firm-1", name: "Alpha Advisory" }, { firm_id: "firm-2", name: "Beta Brokers" }];
+    beforeEach(() => api.fetchOwnedFirms.mockResolvedValue(firms));
+
+    it("is asked which firm, and nothing is read until they say", async () => {
+      renderPage();
+      const picker = await screen.findByLabelText("Firm");
+      expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose a firm", "Alpha Advisory", "Beta Brokers"]);
+      expect(api.listFirmActivity).not.toHaveBeenCalled();
+      expect(api.listFirmActivityPeople).not.toHaveBeenCalled();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    });
+
+    it("reads the firm they choose, and can switch to the other one, starting again from the newest", async () => {
+      renderPage();
+      fireEvent.change(await screen.findByLabelText("Firm"), { target: { value: "firm-2" } });
+      await screen.findByRole("table");
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-2", { person: null, kind: null, after: null });
+      expect(api.listFirmActivityPeople).toHaveBeenLastCalledWith("firm-2");
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-2", { person: null, kind: "sign_in", after: null }));
+      fireEvent.change(screen.getByLabelText("Firm"), { target: { value: "firm-1" } });
+      await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: null }));
+      expect(screen.getByLabelText("Kind")).toHaveValue("");
+    });
+
+    it("reads the firm the address names, which is how the firm's own address will say it", async () => {
+      renderPage("/advisor/activity?firm=firm-2");
+      await screen.findByRole("table");
+      expect(api.listFirmActivity).toHaveBeenCalledWith("firm-2", { person: null, kind: null, after: null });
+      expect(screen.getByLabelText("Firm")).toHaveValue("firm-2");
+    });
+
+    it("is told it is for owners when the address names a firm they don't own, and nothing is read", async () => {
+      renderPage("/advisor/activity?firm=firm-9");
+      expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
+      expect(api.listFirmActivity).not.toHaveBeenCalled();
+    });
+  });
+
+  it("shows no firm picker to an owner of one firm", async () => {
+    renderPage();
+    await screen.findByRole("table");
+    expect(screen.queryByLabelText("Firm")).not.toBeInTheDocument();
   });
 
   it("keeps showing the entries while a changed filter loads, rather than blanking the page", async () => {
