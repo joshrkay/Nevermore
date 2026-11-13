@@ -11,15 +11,33 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 /** The request header that names the firm address a request was made at (supabase/migrations/20261117090000_one_firm_at_a_time.sql). */
 export const FIRM_ADDRESS_HEADER = 'x-firm-address';
 
+/** Where supabase-js sends database requests: `rest/v1/` resolved against the project's address with one trailing slash. */
+function databaseUrlOf(projectUrl: string | undefined): string | null {
+  const trimmed = (projectUrl ?? '').trim();
+  try {
+    return new URL('rest/v1/', new URL(trimmed.endsWith('/') ? trimmed : `${trimmed}/`)).href;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * At a firm's address, every request to the database names that address, and the database answers for that firm only: the
  * address narrows what a member sees, membership is still the lock (D-18, D-40). Only database requests carry it: sign-in, files
- * and server functions don't read it, and a server function's CORS rule would refuse a header it doesn't list.
+ * and server functions don't read it, and a server function's CORS rule would refuse a header it doesn't list. At a firm's
+ * address a database request this can't recognise as the project's is refused rather than sent without it, since it would be
+ * answered for every firm the person belongs to.
  */
-function fetchAtFirmAddress(address: string | null, databaseUrl: string): typeof fetch {
+function fetchAtFirmAddress(address: string | null, databaseUrl: string | null): typeof fetch {
   return (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (address === null || !url.startsWith(databaseUrl)) return fetch(input, init);
+    if (address === null) return fetch(input, init);
+    if (databaseUrl === null || !url.startsWith(databaseUrl)) {
+      if (url.includes('/rest/v1/')) {
+        return Promise.reject(new Error(`A database request at a firm address must name it: ${url} is not ${databaseUrl}`));
+      }
+      return fetch(input, init);
+    }
     if (input instanceof Request && init === undefined) {
       const headers = new Headers(input.headers);
       headers.set(FIRM_ADDRESS_HEADER, address);
@@ -47,7 +65,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
   global: {
     fetch: fetchAtFirmAddress(
       typeof window === 'undefined' ? null : firmAddressFromHost(window.location.hostname),
-      `${SUPABASE_URL}/rest/v1/`,
+      databaseUrlOf(SUPABASE_URL),
     ),
   },
 });
