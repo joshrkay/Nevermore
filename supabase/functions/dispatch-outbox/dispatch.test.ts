@@ -1318,6 +1318,13 @@ describe("who an advisor alert goes to", () => {
       expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
     });
 
+    it("sends nothing when everyone a frozen alert named has left, even if others joined since (D-35)", async () => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith("evt-advisor", "no_recipients", 300, 2, false);
+    });
+
     it("sends nothing from a frozen message when the current members cannot be looked up", async () => {
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => { throw new Error("db down"); }) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
@@ -1332,7 +1339,17 @@ describe("who an advisor alert goes to", () => {
       expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
     });
 
-    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member", async () => {
+    it.each(kinds)("a frozen %s rebuilt because someone left is not widened to a member who joined since (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    // D-35: recipients are fixed when the alert is first prepared. A later joiner is deliberately NOT added to a frozen alert: rebuilding
+    // changes the send key, so the people who already received it would get it twice. They receive every alert prepared after they joined.
+    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member, even if others have joined since (D-35)", async () => {
       const stored = frozen(["stayer@firm-a.example"]);
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@firm-a.example", "joined@firm-a.example"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);

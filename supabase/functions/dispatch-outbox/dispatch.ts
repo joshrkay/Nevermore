@@ -204,7 +204,7 @@ const isFresh = (pending: PendingSend, nowMs: number) => nowMs - Date.parse(pend
 
 const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived";
 
-/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member. */
+/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
   if (!isAdvisorKind(kind)) return true;
   const members = new Set(current.map((a) => a.toLowerCase()));
@@ -236,7 +236,17 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   const stored = parsePending(row.pending_send);
   if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
 
-  const built = buildMessage(row, deps.config, advisorTo);
+  // D-35: an alert's recipients are fixed when it is first prepared. When a stored one is rebuilt only because someone left, it goes to
+  // those it named who are still members; a member who joined since is not added (the rebuilt message has a new key, so the people who
+  // already received the first would get it twice). Joiners receive every alert prepared after they joined.
+  let to = advisorTo;
+  if (stored && isFresh(stored, deps.now()) && isAdvisorKind(row.kind)) {
+    const named = new Set(stored.message.to.map((a) => a.toLowerCase()));
+    to = advisorTo.filter((a) => named.has(a.toLowerCase()));
+    if (to.length === 0) return { outcome: "fail", reason: "no_recipients", final: false };
+  }
+
+  const built = buildMessage(row, deps.config, to);
   if (!built.ok) return { outcome: "fail", reason: built.reason, final: built.final };
 
   // Whatever is stored but unusable (too old, or not the shape we write) must be overwritten; the
