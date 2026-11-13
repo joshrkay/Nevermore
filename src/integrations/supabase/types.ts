@@ -937,6 +937,25 @@ export type Database = {
         Args: { p_address: string }
         Returns: string | null
       }
+      // Signing up a firm and its approval (20261116170000).
+      sign_up_firm: {
+        Args: { p_name: string; p_address: string }
+        Returns: string
+      }
+      admin_waiting_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          firm_id: string
+          name: string
+          address: string
+          signed_up_by_email: string | null
+          signed_up_at: string
+        }[]
+      }
+      admin_decide_firm: {
+        Args: { p_firm_id: string; p_approve: boolean; p_note?: string | null }
+        Returns: undefined
+      }
       is_member_of_firm_address: {
         Args: { p_address: string }
         Returns: boolean

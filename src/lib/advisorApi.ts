@@ -60,12 +60,18 @@ export class AdvisorApiError extends Error {
 const isEndedSession = (error: { message: string; code?: string }) =>
   ["PGRST301", "PGRST302", "PGRST303"].includes(error.code ?? "") || /\bjwt\b|exp claim/i.test(error.message);
 
+/**
+ * The error to throw for a failed call, classified the way AdvisorLoadError reads it: an ended session is `unauthenticated`
+ * (it signs the person out), a refusal (42501) is `forbidden`. Anything else keeps `message`.
+ */
+export const classifyApiError = (error: { message: string; code?: string }, message: string): AdvisorApiError =>
+  error.code !== "42501" && isEndedSession(error)
+    ? new AdvisorApiError("Your session has expired. Sign in again to continue.", error.code, true)
+    : new AdvisorApiError(message, error.code);
+
 const fail = (error: { message: string; code?: string } | null, fallback: string): never => {
   if (error?.code === "42501") throw new AdvisorApiError("You don't have advisor access.", error.code);
-  if (error && isEndedSession(error)) {
-    throw new AdvisorApiError("Your session has expired. Sign in again to continue.", error.code, true);
-  }
-  throw new AdvisorApiError(error?.message || fallback, error?.code);
+  throw classifyApiError(error ?? { message: "" }, error?.message || fallback);
 };
 
 export async function fetchIsAdvisor(): Promise<boolean> {

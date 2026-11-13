@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firmAddressFromHost } from "./firmHost";
+import { firmAddressFromHost, firmHostname, firmUrl } from "./firmHost";
 
 // A firm address is <address>.<the site's domain> (story CRM-P1.3a, D-17). The app reads the firm from the host it
 // is served on; the database, never this, decides who gets in (D-18).
@@ -39,5 +39,14 @@ describe("which firm a host names", () => {
   it("takes the site's domain as an argument, so another domain can be tested", () => {
     expect(firmAddressFromHost("acme.example.org", "example.org")).toBe("acme");
     expect(firmAddressFromHost("acme.nevermorepeo.com", "example.org")).toBeNull();
+  });
+});
+
+describe("the web address of a firm", () => {
+  it("is the address in front of the site's domain, read the way a host is", () => {
+    expect(firmHostname("  Acme-Brokers ")).toBe("acme-brokers.nevermorepeo.com");
+    expect(firmUrl("acme-brokers")).toBe("https://acme-brokers.nevermorepeo.com");
+    expect(firmUrl("  Acme-Brokers ")).toBe("https://acme-brokers.nevermorepeo.com");
+    expect(firmUrl("acme", "example.org")).toBe("https://acme.example.org");
   });
 });

@@ -36,6 +36,8 @@ const AdvisorPeosPage = lazy(() => import("./pages/advisor/AdvisorPeosPage"));
 const AdvisorHeldMailPage = lazy(() => import("./pages/advisor/AdvisorHeldMailPage"));
 const AdvisorMailboxPage = lazy(() => import("./pages/advisor/AdvisorMailboxPage"));
 const AdvisorOrganisationsPage = lazy(() => import("./pages/advisor/AdvisorOrganisationsPage"));
+const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
+const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
 // Read rarely, so kept out of the main bundle too.
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
@@ -68,6 +70,7 @@ const App = () => (
                 />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/firms/new" element={<SignUpFirmPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />
                 {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
@@ -88,6 +91,7 @@ const App = () => (
                 <Route path="/advisor/peos" element={<RequireAdvisor><AdvisorPeosPage /></RequireAdvisor>} />
                 <Route path="/advisor/held" element={<RequireAdvisor><AdvisorHeldMailPage /></RequireAdvisor>} />
                 <Route path="/advisor/mailbox" element={<RequireAdvisor><AdvisorMailboxPage /></RequireAdvisor>} />
+                <Route path="/advisor/firms" element={<RequireAdvisor><AdvisorFirmsPage /></RequireAdvisor>} />
                 <Route path="/advisor/organisations" element={<RequireAdvisor><AdvisorOrganisationsPage /></RequireAdvisor>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
