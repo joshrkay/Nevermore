@@ -519,6 +519,22 @@ BEGIN
   -- the screen that sets one up (20261116160000 answers membership before the second factor).
   PERFORM set_config('request.jwt.claims', (current_setting('request.jwt.claims')::jsonb || '{"aal":"aal1","amr":[{"method":"password","timestamp":1}]}'::jsonb)::text, false);
   PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), true, 'and is told so on a password sign-in with no second factor yet');
+  -- Only a current, non-guest membership counts: a former member, one whose start date is still ahead, and a guest
+  -- session holding a current membership are each told they do not belong at the address.
+  RESET ROLE;
+  PERFORM pg_temp.new_user('former_member');
+  PERFORM pg_temp.new_user('future_member');
+  PERFORM pg_temp.new_user('guest_member', true);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES
+    ((SELECT id FROM public.firms WHERE address = 'fresh-benefits'), pg_temp.id('former_member'), 'agent', now() - interval '10 days', now() - interval '1 day'),
+    ((SELECT id FROM public.firms WHERE address = 'fresh-benefits'), pg_temp.id('future_member'), 'agent', now() + interval '1 day', NULL),
+    ((SELECT id FROM public.firms WHERE address = 'fresh-benefits'), pg_temp.id('guest_member'), 'agent', now() - interval '1 day', NULL);
+  PERFORM pg_temp.as_user('former_member');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), false, 'a former member is not taken for a member');
+  PERFORM pg_temp.as_user('future_member');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), false, 'nor is one whose start date is still ahead');
+  PERFORM pg_temp.as_user('guest_member', true);
+  PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), false, 'nor is a guest session');
   PERFORM pg_temp.as_user('founder');
   -- One firm waiting per person.
   RESET ROLE;
