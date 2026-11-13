@@ -97,6 +97,7 @@
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
 \i supabase/migrations/20261116110000_firm_scoped_policies.sql
+\i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -115,12 +116,13 @@ BEGIN
 END $$;
 
 -- Act as a named person until the next as_user() or RESET ROLE; a guest token when guest.
-CREATE FUNCTION pg_temp.as_user(n text, guest boolean DEFAULT false) RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.as_user(n text, guest boolean DEFAULT false, method text DEFAULT NULL, level text DEFAULT NULL) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims',
-    jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', guest,
-      'email', n || '@example.test')::text, false);
+    (jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', guest,
+      'email', n || '@example.test')
+     || CASE WHEN method IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('amr', jsonb_build_array(jsonb_build_object('method', method, 'timestamp', 1)), 'aal', level) END)::text, false);
   SET LOCAL ROLE authenticated;
 END $$;
 
@@ -307,5 +309,36 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.is(s, 'refused', 'a signed-out caller calling the helper');
   RAISE NOTICE 'firm_visibility: membership date and caller cases passed';
+END $$;
+-- ---------- a password sign-in without a second factor opens no firm's records (D-19; CRM-P1.3b) ----------
+DO $$
+DECLARE
+  north constant uuid := pg_temp.id('north');
+  r boolean;
+  method text;
+  level text;
+  who text;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['owner_n', 'lead_n', 'agent_sales'] LOOP
+    FOREACH method IN ARRAY ARRAY['password', 'oauth'] LOOP
+      FOREACH level IN ARRAY ARRAY['aal1', 'aal2'] LOOP
+        PERFORM pg_temp.as_user(who, false, method, level);
+        r := public.can_see_firm_record(north, pg_temp.id(who))
+             AND (who <> 'owner_n' OR public.can_see_firm_record(north, pg_temp.id('agent_sales')))
+             AND (who <> 'lead_n' OR public.can_see_firm_record(north, pg_temp.id('agent_sales')));
+        RESET ROLE;
+        -- Only a password sign-in that never completed a second factor is held back.
+        PERFORM pg_temp.is(r, NOT (method = 'password' AND level = 'aal1'), format('%s signed in by %s at %s asking for the firm''s records', who, method, level));
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  -- The firm's membership questions answer the same way, so every policy built on them does.
+  PERFORM pg_temp.as_user('owner_n', false, 'password', 'aal1');
+  PERFORM pg_temp.is(public.is_firm_member(north), false, 'is_firm_member for a password sign-in without a second factor');
+  PERFORM pg_temp.is(public.firm_role(north), NULL::text, 'firm_role for a password sign-in without a second factor');
+  PERFORM pg_temp.as_user('owner_n', false, 'password', 'aal2');
+  PERFORM pg_temp.is(public.is_firm_member(north), true, 'is_firm_member for a password sign-in with a second factor');
+  RESET ROLE;
+  RAISE NOTICE 'firm_visibility: second factor cases passed';
 END $$;
 \echo 'firm_visibility: all cases passed'

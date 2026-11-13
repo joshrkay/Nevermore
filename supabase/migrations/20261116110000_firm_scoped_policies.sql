@@ -1,5 +1,45 @@
 -- Every table and storage rule scoped to the caller's firm (story CRM-P2.1a, with CRM-S5.1).
 
+-- A password sign-in without a second factor opens no firm's data (D-19, story CRM-P1.3b). Membership is what every firm's
+-- policy asks, so the rule belongs to the membership check itself: firm_role() and is_firm_member() answer for the caller's
+-- own token, and a sign-in that used a password answers "not a member" until a second factor is completed (aal2). Google and
+-- Microsoft sign-ins, which rely on their provider, are not asked.
+--
+-- The rule is CRM-P1.3b's second_factor_rule_met(), in 20261116150000_second_factor_for_password_sign_ins.sql, which sorts
+-- after this file and is the one that stays: it is created here the same way (and replaced there by the same text) so the
+-- membership check can call it however the files are applied.
+CREATE OR REPLACE FUNCTION public.second_factor_rule_met()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT NOT jsonb_path_exists(COALESCE(auth.jwt(), '{}'::jsonb), '$.amr[*] ? (@.method == "password")')
+      OR COALESCE(auth.jwt() ->> 'aal', '') = 'aal2';
+$$;
+
+REVOKE ALL ON FUNCTION public.second_factor_rule_met() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.second_factor_rule_met() TO anon, authenticated;
+
+-- The caller's role in a firm today (20261116090000_firms.sql), now only for a sign-in that meets the second-factor rule.
+CREATE OR REPLACE FUNCTION public.firm_role(p_firm_id uuid)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT m.role
+  FROM public.firm_memberships m
+  WHERE auth.uid() IS NOT NULL
+    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+    AND public.second_factor_rule_met()
+    AND m.firm_id = p_firm_id
+    AND m.user_id = auth.uid()
+    AND m.valid_from <= now()
+    AND (m.valid_until IS NULL OR m.valid_until > now())
+$$;
+
 -- May the caller see a record of this firm that this person owns? The one question every firm-owned table asks (leads,
 -- accounts, opportunities and quotes, when they exist: D-24). A current member only; then by level.
 CREATE FUNCTION public.can_see_firm_record(p_firm_id uuid, p_owner_id uuid)
@@ -13,7 +53,7 @@ AS $$
     OR (public.is_firm_member(p_firm_id) AND EXISTS (SELECT 1 FROM public.firms f WHERE f.id = p_firm_id AND f.visibility = 'everyone'))
     OR (public.is_firm_member(p_firm_id) AND p_owner_id IS NOT DISTINCT FROM auth.uid())
     OR (
-      public.firm_role(p_firm_id) = 'lead'
+      COALESCE(public.firm_role(p_firm_id) = 'lead', false)
       AND EXISTS (
         WITH RECURSIVE my_teams (id) AS (
           SELECT m.team_id

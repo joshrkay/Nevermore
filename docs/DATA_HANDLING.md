@@ -59,7 +59,8 @@ doesn't.
 
 Who reads a firm's data (story CRM-P2.1a, decisions D-15, D-16 and D-18). Every table and storage rule that holds a firm's
 intakes, files or advisor work lets a person read a row only if they are a current member of that row's firm, whatever
-roles they hold in `user_roles`; the firm is the intake's own and never comes from the browser. A platform admin is not
+roles they hold in `user_roles`; the firm is the intake's own and never comes from the browser. A password sign-in without a
+second factor is not a member of any firm either (D-19). A platform admin is not
 thereby a member of any firm. The tables that hold nothing of any firm's stay platform-wide: the PEO list with its profiles,
 contacts and template workbooks (every firm reads the same, an admin keeps them), `ops_events` and `ops_alerts`,
 `allowed_organisations` and `advisor_role_events`. Mail that arrived for no quote request is held for platform admins until

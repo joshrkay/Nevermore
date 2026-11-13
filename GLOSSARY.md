@@ -282,7 +282,7 @@ The one question every firm-owned table asks of the caller: may they see a recor
 _Avoid_: permission check, ACL
 
 **Firm rule** (code: the policies that call `is_firm_member` or a helper built on it):
-A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
+A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. A password sign-in that has not completed a second factor is not a member to it (D-19): `firm_role` asks the same rule as `has_role`, so no firm's data opens without it. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
 _Avoid_: tenant filter, RLS (on its own)
 
 **Owner**, **lead**, **agent** (code: `firm_memberships.role`):

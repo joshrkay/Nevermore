@@ -13,6 +13,7 @@
 --   agent_b, owner_b  the second firm's agent (who also holds the advisor role) and owner
 --   platform_admin    holds the admin role and a membership of no firm (D-16)
 --   former_agent      holds the advisor role; their membership of the first firm has ended
+--   advisor_pw        the advisor signed in with a password and no second factor; advisor_pw_mfa, with one (D-19)
 --   advisor_as_guest  the advisor's account presenting a guest token (must count as a guest)
 --   service           the service role (what the scheduled jobs and edge functions use)
 --
@@ -176,12 +177,17 @@ BEGIN
     SET LOCAL ROLE service_role;
     RETURN;
   END IF;
-  uid := pg_temp.id(CASE WHEN who = 'advisor_as_guest' THEN 'advisor' ELSE who END);
+  uid := pg_temp.id(CASE WHEN who IN ('advisor_as_guest', 'advisor_pw', 'advisor_pw_mfa') THEN 'advisor' ELSE who END);
   IF uid IS NULL THEN RAISE EXCEPTION 'unknown caller %', who; END IF;
   guest := who IN ('guest_a', 'guest_b', 'advisor_as_guest');
   PERFORM set_config('request.jwt.claims',
-    jsonb_build_object('sub', uid, 'role', 'authenticated', 'is_anonymous', guest,
-      'email', CASE WHEN guest THEN NULL ELSE who || '@example.test' END)::text, false);
+    (jsonb_build_object('sub', uid, 'role', 'authenticated', 'is_anonymous', guest,
+      'email', CASE WHEN guest THEN NULL ELSE who || '@example.test' END)
+     -- A sign-in that used a password, with and without the second factor completed (D-19, CRM-P1.3b).
+     || CASE WHEN who IN ('advisor_pw', 'advisor_pw_mfa')
+          THEN jsonb_build_object('amr', jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', 1)),
+                                  'aal', CASE WHEN who = 'advisor_pw' THEN 'aal1' ELSE 'aal2' END)
+          ELSE '{}'::jsonb END)::text, false);
   SET LOCAL ROLE authenticated;
 END $$;
 
@@ -630,7 +636,7 @@ INSERT INTO matrix VALUES
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
-               'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'service']
+               'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'advisor_pw', 'advisor_pw_mfa', 'service']
 $$;
 
 DO $$
@@ -655,7 +661,14 @@ BEGIN
     expect := CASE WHEN m.firm_rows IS NULL THEN '{}'::jsonb
       ELSE '{"advisor":"A","admin":"A","agent_2":"A","lead_1":"A","agent_b":"B","owner_b":"B"}'::jsonb END || m.expect;
     FOREACH who IN ARRAY pg_temp.matrix_callers() LOOP
-      token := expect ->> who;
+      token := CASE
+        -- The advisor with a second factor is the advisor; without one they are a signed-in person with no role and no
+        -- firm: their own profile and role row, and the PEO template workbooks everyone signed in reads.
+        WHEN who = 'advisor_pw_mfa' THEN expect ->> 'advisor'
+        WHEN who = 'advisor_pw' THEN CASE WHEN m.src IN ('public.profiles', 'public.user_roles') THEN '1'
+                                          WHEN m.src LIKE '%peo-templates%' THEN 'all' ELSE '0' END
+        ELSE expect ->> who
+      END;
       want := CASE
         WHEN who = 'service' THEN total  -- the service role bypasses row security
         WHEN token = 'all' THEN total
