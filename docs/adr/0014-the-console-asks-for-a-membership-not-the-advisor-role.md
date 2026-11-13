@@ -6,7 +6,7 @@ Two checks change, and one deliberately does not.
 
 - `require_advisor()`, the first line of every console function, now also passes a current member of a firm (past the second factor, D-19). Each of those functions already filters by the row's firm (CRM-P2.1b), so a member with no platform role is let in and sees only their own firm's rows.
 - `advisor_needs_second_factor()` is also owed by a current member with no platform role, so the redirect to the second factor reaches them as it reaches a role holder.
-- `is_advisor()` is **not** widened. It is what the PEO catalogue, its contacts and its census templates are read through, . Widening it would give the owner of a firm that is still waiting for approval a read of every PEO's contacts. Those stay with the platform role, and the isolation matrix proves a member with no role reads none of them.
+- `is_advisor()` is **not** widened. It is what the PEO catalogue, its contacts and its census templates are read through. Widening it would give the owner of a firm that is still waiting for approval a read of every PEO's contacts. Those stay with the platform role, and the isolation matrix proves a member with no role reads none of them.
 
 The screens ask `my_firms()` (the firms the caller currently belongs to and their role in each) and not a role, and a platform admin who is not a member reaches only the platform's pages.
 

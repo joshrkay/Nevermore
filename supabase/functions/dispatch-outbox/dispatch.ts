@@ -204,7 +204,7 @@ const isFresh = (pending: PendingSend, nowMs: number) => nowMs - Date.parse(pend
 
 const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived";
 
-/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member. */
+/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
   if (!isAdvisorKind(kind)) return true;
   const members = new Set(current.map((a) => a.toLowerCase()));
@@ -236,16 +236,20 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   const stored = parsePending(row.pending_send);
   if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
 
-  // D-35: the people an alert goes to are fixed when it is first prepared. A message that was written down and is still fresh, but names someone who has
-  // since left, is rebuilt for that reason only: it goes to the people it named who are still members, never to anyone who joined after it was
-  // written (adding an address changes the key, so everyone who already has it would get it twice). A message with nothing usable stored is a first
-  // preparation and goes to the firm's current members.
+  // D-35: an alert's recipients are fixed when it is first prepared. When a stored one is rebuilt only because someone left, it goes to
+  // those it named who are still members; a member who joined since is not added (the rebuilt message has a new key, so the people who
+  // already received the first would get it twice). Joiners receive every alert prepared after they joined.
+  // D-102 (amends D-35, ADR 0020): when none of those it named is still a member, it goes to the current members.
+  // The stored alert's age decides only whether its message and key can be replayed above, never who a rebuilt one goes to.
   let to = advisorTo;
-  if (isAdvisorKind(row.kind) && stored && isFresh(stored, deps.now())) {
+  if (stored && isAdvisorKind(row.kind)) {
     const named = new Set(stored.message.to.map((a) => a.toLowerCase()));
-    to = advisorTo.filter((a) => named.has(a.toLowerCase()));
-    if (to.length === 0) return { outcome: "fail", reason: "no_recipients", final: false };
+    const stayers = advisorTo.filter((a) => named.has(a.toLowerCase()));
+    // When none of those it named is still a member (everyone left, or it was frozen to the shared inbox before alerts went to members),
+    // nobody now in the firm can have received it, so the current members are sent it and no one gets a duplicate.
+    if (stayers.length > 0) to = stayers;
   }
+
   const built = buildMessage(row, deps.config, to);
   if (!built.ok) return { outcome: "fail", reason: built.reason, final: built.final };
 

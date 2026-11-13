@@ -436,7 +436,11 @@ describe("reusing a frozen message", () => {
       ["21 hours", 21 * HOUR],
       ["a week", 168 * HOUR],
     ])("replaces a message frozen %s ago: rebuilt from the current settings, overwriting the stored one", async (_name, age) => {
-      const stored = pendingSend({ frozen_at: new Date(NOW - age).toISOString() });
+      // It names the people who are still the team: age frees the message to be rebuilt, never the recipients to change (D-35).
+      const stored = pendingSend({
+        frozen_at: new Date(NOW - age).toISOString(),
+        message: { ...pendingSend().message, to: ["new-team@example.com", "second@example.com"] },
+      });
       const { deps, sent, logs } = harness({ config: configFrom(changedEnv), advisorRecipients: vi.fn(async () => ["new-team@example.com", "second@example.com"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       const [id, attempt, message, replace] = vi.mocked(deps.freeze).mock.calls[0];
@@ -1337,6 +1341,25 @@ describe("who an advisor alert goes to", () => {
       expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
     });
 
+    it("sends a frozen alert whose every named person has left to the current members, since none of them can have had it, once, under a new key (D-102, which amends D-35)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+      expect(deps.freeze).toHaveBeenCalledTimes(1);
+    });
+
+    it("rebuilds an alert frozen to the shared inbox, as it was before alerts went to members, for the current members", async () => {
+      const stored = frozen(["advisory@shared-inbox.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["a@firm-a.example", "b@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["a@firm-a.example", "b@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
     it("sends nothing from a frozen message when the current members cannot be looked up", async () => {
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => { throw new Error("db down"); }) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
@@ -1351,7 +1374,48 @@ describe("who an advisor alert goes to", () => {
       expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
     });
 
-    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member", async () => {
+    it("recognises a stayer whose address differs only in case when it rebuilds for someone who left", async () => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@Firm-A.example", "joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["Stayer@Firm-A.example"]);
+    });
+
+    it.each(kinds)("a frozen %s rebuilt because someone left, while a stayer remains, goes to the stayers only: a joiner never gets it (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("a %s frozen more than 20 hours ago is rebuilt for the people it named who are still members, not for a member who joined since or one who left (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 21 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message, replace] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(replace).toBe(true);
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+    });
+
+    it("sends an aged alert whose every named person has left to the current members (D-102)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 168 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
+    // D-35: recipients are fixed when the alert is first prepared. A later joiner is deliberately NOT added to a frozen alert: rebuilding
+    // changes the send key, so the people who already received it would get it twice. They receive every alert prepared after they joined.
+    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member, even if others have joined since (D-35)", async () => {
       const stored = frozen(["stayer@firm-a.example"]);
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@firm-a.example", "joined@firm-a.example"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);

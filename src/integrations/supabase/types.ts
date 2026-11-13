@@ -140,6 +140,8 @@ export type Database = {
           // The referral code and campaign tags of the link the intake started from (20261106100000): short codes
           // (src/data/intakeSource.ts), set when the intake is created and never changed.
           referral_code: string | null
+          // The firm the intake belongs to (20261116090000), set by the database.
+          firm_id: string
           utm_campaign: string | null
           utm_medium: string | null
           utm_source: string | null
@@ -805,10 +807,10 @@ export type Database = {
         Args: { p_from: string; p_to: string }
         Returns: { step: number; milestone: string; intakes: number; median_minutes: number | null }[]
       }
-      // The funnel by source (20261106100000): for intakes started in the period, each source and how many of its
-      // intakes reached each step. Intakes with no source are one row whose codes are all null.
+      // The funnel by source (20261106100000), asked for one firm the caller belongs to (20261116200500): for that firm's intakes
+      // started in the period, each source and how many of its intakes reached each step. Intakes with no source are one row whose codes are all null.
       advisor_intake_sources: {
-        Args: { p_from: string; p_to: string }
+        Args: { p_from: string; p_to: string; p_firm_id: string }
         Returns: {
           referral_code: string | null
           partner_name: string | null
@@ -823,6 +825,8 @@ export type Database = {
           email_verified: number
           certified: number
           manuscript_downloaded: number
+          // The firm the row is about (20261116200500): a code is unique within a firm, not across firms.
+          firm_id: string
         }[]
       }
       // Adds a referral partner under a new code; a code already taken is refused (23505).

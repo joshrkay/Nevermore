@@ -4,7 +4,7 @@ Advisor pages live under `/advisor`: the Advisor Console, which is the team's op
 (no CRM; its field mapping and ownership rules are in `docs/ADVISOR_CONSOLE.md`). The UI guard
 (`RequireFirm`, and `RequirePlatformAdmin` for the platform's own pages) only decides what to render; the database enforces
 access (`supabase/migrations/20261022090000_advisor_operations.sql`, and since story P-1.4
-`20261116210000_console_per_firm.sql`, docs/adr/0013). The console asks for a current membership of a firm (`my_firms()`), not
+`20261116210000_console_per_firm.sql`, docs/adr/0014). The console asks for a current membership of a firm (`my_firms()`), not
 for a platform role; a platform admin who belongs to no firm gets the platform's pages only (D-16).
 
 | Route | Audience | Enforced by |

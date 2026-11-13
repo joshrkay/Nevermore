@@ -157,6 +157,7 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116190500_invitation_fixes.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
@@ -1076,8 +1077,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
   ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
-  ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
-                                                                     'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now())', 'the funnel by source'),
+  ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone, p_firm_id uuid)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now(), public.default_firm_id())', 'the funnel by source'),
   ('advisor_add_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_add_referral_partner(''probe-partner'', ''Probe'', ''other'')', 'adding a referral partner'),
   ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
@@ -1583,12 +1584,12 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
   ('advisor_intake_funnel', 'advisor', 'count',
    $$SELECT COALESCE(sum(intakes), 0)::text FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day')$$,
    $$SELECT count(*)::text FROM public.intake_milestones m JOIN public.chamber_sessions s ON s.id = m.session_id
-     WHERE s.firm_id = {firm} AND m.started_at >= now() - interval '300 days' AND m.started_at < now() + interval '1 day'$$),
-  ('advisor_intake_sources', 'advisor', 'count',
-   $$SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)::text
-     FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')$$,
-   $$SELECT count(*)::text FROM public.intake_milestones m JOIN public.chamber_sessions s ON s.id = m.session_id
      WHERE s.firm_id = {firm} AND m.started_at >= now() - interval '300 days' AND m.started_at < now() + interval '1 day'$$);
+-- The funnel by source is asked for one firm, and only a current member of that firm is served it (the positive control reads a number).
+INSERT INTO fprobe (fn, who, shape, call, member_ok) VALUES
+  ('advisor_intake_sources', 'advisor', 'by_id',
+   $$SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)::text
+     FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', {firm})$$, '^ok:[1-9][0-9]*$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('advisor_requeue_outbox_event', 'advisor', 'by_id', $$SELECT public.advisor_requeue_outbox_event({evt}, false)::text$$,
    ARRAY['42501', 'ok:false'], '^ok:true$');
@@ -1772,7 +1773,7 @@ BEGIN
   PERFORM pg_temp.become('agent_b');
   SELECT COALESCE(sum(intakes), 0) INTO before_b FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
   SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
-    INTO src_b FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day');
+    INTO src_b FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', pg_temp.id('firm_b'));
   PERFORM pg_temp.become('advisor');
   SELECT COALESCE(sum(intakes), 0) INTO before_a FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
   RESET ROLE;
@@ -1783,7 +1784,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL: the funnel lost the steps of a deleted intake of its firm';
   END IF;
   IF (SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
-        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')) <> src_b THEN
+        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', pg_temp.id('firm_b'))) <> src_b THEN
     RAISE EXCEPTION 'FAIL: the source report lost the steps of a deleted intake of its firm';
   END IF;
   PERFORM pg_temp.become('advisor');
@@ -1823,7 +1824,7 @@ BEGIN
   IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '201 days', now() - interval '199 days')) <> 1 THEN
     RAISE EXCEPTION 'FAIL: the default firm''s funnel does not count a backfilled old step exactly once';
   END IF;
-  IF (SELECT COALESCE(sum(started), 0) FROM public.advisor_intake_sources(now() - interval '201 days', now() - interval '199 days')) <> 1 THEN
+  IF (SELECT COALESCE(sum(started), 0) FROM public.advisor_intake_sources(now() - interval '201 days', now() - interval '199 days', public.default_firm_id())) <> 1 THEN
     RAISE EXCEPTION 'FAIL: the default firm''s source report does not count a backfilled old step exactly once';
   END IF;
   PERFORM pg_temp.become('agent_b');
@@ -1953,13 +1954,47 @@ BEGIN
   SET LOCAL session_replication_role = replica;
   UPDATE public.intake_milestones SET referral_code = 'acme-cfo' WHERE milestone = 'started' AND firm_id IN (fa, fb) AND session_id IS NOT NULL;
   RESET session_replication_role;
-  r := pg_temp.call_as('advisor', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  r := pg_temp.call_as('advisor', format($q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fa));
   IF r <> 'ok:Acme CFO Partners' THEN RAISE EXCEPTION 'FAIL: the first firm''s funnel named partner(s) %', r; END IF;
-  r := pg_temp.call_as('agent_b', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  r := pg_temp.call_as('agent_b', format($q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fb));
   IF r <> 'ok:Beta CFO Partners' THEN RAISE EXCEPTION 'FAIL: the second firm''s funnel named partner(s) %', r; END IF;
-  RESET ROLE;
+  -- A code that only the second firm holds names nobody on the first firm's intake: a code is matched to a partner within the intake's own firm.
   SET LOCAL session_replication_role = replica;
-  UPDATE public.intake_milestones SET referral_code = NULL WHERE referral_code = 'acme-cfo';
+  UPDATE public.intake_milestones SET referral_code = 'beta-cfo' WHERE milestone = 'started' AND firm_id = fa AND session_id IS NOT NULL;
+  RESET session_replication_role;
+  r := pg_temp.call_as('advisor', format($q$SELECT string_agg(DISTINCT COALESCE(partner_name, 'nobody'), ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'beta-cfo'$q$, fa));
+  IF r <> 'ok:nobody' THEN RAISE EXCEPTION 'FAIL: the second firm''s code on the first firm''s intake was attributed to %', r; END IF;
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = 'acme-cfo' WHERE milestone = 'started' AND firm_id = fa AND session_id IS NOT NULL;
+  RESET session_replication_role;
+  -- A member of both firms is served the firm they name, each row saying whose it is, never a merged row.
+  RESET ROLE;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fa, pg_temp.id('agent_b'), 'agent');
+  r := pg_temp.call_as('agent_b', format($q$SELECT string_agg(DISTINCT firm_id::text || '=' || COALESCE(partner_name, 'nobody'), ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fa));
+  IF r <> format('ok:%s=Acme CFO Partners', fa) THEN RAISE EXCEPTION 'FAIL: naming the first firm, a member of both was given %', r; END IF;
+  r := pg_temp.call_as('agent_b', format($q$SELECT string_agg(DISTINCT firm_id::text || '=' || COALESCE(partner_name, 'nobody'), ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fb));
+  IF r <> format('ok:%s=Beta CFO Partners', fb) THEN RAISE EXCEPTION 'FAIL: naming the second firm, a member of both was given %', r; END IF;
+  -- The report's 200 rows are the named firm's own: another membership's volume cannot push its rows out.
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone, firm_id, utm_source)
+  SELECT NULL, now() - interval '2 days', 'started', fb, 'bulk-' || g FROM generate_series(1, 230) g;
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone, firm_id, utm_source)
+  SELECT NULL, now() - interval '2 days', 'started', fa, 'quiet-' || g FROM generate_series(1, 2) g;
+  RESET session_replication_role;
+  r := pg_temp.call_as('agent_b', format($q$SELECT count(*) FILTER (WHERE utm_source LIKE 'quiet-%%')::text || '/' || count(*) FILTER (WHERE utm_source LIKE 'bulk-%%')::text FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L)$q$, fa));
+  IF r <> 'ok:2/0' THEN RAISE EXCEPTION 'FAIL: the first firm''s report, asked for by a member of both, was %, expected its two quiet rows and none of the second firm''s', r; END IF;
+  r := pg_temp.call_as('agent_b', format($q$SELECT count(*)::text FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L)$q$, fb));
+  IF r <> 'ok:200' THEN RAISE EXCEPTION 'FAIL: the second firm''s report holds % rows, expected the limit of 200', r; END IF;
+  RESET ROLE;
+  -- Someone who is not a current member of the firm named is refused, whatever their other firms.
+  r := pg_temp.call_as('advisor', format($q$SELECT count(*)::text FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L)$q$, fb));
+  IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: the first firm''s advisor read the second firm''s funnel by source (%)', r; END IF;
+  DELETE FROM public.firm_memberships WHERE firm_id = fa AND user_id = pg_temp.id('agent_b');
+  SET LOCAL session_replication_role = replica;
+  DELETE FROM public.intake_milestones WHERE utm_source LIKE 'bulk-%' OR utm_source LIKE 'quiet-%';
+  RESET session_replication_role;
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = NULL WHERE referral_code IN ('acme-cfo', 'beta-cfo');
   RESET session_replication_role;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: referral partner cases passed';
@@ -2061,6 +2096,18 @@ BEGIN
       RAISE EXCEPTION 'FAIL: someone who is not a platform admin assigned held mail (%)', r;
     END IF;
   END LOOP;
+  -- A quote request that closed after the admin loaded the list is no longer assignable: it is answered as one that isn't there.
+  RESET ROLE;
+  UPDATE public.quote_requests SET status = 'closed' WHERE id = qa;
+  PERFORM pg_temp.become('service');
+  FOR r IN SELECT x FROM unnest(ARRAY['plan_mail_move(%s, %s, %L)', 'apply_mail_move(%s, %s, %L, NULL)']) x LOOP
+    IF pg_temp.attempt(format('SELECT public.' || r, ha, qa, plat)) <> 'PT404' OR pg_temp.attempt(format('SELECT public.' || r, hu, qa, plat)) <> 'PT404' THEN
+      RAISE EXCEPTION 'FAIL: held mail was assigned to a quote request that has closed (%)', r;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  UPDATE public.quote_requests SET status = 'sent' WHERE id = qa;
+  PERFORM pg_temp.become('service');
   r := pg_temp.after(format('SELECT public.apply_mail_move(%s, %s, %L, NULL)', hu, qb, plat),
     format('SELECT firm_id::text FROM public.quote_request_messages WHERE id = %s', hu));
   IF r <> fb::text THEN RAISE EXCEPTION 'FAIL: mail assigned to the second firm''s quote request is firm %', r; END IF;
@@ -2114,6 +2161,68 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: held mail cases passed';
+END $$;
+
+-- 4i-2b. A request that closes while held mail is being assigned to it (D-32). The assignment checks that the request is open, and a
+-- check alone is not enough: a close that commits between the check and the assignment would leave the mail on a closed request. So
+-- the request is read FOR UPDATE and the two serialise. Two real connections (dblink) race: the first closes the request and holds
+-- its transaction open until the second, assigning to it, is seen waiting on it; once the first commits the second must find the
+-- request closed and refuse as for one that isn't there. (Without the lock the second never waits: it has already passed the check.)
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+DO $$
+DECLARE
+  hu constant bigint := (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_held');
+  qa constant bigint := (SELECT quote_request_id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_1');
+  plat constant uuid := pg_temp.id('platform_admin');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  second_pid integer;
+  tries integer := 0;
+  s text;
+  was text;
+BEGIN
+  IF hu IS NULL OR qa IS NULL THEN RAISE EXCEPTION 'FAIL: setup: the held message or the quote request is missing'; END IF;
+  IF (SELECT quote_request_id FROM public.quote_request_messages WHERE id = hu) IS NOT NULL THEN RAISE EXCEPTION 'FAIL: setup: the message is not held'; END IF;
+  SELECT status INTO was FROM public.quote_requests WHERE id = qa;
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  PERFORM race.dblink_exec('race_first', format('UPDATE public.quote_requests SET status = ''closed'' WHERE id = %s', qa));
+  PERFORM race.dblink_exec('race_second', 'BEGIN');
+  PERFORM race.dblink_exec('race_second', 'SET LOCAL ROLE service_role');
+  PERFORM * FROM race.dblink('race_second', $q$SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true)$q$) AS t(c text);
+  PERFORM race.dblink_send_query('race_second', format('SELECT public.apply_mail_move(%s, %s, %L, NULL)::text', hu, qa, plat));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF race.dblink_is_busy('race_second') = 0 THEN
+      PERFORM race.dblink_exec('race_first', 'ROLLBACK');
+      RAISE EXCEPTION 'FAIL: the assignment did not wait for the close in progress, so a request closing at that moment still receives the mail';
+    END IF;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the assignment neither waited nor finished'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_second') AS t(r text);
+    RAISE EXCEPTION 'FAIL: held mail was assigned to a request that closed while it waited';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    IF s <> 'PT404' THEN RAISE EXCEPTION 'FAIL: the assignment to the closed request gave %, expected PT404', s; END IF;
+  END;
+  BEGIN
+    PERFORM race.dblink_exec('race_second', 'ROLLBACK');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('race_first');
+  PERFORM race.dblink_disconnect('race_second');
+  IF (SELECT quote_request_id FROM public.quote_request_messages WHERE id = hu) IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: the held message is on the request that closed';
+  END IF;
+  UPDATE public.quote_requests SET status = was WHERE id = qa;
+  RAISE NOTICE 'data_isolation: two-session close and assign race passed';
 END $$;
 
 -- 4i-3. The advisor alert's recipients: the people told about a new submission or new PEO mail are the current members of the firm
