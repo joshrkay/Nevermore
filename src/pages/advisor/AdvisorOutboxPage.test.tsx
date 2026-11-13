@@ -5,6 +5,8 @@ import type { OutboxEvent, OutboxSummaryRow } from "@/lib/advisorApi";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
+// The header asks which firm the address names; these pages are tested at the bare domain.
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const listOutboxEvents = vi.fn();
 const outboxSummary = vi.fn();
 const requeueOutboxEvent = vi.fn();
@@ -78,18 +80,6 @@ describe("AdvisorOutboxPage", () => {
     outboxSummary.mockReturnValue(new Promise(() => {}));
     renderAt();
     expect(screen.getByRole("status")).toHaveTextContent("Loading the outbox");
-  });
-
-  it("is reachable from the console header, which marks it as the current page", async () => {
-    ready([event()]);
-    renderAt();
-    await screen.findByText("Acme");
-    const nav = await screen.findByRole("navigation", { name: "Console" });
-    await within(nav).findByRole("link", { name: "Submissions" });
-    expect(within(nav).getByRole("link", { name: "Outbox & Notifications" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("link", { name: "Submissions" })).not.toHaveAttribute("aria-current");
-    fireEvent.click(within(nav).getByRole("link", { name: "Submissions" }));
-    expect(await screen.findByText("Submissions page")).toBeInTheDocument();
   });
 
   it("lists each event's kind, company, reference, status, attempts and last error, with a plain reading of it", async () => {

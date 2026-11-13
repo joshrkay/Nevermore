@@ -65,6 +65,8 @@ const {
   updateQuoteRequest,
   fetchIsAdmin,
   loadPeoDirectory,
+  loadPeoCatalogDirectory,
+  fetchHasPlatformRole,
   loadVersionContacts,
   publishPeoDraft,
   savePeoDraft,
@@ -628,6 +630,33 @@ describe("the PEOs page's reads and writes", () => {
     expect(rpc).toHaveBeenCalledWith("has_role", { _role: "admin" });
     rpc.mockResolvedValue({ data: false, error: null });
     expect(await fetchIsAdmin()).toBe(false);
+  });
+
+  it("learns whether the signed-in person holds a platform role from the database's own check", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await fetchHasPlatformRole()).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("is_advisor");
+    rpc.mockResolvedValue({ data: false, error: null });
+    expect(await fetchHasPlatformRole()).toBe(false);
+  });
+
+  it("reads the catalogue a member with no platform role may read, through peo_catalog and no table, as the version in use", async () => {
+    rpc.mockResolvedValue({
+      data: [
+        { id: 2, name: "Justworks", listed: false, profile: null },
+        { id: 1, name: "TriNet", listed: true, profile: { id: 10, version: 3, published_at: "2026-11-01T00:00:00Z", min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-10-30" } } } },
+      ],
+      error: null,
+    });
+    const [justworks, trinet] = await loadPeoCatalogDirectory();
+    expect(rpc).toHaveBeenCalledWith("peo_catalog");
+    expect(justworks).toMatchObject({ id: 2, name: "Justworks", listed: false, versions: [] });
+    expect(trinet.versions.map((v) => [v.id, v.version, v.status, v.profile.rules.minHeadcount, v.profile.contacts])).toEqual([[10, 3, "published", 5, []]]);
+  });
+
+  it("says why when the catalogue can't be read", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await expect(loadPeoCatalogDirectory()).rejects.toThrow();
   });
 
   it("reads each PEO with its versions, newest first, and each version's contacts", async () => {

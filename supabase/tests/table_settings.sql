@@ -6,8 +6,7 @@
 -- stops sharing one. Nobody else reads, counts, changes or deletes any of it: not the other firm's members, not a person whose
 -- membership has ended, not a platform admin who belongs to no firm, not a guest token, not a password sign-in without its
 -- second factor. Two firms are used throughout.
--- The earlier migrations load in the order supabase/tests/data_isolation.sql loads them (the console-per-firm migration before
--- the one that scopes unsubmitted data), then this story's.
+-- Every migration loads, in filename order, this story's last.
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -107,9 +106,11 @@
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
-\i supabase/migrations/20261116210000_console_per_firm.sql
-\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116190500_invitation_fixes.sql
+\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116210000_console_per_firm.sql
+\i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261117120000_table_settings.sql
 SET client_min_messages = notice;
 

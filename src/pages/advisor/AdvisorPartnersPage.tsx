@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { funnelRange } from "@/data/funnel";
 import { SOURCE_CODE_PATTERN } from "@/data/intakeSource";
@@ -64,8 +63,7 @@ const AdvisorPartnersPage = () => {
   const reload = () => setAttempt((n) => n + 1);
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-4xl">
         <h1 className="font-display text-3xl font-bold mb-1">Referral partners</h1>
         <p className="text-sm text-muted-foreground mb-6">

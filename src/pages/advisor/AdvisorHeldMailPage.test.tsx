@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "admin@example.com" }, signOut: vi.fn() }) }));
+// The header asks which firm the address names; these pages are tested at the bare domain.
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = { fetchIsAdmin: vi.fn(), loadHeldMail: vi.fn(), assignHeldMessage: vi.fn(), discardHeldMessage: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);

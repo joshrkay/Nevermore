@@ -192,6 +192,11 @@ describe("inviting a member (request and response)", () => {
     expect((await res.json()).error).toBe("This firm can't invite people");
     const cap = setup({ rpc: { invite_member: { error: { code: "PT409", message: "A firm waiting for approval can hold at most five pending invitations" } } } });
     expect((await (await handleInviteRequest(post(invite), cap.deps)).json()).error).toBe("A firm waiting for approval can hold at most five pending invitations");
+    const rate = "A firm waiting for approval can send at most twenty invitation emails in 24 hours. It can send again at 2026-11-17 09:30 UTC";
+    const limited = setup({ rpc: { invite_member: { error: { code: "PT409", message: rate } } } });
+    const limitedRes = await handleInviteRequest(post(invite), limited.deps);
+    expect(limitedRes.status).toBe(409);
+    expect((await limitedRes.json()).error).toBe(rate);
   });
 
   it("passes a team on when one is named", async () => {
