@@ -110,6 +110,7 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
+\i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -271,6 +272,8 @@ SELECT pg_temp.as_user('roleless_a');
 SELECT pg_temp.is((SELECT string_agg(code, ',' ORDER BY code) FROM public.referral_partners), 'p1', 'lists their firm''s partners and none of the other firm''s');
 SELECT pg_temp.expect('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'')', 'PT404', 'cannot edit the other firm''s partner by its code');
 SELECT pg_temp.expect(format('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'', %L)', pg_temp.id('firm_b')), '42501', 'nor by naming that firm');
+SELECT pg_temp.is((SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_add_referral_partner'), 1, 'only one way to add a partner exists: the three-argument version that ignores the firm is gone');
+SELECT pg_temp.is((SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_update_referral_partner'), 1, 'and only one way to edit one');
 SELECT pg_temp.as_user('owner_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0)), 1::bigint, 'an owner of a firm with no platform role lists their firm''s submission');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_a')), 0::bigint, 'and none of Edgar Allan Advisory''s');
