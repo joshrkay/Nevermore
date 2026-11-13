@@ -1418,6 +1418,11 @@ CREATE FUNCTION pg_temp.firms_of(ids text) RETURNS text LANGUAGE sql AS $$
   FROM public.chamber_sessions s WHERE s.id = ANY (string_to_array(NULLIF(ids, ''), ',')::uuid[])
 $$;
 
+-- Which firm a caller belongs to now: 'a', 'b' or neither.
+CREATE FUNCTION pg_temp.caller_firm(who text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN who IN ('advisor', 'admin', 'agent_2', 'lead_1') THEN 'a' WHEN who IN ('agent_b', 'owner_b') THEN 'b' END
+$$;
+
 -- The callers every function is tried as; the first firm's, the second's, and nobody's.
 CREATE FUNCTION pg_temp.every_caller() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor_as_guest', 'advisor', 'admin', 'agent_2', 'lead_1', 'agent_b', 'owner_b',
@@ -1443,8 +1448,40 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('request_intake_deletion', 'admin', 'by_id', $$SELECT public.request_intake_deletion({draft}, 'probe reason')::text$$),
   ('revoke_chamber_session', 'admin', 'by_id', $$SELECT public.revoke_chamber_session({draft}, 'probe reason')::text$$),
   ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$);
+INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
+  ('advisor_list_submissions', 'advisor', 'list',
+   $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)$$, ARRAY['advisor', 'agent_b']),
+  ('advisor_list_outbox_events', 'advisor', 'list',
+   $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_outbox_events(NULL, 500)$$, ARRAY['advisor', 'agent_b']),
+  -- Only the first firm's prospect has a bounced address on record (the matrix's email delivery event).
+  ('advisor_email_problems', 'advisor', 'list',
+   $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_email_problems()$$, ARRAY['advisor']),
+  ('retention_review_due', 'advisor', 'list',
+   $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.retention_review_due(1000)$$, ARRAY['advisor', 'agent_b']);
+INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
+  ('advisor_outbox_summary', 'advisor', 'count', $$SELECT COALESCE(sum(events), 0)::text FROM public.advisor_outbox_summary()$$,
+   $$SELECT count(*)::text FROM public.outbox_events e JOIN public.chamber_sessions s ON s.id = e.session_id WHERE s.firm_id = {firm}$$),
+  ('advisor_intake_funnel', 'advisor', 'count',
+   $$SELECT COALESCE(sum(intakes), 0)::text FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day')$$,
+   $$SELECT count(*)::text FROM public.intake_milestones m JOIN public.chamber_sessions s ON s.id = m.session_id
+     WHERE s.firm_id = {firm} AND m.started_at >= now() - interval '300 days' AND m.started_at < now() + interval '1 day'$$),
+  ('advisor_intake_sources', 'advisor', 'count',
+   $$SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)::text
+     FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')$$,
+   $$SELECT count(*)::text FROM public.intake_milestones m JOIN public.chamber_sessions s ON s.id = m.session_id
+     WHERE s.firm_id = {firm} AND m.started_at >= now() - interval '300 days' AND m.started_at < now() + interval '1 day'$$);
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('advisor_requeue_outbox_event', 'advisor', 'by_id', $$SELECT public.advisor_requeue_outbox_event({evt}, false)::text$$,
+   ARRAY['42501', 'ok:false'], '^ok:true$');
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:{}'], member_ok = '^ok:\{company_name\}$' WHERE fn = 'session_verified_fields';
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:false'], member_ok = '^ok:true$' WHERE fn = 'retry_intake_deletion';
+
+-- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
+DO $$
+BEGIN
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.chamber_certifications SET recorded_at = recorded_at - interval '30 years';
+END $$;
 
 DO $$
 DECLARE
@@ -1458,11 +1495,19 @@ BEGIN
       (f, 'draft', pg_temp.id(CASE f WHEN 'a' THEN 'pa_open' ELSE 'pb_open' END)::text),
       (f, 'qr', qr),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
-    -- A deletion that failed, to retry: written as the superuser, and taken away again below.
+    -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
+    -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
-    VALUES (pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), 'request', 'probe', 'failed')
+    VALUES (CASE f WHEN 'a' THEN pg_temp.id('ga_archived')
+                   ELSE (SELECT s.id FROM public.chamber_sessions s WHERE s.user_id = pg_temp.id('prospect_b') AND s.status = 'archived') END,
+            'request', 'probe', 'failed')
     RETURNING id::text INTO qr;
     INSERT INTO fprobe_ids VALUES (f, 'del', qr);
+    -- An email that gave up, to retry: written the same way.
+    INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload, status)
+    VALUES ('advisor_notification', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), 'probe-dead-' || f, '{}', 'dead')
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'evt', qr);
   END LOOP;
 END $$;
 
@@ -1505,7 +1550,7 @@ BEGIN
           IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % calling % gave %', who, e.fn, r; END IF;
           IF who = ANY (e.positive) THEN RAISE EXCEPTION 'FAIL: % was refused %', who, e.fn; END IF;
         ELSE
-          f := pg_temp.member_of(who);
+          f := pg_temp.caller_firm(who);
           IF e.shape = 'list' THEN
             ids := substr(r, 4);
             IF pg_temp.firms_of(ids) IS DISTINCT FROM COALESCE((SELECT id::text FROM fx WHERE name = CASE f WHEN 'a' THEN 'firm_a' WHEN 'b' THEN 'firm_b' END), '')
@@ -1531,7 +1576,13 @@ BEGIN
   RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
 END $$;
 
+DO $$
+BEGIN
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.chamber_certifications SET recorded_at = recorded_at + interval '30 years';
+END $$;
 DELETE FROM public.intake_deletions WHERE id::text IN (SELECT v FROM fprobe_ids WHERE k = 'del');
+DELETE FROM public.outbox_events WHERE id::text IN (SELECT v FROM fprobe_ids WHERE k = 'evt');
 
 -- ---------- 4d. a deletion record keeps its firm after its intake is gone ----------
 DO $$

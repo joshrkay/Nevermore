@@ -752,3 +752,395 @@ BEGIN
   RETURN FOUND;
 END;
 $function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_email_problems()
+ RETURNS TABLE(session_id uuid, reason text, since timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+#variable_conflict use_column
+BEGIN
+  PERFORM public.require_advisor();
+  RETURN QUERY
+  SELECT DISTINCT ON (e.session_id) e.session_id, s.reason, s.created_at
+  FROM public.outbox_events e
+  JOIN public.email_suppressions s ON s.address = lower(btrim(e.payload ->> 'recipient_email'))
+  WHERE public.outbox_kind_reaches_prospect(e.kind)
+    AND public.intake_in_my_firm(e.session_id)
+  ORDER BY e.session_id, s.updated_at DESC;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_list_outbox_events(p_status text DEFAULT NULL::text, p_limit integer DEFAULT 100)
+ RETURNS TABLE(id uuid, kind text, status text, attempts integer, next_attempt_at timestamp with time zone, claimed_at timestamp with time zone, claim_lapsed boolean, last_error text, provider_message_id text, created_at timestamp with time zone, sent_at timestamp with time zone, session_id uuid, company_name text, reference text, resubmission boolean, frozen boolean, requeue_count integer, last_requeued_at timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+#variable_conflict use_column
+BEGIN
+  PERFORM public.require_advisor();
+  IF p_status IS NOT NULL AND p_status NOT IN ('pending', 'claimed', 'sent', 'dead', 'suppressed') THEN
+    RAISE EXCEPTION 'unknown outbox status %', left(p_status, 40) USING ERRCODE = '22023';
+  END IF;
+  RETURN QUERY
+  SELECT
+    e.id, e.kind, e.status, e.attempts, e.next_attempt_at, e.claimed_at,
+    (e.status = 'claimed' AND e.locked_until < now()),
+    e.last_error, e.provider_message_id, e.created_at, e.sent_at, e.session_id,
+    e.payload ->> 'company_name',
+    e.payload ->> 'reference',
+    COALESCE(e.payload -> 'resubmission' = 'true'::jsonb, false),
+    e.pending_send IS NOT NULL,
+    e.requeue_count, e.last_requeued_at
+  FROM public.outbox_events e
+  WHERE (p_status IS NULL OR e.status = p_status)
+    AND public.intake_in_my_firm(e.session_id)
+  ORDER BY e.created_at DESC, e.id
+  LIMIT LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_outbox_summary()
+ RETURNS TABLE(status text, events bigint, oldest_due_at timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+#variable_conflict use_column
+BEGIN
+  PERFORM public.require_advisor();
+  RETURN QUERY
+  SELECT v.status, count(e.id), min(e.next_attempt_at) FILTER (WHERE v.status = 'pending' AND e.next_attempt_at <= now())
+  FROM (VALUES ('pending'), ('claimed'), ('sent'), ('dead'), ('suppressed')) AS v(status)
+  LEFT JOIN public.outbox_events e ON e.status = v.status AND public.intake_in_my_firm(e.session_id)
+  GROUP BY v.status;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean DEFAULT false)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  PERFORM public.require_advisor();
+  IF event_id IS NULL THEN
+    RAISE EXCEPTION 'an event id is required' USING ERRCODE = '22023';
+  END IF;
+  -- An email of another firm's intake is none the caller can see, so there is nothing to retry.
+  IF NOT EXISTS (SELECT 1 FROM public.outbox_events e WHERE e.id = event_id AND public.intake_in_my_firm(e.session_id)) THEN
+    RETURN false;
+  END IF;
+  RETURN public.requeue_outbox_event(event_id, COALESCE(rebuild_payload, false), auth.uid());
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.retention_review_due(p_limit integer DEFAULT 100)
+ RETURNS TABLE(session_id uuid, file_id text, last_certified_at timestamp with time zone, review_due_at timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  PERFORM public.require_advisor();
+  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+    RAISE EXCEPTION 'p_limit must be between 1 and 1000' USING ERRCODE = '22023';
+  END IF;
+  RETURN QUERY
+    SELECT c.session_id,
+           (array_agg(c.file_id ORDER BY c.recorded_at DESC))[1],
+           max(c.recorded_at),
+           max(c.recorded_at) + public.submitted_record_retention()
+    FROM public.chamber_certifications c
+    WHERE public.intake_in_my_firm(c.session_id)
+      AND NOT EXISTS (SELECT 1 FROM public.intake_deletions d WHERE d.session_id = c.session_id AND d.status <> 'done')
+    GROUP BY c.session_id
+    HAVING max(c.recorded_at) + public.submitted_record_retention() <= now()
+    ORDER BY max(c.recorded_at), c.session_id
+    LIMIT p_limit;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)
+ RETURNS TABLE(step integer, milestone text, intakes bigint, median_minutes numeric)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+#variable_conflict use_column
+BEGIN
+  PERFORM public.require_advisor();
+  IF p_from IS NULL OR p_to IS NULL OR p_from >= p_to THEN
+    RAISE EXCEPTION 'The period must start before it ends' USING ERRCODE = '22023';
+  END IF;
+  IF p_to - p_from > interval '366 days' THEN
+    RAISE EXCEPTION 'The funnel covers at most a year at once' USING ERRCODE = '22023';
+  END IF;
+  RETURN QUERY
+    SELECT s.ord::integer, s.name,
+           count(m.id),
+           round((percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM m.reached_at - m.started_at) / 60)
+                  FILTER (WHERE NOT m.backfilled))::numeric, 1)
+    FROM unnest(ARRAY[
+      'started', 'answered', 'document_uploaded', 'census_provided', 'ready_to_certify', 'email_verified', 'certified', 'manuscript_downloaded'
+    ]) WITH ORDINALITY AS s(name, ord)
+    LEFT JOIN public.intake_milestones m
+      ON m.milestone = s.name AND m.started_at >= p_from AND m.started_at < p_to
+     AND public.intake_in_my_firm(m.session_id)
+    GROUP BY s.ord, s.name
+    ORDER BY s.ord;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)
+ RETURNS TABLE(referral_code text, partner_name text, utm_source text, utm_medium text, utm_campaign text, started bigint, answered bigint, document_uploaded bigint, census_provided bigint, ready_to_certify bigint, email_verified bigint, certified bigint, manuscript_downloaded bigint)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+#variable_conflict use_column
+BEGIN
+  PERFORM public.require_advisor();
+  IF p_from IS NULL OR p_to IS NULL OR p_from >= p_to THEN
+    RAISE EXCEPTION 'The period must start before it ends' USING ERRCODE = '22023';
+  END IF;
+  IF p_to - p_from > interval '366 days' THEN
+    RAISE EXCEPTION 'The funnel covers at most a year at once' USING ERRCODE = '22023';
+  END IF;
+  RETURN QUERY
+    SELECT m.referral_code, p.name, m.utm_source, m.utm_medium, m.utm_campaign,
+           count(*) FILTER (WHERE m.milestone = 'started'),
+           count(*) FILTER (WHERE m.milestone = 'answered'),
+           count(*) FILTER (WHERE m.milestone = 'document_uploaded'),
+           count(*) FILTER (WHERE m.milestone = 'census_provided'),
+           count(*) FILTER (WHERE m.milestone = 'ready_to_certify'),
+           count(*) FILTER (WHERE m.milestone = 'email_verified'),
+           count(*) FILTER (WHERE m.milestone = 'certified'),
+           count(*) FILTER (WHERE m.milestone = 'manuscript_downloaded')
+    FROM public.intake_milestones m
+    LEFT JOIN public.referral_partners p ON p.code = m.referral_code
+    WHERE m.started_at >= p_from AND m.started_at < p_to AND public.intake_in_my_firm(m.session_id)
+    GROUP BY m.referral_code, p.name, m.utm_source, m.utm_medium, m.utm_campaign
+    ORDER BY count(*) FILTER (WHERE m.milestone = 'started') DESC,
+             m.referral_code NULLS LAST, m.utm_source NULLS LAST, m.utm_medium NULLS LAST, m.utm_campaign NULLS LAST
+    LIMIT 200;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.advisor_list_submissions(p_status text DEFAULT NULL::text, p_search text DEFAULT NULL::text, p_limit integer DEFAULT NULL::integer, p_offset integer DEFAULT 0, p_needs_action boolean DEFAULT NULL::boolean, p_waiting boolean DEFAULT NULL::boolean, p_sort text DEFAULT NULL::text)
+ RETURNS TABLE(session_id uuid, company_name text, contact_name text, employee_count integer, pipeline_status text, intake_status text, signer_name text, submitted_at timestamp with time zone, created_at timestamp with time zone, updated_at timestamp with time zone, missing_required text[], open_fields integer, flagged_fields integer, verified_fields integer, file_id text, states text[], needs_action boolean, needs_action_note text, quote_requests_sent integer, quotes_received integer, oldest_waiting_on date, earliest_quote_expires_on date, sent_older_version boolean, new_peo_mail_requests integer, start_month text, total_count bigint)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+#variable_conflict use_column
+DECLARE
+  terms text[] := ARRAY(
+    SELECT lower(t) FROM regexp_split_to_table(btrim(COALESCE(p_search, '')), '\s+') AS t WHERE t <> ''
+  );
+BEGIN
+  PERFORM public.require_advisor();
+  IF p_limit IS NOT NULL AND (p_limit < 1 OR p_limit > 500) THEN
+    RAISE EXCEPTION 'A page holds 1 to 500 submissions' USING ERRCODE = '22023';
+  END IF;
+  IF p_offset IS NULL OR p_offset < 0 THEN
+    RAISE EXCEPTION 'The page offset can''t be negative' USING ERRCODE = '22023';
+  END IF;
+  IF p_sort IS NOT NULL AND p_sort NOT IN ('oldest_waiting', 'earliest_expiry') THEN
+    RAISE EXCEPTION 'The queue sorts by oldest_waiting or earliest_expiry, not %', p_sort USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
+  WITH base AS (
+    SELECT
+      s.id,
+      s.user_id,
+      s.status,
+      s.created_at,
+      s.updated_at,
+      s.submission,
+      s.file_id,
+      -- Who signed: the certification in force, or, once it was withdrawn, the latest on record. Never a
+      -- submission the browser wrote (S-1; since 20261106090000 only certifying writes one).
+      CASE WHEN snap.used THEN NULLIF(btrim(s.submission ->> 'signer_name'), '')
+        ELSE (SELECT NULLIF(btrim(c.signer_name), '') FROM public.chamber_certifications c
+               WHERE c.session_id = s.id ORDER BY c.recorded_at DESC, c.id DESC LIMIT 1)
+      END AS signer,
+      w.status AS pipeline,
+      w.needs_action AS action_needed,
+      w.needs_action_note AS action_note,
+      CASE WHEN s.status = 'submitted' THEN (s.submission ->> 'certified_at')::timestamptz END AS certified_at,
+      -- The copy the advisor sees, answers and provenance together: the certified snapshot while
+      -- certified, otherwise as it stands. The same test as public.advisor_visible_answers.
+      CASE WHEN snap.used THEN s.submission -> 'chamber_data' ELSE s.chamber_data END AS shown,
+      CASE WHEN snap.used THEN s.submission -> 'field_provenance' ELSE s.field_provenance END AS prov
+    FROM public.chamber_sessions s
+    JOIN public.submission_workflow w ON w.session_id = s.id
+    LEFT JOIN auth.users u ON u.id = s.user_id
+    CROSS JOIN LATERAL (
+      SELECT s.status = 'submitted'
+         AND jsonb_typeof(s.submission) = 'object'
+         AND btrim(COALESCE(s.submission ->> 'signer_name', '')) <> ''
+         AND s.submission ? 'chamber_data' AS used
+    ) snap
+    WHERE public.is_firm_member(s.firm_id)
+      AND (p_status IS NULL OR w.status = p_status)
+      AND (p_needs_action IS NULL OR w.needs_action = p_needs_action)
+      -- Waiting on a PEO: a quote request sent and not yet answered.
+      AND (p_waiting IS NULL OR p_waiting = EXISTS (
+        SELECT 1 FROM public.quote_requests q WHERE q.session_id = s.id AND q.status = 'sent'
+      ))
+      -- Not an empty guest draft (F-2.1): a guest's intake, never certified, that holds nothing the prospect did.
+      -- Since A-1 an intake is created only by the prospect's first action, so these are left from before then.
+      AND NOT (
+        COALESCE(u.is_anonymous, false)
+        AND NOT public.intake_ever_certified(s.id)
+        AND public.intake_holds_nothing(s.chamber_data, s.field_provenance, s.transcript, s.chosen_peo)
+        AND NOT EXISTS (SELECT 1 FROM public.documents doc WHERE doc.session_id = s.id)
+      )
+  ),
+  shaped AS (
+    SELECT
+      b.*,
+      CASE WHEN jsonb_typeof(b.shown) = 'object' THEN b.shown ELSE '{}'::jsonb END AS d,
+      CASE WHEN jsonb_typeof(b.prov) = 'object' THEN b.prov ELSE '{}'::jsonb END AS fp,
+      p.company_name AS profile_company,
+      p.contact_name AS profile_contact
+    FROM base b
+    LEFT JOIN public.profiles p ON p.user_id = b.user_id
+  ),
+  described AS (
+    SELECT
+      x.*,
+      -- The census, or the roster an intake saved before the census contract.
+      CASE
+        WHEN jsonb_typeof(x.d -> 'census') = 'array' THEN x.d -> 'census'
+        WHEN jsonb_typeof(x.d -> 'employees') = 'array' THEN x.d -> 'employees'
+        ELSE '[]'::jsonb
+      END AS roster,
+      -- At most 200 characters of each: a page lists up to 500 rows (S-3).
+      left(COALESCE(NULLIF(btrim(x.d ->> 'company_name'), ''), NULLIF(btrim(x.profile_company), '')), 200) AS company,
+      left(COALESCE(NULLIF(btrim(x.profile_contact), ''), x.signer), 200) AS contact,
+      -- The File ID the database assigned (S-1), kept when a certification is withdrawn.
+      NULLIF(btrim(x.file_id), '') AS certified_file_id
+    FROM shaped x
+  ),
+  matched AS (
+    SELECT r.*
+    FROM described r
+    -- Every word must appear in the company, the contact or the reference the queue shows (the
+    -- certified file id, or the one the app derives for a draft: EAA-<year>-<first 8 hex of the id>).
+    WHERE NOT EXISTS (
+      SELECT 1 FROM unnest(terms) AS t
+      WHERE strpos(
+        lower(concat_ws(E'\n', r.company, r.contact, COALESCE(
+          r.certified_file_id,
+          'EAA-' || extract(year FROM r.created_at AT TIME ZONE 'UTC')::int || '-' || upper(left(replace(r.id::text, '-', ''), 8))
+        ))),
+        t
+      ) = 0
+    )
+  )
+  SELECT
+    m.id,
+    m.company,
+    m.contact,
+    CASE WHEN jsonb_typeof(m.d -> 'employee_count') = 'number' THEN (m.d ->> 'employee_count')::numeric::integer END,
+    m.pipeline,
+    m.status,
+    left(m.signer, 200),
+    m.certified_at,
+    m.created_at,
+    m.updated_at,
+    -- The required items still missing, in order (public.intake_required_items, 20261104103000: the
+    -- recommended census is never one), less any the advisor supplied through a verified correction with
+    -- a value, which the advisor's Manuscript shows. A verification alone supplies nothing.
+    ARRAY(
+      SELECT ri.item ->> 'label'
+      FROM jsonb_array_elements(public.intake_required_items(m.d, m.fp, '{}'::text[])) WITH ORDINALITY AS ri(item, ord)
+      WHERE ri.item ->> 'state' = 'missing' AND (ri.item ->> 'required')::boolean
+        AND NOT public.advisor_supplied(m.id, ri.item ->> 'field')
+      ORDER BY ri.ord
+    ),
+    -- The other open items, as Review and The Manuscript list them (src/data/openItems.ts): reviewable fields whose
+    -- status leaves them open, less a required answer still missing (missing_required names it, so one the prospect
+    -- doesn't know is one open item, not two), less the census when none is uploaded (a document, which the queue
+    -- never lists), and less any field an advisor verified. A field closed as not applicable is never counted.
+    -- The census matches a review under either of its names.
+    (SELECT count(*)::integer
+       FROM jsonb_each(m.fp) f
+      WHERE f.value ->> 'status' IN (
+          -- sync:begin open_item_statuses
+          'conflicting', 'incomplete', 'unknown', 'inferred'
+          -- sync:end open_item_statuses
+        )
+        AND public.is_reviewable_field(f.key)
+        AND NOT (f.key IN ('census', 'employees') AND jsonb_array_length(m.roster) = 0)
+        AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements(public.intake_required_items(m.d, m.fp, '{}'::text[])) AS ri(item)
+          WHERE ri.item ->> 'state' = 'missing' AND (ri.item ->> 'required')::boolean
+            AND ri.item ->> 'field' = f.key
+            AND NOT public.advisor_supplied(m.id, ri.item ->> 'field')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM public.advisor_field_reviews r
+          WHERE r.session_id = m.id AND r.review_state = 'verified'
+            AND (r.field = f.key OR (r.field IN ('census', 'employees') AND f.key IN ('census', 'employees')))
+        )),
+    (SELECT count(*)::integer FROM public.advisor_field_reviews r
+      WHERE r.session_id = m.id AND r.review_state IN ('incomplete', 'follow_up')),
+    (SELECT count(*)::integer FROM public.advisor_field_reviews r
+      WHERE r.session_id = m.id AND r.review_state = 'verified'),
+    m.certified_file_id,
+    ARRAY(
+      SELECT DISTINCT upper(btrim(y.st)) AS abbr
+      FROM (
+        SELECT st FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(m.d -> 'states') = 'array' THEN m.d -> 'states' ELSE '[]'::jsonb END) AS st
+        UNION ALL
+        SELECT COALESCE(e ->> 'work_state', e ->> 'state') FROM jsonb_array_elements(m.roster) AS e
+      ) y
+      WHERE btrim(COALESCE(y.st, '')) <> ''
+      ORDER BY abbr
+    ),
+    m.action_needed,
+    m.action_note,
+    qs.sent,
+    qs.received,
+    qs.waiting_since,
+    qs.expires,
+    qs.older,
+    qs.new_mail,
+    left(NULLIF(btrim(m.d ->> 'start_month'), ''), 200),
+    count(*) OVER ()
+  FROM matched m
+  CROSS JOIN LATERAL (
+    SELECT
+      count(*) FILTER (WHERE q.status <> 'closed')::integer AS sent,
+      count(*) FILTER (WHERE q.status = 'quoted')::integer AS received,
+      min(q.sent_on) FILTER (WHERE q.status = 'sent') AS waiting_since,
+      min(q.quote_expires_on) FILTER (WHERE q.status = 'quoted') AS expires,
+      COALESCE(bool_or(q.sent_version < (
+        SELECT max(c.version) FROM public.chamber_certifications c WHERE c.session_id = m.id
+      )) FILTER (WHERE q.status IN ('sent', 'quoted')), false) AS older,
+      -- Mail a person at the PEO wrote (not an automatic reply, not an advisor's own copied-in message) that arrived
+      -- after any advisor last opened that quote request's thread; held mail belongs to no quote request.
+      count(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM public.quote_request_messages x
+        WHERE x.quote_request_id = q.id AND x.direction = 'received' AND NOT x.is_automatic
+          AND x.recorded_at > COALESCE((SELECT r.last_opened_at FROM public.quote_request_thread_reads r WHERE r.quote_request_id = q.id), '-infinity'::timestamptz)
+      ))::integer AS new_mail
+    FROM public.quote_requests q
+    WHERE q.session_id = m.id
+  ) qs
+  -- Certified is the intake's status; its date only orders the group. Rows submitted before the
+  -- server stamped certifications have no certified_at: they stay in the group, after the stamped ones.
+  ORDER BY
+    CASE WHEN p_sort = 'oldest_waiting' THEN qs.waiting_since END ASC NULLS LAST,
+    CASE WHEN p_sort = 'earliest_expiry' THEN qs.expires END ASC NULLS LAST,
+    (m.status = 'submitted') DESC, m.certified_at DESC NULLS LAST, m.updated_at DESC, m.id
+  LIMIT p_limit OFFSET p_offset;
+END;
+$function$;
