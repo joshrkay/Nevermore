@@ -35,7 +35,7 @@ BEGIN
   IF char_length(clean_name) NOT BETWEEN 1 AND 80 THEN
     RAISE EXCEPTION 'A firm''s name is 1 to 80 characters' USING ERRCODE = '23514';
   END IF;
-  -- One firm waiting at a time per person (D-29): nobody can hold addresses they have no use for, or fill the admin's
+  -- One firm waiting at a time per person (D-30): nobody can hold addresses they have no use for, or fill the admin's
   -- list. The lock makes two calls from the same person at once take turns, so both cannot pass the check.
   PERFORM pg_advisory_xact_lock(hashtext('sign_up_firm:' || auth.uid()::text));
   IF EXISTS (SELECT 1 FROM public.firms f WHERE f.signed_up_by = auth.uid() AND f.decision IS NULL) THEN
@@ -102,7 +102,7 @@ ALTER TABLE public.firms
 REVOKE SELECT ON public.firms FROM authenticated;
 GRANT SELECT (id, name, address, visibility, approved_at, parent_firm_id, created_at, decision) ON public.firms TO authenticated;
 
--- A refused firm is not shown at its address and does not let its founder in there; the address stays taken (D-30).
+-- A refused firm is not shown at its address and does not let its founder in there; the address stays taken (D-31).
 -- (This supersedes the header of 20261116140000_firm_address_lookup.sql, which describes every existing firm as shown.)
 CREATE OR REPLACE FUNCTION public.firm_public_name(p_address text)
 RETURNS text
