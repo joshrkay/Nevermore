@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchIsAdvisor } from "@/lib/advisorApi";
+import { fetchIsAdvisor, fetchNeedsSecondFactor } from "@/lib/advisorApi";
 import { reportOpsEvent } from "@/lib/monitoring";
 
-type Access = "checking" | "allowed" | "denied" | "error" | "ended";
+type Access = "checking" | "allowed" | "denied" | "second_factor" | "error" | "ended";
 
 // Advisor pages need a signed-in (not guest) account that holds the advisor or admin role.
 // This only decides what to render: the database refuses advisor data to everyone else anyway.
@@ -24,11 +24,16 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
     let cancelled = false;
     setAccess("checking");
     fetchIsAdvisor()
-      .then((ok) => {
-        if (cancelled) return;
-        setAccess(ok ? "allowed" : "denied");
+      .then(async (ok) => {
+        if (ok) return "allowed" as const;
+        // An advisor who signed in with a password is held back until they add or enter a second factor.
+        if (await fetchNeedsSecondFactor()) return "second_factor" as const;
         // A signed-in account that isn't an advisor reaching an advisor page.
-        if (!ok) reportOpsEvent("auth_denied", { code: "advisor_route" });
+        reportOpsEvent("auth_denied", { code: "advisor_route" });
+        return "denied" as const;
+      })
+      .then((next) => {
+        if (!cancelled) setAccess(next);
       })
       .catch((err: { unauthenticated?: boolean }) => {
         if (cancelled) return;
@@ -60,6 +65,9 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
         <p className="text-muted-foreground">Taking you to sign in again…</p>
       </Message>
     );
+  }
+  if (access === "second_factor") {
+    return <Navigate to="/advisor/second-factor" replace state={{ from: location }} />;
   }
   if (access === "error") {
     return (
