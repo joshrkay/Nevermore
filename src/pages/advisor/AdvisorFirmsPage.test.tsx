@@ -99,4 +99,12 @@ describe("AdvisorFirmsPage", () => {
     finish();
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
   });
+
+  it("treats a session that ended during a decision as an ended session, not a toast to retry", async () => {
+    firms.decideFirm.mockRejectedValue(Object.assign(new Error("Your session has expired. Sign in again to continue."), { unauthenticated: true }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Approve Fresh Benefits" }));
+    expect(await screen.findByText("Your session has expired.")).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });

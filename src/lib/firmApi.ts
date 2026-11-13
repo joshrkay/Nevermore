@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { classifyApiError } from "@/lib/advisorApi";
 
 // What the screens at a firm address ask the database (story CRM-P1.3a). Both answers only choose what to show;
 // the database still checks membership on every row and function (D-18).
@@ -58,7 +59,7 @@ export interface WaitingFirm {
 /** The firms waiting for approval, oldest first. Platform admins only. */
 export async function fetchWaitingFirms(): Promise<WaitingFirm[]> {
   const { data, error } = await supabase.rpc("admin_waiting_firms");
-  if (error) throw new Error("Couldn't load the waiting firms.");
+  if (error) throw classifyApiError(error, error.code === "42501" ? "You don't have admin access." : "Couldn't load the waiting firms.");
   return (data ?? []).map((f) => ({ id: f.firm_id, name: f.name, address: f.address, ownerEmail: f.owner_email, signedUpAt: f.signed_up_at }));
 }
 
@@ -67,7 +68,9 @@ export async function decideFirm(firmId: string, approve: boolean, note?: string
   const { error } = await supabase.rpc("admin_decide_firm", { p_firm_id: firmId, p_approve: approve, p_note: note ?? null });
   if (!error) return;
   if (error.code === "55000") throw new Error("That firm has been decided already.");
-  if (error.code === "42501") throw new Error("Only a platform admin who isn't a member of the firm can decide on it.");
   if (error.code === "PT404") throw new Error("That firm no longer exists.");
-  throw new Error("Couldn't record the decision. Try again.");
+  // 42501 is either a lost admin role or the admin belonging to this firm; either way the page reports what the database refused.
+  throw classifyApiError(error, error.code === "42501"
+    ? "Only a platform admin who isn't a member of the firm can decide on it."
+    : "Couldn't record the decision. Try again.");
 }

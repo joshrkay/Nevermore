@@ -47,7 +47,10 @@ const AdvisorFirmsPage = () => {
       setConfirming(null);
       setAttempt((n) => n + 1);
     } catch (err) {
-      toast.error((err as Error).message);
+      // An ended session is no failure to retry: AdvisorLoadError signs the person out. A refusal (42501) stays a message,
+      // since it can also mean the admin belongs to this firm, and the person can still use the page.
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error((err as Error).message);
     }
     setBusy(null);
   };

@@ -99,6 +99,22 @@ describe("the platform admin's firm approvals", () => {
     await expect(fetchWaitingFirms()).rejects.toThrow("Couldn't load the waiting firms.");
   });
 
+  it("keeps an ended session and a lost admin role apart from any other failure, on both calls", async () => {
+    for (const call of [() => fetchWaitingFirms(), () => decideFirm("f1", true)]) {
+      rpc.mockResolvedValue({ data: null, error: { code: "PGRST301", message: "JWT expired" } });
+      await expect(call()).rejects.toMatchObject({ unauthenticated: true, forbidden: false });
+      rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Admin access required" } });
+      await expect(call()).rejects.toMatchObject({ forbidden: true, unauthenticated: false });
+      rpc.mockResolvedValue({ data: null, error: { code: "XX000", message: "boom" } });
+      await expect(call()).rejects.toMatchObject({ forbidden: false, unauthenticated: false });
+    }
+  });
+
+  it("reads a refusal as a refusal even when its words mention the token", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "jwt role is not admin" } });
+    await expect(fetchWaitingFirms()).rejects.toMatchObject({ forbidden: true, unauthenticated: false });
+  });
+
   it("approves or refuses with a note, and trims nothing the database trims itself", async () => {
     rpc.mockResolvedValue({ data: null, error: null });
     await decideFirm("f1", true, "Known");

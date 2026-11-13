@@ -262,7 +262,7 @@ The firm address read out of the host the app is served on: `name.nevermorepeo.c
 A signed-in person with a verified email gives a firm name and a firm address and becomes the firm's first owner in one step. The firm exists at once and its members can work, but it is waiting for approval: it cannot send to a PEO until a platform admin approves it (Q-1.2). The address is read as every firm address is (lower case, no surrounding spaces) and the address rules of the table apply.
 
 **Waiting for approval** (code: `firms.approved_at` empty and `firms.decision` empty):
-A firm that has signed up and has no decision yet. A platform admin sees these through `admin_waiting_firms`, oldest first, and no other way (D-16).
+A firm that has signed up and has no decision yet. A platform admin sees these through `admin_waiting_firms`, oldest first, and no other way (D-16). Each shows who signed the firm up, kept on the firm (`firms.signed_up_by`) when it was signed up: it stays that person if ownership later passes to someone else.
 
 **Firm decision** (code: `admin_decide_firm`, `firms.decision`, `decided_at`, `decided_by`, `decision_note`):
 A platform admin's approval or refusal of a waiting firm, with an optional note. Approving sets `approved_at`; refusing leaves it empty. A firm is decided once, and an admin does not decide on a firm they belong to. The event is written through `record_firm_event`, the one small function the record of who did what (CRM-P2.3) takes over.
