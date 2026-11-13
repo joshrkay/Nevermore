@@ -21,10 +21,9 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
   const open = async (doc: ReviewedDocument) => {
     setOpening(doc.id);
     try {
-      const url = await documentUrl(doc);
-      // Recorded once the link is in hand: a link that couldn't be signed is not a download.
+      window.location.assign(await documentUrl(doc));
+      // Recorded only once a link was signed and handed to the browser (the link itself is never kept here).
       void recordActivity("document_downloaded", "document", doc.id);
-      window.location.assign(url);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {

@@ -109,9 +109,8 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
-      const url = await manuscriptUrl(v, versionFilename(detail.data.company_name, v));
+      window.location.assign(await manuscriptUrl(v, versionFilename(detail.data.company_name, v)));
       void recordActivity("packet_downloaded", "manuscript", v.id);
-      window.location.assign(url);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
