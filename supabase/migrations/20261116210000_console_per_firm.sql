@@ -99,3 +99,27 @@ AS $$
       OR EXISTS (SELECT 1 FROM public.current_member_firm_ids())
     );
 $$;
+
+-- A broker's mailbox belongs to a current member of a firm, whether or not they hold a platform role. 20261116200000 asked for
+-- the platform role AND a current membership, which turned away a firm's founder or an invited member who holds no platform
+-- role: the console's Mailbox page is theirs too. The membership rule, and the rule that a platform admin who belongs to no
+-- firm connects none (D-16), are that migration's and are kept as they were; only the role clause is dropped. The second
+-- factor is asked by the mailbox function before it calls this, through my_firms(). Everything else about the mailbox
+-- (my_mailbox(), mailbox_secret(), the table) is as 20261116200000 left it.
+CREATE OR REPLACE FUNCTION public.mailbox_store(
+  p_user_id uuid, p_provider text, p_address text, p_scope text, p_token_ciphertext text, p_token_iv text, p_rotated boolean DEFAULT false)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.firm_memberships f WHERE f.user_id = p_user_id AND public.membership_is_current(f.valid_from, f.valid_until)) THEN
+    RAISE EXCEPTION 'Only a member of a firm can connect a mailbox' USING ERRCODE = '42501';
+  END IF;
+  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+  VALUES (p_user_id, p_provider, p_address, p_scope, p_token_ciphertext, p_token_iv)
+  ON CONFLICT (user_id) DO UPDATE
+  SET provider = EXCLUDED.provider, address = EXCLUDED.address, scope = EXCLUDED.scope,
+      token_ciphertext = EXCLUDED.token_ciphertext, token_iv = EXCLUDED.token_iv, token_updated_at = now(),
+      -- A token Microsoft handed back on a refresh replaces the old one; the broker has not connected again.
+      connected_at = CASE WHEN p_rotated THEN public.broker_mailboxes.connected_at ELSE now() END;
+  RETURN jsonb_build_object('connected', true);
+END;
+$$;

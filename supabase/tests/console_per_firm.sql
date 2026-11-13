@@ -305,4 +305,16 @@ SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'one who has done
 SELECT pg_temp.as_user_with('nobody', 'password', 'aal1');
 SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'a person with no role and no membership is never asked');
 SELECT pg_temp.as_owner();
+-- ---------- 4. A mailbox is a current member's, whether or not they hold a platform role ----------
+-- The mailbox function stores for a person the edge function has already checked (their membership and the second factor,
+-- through my_firms()); the database refuses anyone who is no current member of a firm, a platform role or not.
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(public.mailbox_store(pg_temp.id('roleless_a'), 'microsoft', 'pat@alpha.example', 'Mail.Send', 'cipher', 'iv')::text, '{"connected": true}', 'a member with no platform role connects a mailbox');
+SELECT pg_temp.as_user('roleless_a');
+SELECT pg_temp.is(public.my_mailbox() ->> 'connected', 'true', 'and is told it is connected');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(public.mailbox_secret(pg_temp.id('roleless_a')) ->> 'address', 'pat@alpha.example', 'and it is sent through');
+SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('platform_admin')), '42501', 'a platform admin who belongs to no firm connects none (D-16)');
+SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('nobody')), '42501', 'nor does a person with no membership');
+SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('former_a')), '42501', 'nor a former member');
 \echo console_per_firm: ok
