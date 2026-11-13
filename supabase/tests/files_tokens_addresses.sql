@@ -278,6 +278,11 @@ BEGIN
   -- The same message also sent to an address nobody held, which sorts first: the firm is still known.
   m := (pg_temp.arrive('m-revoked-a-plus-unknown', ARRAY['aaaa.nobody.0000000000000000', pg_temp.local_of('a_old')]) ->> 'message_id')::bigint;
   PERFORM pg_temp.is(pg_temp.held_firm(m), pg_temp.id('firm_a'), 'an unknown address beside a revoked one does not hide the firm');
+  -- The platform's list shows such a message by the address that was once a quote request's: its PEO, and never who wrote it or what.
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is((SELECT h.peo_name FROM public.admin_held_mail() h WHERE h.message_id = m), 'Harbor PEO old', 'a platform admin sees the PEO of the address the message was held for');
+  PERFORM pg_temp.is((SELECT h.peo_name FROM public.admin_held_mail() h WHERE h.message_id = (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'm-unknown')), NULL::text, 'and no PEO for an address nobody held');
+  PERFORM pg_temp.as_owner();
 
   -- One message sent to the revoked addresses of two firms can't be said to belong to either: the platform's list, whichever sorts first.
   m := (pg_temp.arrive('m-two-firms', ARRAY[pg_temp.local_of('a_old'), pg_temp.local_of('b_old')]) ->> 'message_id')::bigint;
