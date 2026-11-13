@@ -9,7 +9,7 @@ import { localToday } from "@/data/peoProfiles";
 import { fetchHasPlatformRole, fetchIsAdmin, loadPeoCatalogDirectory, loadPeoDirectory, type PeoDirectoryEntry } from "@/lib/advisorApi";
 import AddPeoForm from "@/components/advisor/peos/AddPeoForm";
 
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean };
+type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean; catalogue: boolean };
 
 /**
  * The PEOs and their requirement profiles (L-1.2, docs/adr/0010). A member of a firm with no platform role reads the version in
@@ -32,9 +32,9 @@ const AdvisorPeosPage = () => {
     // without one reads the prospect-safe catalogue, the version in use of each PEO, which the tables refuse them (ADR 0010).
     (async () => {
       const [hasRole, isAdmin] = await Promise.all([fetchHasPlatformRole(), fetchIsAdmin()]);
-      return [hasRole ? await loadPeoDirectory() : await loadPeoCatalogDirectory(), isAdmin] as const;
+      return [hasRole ? await loadPeoDirectory() : await loadPeoCatalogDirectory(), isAdmin, !hasRole] as const;
     })()
-      .then(([peos, isAdmin]) => !cancelled && setLoad({ kind: "ready", peos, isAdmin }))
+      .then(([peos, isAdmin, catalogue]) => !cancelled && setLoad({ kind: "ready", peos, isAdmin, catalogue }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
@@ -95,7 +95,7 @@ const AdvisorPeosPage = () => {
                 </nav>
               )}
             </div>
-            {selected && <PeoPanel key={selected.id} peo={selected} isAdmin={load.isAdmin} today={today} onChanged={reload} />}
+            {selected && <PeoPanel key={selected.id} peo={selected} isAdmin={load.isAdmin} showContacts={!load.catalogue} today={today} onChanged={reload} />}
           </div>
         )}
       </main>
