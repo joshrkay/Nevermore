@@ -159,6 +159,11 @@ const renderWithNavigation = () =>
     </MemoryRouter>,
   );
 
+// The request being drafted lives in Ask the prospect. Role queries over the whole page cost seconds each in a page this
+// large (every button and list is checked for being visible), and a full run under load crossed the 5 second limit on
+// them; asked of the one section, each takes milliseconds.
+const ask = () => screen.getByRole("heading", { name: "Ask the prospect", hidden: true }).closest("section")!;
+
 describe("AdvisorSubmissionPage", () => {
   // A test that fakes the clock gets the real one back even when it fails.
   afterEach(() => vi.useRealTimers());
@@ -1138,7 +1143,7 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     const quotes = await screen.findByRole("region", { name: "Quote requests" });
     fireEvent.click(within(quotes).getByRole("button", { name: "Ask the prospect" }));
-    const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
     expect(message.value).toBe("Can they send last year's loss runs?");
     expect(message.value).not.toMatch(/TriNet/);
     expect(api.requestInformation).not.toHaveBeenCalled();
@@ -1147,9 +1152,9 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue({ ...(await api.loadSubmission.mock.results[0].value), informationRequests: [
       { id: 1, session_id: "s1", message: "Can they send last year's loss runs?", fields: [], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" },
     ] });
-    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
+    await waitFor(() => expect(within(ask()).getByLabelText(/What do you need from them/i)).toHaveValue(""));
   });
 
   describe("What each PEO still needs", () => {
@@ -1345,7 +1350,7 @@ describe("AdvisorSubmissionPage", () => {
       const needs = await panel();
       const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
       fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
-      const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+      const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
       expect(message.value).toBe([
         "We need a few more things from you to get a quote.",
         "",
@@ -1355,10 +1360,10 @@ describe("AdvisorSubmissionPage", () => {
         "Please also answer or confirm the answers this request is about.",
       ].join("\n"));
       expect(message.value).not.toMatch(/TriNet/);
-      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HRIS system", "Payroll vendor"]);
+      expect(within(within(ask()).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HRIS system", "Payroll vendor"]);
       expect(api.requestInformation).not.toHaveBeenCalled();
       fireEvent.change(message, { target: { value: `${message.value}\nThanks!` } });
-      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"], []));
     });
 
@@ -1370,11 +1375,11 @@ describe("AdvisorSubmissionPage", () => {
       renderPage();
       const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
       fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
-      const asked = () => within(screen.getByRole("list", { name: "Extra questions the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+      const asked = () => within(within(ask()).getByRole("list", { name: "Extra questions the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
       expect(asked()).toEqual(["Do employees drive for work?", "How many vans?"]);
-      expect((screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement).value).not.toMatch(/TriNet/);
-      fireEvent.click(screen.getByRole("button", { name: "Remove How many vans?" }));
-      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      expect((within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement).value).not.toMatch(/TriNet/);
+      fireEvent.click(within(ask()).getByRole("button", { name: "Remove How many vans?" }));
+      fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.any(String), ["hris_system", "payroll_vendor"],
         [{ peo_id: 5, key: "vehicles", question: "Do employees drive for work?" }]));
     });
@@ -1392,10 +1397,10 @@ describe("AdvisorSubmissionPage", () => {
         reviews,
         informationRequests: [{ id: 1, session_id: "s1", message: "We need a few more things", fields: ["hris_system", "payroll_vendor"], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-11T12:00:00Z" }],
       }));
-      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
-      await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
-      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HQ state"]);
+      await waitFor(() => expect(within(ask()).getByLabelText(/What do you need from them/i)).toHaveValue(""));
+      expect(within(within(ask()).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HQ state"]);
     });
 
     it("starts the draft from the PEO's missing answers alone, not the fields marked Needs follow-up", async () => {

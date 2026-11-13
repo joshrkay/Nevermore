@@ -79,6 +79,7 @@ const {
   fetchOwnedFirms,
   listFirmActivity,
   listFirmActivityPeople,
+  NEVERMORE_FILTER,
   FIRM_ACTIVITY_PAGE_SIZE,
 } = await import("./advisorApi");
 
@@ -748,7 +749,7 @@ describe("the firm's record of who did what", () => {
     rpc.mockResolvedValue({ data: [row(3), row(2), row(1)], error: null });
     const page = await listFirmActivity("firm-1", { person: "u1", kind: "send_recorded", after: null });
     expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
-      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: null, p_before_key: null,
+      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: null, p_before_key: null, p_nevermore: false,
     });
     expect(page.entries.map((e) => e.entry_key)).toEqual(["k3", "k2", "k1"]);
     expect(page.hasMore).toBe(false);
@@ -758,7 +759,7 @@ describe("the firm's record of who did what", () => {
     rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE + 1 }, (_, i) => row(100 - i)), error: null });
     const page = await listFirmActivity("firm-1", { person: null, kind: null, after: { at: "2026-11-12T09:00:00Z", key: "k77" } });
     expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
-      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: "2026-11-12T09:00:00Z", p_before_key: "k77",
+      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: "2026-11-12T09:00:00Z", p_before_key: "k77", p_nevermore: false,
     });
     expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
     expect(page.hasMore).toBe(true);
@@ -777,9 +778,17 @@ describe("the firm's record of who did what", () => {
     expect((await caught(() => listFirmActivity("firm-1", { person: null, kind: null, after: null }))).forbidden).toBe(true);
   });
 
+  it("filters by Nevermore with the filter's own flag, never by an id, and by a person with their id and no flag", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    await listFirmActivity("firm-1", { person: NEVERMORE_FILTER, kind: null, after: null });
+    expect(rpc).toHaveBeenLastCalledWith("firm_activity_list", expect.objectContaining({ p_person: null, p_nevermore: true }));
+    await listFirmActivity("firm-1", { person: "u1", kind: null, after: null });
+    expect(rpc).toHaveBeenLastCalledWith("firm_activity_list", expect.objectContaining({ p_person: "u1", p_nevermore: false }));
+  });
+
   it("lists the people who appear in the record", async () => {
-    rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test" }], error: null });
-    await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test" }]);
+    rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test", is_nevermore: false }], error: null });
+    await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test", is_nevermore: false }]);
     expect(rpc).toHaveBeenCalledWith("firm_activity_people", { p_firm_id: "firm-1" });
   });
 });

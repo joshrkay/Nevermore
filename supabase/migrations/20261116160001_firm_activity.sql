@@ -20,6 +20,12 @@
 -- * A firm's owners (a current membership with the role owner) read their own firm's record, once they have completed
 --   the second factor (D-19), by the table or by firm_activity_list(); no one else does, and a platform admin who is not
 --   an owner of the firm doesn't (D-16). A firm owner with no platform role is held back for the second factor too.
+-- * A firm never learns which person at Nevermore acted on it (D-33). The real actor stays stored, for the platform's own
+--   record, but an entry made by a platform admin who was not a current member of the firm is stamped actor_is_staff
+--   when it is written, and everything a firm can read (the table's columns, firm_activity_list, firm_activity_people)
+--   shows it as "Nevermore": no id, no name, no email. Stamped at write time, not derived at read time, so a member who
+--   later leaves still shows as themselves and staff stay masked whatever happens to their roles or memberships; an admin
+--   who is a member and acts as one is not stamped.
 -- * Kinds that later stories write (export, invitation, removal, support access) are accepted now so they need no
 --   schema change. A sign-in to a firm's console is written by the screen at the firm's address, once after each
 --   sign-in, through record_member_activity('sign_in', 'firm', <the firm the address names>): it is the caller's own
@@ -40,6 +46,10 @@ CREATE TABLE public.firm_activity (
   -- The signed-in person who did it; null when the system did (a scheduled job, a server function as the service).
   -- No foreign key on purpose: the record outlives the account, and a key's ON DELETE would change a row.
   actor_id uuid,
+  -- Stamped when the row is written (D-33): true when the actor was a person of Nevermore's own (a platform admin)
+  -- acting on a firm they were not a current member of. Stamped, not worked out when read, so a member who later leaves
+  -- still shows as themselves and staff stay "Nevermore" for good, whatever happens to their roles or memberships.
+  actor_is_staff boolean NOT NULL DEFAULT false,
   kind text NOT NULL,
   record_type text NOT NULL,
   record_id text NOT NULL,
@@ -122,7 +132,9 @@ REVOKE ALL ON public.firm_activity FROM PUBLIC, anon, authenticated, service_rol
 -- The service reads it (a later story's alert counts a member's exports) but writes only through record_firm_activity().
 -- A reader gets every column but the global number (id): its gaps would count what other firms did.
 GRANT SELECT ON public.firm_activity TO service_role;
-GRANT SELECT (entry_key, firm_id, at, actor_id, kind, record_type, record_id, subject_user_id, role) ON public.firm_activity TO authenticated;
+-- Not the actor either: who acted is read through the two functions below, which show a person of Nevermore's as
+-- "Nevermore" (D-33). The table says only that it was staff (actor_is_staff).
+GRANT SELECT (entry_key, firm_id, at, actor_is_staff, kind, record_type, record_id, subject_user_id, role) ON public.firm_activity TO authenticated;
 GRANT SELECT, DELETE ON public.firm_activity TO firm_activity_pruner;
 
 -- Who may read a firm's record: its current owners, once they have done the second factor if their sign-in owes one
@@ -183,32 +195,42 @@ REVOKE ALL ON FUNCTION public.firm_activity_resolve(text, text) FROM PUBLIC, ano
 -- file call it, and only with the caller's own sign-in (firm_activity_append) or from a browser report.
 CREATE FUNCTION public.firm_activity_insert(
   p_actor_id uuid, p_firm_id uuid, p_kind text, p_record_type text, p_record_id text,
-  p_subject_user_id uuid DEFAULT NULL, p_role text DEFAULT NULL)
+  p_subject_user_id uuid DEFAULT NULL, p_role text DEFAULT NULL, p_acted_as_member boolean DEFAULT NULL)
 RETURNS bigint
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  INSERT INTO public.firm_activity (firm_id, actor_id, kind, record_type, record_id, subject_user_id, role)
-  VALUES (p_firm_id, p_actor_id, p_kind, p_record_type, p_record_id, p_subject_user_id, p_role)
+  -- D-33, stamped here once, when the row is written: the actor is a platform admin (Nevermore's own people; an advisor is a firm's own) and was not a current member of the
+  -- firm. p_acted_as_member lets a caller say the actor was one even though the change being recorded has just ended it
+  -- (a member ending their own membership); left null, it is read from the firm's memberships as they stand now.
+  INSERT INTO public.firm_activity (firm_id, actor_id, actor_is_staff, kind, record_type, record_id, subject_user_id, role)
+  VALUES (p_firm_id, p_actor_id,
+          p_actor_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM public.user_roles r WHERE r.user_id = p_actor_id AND r.role = 'admin')
+            AND NOT COALESCE(p_acted_as_member, EXISTS (
+              SELECT 1 FROM public.firm_memberships m
+              WHERE m.firm_id = p_firm_id AND m.user_id = p_actor_id AND public.membership_is_current(m.valid_from, m.valid_until))),
+          p_kind, p_record_type, p_record_id, p_subject_user_id, p_role)
   RETURNING id
 $$;
 
-REVOKE ALL ON FUNCTION public.firm_activity_insert(uuid, uuid, text, text, text, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.firm_activity_insert(uuid, uuid, text, text, text, uuid, text, boolean) FROM PUBLIC, anon, authenticated, service_role;
 
 -- Inserts as the caller's own sign-in (null for the service and for scheduled work). Internal; record_firm_activity and
 -- the triggers below call it.
 CREATE FUNCTION public.firm_activity_append(
-  p_firm_id uuid, p_kind text, p_record_type text, p_record_id text, p_subject_user_id uuid DEFAULT NULL, p_role text DEFAULT NULL)
+  p_firm_id uuid, p_kind text, p_record_type text, p_record_id text, p_subject_user_id uuid DEFAULT NULL, p_role text DEFAULT NULL,
+  p_acted_as_member boolean DEFAULT NULL)
 RETURNS bigint
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT public.firm_activity_insert(auth.uid(), p_firm_id, p_kind, p_record_type, p_record_id, p_subject_user_id, p_role)
+  SELECT public.firm_activity_insert(auth.uid(), p_firm_id, p_kind, p_record_type, p_record_id, p_subject_user_id, p_role, p_acted_as_member)
 $$;
 
-REVOKE ALL ON FUNCTION public.firm_activity_append(uuid, text, text, text, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.firm_activity_append(uuid, text, text, text, uuid, text, boolean) FROM PUBLIC, anon, authenticated, service_role;
 
 -- Inserts as the caller's own sign-in unless the same person already wrote the same entry within 30 seconds: the one place
 -- that window is written. Internal; the browser report and the opening of a submission call it.
@@ -352,7 +374,9 @@ BEGIN
   PERFORM public.firm_activity_append(
     m.firm_id,
     CASE WHEN m.role = 'owner' THEN 'owner_' ELSE 'member_' END || CASE WHEN added THEN 'added' ELSE 'ended' END,
-    'membership', m.id::text, m.user_id, m.role);
+    'membership', m.id::text, m.user_id, m.role,
+    -- A member ending their own membership acted as a member, though the row they just ended no longer says so.
+    CASE WHEN TG_OP <> 'INSERT' AND OLD.user_id = auth.uid() AND public.membership_is_current(OLD.valid_from, OLD.valid_until) THEN true END);
   RETURN NULL;
 END;
 $$;
@@ -389,9 +413,9 @@ CREATE TRIGGER quote_requests_record_send
 -- key, the same two the list is ordered by. The key is random, not the table's number, which is shared by every firm.
 CREATE FUNCTION public.firm_activity_list(
   p_firm_id uuid, p_person uuid DEFAULT NULL, p_kind text DEFAULT NULL, p_limit integer DEFAULT 50,
-  p_before_at timestamptz DEFAULT NULL, p_before_key uuid DEFAULT NULL)
+  p_before_at timestamptz DEFAULT NULL, p_before_key uuid DEFAULT NULL, p_nevermore boolean DEFAULT false)
 RETURNS TABLE (
-  entry_key uuid, at timestamptz, actor_id uuid, actor_email text, kind text, record_type text, record_id text,
+  entry_key uuid, at timestamptz, actor_id uuid, actor_email text, by_nevermore boolean, kind text, record_type text, record_id text,
   subject_user_id uuid, subject_email text, role text)
 LANGUAGE plpgsql
 STABLE
@@ -406,12 +430,13 @@ BEGIN
     RAISE EXCEPTION 'A page is 1 to 100 entries, after an entry given by its time and key together' USING ERRCODE = '22023';
   END IF;
   RETURN QUERY
-    SELECT a.entry_key, a.at, a.actor_id, u.email::text, a.kind, a.record_type, a.record_id, a.subject_user_id, su.email::text, a.role
+    SELECT a.entry_key, a.at, CASE WHEN a.actor_is_staff THEN NULL ELSE a.actor_id END, u.email::text, a.actor_is_staff, a.kind, a.record_type, a.record_id, a.subject_user_id, su.email::text, a.role
     FROM public.firm_activity a
-    LEFT JOIN auth.users u ON u.id = a.actor_id
+    LEFT JOIN auth.users u ON u.id = a.actor_id AND NOT a.actor_is_staff
     LEFT JOIN auth.users su ON su.id = a.subject_user_id
     WHERE a.firm_id = p_firm_id
-      AND (p_person IS NULL OR a.actor_id = p_person)
+      AND (p_person IS NULL OR (a.actor_id = p_person AND NOT a.actor_is_staff))
+      AND (NOT COALESCE(p_nevermore, false) OR a.actor_is_staff)
       AND (p_kind IS NULL OR a.kind = p_kind)
       AND (p_before_at IS NULL OR (a.at, a.entry_key) < (p_before_at, p_before_key))
     ORDER BY a.at DESC, a.entry_key DESC
@@ -419,8 +444,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, uuid, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, uuid, boolean) TO authenticated;
 
 -- The firms the caller currently owns, to offer a choice when there is more than one. A page says which firm it wants
 -- (today by ?firm=<id>, or the only firm the caller owns) and firm_activity_list checks the caller currently owns that one. A platform admin who is not an owner is refused like anyone else (D-16).
@@ -478,7 +503,7 @@ GRANT EXECUTE ON FUNCTION public.my_firm_at_address(text) TO authenticated;
 
 -- The people who appear as the doer in a firm's record: what the person filter offers, read under the same rule as the list.
 CREATE FUNCTION public.firm_activity_people(p_firm_id uuid)
-RETURNS TABLE (user_id uuid, email text)
+RETURNS TABLE (user_id uuid, email text, is_nevermore boolean)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
@@ -489,10 +514,17 @@ BEGIN
     RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
-    SELECT a.actor_id, u.email::text
-    FROM (SELECT DISTINCT f.actor_id FROM public.firm_activity f WHERE f.firm_id = p_firm_id AND f.actor_id IS NOT NULL) a
-    LEFT JOIN auth.users u ON u.id = a.actor_id
-    ORDER BY u.email;
+    SELECT p.user_id, p.email, p.is_nevermore FROM (
+      SELECT a.actor_id AS user_id, u.email::text AS email, false AS is_nevermore
+      FROM (SELECT DISTINCT f.actor_id FROM public.firm_activity f
+            WHERE f.firm_id = p_firm_id AND f.actor_id IS NOT NULL AND NOT f.actor_is_staff) a
+      LEFT JOIN auth.users u ON u.id = a.actor_id
+      UNION ALL
+      -- Every person of Nevermore's who acted on the firm is this one entry: no id, no email.
+      SELECT NULL::uuid, NULL::text, true
+      WHERE EXISTS (SELECT 1 FROM public.firm_activity f WHERE f.firm_id = p_firm_id AND f.actor_is_staff)
+    ) p
+    ORDER BY p.is_nevermore, p.email;
 END;
 $$;
 

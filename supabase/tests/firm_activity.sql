@@ -453,10 +453,10 @@ CREATE FUNCTION pg_temp.ids(p_firm text, p_person text DEFAULT NULL, p_kind text
 RETURNS uuid[] LANGUAGE sql AS $$
   SELECT COALESCE(array_agg(e.entry_key ORDER BY ord), '{}') FROM public.firm_activity_list(pg_temp.id(p_firm),
     CASE WHEN p_person IS NULL THEN NULL ELSE pg_temp.id(p_person) END, p_kind, lim,
-    (SELECT c.at FROM public.firm_activity c WHERE c.entry_key = after_key), after_key) WITH ORDINALITY AS e(entry_key, at, actor_id, actor_email, kind, record_type,
+    (SELECT c.at FROM public.firm_activity c WHERE c.entry_key = after_key), after_key) WITH ORDINALITY AS e(entry_key, at, actor_id, actor_email, by_nevermore, kind, record_type,
     record_id, subject_user_id, subject_email, role, ord);
 $$;
-CREATE FUNCTION pg_temp.truth(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL) RETURNS uuid[] LANGUAGE sql AS $$
+CREATE FUNCTION pg_temp.truth(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL) RETURNS uuid[] LANGUAGE sql SECURITY DEFINER AS $$
   SELECT COALESCE(array_agg(a.entry_key ORDER BY a.at DESC, a.entry_key DESC), '{}') FROM public.firm_activity a
   WHERE a.firm_id = pg_temp.id(p_firm) AND (p_person IS NULL OR a.actor_id = pg_temp.id(p_person)) AND (p_kind IS NULL OR a.kind = p_kind);
 $$;
@@ -705,5 +705,93 @@ SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = cur
 SELECT pg_temp.as_user('founder_c');
 SELECT pg_temp.expect(format('SELECT public.record_firm_event(%L, %L, %L, %L)', current_setting('nevermore.fid'), 'firm_refused', pg_temp.id('founder_c'), '{}'),
   '42501', 'a signed-in caller writing a firm event of their own');
+
+-- ---------- 14. A refusal through the real recorder: written, and the admin who refused it is not named to the firm (D-33) ----------
+-- (The test above stubs nothing for approval; this one runs a refusal through admin_decide_firm and record_firm_event as
+-- they are loaded, so a kind the table's check refuses would fail the decision itself.)
+SELECT pg_temp.as_owner();
+SELECT pg_temp.new_user('founder_d');
+UPDATE auth.users SET email_confirmed_at = now() WHERE id = pg_temp.id('founder_d');
+SELECT pg_temp.as_user('founder_d');
+SELECT set_config('nevermore.fid_d', public.sign_up_firm('Delta Brokers', 'delta-brokers')::text, false);
+SELECT pg_temp.as_user('platform_admin');
+SELECT pg_temp.expect(format('SELECT public.admin_decide_firm(%L, false, %L)', current_setting('nevermore.fid_d'), 'not a fit'), 'rows:1',
+  'an admin refusing a firm with the real recorder loaded');
+SELECT public.admin_decide_firm(current_setting('nevermore.fid_d')::uuid, false, 'not a fit');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = current_setting('nevermore.fid_d')::uuid AND kind = 'firm_refused'
+  AND record_type = 'firm' AND record_id = current_setting('nevermore.fid_d') AND actor_id = pg_temp.id('platform_admin')), 1::bigint,
+  'the refusal is recorded against the firm, with the admin kept as the actor');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = current_setting('nevermore.fid_d')::uuid AND kind = 'firm_refused'
+  AND actor_is_staff), 1::bigint, 'and stamped, when it was written, as staff acting from outside the firm');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = current_setting('nevermore.fid_d')::uuid AND kind = 'firm_signed_up'
+  AND actor_id = pg_temp.id('founder_d') AND NOT actor_is_staff), 1::bigint, 'the founder''s own sign-up is not stamped as staff');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = current_setting('nevermore.fid')::uuid AND kind = 'firm_approved'
+  AND actor_id = pg_temp.id('platform_admin') AND actor_is_staff), 1::bigint, 'the approval is stamped the same way');
+
+-- ---------- 15. A firm never sees which Nevermore person acted on it (D-33) ----------
+-- Gamma (approved by the admin, who is not a member) is read by its owner, the founder.
+SELECT pg_temp.as_user('founder_c');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid) WHERE kind = 'firm_approved'), 1::bigint,
+  'the owner sees the approval');
+SELECT pg_temp.is((SELECT by_nevermore FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid) WHERE kind = 'firm_approved'), true,
+  'it is shown as done by Nevermore');
+SELECT pg_temp.is((SELECT actor_id IS NULL AND actor_email IS NULL FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid) WHERE kind = 'firm_approved'),
+  true, 'with no id and no email');
+SELECT pg_temp.is((SELECT actor_email FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid) WHERE kind = 'firm_signed_up'), 'founder_c@example.test',
+  'while the founder''s own sign-up still names the founder');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid) l
+  WHERE to_jsonb(l)::text ~* ('platform_admin|' || pg_temp.id('platform_admin')::text)), 0::bigint, 'nothing in any row of the list names the admin');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid, pg_temp.id('platform_admin'))), 0::bigint,
+  'filtering by the admin''s real id finds nothing');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid, NULL, NULL, 50, NULL, NULL, true)), 1::bigint,
+  'filtering by Nevermore finds the approval');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(current_setting('nevermore.fid')::uuid, pg_temp.id('founder_c'), NULL, 50, NULL, NULL, true)), 0::bigint,
+  'a person and Nevermore together match no one');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_people(current_setting('nevermore.fid')::uuid) WHERE is_nevermore), 1::bigint,
+  'the people filter offers Nevermore once');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_people(current_setting('nevermore.fid')::uuid) p
+  WHERE to_jsonb(p)::text ~* ('platform_admin|' || pg_temp.id('platform_admin')::text)), 0::bigint, 'and nothing in it names the admin');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_people(current_setting('nevermore.fid')::uuid) WHERE NOT is_nevermore AND email = 'founder_c@example.test'), 1::bigint,
+  'the founder is offered as themselves');
+SELECT pg_temp.expect('SELECT actor_id FROM public.firm_activity', '42501', 'an owner reading the stored actor from the table');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'firm_approved' AND actor_is_staff), 1::bigint, 'the table says only that it was staff');
+
+-- A refusal read by an owner of the firm (the firm here is a member's own, so an entry written as the admin from outside it).
+SELECT pg_temp.as_owner();
+SELECT set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id('platform_admin'), 'role', 'authenticated', 'is_anonymous', false)::text, false);
+SELECT public.record_firm_event(pg_temp.id('firm_b'), 'firm_refused', pg_temp.id('platform_admin'), '{}');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.as_user('owner_b');
+SELECT pg_temp.is((SELECT by_nevermore AND actor_id IS NULL AND actor_email IS NULL FROM public.firm_activity_list(pg_temp.id('firm_b')) WHERE kind = 'firm_refused'), true,
+  'an owner reading after a refusal sees Nevermore');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b')) l
+  WHERE to_jsonb(l)::text ~* ('platform_admin|' || pg_temp.id('platform_admin')::text)), 0::bigint, 'and no row names the admin');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b'), pg_temp.id('platform_admin'))), 0::bigint, 'nor does filtering by the admin''s id');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_people(pg_temp.id('firm_b')) p
+  WHERE to_jsonb(p)::text ~* ('platform_admin|' || pg_temp.id('platform_admin')::text)), 0::bigint, 'nor does the people list');
+
+-- A member who also holds a platform role and acts as a member shows as themselves; one who leaves still does; staff stays masked.
+SELECT pg_temp.as_owner();
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_b'), pg_temp.id('platform_admin'), 'agent');
+SELECT set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id('platform_admin'), 'role', 'authenticated', 'is_anonymous', false)::text, false);
+SELECT public.record_firm_event(pg_temp.id('firm_b'), 'firm_approved', pg_temp.id('platform_admin'), '{}');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = pg_temp.id('firm_b') AND kind = 'firm_approved' AND actor_id = pg_temp.id('platform_admin') AND NOT actor_is_staff), 1::bigint,
+  'a platform admin who is a member of the firm, acting as one, is not stamped as staff');
+UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = pg_temp.id('firm_b') AND user_id = pg_temp.id('platform_admin');
+SELECT pg_temp.as_user('owner_b');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b')) WHERE kind = 'firm_approved' AND actor_email = 'platform_admin@example.test' AND NOT by_nevermore), 1::bigint,
+  'and still shows as themselves after they leave');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b')) WHERE kind = 'firm_refused' AND by_nevermore AND actor_email IS NULL), 1::bigint,
+  'while the earlier entry made from outside the firm stays Nevermore');
+-- An admin who is a member ending their own membership acted as a member, though the row they ended no longer says so.
+SELECT pg_temp.as_owner();
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_b'), pg_temp.id('platform_admin'), 'agent');
+SELECT set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id('platform_admin'), 'role', 'authenticated', 'is_anonymous', false)::text, false);
+UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = pg_temp.id('firm_b') AND user_id = pg_temp.id('platform_admin') AND valid_until IS NULL;
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = pg_temp.id('firm_b') AND kind = 'member_ended' AND actor_id = pg_temp.id('platform_admin')
+  AND subject_user_id = pg_temp.id('platform_admin') AND NOT actor_is_staff), 1::bigint, 'a member who also holds the admin role, ending their own membership, is shown as themselves');
 SELECT pg_temp.as_owner();
 \echo firm_activity: ok

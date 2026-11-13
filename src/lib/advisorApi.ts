@@ -806,6 +806,11 @@ export async function recordActivity<K extends Exclude<BrowserActivityKind, "sig
 export type FirmActivityEntry = Database["public"]["Functions"]["firm_activity_list"]["Returns"][number];
 export type OwnedFirm = Database["public"]["Functions"]["my_owner_firms"]["Returns"][number];
 export type FirmActivityPerson = Database["public"]["Functions"]["firm_activity_people"]["Returns"][number];
+/**
+ * The person filter's value for everyone at Nevermore together (D-33): a firm is never given a Nevermore person's id, so
+ * this is what stands for them. A real user id is a uuid, so it can't be mistaken for this.
+ */
+export const NEVERMORE_FILTER = "nevermore";
 /** Entries on a page of the firm's record. */
 export const FIRM_ACTIVITY_PAGE_SIZE = 25;
 
@@ -842,7 +847,8 @@ export async function listFirmActivity(
 ): Promise<{ entries: FirmActivityEntry[]; hasMore: boolean }> {
   const { data, error } = await supabase.rpc("firm_activity_list", {
     p_firm_id: firmId,
-    p_person: opts.person,
+    p_person: opts.person === NEVERMORE_FILTER ? null : opts.person,
+    p_nevermore: opts.person === NEVERMORE_FILTER,
     p_kind: opts.kind,
     p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1,
     p_before_at: opts.after?.at ?? null,

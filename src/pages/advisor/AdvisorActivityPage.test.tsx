@@ -2,7 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "owner@example.com" }, signOut: vi.fn() }) }));
+// The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
+// about which firms they own, so an answer given before the second factor is not handed out after it.
+const auth = { user: { id: "u1", email: "owner@example.com" }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 // The page's calls to the database, by the names advisorApi gives them; AdvisorApiError is the real one, so a refusal is read as it is.
 const api = { fetchOwnedFirms: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
@@ -10,20 +13,21 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
 const { clearOwnedFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorActivityPage } = await import("./AdvisorActivityPage");
-const { AdvisorApiError } = await import("@/lib/advisorApi");
+const { AdvisorApiError, NEVERMORE_FILTER } = await import("@/lib/advisorApi");
 
 const renderPage = (at = "/advisor/activity") => render(<MemoryRouter initialEntries={[at]}><AdvisorActivityPage /></MemoryRouter>);
 const entry = (over: Record<string, unknown> = {}) => ({
   entry_key: "k1", at: "2026-11-12T15:30:00Z", actor_id: "u1", actor_email: "agent@example.com", kind: "submission_viewed",
-  record_type: "submission", record_id: "0b5c1f2e-1111-4222-8333-444455556666", subject_user_id: null, subject_email: null, role: null, ...over,
+  record_type: "submission", record_id: "0b5c1f2e-1111-4222-8333-444455556666", subject_user_id: null, subject_email: null, role: null, by_nevermore: false, ...over,
 });
 
 describe("AdvisorActivityPage", () => {
   beforeEach(() => {
     clearOwnedFirms();
+    auth.session = { access_token: "tok-1" };
     for (const fn of Object.values(api)) fn.mockReset();
     api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
-    api.listFirmActivityPeople.mockResolvedValue([{ user_id: "u1", email: "agent@example.com" }, { user_id: "u2", email: "lead@example.com" }]);
+    api.listFirmActivityPeople.mockResolvedValue([{ user_id: "u1", email: "agent@example.com", is_nevermore: false }, { user_id: "u2", email: "lead@example.com", is_nevermore: false }]);
     api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
   });
 
@@ -97,6 +101,35 @@ describe("AdvisorActivityPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
     expect(api.listFirmActivity).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a person at Nevermore as Nevermore, with no email or id, and offers Nevermore once in the person filter", async () => {
+    api.listFirmActivityPeople.mockResolvedValue([
+      { user_id: "u1", email: "agent@example.com", is_nevermore: false },
+      { user_id: null, email: null, is_nevermore: true },
+    ]);
+    api.listFirmActivity.mockResolvedValue({
+      entries: [entry({ entry_key: "k8", kind: "firm_approved", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null, by_nevermore: true })],
+      hasMore: false,
+    });
+    renderPage();
+    const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
+    expect(within(row).getAllByRole("cell")[1].textContent).toBe("Nevermore");
+    expect(within(row).getAllByRole("cell")[1].textContent).not.toBe("System");
+    const person = await screen.findByLabelText("Person");
+    expect(within(person).getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "agent@example.com", "Nevermore"]);
+    fireEvent.change(person, { target: { value: NEVERMORE_FILTER } });
+    await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: NEVERMORE_FILTER, kind: null, after: null }));
+  });
+
+  it("asks which firms the person owns again when the sign-in changes, such as after the second factor", async () => {
+    api.fetchOwnedFirms.mockResolvedValueOnce([]).mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
+    const view = renderPage();
+    expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
+    auth.session = { access_token: "tok-2" };
+    view.rerender(<MemoryRouter initialEntries={["/advisor/activity"]}><AdvisorActivityPage /></MemoryRouter>);
+    expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
+    expect(api.fetchOwnedFirms).toHaveBeenCalledTimes(2);
   });
 
   it("is reached from the advisor console's navigation", async () => {

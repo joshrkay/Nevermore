@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { loadOwnedFirms } from "@/hooks/useOwnedFirms";
 import { ENTRY_KINDS, kindLabel, recordLabel } from "@/data/firmActivity";
 import {
-  listFirmActivity, listFirmActivityPeople,
+  listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
 } from "@/lib/advisorApi";
 
@@ -22,8 +22,12 @@ type Load =
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 
-/** Who did it: their email, the system for an entry no person made, or a former member whose account is gone. */
-const who = (actorId: string | null, email: string | null) => email ?? (actorId ? "A former member" : "System");
+/**
+ * Who did it: Nevermore for a person at Nevermore (never their name, email or id, D-33), their email, the system for an
+ * entry no person made, or a former member whose account is gone.
+ */
+const who = (byNevermore: boolean, actorId: string | null, email: string | null) =>
+  byNevermore ? "Nevermore" : (email ?? (actorId ? "A former member" : "System"));
 
 /** The record an entry was about: what it is and its id, and for a membership the person it was about and their role. */
 function recordText(e: FirmActivityEntry): string {
@@ -130,7 +134,10 @@ const AdvisorActivityPage = () => {
                   className={select}
                 >
                   <option value="">Everyone</option>
-                  {load.people.map((p) => <option key={p.user_id} value={p.user_id}>{p.email ?? "A former member"}</option>)}
+                  {load.people.map((p) =>
+                    p.is_nevermore
+                      ? <option key="nevermore" value={NEVERMORE_FILTER}>Nevermore</option>
+                      : <option key={p.user_id} value={p.user_id ?? ""}>{p.email ?? "A former member"}</option>)}
                 </select>
               </div>
               <div>
@@ -166,7 +173,7 @@ const AdvisorActivityPage = () => {
                     {load.entries.map((e) => (
                       <tr key={e.entry_key} className="border-t border-border align-top">
                         <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
-                        <td className="px-4 py-2">{who(e.actor_id, e.actor_email)}</td>
+                        <td className="px-4 py-2">{who(e.by_nevermore, e.actor_id, e.actor_email)}</td>
                         <td className="px-4 py-2">{kindLabel(e.kind)}</td>
                         <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e)}</td>
                       </tr>

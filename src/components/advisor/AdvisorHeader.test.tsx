@@ -2,7 +2,8 @@ import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "advisor@example.com" }, signOut: vi.fn() }) }));
+const auth = { user: { id: "u1", email: "advisor@example.com" }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchOwnedFirms: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
 
@@ -15,7 +16,7 @@ const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)
 // The record of who did what is for a firm's owners (CRM-P2.3): the console's navigation offers it to them alone, so an
 // agent or a lead never walks into a page that turns them away (each turn-away is an auth_denied event on the alert).
 describe("the advisor header's Activity link", () => {
-  beforeEach(() => { clearOwnedFirms(); api.fetchOwnedFirms.mockReset(); });
+  beforeEach(() => { clearOwnedFirms(); auth.session = { access_token: "tok-1" }; api.fetchOwnedFirms.mockReset(); });
 
   it("is offered to someone who owns a firm", async () => {
     api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha" }]);
@@ -29,6 +30,17 @@ describe("the advisor header's Activity link", () => {
     await settle();
     expect(await screen.findByRole("link", { name: "Submissions" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
+  });
+
+  it("is offered once the sign-in changes to one that owns a firm, such as after the second factor, not held back by the answer from before it", async () => {
+    api.fetchOwnedFirms.mockResolvedValueOnce([]).mockResolvedValue([{ firm_id: "firm-1", name: "Alpha" }]);
+    const view = renderHeader();
+    await settle();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
+    auth.session = { access_token: "tok-2-after-second-factor" };
+    view.rerender(<MemoryRouter><AdvisorHeader /></MemoryRouter>);
+    expect(await screen.findByRole("link", { name: "Activity" })).toBeInTheDocument();
+    expect(api.fetchOwnedFirms).toHaveBeenCalledTimes(2);
   });
 
   it("is not offered while the answer is unknown, or when it can't be had", async () => {

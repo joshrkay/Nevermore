@@ -465,7 +465,8 @@ export type Database = {
       // read their own firm's through firm_activity_list(); written only through record_firm_activity().
       firm_activity: {
         Row: {
-          actor_id: string | null
+          // The stored actor is never granted to a firm: only that an entry was by Nevermore's own people (D-33).
+          actor_is_staff: boolean
           at: string
           entry_key: string
           firm_id: string
@@ -818,11 +819,13 @@ export type Database = {
       }
       // A page of one firm's record (p_firm_id), newest first, for that firm's current owners only (20261116160001).
       firm_activity_list: {
-        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_key?: string | null }
+        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_key?: string | null; p_nevermore?: boolean }
         Returns: {
           actor_email: string | null
           actor_id: string | null
           at: string
+          // True when a person at Nevermore did it: no id and no email, shown as "Nevermore" (D-33).
+          by_nevermore: boolean
           entry_key: string
           kind: string
           record_id: string
@@ -834,7 +837,7 @@ export type Database = {
       }
       firm_activity_people: {
         Args: { p_firm_id: string }
-        Returns: { email: string | null; user_id: string }[]
+        Returns: { email: string | null; is_nevermore: boolean; user_id: string | null }[]
       }
       // The firms the caller currently owns, by name.
       my_owner_firms: {

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 const auth = {
   user: null as { id: string; email?: string } | null,
+  session: null as { access_token: string } | null,
   loading: false,
   isAnonymous: false,
   sessionEnded: null as "signed_out" | "expired" | null,
@@ -37,6 +38,7 @@ const renderGuarded = () =>
 describe("RequireFirmOwner", () => {
   beforeEach(() => {
     auth.user = { id: "u1", email: "owner@example.com" };
+    auth.session = { access_token: "tok-1" };
     auth.loading = false;
     auth.isAnonymous = false;
     auth.sessionEnded = null;
@@ -49,6 +51,26 @@ describe("RequireFirmOwner", () => {
     fetchOwnedFirms.mockResolvedValue([{ firm_id: "f1", name: "Alpha" }]);
     renderGuarded();
     expect(await screen.findByText("The record")).toBeInTheDocument();
+  });
+
+  it("asks again when the sign-in has changed since an answer was kept: one given before the second factor is not handed out after it", async () => {
+    fetchOwnedFirms.mockResolvedValueOnce([]).mockResolvedValue([{ firm_id: "f1", name: "Alpha" }]);
+    fetchNeedsSecondFactor.mockResolvedValue(false);
+    const before = renderGuarded();
+    expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
+    before.unmount();
+    auth.session = { access_token: "tok-2-after-second-factor" };
+    renderGuarded();
+    expect(await screen.findByText("The record")).toBeInTheDocument();
+    expect(fetchOwnedFirms).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one answer between visits on the same sign-in, so the token it passes is what tells one sign-in from another", async () => {
+    fetchOwnedFirms.mockResolvedValue([{ firm_id: "f1", name: "Alpha" }]);
+    renderGuarded().unmount();
+    renderGuarded();
+    expect(await screen.findByText("The record")).toBeInTheDocument();
+    expect(fetchOwnedFirms).toHaveBeenCalledTimes(1);
   });
 
   it("sends a signed-out visitor, or a guest, to sign in, remembering the page", () => {
