@@ -54,12 +54,12 @@ const MenuBody = () => {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <nav aria-label="Workspace">
+        <SidebarGroup className="flex-1">
+          <nav aria-label="Workspace" className="flex h-full flex-col">
             <SidebarMenu>
               {MENU_ITEMS.map((item) => <Item key={item.key} item={item} pathname={pathname} search={params} />)}
             </SidebarMenu>
-            <SidebarMenu className="mt-6">
+            <SidebarMenu className="mt-auto">
               {isPlatformAdmin && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
