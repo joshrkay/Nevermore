@@ -49,6 +49,11 @@ export interface OutboxRow {
   attempts: number;
   /** The frozen send of an earlier attempt, as stored; read it through `parsePending`. */
   pending_send: unknown;
+  /**
+   * The addresses the first preparation of an advisor alert went to, written once by the database and never cleared (D-35). Absent
+   * on a row that has not been prepared yet, and on rows from before it existed.
+   */
+  first_recipients?: unknown;
 }
 
 /** The write-ahead copy of an email: what to send and the key to send it under. */
@@ -202,6 +207,11 @@ export function parsePending(raw: unknown): PendingSend | null {
 
 const isFresh = (pending: PendingSend, nowMs: number) => nowMs - Date.parse(pending.frozen_at) < FROZEN_MAX_AGE_MS;
 
+/** The stored first recipients, or null when the row has none (not prepared yet, or older than the column). */
+function firstRecipients(value: unknown): string[] | null {
+  return Array.isArray(value) && value.length > 0 && value.every((a) => typeof a === "string") ? (value as string[]) : null;
+}
+
 const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived";
 
 /** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
@@ -236,18 +246,20 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   const stored = parsePending(row.pending_send);
   if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
 
-  // D-35: an alert's recipients are fixed when it is first prepared. When a stored one is rebuilt only because someone left, it goes to
-  // those it named who are still members; a member who joined since is not added (the rebuilt message has a new key, so the people who
-  // already received the first would get it twice). Joiners receive every alert prepared after they joined.
-  // D-102 (amends D-35, ADR 0020): when none of those it named is still a member, it goes to the current members.
-  // The stored alert's age decides only whether its message and key can be replayed above, never who a rebuilt one goes to.
+  // D-35: the people an alert goes to are fixed when it is first prepared, and the database keeps them on the row (first_recipients),
+  // apart from the frozen message, which is thrown away when it ages out or a send is definitively refused. A message that is rebuilt
+  // goes to those people who are still members, never to anyone who joined after the first preparation (adding an address changes the key,
+  // so everyone who already has it would get it twice). D-102: when none of them is still a member, it is not lost: it goes to the
+  // current members, under a new key. A row older than the column falls back to the frozen message's people, whatever its age (age decides
+  // only whether the message and key can be replayed above). With nothing stored it is a first preparation and goes to the current members.
   let to = advisorTo;
-  if (stored && isAdvisorKind(row.kind)) {
-    const named = new Set(stored.message.to.map((a) => a.toLowerCase()));
-    const stayers = advisorTo.filter((a) => named.has(a.toLowerCase()));
-    // When none of those it named is still a member (everyone left, or it was frozen to the shared inbox before alerts went to members),
-    // nobody now in the firm can have received it, so the current members are sent it and no one gets a duplicate.
-    if (stayers.length > 0) to = stayers;
+  if (isAdvisorKind(row.kind)) {
+    const first = firstRecipients(row.first_recipients) ?? stored?.message.to ?? null;
+    if (first) {
+      const named = new Set(first.map((a) => a.toLowerCase()));
+      const stillThere = advisorTo.filter((a) => named.has(a.toLowerCase()));
+      if (stillThere.length > 0) to = stillThere;
+    }
   }
 
   const built = buildMessage(row, deps.config, to);

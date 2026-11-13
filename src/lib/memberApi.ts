@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { classifyApiError } from "@/lib/advisorApi";
 
 // What the members screen asks the database (story CRM-P1.5). The database decides every rule: only a current owner of the firm
 // may list, remove, suspend or lift (D-18), a firm keeps an owner, and a platform admin who is no member may do none of it (D-16).
@@ -28,7 +29,10 @@ export class MemberApiError extends Error {
 type DbError = { code?: string; message?: string };
 
 /** The words for a refused or failed change. A rule's own message (a firm keeps its last owner, you can't remove yourself) is plain and is given as it is. */
-function changeRefusal(error: DbError): MemberApiError {
+function changeRefusal(error: DbError): Error {
+  // A session the server no longer accepts is said first, by the flag the console reads to sign the person out, whatever the call was.
+  const ended = classifyApiError({ message: error.message ?? "", code: error.code }, "");
+  if (ended.unauthenticated) return ended;
   switch (error.code) {
     case "42501": return new MemberApiError("Only an owner of the firm can do that.", true);
     case "PT404": return new MemberApiError("That person's membership has already changed. Reload the list.");
@@ -42,6 +46,8 @@ function changeRefusal(error: DbError): MemberApiError {
 export async function fetchFirmMembers(firmId: string): Promise<FirmMember[]> {
   const { data, error } = await supabase.rpc("firm_members", { p_firm_id: firmId });
   if (error) {
+    const ended = classifyApiError({ message: error.message, code: error.code }, "");
+    if (ended.unauthenticated) throw ended;
     throw error.code === "42501" ? new MemberApiError("Only an owner of the firm can see its members.", true) : new MemberApiError("Couldn't load the members.");
   }
   return (data ?? []).map((m) => ({

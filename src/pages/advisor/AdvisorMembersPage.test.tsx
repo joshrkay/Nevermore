@@ -19,9 +19,12 @@ const db = {
   /** What the next call of a function answers instead, as the database's error. */
   fail: {} as Record<string, { code?: string; message: string } | "pending">,
   calls: [] as [string, Record<string, unknown>][],
+  /** Runs when a function is called, before it answers: lets a test change what a later call answers. */
+  onCall: {} as Record<string, () => void>,
 };
 const rpc = vi.fn(async (fn: string, args: Record<string, unknown> = {}) => {
   db.calls.push([fn, args]);
+  db.onCall[fn]?.();
   const failure = db.fail[fn];
   if (failure === "pending") return new Promise(() => undefined);
   if (failure) return { data: null, error: failure };
@@ -63,6 +66,8 @@ describe("the members page", () => {
     rpc.mockClear();
     db.calls = [];
     db.fail = {};
+    db.onCall = {};
+    auth.signOut.mockClear();
     db.isAdmin = false;
     firmAddress = { status: "none" };
     auth.user = { id: "u-owner", email: "owner@acme.example" };
@@ -133,6 +138,14 @@ describe("the members page", () => {
     await waitFor(() => expect(row("lead@acme.example")).toHaveTextContent("Suspended"));
     expect(db.calls).toContainEqual(["suspend_member", { p_firm_id: "f1", p_user_id: "u-lead" }]);
     expect(within(row("lead@acme.example")).getByRole("button", { name: "Lift the suspension of lead@acme.example" })).toBeInTheDocument();
+    expect(screen.getByText("lead@acme.example is suspended.")).toBeInTheDocument();
+  });
+
+  it("names an agent with the right article in the suspend question", async () => {
+    renderPage();
+    await screen.findByRole("table", { name: "Members" });
+    fireEvent.click(within(row("agent@acme.example")).getByRole("button", { name: "Suspend agent@acme.example" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("stay on this list as an agent until you lift the suspension.");
   });
 
   it("asks before lifting a suspension, and gives the person their access back as a member once confirmed", async () => {
@@ -145,6 +158,7 @@ describe("the members page", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Lift suspension" }));
     await waitFor(() => expect(row("held@acme.example")).toHaveTextContent("Member"));
     expect(db.calls).toContainEqual(["lift_member_suspension", { p_firm_id: "f1", p_user_id: "u-held" }]);
+    expect(screen.getByText("held@acme.example's suspension is lifted.")).toBeInTheDocument();
   });
 
   it("removes a suspended person too", async () => {
@@ -164,6 +178,40 @@ describe("the members page", () => {
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove lead@acme.example" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The last owner of a firm can't be removed. Make someone else an owner first.");
     expect(row("lead@acme.example")).toBeInTheDocument();
+    expect(screen.queryByText(/was removed from/)).not.toBeInTheDocument();
+  });
+
+  // The change was made: the database committed it. A list that fails to reload afterwards is a list problem, and says so as one.
+  it("does not report a committed change as failed when the list can't be reloaded afterwards: it says so, and offers to try again", async () => {
+    db.onCall.remove_member = () => { db.fail.firm_members = { message: "boom" }; };
+    renderPage();
+    await screen.findByRole("table", { name: "Members" });
+    fireEvent.click(within(row("agent@acme.example")).getByRole("button", { name: "Remove agent@acme.example" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove agent@acme.example" }));
+    expect(await screen.findByText(/We couldn't load the members/)).toBeInTheDocument();
+    expect(screen.getByText("agent@acme.example was removed from Acme Brokers.")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't do that. Try again.")).not.toBeInTheDocument();
+    delete db.fail.firm_members;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Members" })).toBeInTheDocument();
+    expect(screen.queryByText("agent@acme.example")).not.toBeInTheDocument();
+  });
+
+  it("signs the owner out when their session has expired while the list loads", async () => {
+    db.fail.firm_members = { code: "PGRST301", message: "JWT expired" };
+    renderPage();
+    expect(await screen.findByText("Your session has expired.")).toBeInTheDocument();
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledWith("expired"));
+  });
+
+  it("signs the owner out when their session has expired as they change someone", async () => {
+    db.fail.remove_member = { code: "PGRST301", message: "JWT expired" };
+    renderPage();
+    await screen.findByRole("table", { name: "Members" });
+    fireEvent.click(within(row("agent@acme.example")).getByRole("button", { name: "Remove agent@acme.example" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove agent@acme.example" }));
+    expect(await screen.findByText("Your session has expired.")).toBeInTheDocument();
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledWith("expired"));
     expect(screen.queryByText(/was removed from/)).not.toBeInTheDocument();
   });
 
