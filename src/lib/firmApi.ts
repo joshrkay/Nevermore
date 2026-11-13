@@ -16,3 +16,58 @@ export async function fetchIsMemberOfFirmAddress(address: string): Promise<boole
   if (error) throw new Error("Couldn't check your membership.");
   return data === true;
 }
+
+// Signing up a firm and a platform admin's decision on it (story CRM-P1.1 with Q-1.2). The database applies every rule
+// (the address rules, who may sign up, who may decide, deciding once); these only put its refusals into words.
+
+type DbError = { code?: string; message?: string };
+
+/** The reason the database gave for a refused name or address, or a plain one when all it gave is a constraint's name. */
+function refusalReason(error: DbError): string {
+  const said = error.message ?? "";
+  if (/check constraint|violates/i.test(said) || !said) {
+    return "That address can't be used. Use 3 to 40 letters, digits or hyphens, not starting or ending with a hyphen, and not a reserved word or the name of Nevermore.";
+  }
+  return said;
+}
+
+/**
+ * Signs a firm up: the signed-in person becomes its owner, and the firm waits for a platform admin's approval. Returns the
+ * firm's id. Throws an error whose message is fit to show.
+ */
+export async function signUpFirm(name: string, address: string): Promise<string> {
+  const { data, error } = await supabase.rpc("sign_up_firm", { p_name: name, p_address: address });
+  if (error) {
+    if (error.code === "23505") throw new Error("That address is taken. Choose another.");
+    if (error.code === "23514") throw new Error(refusalReason(error));
+    if (error.code === "42501") throw new Error("Sign in with a verified email to sign up a firm.");
+    throw new Error("Couldn't sign your firm up. Try again.");
+  }
+  return data as string;
+}
+
+/** A firm waiting for a platform admin's decision. */
+export interface WaitingFirm {
+  id: string;
+  name: string;
+  address: string;
+  ownerEmail: string | null;
+  signedUpAt: string;
+}
+
+/** The firms waiting for approval, oldest first. Platform admins only. */
+export async function fetchWaitingFirms(): Promise<WaitingFirm[]> {
+  const { data, error } = await supabase.rpc("admin_waiting_firms");
+  if (error) throw new Error("Couldn't load the waiting firms.");
+  return (data ?? []).map((f) => ({ id: f.firm_id, name: f.name, address: f.address, ownerEmail: f.owner_email, signedUpAt: f.signed_up_at }));
+}
+
+/** Approves or refuses a waiting firm, with an optional note. A firm is decided once. */
+export async function decideFirm(firmId: string, approve: boolean, note?: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_decide_firm", { p_firm_id: firmId, p_approve: approve, p_note: note ?? null });
+  if (!error) return;
+  if (error.code === "55000") throw new Error("That firm has been decided already.");
+  if (error.code === "42501") throw new Error("Only a platform admin who isn't a member of the firm can decide on it.");
+  if (error.code === "PT404") throw new Error("That firm no longer exists.");
+  throw new Error("Couldn't record the decision. Try again.");
+}
