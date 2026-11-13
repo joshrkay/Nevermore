@@ -11,6 +11,8 @@ interface Options {
   rpc?: Record<string, { data?: unknown; error?: { code?: string } | null } | ((args: Record<string, unknown>) => { data?: unknown; error?: { code?: string } | null })>;
   moveFails?: (from: string) => boolean;
   removeFails?: boolean;
+  /** Whether the caller's own token passes the role check, as the database answers it (false: a password sign-in with no second factor). */
+  roleCheck?: boolean;
 }
 
 function setup(o: Options = {}) {
@@ -42,9 +44,18 @@ function setup(o: Options = {}) {
       }),
     },
   };
-  const createClient = vi.fn((_url: string, _key: string, _options?: unknown) => db);
+  // The caller's own client asks the database about their token; it does none of the work.
+  const asked: string[] = [];
+  const userDb: HeldMailClient = {
+    ...db,
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      asked.push(`${fn}:${JSON.stringify(args)}`);
+      return { data: o.roleCheck ?? true, error: null };
+    },
+  };
+  const createClient = vi.fn((_url: string, key: string, _options?: unknown) => (key === "anon" ? userDb : db));
   const deps: HeldMailDeps = { env: (n) => (o.env ?? ENV)[n], createClient, log: (l) => logs.push(l) };
-  return { deps, rpc, moves, removes, logs, order, createClient };
+  return { deps, rpc, moves, removes, logs, order, createClient, asked };
 }
 
 const post = (body: unknown, token: string | null = USER_JWT, method = "POST") =>
@@ -98,6 +109,22 @@ describe("held-mail: who may call", () => {
     const calls = s.createClient.mock.calls;
     expect(calls.some(([, key, opt]) => key === "anon" && JSON.stringify(opt).includes(USER_JWT))).toBe(true);
     expect(s.rpc.mock.calls[0][1]).toMatchObject({ p_actor: "user-1" });
+  });
+});
+
+describe("held-mail: the caller's own token has to pass the role check", () => {
+  it.each([
+    ["move_off", { action: "move_off", message_id: 9 }, "is_advisor:{}"],
+    ["assign", { action: "assign", message_id: 9, quote_request_id: 3 }, 'has_role:{"_role":"admin"}'],
+    ["discard", { action: "discard", message_id: 9 }, 'has_role:{"_role":"admin"}'],
+  ])("refuses %s with 403 and does no work when the token has no second factor", async (_n, body, asked) => {
+    const s = setup({ roleCheck: false, rpc: plan([{ from: "a/1", to: "held/1" }]) });
+    const res = await handleHeldMailRequest(post(body), s.deps);
+    expect(res.status).toBe(403);
+    expect(s.asked).toEqual([asked]);
+    expect(s.rpc).not.toHaveBeenCalled();
+    expect(s.moves).toEqual([]);
+    expect(s.removes).toEqual([]);
   });
 });
 

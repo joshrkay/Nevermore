@@ -50,6 +50,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 const {
   AdvisorApiError,
   fetchIsAdvisor,
+  fetchNeedsSecondFactor,
   listEmailProblems,
   listOutboxEvents,
   listSubmissions,
@@ -94,6 +95,16 @@ describe("advisor API errors", () => {
     await expect(fetchIsAdvisor()).resolves.toBe(true);
     rpc.mockResolvedValueOnce({ data: false, error: null });
     await expect(fetchIsAdvisor()).resolves.toBe(false);
+  });
+
+  it("reports whether only a second factor holds an advisor back, and says nothing is wrong when the answer is empty", async () => {
+    rpc.mockResolvedValueOnce({ data: true, error: null });
+    await expect(fetchNeedsSecondFactor()).resolves.toBe(true);
+    rpc.mockResolvedValueOnce({ data: false, error: null });
+    await expect(fetchNeedsSecondFactor()).resolves.toBe(false);
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchNeedsSecondFactor()).resolves.toBe(false);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_needs_second_factor");
   });
 
   it("calls a database refusal a lack of advisor access", async () => {

@@ -74,6 +74,16 @@ export async function fetchIsAdvisor(): Promise<boolean> {
   return data === true;
 }
 
+/**
+ * True when the caller's role is held back only by the second factor: they signed in with a password and
+ * haven't completed one (decision D-19). False for everyone else, including a Google or Microsoft sign-in.
+ */
+export async function fetchNeedsSecondFactor(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("advisor_needs_second_factor");
+  if (error) fail(error, "Couldn't check your sign-in.");
+  return data === true;
+}
+
 /** The queue's sorts besides its default: the longest wait on a PEO, or the quote that expires soonest. */
 export type QueueSort = "oldest_waiting" | "earliest_expiry";
 
