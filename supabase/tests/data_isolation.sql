@@ -1695,17 +1695,29 @@ DECLARE
 BEGIN
   -- Steps of intakes deleted before the firm column existed have no firm and no link: the backfill gives them to the default
   -- firm (without it, the default firm's funnel and source report silently lose them).
-  INSERT INTO public.intake_milestones (session_id, started_at, milestone) VALUES (NULL, now(), 'started') RETURNING id INTO old_step;
+  -- A window wholly in the past around this step: no fixture row (all made now) can fall in it, so the counts below can
+  -- only come from this step.
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone) VALUES (NULL, now() - interval '200 days', 'started') RETURNING id INTO old_step;
   IF (SELECT firm_id FROM public.intake_milestones WHERE id = old_step) IS NOT NULL THEN
     RAISE EXCEPTION 'FAIL: setup: an unlinked step got a firm on insert';
+  END IF;
+  IF (SELECT count(*) FROM public.intake_milestones WHERE started_at < now() - interval '199 days' AND firm_id IS NOT NULL) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: setup: another step falls in the past window';
   END IF;
   PERFORM public.backfill_intake_milestone_firms();
   IF (SELECT firm_id FROM public.intake_milestones WHERE id = old_step) IS DISTINCT FROM public.default_firm_id() THEN
     RAISE EXCEPTION 'FAIL: the backfill did not give an old unlinked step to the default firm';
   END IF;
   PERFORM pg_temp.become('advisor');
-  IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '1 day', now() + interval '1 day') WHERE milestone = 'started') < 1 THEN
-    RAISE EXCEPTION 'FAIL: the default firm''s funnel does not count a backfilled old step';
+  IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '201 days', now() - interval '199 days')) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the default firm''s funnel does not count a backfilled old step exactly once';
+  END IF;
+  IF (SELECT COALESCE(sum(started), 0) FROM public.advisor_intake_sources(now() - interval '201 days', now() - interval '199 days')) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the default firm''s source report does not count a backfilled old step exactly once';
+  END IF;
+  PERFORM pg_temp.become('agent_b');
+  IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '201 days', now() - interval '199 days')) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: the second firm''s funnel counts the default firm''s backfilled step';
   END IF;
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
@@ -2378,6 +2390,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('clean_template_workbook_path', 'platform_wide', 'where a PEO''s blank template workbook is; names no one'),
   ('is_clean_census_template_file', 'platform_wide', 'the storage policy on the template bucket; names no one'),
   ('peo_catalog', 'platform_wide', 'the PEOs and their published profiles: the same for every firm'),
+  ('admin_waiting_firms', 'platform_wide', 'the firms waiting for a platform admin''s decision: no firm''s member sees them by row security, so only platform admins read this list'),
+  ('admin_decide_firm', 'platform_wide', 'a platform admin approves or refuses a waiting firm'),
+  ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
   ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller owns or is a firm member of (4h)'),
   ('archive_chamber_session', 'own', 'the prospect''s Start over, on their own intake'),

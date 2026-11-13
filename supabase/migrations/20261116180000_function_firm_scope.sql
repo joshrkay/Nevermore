@@ -892,10 +892,11 @@ SET search_path = public
 AS $$
 BEGIN
   IF NEW.session_id IS NOT NULL THEN
-    -- A linked step is always in its intake's firm, so a moved intake's steps follow it.
-    -- FOR SHARE: a step written while its intake is being moved waits for the move to commit, then reads the new firm
-    -- (the foreign key's own lock does not conflict with a firm_id update, and the move's trigger can't see an uncommitted step).
-    NEW.firm_id := (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id FOR SHARE);
+    -- A linked step is always in its intake's firm: read at insert. No lock on the intake is taken: nothing a person or a job
+    -- can do today changes an intake's firm after it is made (keep_intake_firm freezes it for the API roles; no function sets
+    -- it), so there is no move to wait for (D-32). The story that first lets an intake move between firms must add a lock
+    -- (FOR SHARE on this read) back with a two-session test.
+    NEW.firm_id := (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id);
   ELSIF TG_OP = 'UPDATE' AND NEW.firm_id IS NOT NULL AND OLD.firm_id IS NOT NULL THEN
     -- The intake went (the link goes null) and the step stays in its firm (a firm-less step may be given one: the backfill). A null firm_id is let through: it is the
     -- foreign key emptying it because the firm itself was deleted.
