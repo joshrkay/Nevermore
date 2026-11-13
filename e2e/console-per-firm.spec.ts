@@ -63,8 +63,9 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
   await test.step("the member signs in at firm B's address and reaches the console, with no platform role", async () => {
     await signInAndAddSecondFactor(page, `${firmUrl(FIRM_B)}/advisor`, member);
     await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Console" })).toBeVisible();
-    await expect(page.getByText("Bravo Brokers")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
+    await expect(page.getByText("Bravo Brokers").first()).toBeVisible();
+    await expect(page.getByText(`${FIRM_B}.nevermorepeo.com`)).toBeVisible();
   });
 
   await test.step("the list holds firm B's submission and none of firm A's", async () => {
@@ -82,10 +83,15 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
 
   await test.step("the menu offers the firm's pages and none of the platform's", async () => {
     await page.goto(`${firmUrl(FIRM_B)}/advisor`);
-    const nav = page.getByRole("navigation", { name: "Console" });
-    await expect(nav.getByRole("link", { name: "Submissions" })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "Workspace" });
+    await expect(nav.getByRole("link", { name: "Quotes" })).toHaveAttribute("aria-current", "page");
     await expect(nav.getByRole("link", { name: "Held mail" })).toHaveCount(0);
     await expect(nav.getByRole("link", { name: "Firms" })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "Nevermore admin" })).toHaveCount(0);
+    // The section links, and the firm's address as the firm's menu title, stay inside this firm.
+    await nav.getByRole("link", { name: "Settings" }).click();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${FIRM_B}.*/settings$`));
   });
 
   await test.step("the platform's pages are not the member's", async () => {

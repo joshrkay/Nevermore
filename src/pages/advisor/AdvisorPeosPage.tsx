@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import PeoPanel from "@/components/advisor/peos/PeoPanel";
 import { peoStatusLine } from "@/data/peoEditor";
@@ -41,8 +40,7 @@ const AdvisorPeosPage = () => {
   const selected = load.kind === "ready" ? load.peos.find((p) => String(p.id) === params.get("peo")) ?? load.peos[0] : undefined;
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-4 sm:px-6 py-8 max-w-6xl">
         <h1 className="font-display text-3xl font-bold mb-1">PEOs</h1>
         <p className="text-sm text-muted-foreground mb-6">

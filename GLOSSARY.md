@@ -373,6 +373,17 @@ _Avoid_: CRM, admin queue
 The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner, for the firm's record of who did what), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
 _Avoid_: advisor guard, role check
 
+**Workspace** (code: `src/components/workspace/`):
+The broker's side of the product: the pages a current member of a firm works in (quotes, inbox, reports, settings and the console pages that are still to be replaced), drawn inside the **Workspace shell** and in the **Workspace look**. Not the tabs inside The Chamber, which are the prospect's. The workspace's pages keep their `/advisor` paths until the screens that replace them ship (D-8, D-37); Settings is `/settings`. Platform pages are never part of it.
+_Avoid_: the console (for the whole of it), dashboard, CRM
+
+**Workspace shell** (code: `WorkspaceShell`):
+The frame around every workspace page: the **menu** down the left and the page beside it, one layout route inside the firm guard, so it draws only for a current member. The menu shows the firm's name and address at the top (linking to the queue), Quotes, Inbox and Reports, and at the foot Settings, the signed-in person (name, or email when there is none) with their role (Owner, Lead, Agent), and sign-out; a "Nevermore admin" link shows to a platform admin only (D-37). The current section is marked with `aria-current="page"` and a submission's page marks Quotes. New quote, Home, Leads and Accounts are not listed until the stories that build them (D-38). At phone width the menu is a button that opens it over the page. The menu's items are data (`menu.ts`), each with a place for the count CRM-S1.1c adds. Inbox opens the queue with the address parameter `mail=new`, which the queue's "has new PEO mail" filter (CRM-S3.3b) will honour; until then it opens the whole queue.
+_Avoid_: layout, sidebar (in screen words)
+
+**Workspace look** (code: the `theme-workspace` class, `src/index.css`):
+The grey page, white cards, blue actions and dark navy menu of `docs/prd-screens/`. The shell puts the class on the document's root element while it is mounted, so a dialog or sheet drawn outside the shell takes the look; the employer's intake and the landing page never have it (D-41).
+
 **Platform page** (code: `RequirePlatformAdmin`):
 A page that is platform-wide and not a firm's: the firms waiting for approval, who gets the advisor role by organisation, held mail. Opened by a platform admin and by no one else, a member of a firm included; and opening one is no way into a firm's console (D-16).
 

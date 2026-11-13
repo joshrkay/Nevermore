@@ -80,18 +80,6 @@ describe("AdvisorOutboxPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading the outbox");
   });
 
-  it("is reachable from the console header, which marks it as the current page", async () => {
-    ready([event()]);
-    renderAt();
-    await screen.findByText("Acme");
-    const nav = await screen.findByRole("navigation", { name: "Console" });
-    await within(nav).findByRole("link", { name: "Submissions" });
-    expect(within(nav).getByRole("link", { name: "Outbox & Notifications" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("link", { name: "Submissions" })).not.toHaveAttribute("aria-current");
-    fireEvent.click(within(nav).getByRole("link", { name: "Submissions" }));
-    expect(await screen.findByText("Submissions page")).toBeInTheDocument();
-  });
-
   it("lists each event's kind, company, reference, status, attempts and last error, with a plain reading of it", async () => {
     ready([
       event({ last_error: "auth:403 (validation_error: The mail.example.com domain is not verified.)" }),
