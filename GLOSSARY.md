@@ -180,7 +180,7 @@ A dated entry an advisor adds to a quote request's timeline for something that h
 _Avoid_: activity, log entry, comment
 
 **Holding list**:
-Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Only an admin assigns a held message to a quote request or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
+Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Mail to a firm's own revoked address, or moved off its thread, is **held for that firm**: its current members read it. Mail to an address nobody held belongs to no firm. A platform admin, who belongs to no firm, sees only a File ID and a PEO for each (never a sender, subject or text). Only a platform admin assigns a held message to a quote request (of the same firm, if it has one) or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
 _Avoid_: unmatched inbox, spam folder, quarantine (quarantine holds files waiting for or failing a malware scan)
 
 **Market authorization**:
@@ -234,7 +234,7 @@ _Avoid_: checkout, submit page
 ### Communications
 
 **Advisor Alert**:
-The email telling the advisory team that a submission arrived or was updated.
+The email telling a firm that a submission arrived or was updated. It goes to the **alert recipients**: the current members of the firm the intake belongs to, looked up each time it is sent, so a member who leaves stops receiving at once. Never another firm's people, a platform admin who belongs to no firm, or a platform-wide list. The new-PEO-mail notice goes to the same people.
 _Avoid_: internal notification, new-submission notification
 
 **Confirmation**:
@@ -306,6 +306,13 @@ _Avoid_: permission check, ACL
 A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. A password sign-in that has not completed a second factor is not a member to it (D-19): `firm_role` asks the same rule as `has_role`, so no firm's data opens without it. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
 _Avoid_: tenant filter, RLS (on its own)
 
+**Alert recipients** (code: `outbox_alert_recipients()`):
+The current members of the firm an intake belongs to, whom the Advisor Alert and the new-PEO-mail notice go to. See **Advisor Alert**.
+_Avoid_: distribution list, advisory team list
+
+**Held for a firm** (code: `quote_request_messages.firm_id` on held mail):
+Held mail that carries the firm its address belonged to, or whose thread a member of that firm moved it off. A held message with no firm is read by nobody. See **Holding list**.
+
 **Firm-scoped function** (code: the `firm_scoped` class of `fn_class` in `supabase/tests/data_isolation.sql`):
 A database function that runs as its owner, so row security does not bind it, and reads or changes a firm's data for an advisor or platform admin: the queue, the outbox, the funnel, setting a status, reviewing a field, recording a quote send, a platform admin's deletion request. It asks the firm rule itself, taking the firm from the row it is given and never from the caller: a row of a firm the caller is not a current member of is answered as a row that isn't there (a list leaves it out, a call by id says not found). The role it also asks for, advisor or platform admin, is not what opens a firm's data.
 _Avoid_: scoped RPC, tenant-aware function
@@ -341,7 +348,7 @@ A person or firm outside the advisory team who sends employers to the site with 
 _Avoid_: partner on its own, affiliate, referrer
 
 **Referral code**:
-The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
+The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
 _Avoid_: promo code, tracking code
 
 **Second factor**:
