@@ -179,16 +179,24 @@ account, so the first step is the account:
 one product: a broker who only wants to quote uses "New quote" and the Quotes list and never opens a lead; the
 accounts, contacts and opportunities fill in behind them.
 
-"New quote" opens one flow of four steps, over whatever screen the broker is on:
+"New quote" runs the original process from start to finish, in five steps, over whatever screen the broker is on:
 
 1. **Account.** Pick an existing account or create one from the quote, with its contact.
-2. **Company information.** The intake itself, in the broker's view: company, census, workers' comp, benefits
-   and payroll, documents, certification. What the account holds is already written in; the broker adds what they
-   have and uploads documents, or invites the contact to fill it in with Lenore. Only the employer certifies.
-3. **Choose PEOs.** Each listed PEO with whether the employer fits it, what it still needs, whether the employer
+2. **The intake with Lenore.** The intake as built: Lenore on one side, the ten workspace tabs on the other
+   (Upload, Company, Payroll, Benefits, Workers' comp, Your Team, Dependents, Review, PEO Match, Certify & sign).
+   The broker can start it themselves, telling Lenore what they know and uploading the census, with each answer
+   marked as theirs; or invite the contact to do all of it. Either way the contact finishes with Lenore on the
+   firm's address.
+3. **Certify.** Only the employer certifies and names the PEOs. The broker then sees the certified version, what
+   the employer changed, and the packet with its files.
+4. **Choose PEOs.** Each listed PEO with whether the employer fits it, what it still needs, whether the employer
    has authorized it, and the firm's contact there.
-4. **Review and send.** One email per PEO from the broker's own mailbox, with that PEO's files attached in its
-   own layout.
+5. **Review and send.** One email per PEO from the broker's own mailbox, with that PEO's files attached in its
+   own layout. The first send asks the broker to connect Google or Microsoft, send-only (`docs/adr/0005`), or to
+   skip and send from their own mail with the reply address in CC.
+
+**The Inbox** is every email on the broker's quotes, contacts and leads, both directions, each linked to the
+record it sits on. It is a view over the threads, not a mailbox: the product still never reads one.
 
 What comes back lands in the CRM without re-keying: a PEO's reply attaches to its quote, the broker records the
 quote from the email and the document, and the quotes for an opportunity are compared on the same lines. The
