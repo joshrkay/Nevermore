@@ -855,7 +855,7 @@ export type Database = {
       // The firms the caller currently belongs to, with their role in each, for a caller past the second factor.
       my_firms: {
         Args: Record<PropertyKey, never>
-        Returns: { firm_id: string; name: string; address: string; role: string }[]
+        Returns: { firm_id: string; name: string; address: string; role: string; refused: boolean }[]
       }
       // The firms the caller currently owns, by name.
       my_owner_firms: {
@@ -1122,6 +1122,22 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: { version: number; storage_path: string; generated_at: string; corrections_applied: number }[]
       }
+      // CRM-S3.3b: the queue's query (20261117100000_queue_query.sql). The page's shape is typed in src/lib/queueApi.ts.
+      queue_list_submissions: {
+        Args: {
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      queue_view_counts: {
+        Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
       record_intake_consent: {
         Args: { p_text: string; p_version: string }
         // When the server received the agreement (the first one, when agreeing again).
@@ -1185,6 +1201,57 @@ export type Database = {
         Args: { p_note?: string | null; p_session_id: string; p_status: string; p_won_quote_request_id?: number | null }
         Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
+      // ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000_table_settings.sql) ----
+      // The tables saved_views and table_preferences are closed to the API; these functions are the only way in.
+      list_saved_views: {
+        Args: { p_firm_id: string; p_table: string }
+        Returns: {
+          view_id: string
+          name: string
+          filters: Json
+          sort: Json | null
+          columns: Json | null
+          shared: boolean
+          mine: boolean
+          can_change: boolean
+          can_share: boolean
+          can_unshare: boolean
+          updated_at: string
+        }[]
+      }
+      save_view: {
+        Args: { p_firm_id: string; p_table: string; p_name: string; p_filters: Json | null; p_sort: Json | null; p_columns: Json | null }
+        Returns: string
+      }
+      rename_saved_view: {
+        Args: { p_view_id: string; p_name: string }
+        Returns: undefined
+      }
+      change_saved_view: {
+        Args: { p_view_id: string; p_filters: Json | null; p_sort: Json | null; p_columns: Json | null }
+        Returns: undefined
+      }
+      delete_saved_view: {
+        Args: { p_view_id: string }
+        Returns: undefined
+      }
+      share_saved_view: {
+        Args: { p_view_id: string }
+        Returns: undefined
+      }
+      unshare_saved_view: {
+        Args: { p_view_id: string }
+        Returns: undefined
+      }
+      my_table_columns: {
+        Args: { p_firm_id: string; p_table: string; p_view_id?: string | null }
+        Returns: { columns: Json | null; source: string }[]
+      }
+      set_my_table_columns: {
+        Args: { p_firm_id: string; p_table: string; p_view_id: string | null; p_columns: Json | null }
+        Returns: undefined
+      }
+      // ---- end CRM-S3.1b with S3.4b ----
     }
     Enums: {
       app_role: "advisor" | "admin"

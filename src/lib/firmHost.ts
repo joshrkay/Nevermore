@@ -30,3 +30,24 @@ export function firmHostname(address: string, siteDomain: string = SITE_DOMAIN):
 export function firmUrl(address: string, siteDomain: string = SITE_DOMAIN): string {
   return `https://${firmHostname(address, siteDomain)}`;
 }
+
+/**
+ * Where a firm is reached from the page the person is on: on `localhost` (local development and the end-to-end tests) the
+ * firm's `<address>.localhost`, with this page's scheme and port; anywhere else the firm's address on the site's domain.
+ */
+export function firmUrlFrom(
+  address: string,
+  here: { protocol: string; hostname: string; port: string } = window.location,
+  siteDomain: string = SITE_DOMAIN,
+): string {
+  const host = here.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) {
+    return `${here.protocol}//${address.trim().toLowerCase()}.localhost${here.port ? `:${here.port}` : ""}`;
+  }
+  return firmUrl(address, siteDomain);
+}
+
+/** Leaves this page for a firm's address (a new origin, with its own session), replacing this page in the history. */
+export function openFirmAddress(url: string): void {
+  window.location.replace(url);
+}

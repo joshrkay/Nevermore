@@ -1,7 +1,7 @@
 // A subset of PostgREST. The prospect path uses select, eq/neq, order, limit, POST/PATCH and scalar rpc;
 // the rest (gt/gte/lt/lte, is and in filters, offset, DELETE, void and set-returning rpc) is implemented
 // but no spec exercises it. Every request runs in a transaction as the database role and JWT claims of
-// its token (see withRequest), so row security, grants and triggers are the real ones. Query features
+// its token, and its request headers (see withRequest), so row security, grants and triggers are the real ones. Query features
 // beyond the subset answer 400 E2E_UNSUPPORTED rather than being guessed at.
 import pg from "pg";
 import { JWT_SECRET } from "./config.mjs";
@@ -323,7 +323,9 @@ export function createRest({ pool, log = () => {} }) {
 
         const prefer = parsePrefer(req.headers.prefer);
         const wantsObject = String(req.headers.accept ?? "").includes(OBJECT_ACCEPT);
-        const request = { role: ctx.role, claims: ctx.claims, method: req.method };
+        // Hosted PostgREST hands the database every request header, names in lower case, as request.headers (which the firm
+        // address is read from: supabase/migrations/20261117090000_one_firm_at_a_time.sql).
+        const request = { role: ctx.role, claims: ctx.claims, method: req.method, headers: req.headers };
 
         if (target.startsWith("rpc/")) return await callFunction(request, target.slice(4), body);
 

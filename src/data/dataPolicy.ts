@@ -436,13 +436,13 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included; an entry made by a platform admin from outside the firm reads as \"Nevermore\" (no name, email or id), D-33.",
   },
   {
-    id: "firm_suspensions",
-    label: "Nevermore's record of firms it suspended",
+    id: "table_settings",
+    label: "Column choices and saved views",
     sensitivity: "internal",
-    examples: "For each time a platform admin suspended a firm: which firm, who suspended it and why (a short reason typed by the admin), when, and when and by whom the suspension was lifted. The firm never reads it: its own record of who did what shows only that Nevermore suspended or lifted (D-33). Nothing about an intake.",
-    stored: { tables: ["firm_suspensions"], buckets: [], elsewhere: [] },
-    retention: "Kept with the firm, as the record of why its members were shut out and when they were let back in; a lifted suspension is closed, never deleted. A rule to clear old ones is not built yet (docs/DATA_HANDLING.md).",
-    deletion: "An admin's account deleted at their request clears who suspended or lifted from the rows that name them; the reason and dates stay.",
+    examples: "Which columns a member shows on a table and in what order, and the views a member saved (a name, filters, a sort and columns), with who saved and who shared each. A filter can hold a value a member typed to filter by. Nothing else about an intake.",
+    stored: { tables: ["saved_views", "table_preferences"], buckets: [], elsewhere: [] },
+    retention: "Kept with the firm until the member changes or deletes them. A member who leaves keeps their rows, read by nobody, and finds them again if they rejoin; a view they shared stays with the firm until an owner unshares it.",
+    deletion: "A member's account deleted at their request removes their views and column choices. Closing a firm (CRM-P1.7) deletes its saved views with its other data.",
   },
 ];
 

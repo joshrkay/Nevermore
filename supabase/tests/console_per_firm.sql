@@ -113,7 +113,6 @@
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
-\i supabase/migrations/20261116230000_firm_suspension.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

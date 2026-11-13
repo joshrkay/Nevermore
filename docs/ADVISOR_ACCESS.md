@@ -4,13 +4,20 @@ Advisor pages live under `/advisor`: the Advisor Console, which is the team's op
 (no CRM; its field mapping and ownership rules are in `docs/ADVISOR_CONSOLE.md`). The UI guard
 (`RequireFirm`, and `RequirePlatformAdmin` for the platform's own pages) only decides what to render; the database enforces
 access (`supabase/migrations/20261022090000_advisor_operations.sql`, and since story P-1.4
-`20261116210000_console_per_firm.sql`, docs/adr/0013). The console asks for a current membership of a firm (`my_firms()`), not
+`20261116210000_console_per_firm.sql`, docs/adr/0014). The console asks for a current membership of a firm (`my_firms()`), not
 for a platform role; a platform admin who belongs to no firm gets the platform's pages only (D-16).
+
+One firm at a time (story CRM-S1.1b, D-40, docs/adr/0016). At a firm's address the browser sends that address with every
+request to the database (the `x-firm-address` header, `src/integrations/supabase/client.ts`), and the membership helpers then
+answer for that firm only (`20261117090000_one_firm_at_a_time.sql`). The address only narrows; membership is still the lock. So a
+member of several firms is let into the console at the address of any firm they belong to, and sees that firm's records alone.
+On the bare domain such a person is sent to `/choose-firm`, a list linking to each of their firms' addresses, where they sign in.
 
 | Route | Audience | Enforced by |
 |---|---|---|
 | `/advisor`, `/advisor/submissions/:id`, `/advisor/outbox`, `/advisor/funnel`, `/advisor/partners`, `/advisor/peos`, `/advisor/mailbox` | A current member of a firm (at a firm's address, of that firm) | `require_advisor()` (a platform role or a current membership), then each function's firm filter; row security on every table it reads |
 | `/advisor/activity` | A firm's owner | `firm_activity_list()` refuses everyone else |
+| `/choose-firm` | A current member of a firm (the bare domain sends a member of several firms here) | `my_firms()`, the person's own firms, not narrowed by the address |
 | `/advisor/firms`, `/advisor/organisations`, `/advisor/held` | A platform admin | `has_role('admin')` in each function and policy |
 
 ## Roles

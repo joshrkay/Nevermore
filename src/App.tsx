@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { createBrowserRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -42,20 +42,15 @@ const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
 const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
 const JoinFirmPage = lazy(() => import("./pages/JoinFirmPage"));
 const FirmInvitationsPage = lazy(() => import("./pages/FirmInvitationsPage"));
+const ChooseFirmPage = lazy(() => import("./pages/ChooseFirmPage"));
 // Read rarely, so kept out of the main bundle too.
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
 
 const queryClient = new QueryClient();
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AuthProvider>
-        <FirmAddressProvider>
-        <BrowserRouter>
+const AppRoutes = () => (
+  <>
           {/* The title, description and robots rule of the page at this address (src/data/seo.ts). */}
           <PageMeta />
           <ErrorBoundary>
@@ -68,6 +63,7 @@ const App = () => (
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/firms/new" element={<SignUpFirmPage />} />
                 <Route path="/join" element={<JoinFirmPage />} />
+                <Route path="/choose-firm" element={<ChooseFirmPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />
                 {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
@@ -104,7 +100,21 @@ const App = () => (
               </AuthRedirectGate>
             </Suspense>
           </ErrorBoundary>
-        </BrowserRouter>
+  </>
+);
+
+// A data router, so a form with unsaved changes can ask before the app moves to another page (CRM-S4.1, useUnsavedChangesGuard).
+// One splat route holds the whole route table below, which is unchanged.
+const router = createBrowserRouter([{ path: "*", element: <AppRoutes /> }]);
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <Sonner />
+      <AuthProvider>
+        <FirmAddressProvider>
+        <RouterProvider router={router} />
         </FirmAddressProvider>
       </AuthProvider>
     </TooltipProvider>
