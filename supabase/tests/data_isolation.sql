@@ -141,6 +141,7 @@
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
+\i supabase/migrations/20261116180000_function_firm_scope.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1350,6 +1351,161 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: % cross-firm table cases passed', cases;
+END $$;
+
+-- ---------- 4e. functions: one firm against the other (CRM-P2.1b) ----------
+-- A function that runs as its owner, not as the caller, sees every firm's rows whatever row security says, so each advisor or
+-- admin function that reads or changes a firm's data must ask the firm itself (D-18). Each is probed here with the two firms'
+-- data from the matrix. A function the policies don't cover is called, as every caller, against the row of a firm the caller
+-- is not a current member of:
+--   by_id   a call naming one row (an intake, a quote request, a note, an outbox event, a deletion) of the firm under test. A
+--           caller who is not a member of that firm (the other firm's members, a platform admin, a former member, a prospect, a
+--           guest, signed out) is refused or told there is no such row, never served: `refused` lists the answers that count.
+--           A member of the firm under test is not (the positive control: without it a function that refused everyone would pass).
+--   list    a call that lists: every caller gets only their own firm's intakes, and a caller who is no firm's member gets none.
+--   count   the same for a call that only counts, which must equal what the caller's own firm has, exactly.
+-- The call is a statement that returns one text value; {sid} {draft} {qr} {note} {evt} {del} stand for the firm's row of each kind.
+CREATE TEMP TABLE fprobe (
+  fn text PRIMARY KEY,
+  who text NOT NULL,
+  shape text NOT NULL CHECK (shape IN ('by_id', 'list', 'count')),
+  call text NOT NULL,
+  refused text[] NOT NULL DEFAULT ARRAY['42501', 'PT404', 'P0002'],
+  member_ok text,
+  expected text,
+  positive text[] NOT NULL DEFAULT ARRAY['advisor', 'agent_b']
+);
+CREATE TEMP TABLE fprobe_ids (firm text, k text, v text, PRIMARY KEY (firm, k));
+GRANT SELECT ON fprobe, fprobe_ids TO anon, authenticated, service_role;
+
+-- What a call does as one caller, rolled back: 'ok:<value>' or the SQLSTATE it raised.
+CREATE FUNCTION pg_temp.call_as(who text, stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  v text;
+  s text;
+  m text;
+BEGIN
+  PERFORM pg_temp.become(who);
+  BEGIN
+    EXECUTE stmt INTO v;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = COALESCE(v, '<null>');
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    RESET ROLE;
+    IF s = 'ZZ999' THEN RETURN 'ok:' || m; END IF;
+    RETURN s;
+  END;
+END $$;
+
+-- A probe's statement with a firm's rows named in it.
+CREATE FUNCTION pg_temp.fill(stmt text, firm text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT k, v FROM fprobe_ids WHERE fprobe_ids.firm = fill.firm LOOP
+    stmt := replace(stmt, '{' || r.k || '}', quote_literal(r.v));
+  END LOOP;
+  RETURN stmt;
+END $$;
+
+-- The firms the intakes in a comma-separated list belong to, as text, '' when there are none.
+CREATE FUNCTION pg_temp.firms_of(ids text) RETURNS text LANGUAGE sql AS $$
+  SELECT COALESCE(string_agg(DISTINCT s.firm_id::text, ',' ORDER BY s.firm_id::text), '')
+  FROM public.chamber_sessions s WHERE s.id = ANY (string_to_array(NULLIF(ids, ''), ',')::uuid[])
+$$;
+
+-- The callers every function is tried as; the first firm's, the second's, and nobody's.
+CREATE FUNCTION pg_temp.every_caller() RETURNS text[] LANGUAGE sql AS $$
+  SELECT ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor_as_guest', 'advisor', 'admin', 'agent_2', 'lead_1', 'agent_b', 'owner_b',
+               'platform_admin', 'former_agent']
+$$;
+
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('advisor_record_quote_send', 'advisor', 'by_id', $$SELECT public.advisor_record_quote_send({sid}, 'Probe PEO', NULL)::text$$),
+  ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
+  ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
+  ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
+  ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
+  ('advisor_correct_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_correct_quote_request_note({note}, 'call', current_date, 'probe')::text$$),
+  ('advisor_reissue_quote_request_address', 'advisor', 'by_id', $$SELECT public.advisor_reissue_quote_request_address({qr})::text$$);
+
+DO $$
+DECLARE
+  f text;
+  qr text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+    qr := (SELECT q.id::text FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END));
+    INSERT INTO fprobe_ids VALUES
+      (f, 'sid', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)::text),
+      (f, 'draft', pg_temp.id(CASE f WHEN 'a' THEN 'pa_open' ELSE 'pb_open' END)::text),
+      (f, 'qr', qr),
+      (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  e record;
+  f text;
+  who text;
+  stmt text;
+  r text;
+  ids text;
+  expected text;
+  member text;
+  cases integer := 0;
+BEGIN
+  FOR e IN SELECT * FROM fprobe ORDER BY fn LOOP
+    IF e.shape = 'by_id' THEN
+      FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+        stmt := pg_temp.fill(e.call, f);
+        FOR who IN SELECT pg_temp.outsiders(CASE f WHEN 'a' THEN 'prospect_a' ELSE 'prospect_b' END, f) LOOP
+          r := pg_temp.call_as(who, stmt);
+          IF NOT r = ANY (e.refused) THEN
+            RAISE EXCEPTION 'FAIL: % calling % on the % firm''s row gave %, expected a refusal (%)', who, e.fn, f, r, e.refused;
+          END IF;
+          cases := cases + 1;
+        END LOOP;
+        member := CASE WHEN e.who = 'admin' THEN CASE f WHEN 'a' THEN 'admin' END ELSE CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END END;
+        IF member IS NOT NULL THEN
+          r := pg_temp.call_as(member, stmt);
+          IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
+            RAISE EXCEPTION 'FAIL: % (a member) calling % on their own firm''s row gave %', member, e.fn, r;
+          END IF;
+          cases := cases + 1;
+        END IF;
+      END LOOP;
+    ELSE
+      FOREACH who IN ARRAY pg_temp.every_caller() LOOP
+        r := pg_temp.call_as(who, e.call);
+        IF r NOT LIKE 'ok:%' THEN
+          IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % calling % gave %', who, e.fn, r; END IF;
+          IF who = ANY (e.positive) THEN RAISE EXCEPTION 'FAIL: % was refused %', who, e.fn; END IF;
+        ELSE
+          f := pg_temp.member_of(who);
+          IF e.shape = 'list' THEN
+            ids := substr(r, 4);
+            IF pg_temp.firms_of(ids) IS DISTINCT FROM COALESCE((SELECT id::text FROM fx WHERE name = CASE f WHEN 'a' THEN 'firm_a' WHEN 'b' THEN 'firm_b' END), '')
+               AND ids <> '' THEN
+              RAISE EXCEPTION 'FAIL: % listing with % got intakes of firm(s) %, their firm is %', who, e.fn, pg_temp.firms_of(ids), COALESCE(f, 'none');
+            END IF;
+            IF ids = '' AND who = ANY (e.positive) THEN RAISE EXCEPTION 'FAIL: % got none of their own firm''s rows from %', who, e.fn; END IF;
+          ELSE
+            expected := '0';
+            IF f IS NOT NULL THEN
+              EXECUTE replace(e.expected, '{firm}', quote_literal((SELECT id FROM fx WHERE name = CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END))) INTO expected;
+            END IF;
+            IF substr(r, 4) <> expected THEN RAISE EXCEPTION 'FAIL: % counting with % got %, expected %', who, e.fn, substr(r, 4), expected; END IF;
+            IF expected = '0' AND who = ANY (e.positive) THEN RAISE EXCEPTION 'FAIL: % has nothing to count for %: the probe proves nothing', who, e.fn; END IF;
+          END IF;
+        END IF;
+        cases := cases + 1;
+      END LOOP;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
 END $$;
 
 -- ---------- 4d. a deletion record keeps its firm after its intake is gone ----------
