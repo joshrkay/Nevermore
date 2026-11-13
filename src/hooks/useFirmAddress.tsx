@@ -8,9 +8,9 @@ export type FirmAddress =
   /** The bare domain, www, or any host that is not a firm's: today's behaviour. */
   | { status: "none" }
   | { status: "checking"; address: string }
-  /** An approved firm holds the address; `name` is all that may be shown before sign-in. */
+  /** A firm holds the address, approved or still waiting; `name` is all that may be shown before sign-in. */
   | { status: "known"; address: string; name: string }
-  /** No approved firm holds it (an unapproved firm looks the same). */
+  /** No firm holds it (D-27): a plain not-found page for everyone. */
   | { status: "unknown"; address: string }
   | { status: "error"; address: string; retry: () => void };
 

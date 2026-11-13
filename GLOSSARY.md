@@ -259,13 +259,13 @@ _Avoid_: subdomain, slug, URL
 The firm address read out of the host the app is served on: `name.nevermorepeo.com`, or `name.localhost` for local development and the end-to-end tests. The bare domain, `www` and any other host name no firm and keep today's behaviour; a name with more than one label in front of the domain matches no firm and shows as not found. It only picks what the screen shows (D-17, D-18).
 
 **Public firm name** (code: `firm_public_name`):
-What a firm's address shows before anyone signs in: the approved firm's name, and nothing else. An address nobody holds and a firm not yet approved give the same answer (nothing), so the public cannot tell which firms are signing up. Firms have no logo field yet.
+What a firm's address shows before anyone signs in: the firm's name, and nothing else, for any firm that exists, approved or still waiting for approval (a waiting firm's members can work before approval; approval gates sending, not signing in). Only an address no firm holds gives nothing, and it shows a plain not-found page to everyone, with no sign-in and no sign-in callback pages (D-27). Firms have no logo field yet.
 
 **Not a member screen**:
-What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. At an address whose firm is not yet approved, a non-member gets the not-found page instead (a member there works as usual). `is_member_of_firm_address` answers about the caller only. The database, not this screen, refuses them the data (D-18).
+What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only. The database, not this screen, refuses them the data (D-18).
 
 **Session per address**:
-A sign-in belongs to one firm address: the browser keeps its session per origin, so signing in at one firm's address does not sign the person in at another's, and the provider sends them back to the address they started from. A person in two firms signs in to each. Signing out ends only the session at the address it is done at, on a firm's address or on the bare domain alike.
+A sign-in belongs to one firm address: the browser keeps its session per origin, so signing in at one firm's address does not sign the person in at another's, and the provider sends them back to the address they started from. A person in two firms signs in to each. Signing out on a firm's address ends only that address's session; on the bare domain and www it is a plain sign-out that ends every session of that person, as before (D-27). If a session exists at an address no firm holds, the not-found page carries a sign-out.
 
 **Visibility** (code: `firms.visibility`):
 A firm's setting for who sees its records: `by_level` (an agent sees what they own, a lead their team's, an owner everything) or `everyone` ("everyone sees everything"). A new firm sees by level.

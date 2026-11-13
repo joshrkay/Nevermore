@@ -50,15 +50,12 @@ async function signInWithPassword(page: Page, address: string, email: string) {
 test("a member signs in at their firm's address and reaches the console; at another firm's address they are told they aren't a member", async ({ page, request }) => {
   const email = await setUp(request);
 
-  await test.step("an address no firm holds shows the sign-in with no firm name, and signing in there ends in not-found", async () => {
+  await test.step("an address no firm holds shows a plain not-found page: no sign-in is offered", async () => {
     await page.goto(`${firmUrl(NOWHERE)}/advisor`);
-    await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toBeVisible();
-    await expect(page.getByTestId("firm-name")).toHaveCount(0);
-    await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password").fill(PASSWORD);
-    await page.getByRole("button", { name: "Sign In" }).click();
     await expect(page.getByText("Oops! Page not found")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Submissions" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toHaveCount(0);
+    await expect(page.getByTestId("firm-name")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
   });
 
   await test.step("the sign-in at the firm's address names the firm", async () => {
@@ -112,7 +109,7 @@ test("a member signs in at their firm's address and reaches the console; at anot
   });
 });
 
-test("a member of a firm waiting for approval signs in at its address and works there, with no firm name shown before sign-in", async ({ page, request }) => {
+test("a member of a firm waiting for approval signs in at its address, which names the firm, and works there", async ({ page, request }) => {
   const waiting = `waiting-${stamp}`;
   const email = `waiting-member-${stamp}@example.test`;
   const res = await request.post(`${GATEWAY_URL}/auth/v1/signup`, { headers: { apikey: ANON_KEY }, data: { email, password: PASSWORD } });
@@ -126,8 +123,7 @@ test("a member of a firm waiting for approval signs in at its address and works 
 
   await page.goto(`${firmUrl(waiting)}/advisor`);
   await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toBeVisible();
-  await expect(page.getByTestId("firm-name")).toHaveCount(0);
-  await expect(page.getByText("Waiting Brokers")).toHaveCount(0);
+  await expect(page.getByText("Waiting Brokers")).toBeVisible();
   await signInWithPassword(page, waiting, email);
   await expect(page.getByRole("heading", { name: "Add a second step to your sign-in" })).toBeVisible();
   const secret = (await page.locator("span.font-mono").innerText()).trim();

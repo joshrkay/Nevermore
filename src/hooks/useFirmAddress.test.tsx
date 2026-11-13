@@ -25,7 +25,7 @@ describe("the firm the host names", () => {
     expect(fetchFirmName).not.toHaveBeenCalled();
   });
 
-  it("is unknown when nothing comes back for the address", async () => {
+  it("is unknown when no firm holds the address", async () => {
     fetchFirmName.mockResolvedValue(null);
     render(tree("nobody.nevermorepeo.com"));
     expect(await screen.findByText("unknown")).toBeInTheDocument();

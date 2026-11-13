@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 // What the screens at a firm address ask the database (story CRM-P1.3a). Both answers only choose what to show;
 // the database still checks membership on every row and function (D-18).
 
-/** The name an address shows before sign-in, or null when no approved firm holds it (unknown and unapproved look alike). */
+/** The name an address shows before sign-in: the firm's name for any firm that exists, approved or not, or null when no firm holds it. */
 export async function fetchFirmName(address: string): Promise<string | null> {
   const { data, error } = await supabase.rpc("firm_public_name", { p_address: address });
   if (error) throw new Error("Couldn't look up this firm address.");

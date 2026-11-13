@@ -183,11 +183,19 @@ describe("useAuth session ending", () => {
     }
   });
 
-  it("ends only this address's session when signing out on the bare domain too, so a firm address's session stays", async () => {
-    const { result } = await mountAuth();
-    authApi.signOut.mockClear();
-    await act(async () => { await result.current.signOut(); });
-    expect(authApi.signOut).toHaveBeenCalledWith({ scope: "local" });
+  it("signs out with a plain signOut on the bare domain and www, exactly as before firm addresses: every session of that person ends", async () => {
+    for (const hostname of ["nevermorepeo.com", "www.nevermorepeo.com", "localhost"]) {
+      vi.stubGlobal("location", { ...window.location, hostname });
+      try {
+        const { result } = await mountAuth();
+        authApi.signOut.mockClear();
+        await act(async () => { await result.current.signOut(); });
+        expect(authApi.signOut, hostname).toHaveBeenCalledTimes(1);
+        expect(authApi.signOut.mock.calls[0], hostname).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
   });
 
   it("calls a deliberate sign-out a sign-out", async () => {

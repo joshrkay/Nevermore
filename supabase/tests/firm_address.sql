@@ -2,8 +2,8 @@
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh firm_address
 -- The firm address before and after sign-in (story CRM-P1.3a; docs/BROKER_CRM_BUILD.md D-17, D-18;
 -- 20261116140000_firm_address_lookup.sql). Before sign-in anyone, a signed-out visitor included, may ask what name
--- an address shows, and gets the name of an approved firm or nothing: an address nobody holds and a firm not yet
--- approved look exactly the same. After sign-in the caller may ask whether they themselves are a current member of
+-- an address shows, and gets the name of any firm that exists, approved or still waiting for approval (D-27), or
+-- nothing when no firm holds the address. After sign-in the caller may ask whether they themselves are a current member of
 -- the firm at an address. Neither function is the lock (D-18): row security and the membership helpers still
 -- decide who reads what; the screen only chooses what to show.
 -- The list of earlier migrations is pinned on purpose to what existed before this story (the file loads this
@@ -178,7 +178,7 @@ BEGIN
 END $$;
 
 -- ---------- before sign-in: what an address shows ----------
--- Break caught: the page shows nothing for a real firm, or a firm that isn't approved is named to the public.
+-- Break caught: the page shows nothing for a real firm.
 DO $$
 BEGIN
   PERFORM pg_temp.as_anon();
@@ -191,27 +191,27 @@ BEGIN
   RAISE NOTICE 'firm_address: name for an approved firm cases passed';
 END $$;
 
--- Break caught: an unapproved firm answers differently from an address nobody holds, so the public can tell which
--- firms are signing up; or a wildcard or empty input lists firms.
+-- Break caught: a firm waiting for approval shows nothing (D-27: it shows its name, because its members can work
+-- before approval), an address nobody holds shows something, or a wildcard or empty input lists firms.
 DO $$
 BEGIN
   PERFORM pg_temp.as_anon();
-  PERFORM pg_temp.is(public.firm_public_name('waiting-firm'), NULL::text, 'a firm that is not approved shows nothing');
+  PERFORM pg_temp.is(public.firm_public_name('waiting-firm'), 'Waiting Firm', 'a firm waiting for approval shows its name');
   PERFORM pg_temp.is(public.firm_public_name('no-such-firm'), NULL::text, 'an address nobody holds shows nothing');
   PERFORM pg_temp.is(public.firm_public_name('%'), NULL::text, 'a wildcard matches nothing');
   PERFORM pg_temp.is(public.firm_public_name('acme%'), NULL::text, 'a prefix matches nothing');
   PERFORM pg_temp.is(public.firm_public_name(''), NULL::text, 'an empty address matches nothing');
   PERFORM pg_temp.is(public.firm_public_name(NULL), NULL::text, 'no address matches nothing');
-  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.firm_public_name('waiting-firm')$q$), 'rows:1', 'an unapproved firm is no error');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.firm_public_name('waiting-firm')$q$), 'rows:1', 'a waiting firm is no error');
   PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.firm_public_name('no-such-firm')$q$), 'rows:1', 'nor is an unknown address');
-  -- A firm approved later starts showing, and one whose approval is withdrawn stops.
+  -- Approval changes nothing about what the address shows.
   RESET ROLE;
   UPDATE public.firms SET approved_at = now() WHERE address = 'waiting-firm';
   PERFORM pg_temp.as_anon();
-  PERFORM pg_temp.is(public.firm_public_name('waiting-firm'), 'Waiting Firm', 'approval makes the name show');
+  PERFORM pg_temp.is(public.firm_public_name('waiting-firm'), 'Waiting Firm', 'approval does not change the name shown');
   RESET ROLE;
   UPDATE public.firms SET approved_at = NULL WHERE address = 'waiting-firm';
-  RAISE NOTICE 'firm_address: unknown and unapproved cases passed';
+  RAISE NOTICE 'firm_address: waiting and unknown cases passed';
 END $$;
 
 -- Break caught: the function reveals more than a name (an id, the visibility setting, the owner) or can be changed
@@ -259,8 +259,8 @@ BEGIN
   RAISE NOTICE 'firm_address: membership at an address cases passed';
 END $$;
 
--- Break caught: the address of an unknown or unapproved firm answers differently from any other for someone signed
--- in, or the function lists what firm the caller belongs to.
+-- Break caught: a member of a firm waiting for approval is turned away from its address, an address nobody holds has
+-- members, or the function lists what firm the caller belongs to.
 DO $$
 BEGIN
   PERFORM pg_temp.as_user('waiting_owner');

@@ -8,29 +8,29 @@ import NotFound from "@/pages/NotFound";
 import { AUTH_CALLBACK_PATH } from "@/lib/authRedirect";
 import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
 
-// The pages a sign-in lands on hold no data and finish by redirecting. They are left alone: hiding one while the new
-// session is checked would unmount it half-way, and its one-time code would be spent twice.
+// The pages a sign-in lands on hold no data and finish by redirecting. At an existing firm's address they are left
+// alone: hiding one while the new session is checked would unmount it half-way, and its one-time code would be spent
+// twice. At an address no firm holds they are not mounted at all (D-27).
 const SIGN_IN_LANDING_PATHS: readonly string[] = [AUTH_CALLBACK_PATH, BROKER_CALLBACK_PATH];
 
 type Membership = "checking" | "member" | "not_member" | "error";
 
 /**
- * What a firm's address shows (story CRM-P1.3a, D-17, D-18). On the bare domain it changes nothing. At a firm's address:
- * a signed-out visitor reaches the sign-in screens (with no firm name where no approved firm holds the address); a
- * signed-in person at an address no approved firm holds sees a plain not-found page, unless they are a member of the
- * firm waiting for approval there; and
- * a signed-in person who is not a current member of that firm sees "You aren't a member of this firm" and nothing
- * else, whichever firm they do belong to. This decides only what to render: the database refuses the data to a
- * non-member anyway, and no firm is put in the token.
+ * What a firm's address shows (story CRM-P1.3a, D-17, D-18, D-27). On the bare domain it changes nothing. At an address
+ * no firm holds: a plain not-found page for everyone, with a sign-out when a session exists there anyway; no sign-in
+ * screen and no callback page. At a firm that exists (approved or still waiting): a signed-out visitor reaches the
+ * sign-in screens, which name the firm; a signed-in current member reaches the console; a signed-in person who is not a
+ * current member sees "You aren't a member of this firm" and a sign-out, and nothing else, whichever firm they do
+ * belong to. This decides only what to render: the database refuses the data to a non-member anyway, and no firm is
+ * put in the token.
  */
 const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   const firm = useFirmAddress();
   const { user, loading, isAnonymous, signOut } = useAuth();
   const { pathname } = useLocation();
   const userId = user?.id;
-  // At an address no approved firm holds, a member of the firm waiting for approval is still let in (PRD 8.2: approval
-  // blocks sending, not working), so the question is asked there too.
-  const address = firm.status === "known" || firm.status === "unknown" ? firm.address : null;
+  // Membership is asked only at an address a firm holds.
+  const address = firm.status === "known" ? firm.address : null;
   // The answer belongs to one person at one address: another person's, or another address's, is no answer.
   const asked = `${address}|${userId}`;
   const [answer, setAnswer] = useState<{ asked: string; result: Exclude<Membership, "checking"> } | null>(null);
@@ -51,15 +51,6 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   }, [address, userId, signedIn, asked, attempt]);
 
   if (firm.status === "none") return <>{children}</>;
-  if (SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
-  if (firm.status === "checking" || loading) return <Checking />;
-  if (firm.status === "unknown") {
-    // A session is kept per address, so the member of a firm waiting for approval has to sign in here. The sign-in
-    // screens show no firm name at an unknown address (FirmName), so nothing tells it from an address nobody holds.
-    if (!signedIn) return <>{children}</>;
-    // Nothing tells a non-member (or a failed check) from a visitor at an address nobody holds.
-    return membership === "checking" ? <Checking /> : membership === "member" ? <>{children}</> : <NotFound />;
-  }
   if (firm.status === "error") {
     return (
       <Message title="We couldn't load this page">
@@ -67,6 +58,23 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
       </Message>
     );
   }
+  if (firm.status === "checking") return <Checking />;
+  if (firm.status === "unknown") {
+    if (loading) return <Checking />;
+    // A plain not-found page for everyone. A session that exists here anyway can be ended from it.
+    return (
+      <>
+        <NotFound />
+        {user && (
+          <div className="fixed inset-x-0 bottom-6 text-center">
+            <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
+          </div>
+        )}
+      </>
+    );
+  }
+  if (SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
+  if (loading) return <Checking />;
   if (!signedIn) return <>{children}</>;
   if (membership === "checking") return <Checking />;
   if (membership === "error") {
