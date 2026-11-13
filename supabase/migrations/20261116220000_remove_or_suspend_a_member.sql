@@ -341,11 +341,11 @@ BEGIN
 END;
 $$;
 
--- The mailbox of a suspended person survives the loss of a platform role too, as it survives the end of their membership.
+-- The mailbox of a suspended person survives the loss of a platform role too, as it survives the end of their membership. No lock is
+-- taken here: the end of a membership deletes the mailbox whatever platform role the person holds, so this can only ever be early.
 CREATE OR REPLACE FUNCTION public.drop_mailbox_without_role()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
-  PERFORM public.lock_mailbox_owner(OLD.user_id);
   IF NOT EXISTS (SELECT 1 FROM public.user_roles r WHERE r.user_id = OLD.user_id AND r.role::text IN ('advisor', 'admin'))
      AND NOT EXISTS (SELECT 1 FROM public.firm_memberships f WHERE f.user_id = OLD.user_id AND public.membership_is_current(f.valid_from, f.valid_until))
      AND NOT EXISTS (SELECT 1 FROM public.firm_member_suspensions s WHERE s.user_id = OLD.user_id AND s.ended_at IS NULL) THEN

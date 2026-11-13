@@ -1354,6 +1354,13 @@ describe("who an advisor alert goes to", () => {
       expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
     });
 
+    it.each(kinds)("treats stored first recipients that are not a list of addresses as none, and sends the %s to the current members", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: [1, null] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+    });
+
     it.each(kinds)("sends a %s with no freeze and no one left of its first recipients to the current members (D-102)", async (_name, makeRow) => {
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
       await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: ["gone@firm-a.example"] })], deps);

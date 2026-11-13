@@ -298,6 +298,13 @@ _Avoid_: delete a member, deprovision, kick
 A member kept on the firm's list who grants nothing until an owner lifts it. It is stored as the membership ended (so every rule that asks "is this a current member" already refuses the person, with no second condition to forget) plus a suspension record of the role and team to give back; lifting begins a new membership from that moment with them (ADR 0016). At most one suspension is open per person and firm (a unique index, D-29), and a suspended person cannot be added again by an invitation or an insert: only lifting brings them back. A suspended person keeps a connected mailbox stored but cannot use it. A suspended owner does not count as an owner the firm keeps. Removing a suspended person closes the suspension as removed.
 _Avoid_: pause, lock out, disabled (a suspended firm is CRM-P1.8's, a different thing)
 
+**First recipients** (code: `outbox_events.first_recipients`):
+The addresses an advisor alert was first prepared for, written on the outbox event by the first freeze and never cleared or rewritten, even when the frozen message is thrown away. Every retry sends only to those of them who are still current members; when none is, the alert goes to the firm's current members under a new key (D-35, D-102). Nobody who joined after the first preparation is added.
+_Avoid_: frozen recipients (the frozen message is disposable, this is not)
+
+**Mailbox cleanup** (code: `drop_mailboxes_of_former_members`, `lock_mailbox_owner`):
+The hourly job that deletes the stored **connected mailbox** of anyone with no current membership and no open suspension, which catches a last membership that ended by reaching its date (no change fires then). Storing a mailbox and every ending of a membership take the same per-person lock first, so concurrent endings or a concurrent store cannot leave a mailbox for a non-member (D-32).
+
 **Members page** (code: `AdvisorMembersPage`, `/advisor/members`, `firm_members`):
 The console page where an owner sees the current and suspended members of the firm with their role and state, and removes, suspends or lifts a suspension, each after a confirmation in plain words. It is for the owners of the **current firm**, reached from the console menu. A removed person is not listed; the firm's record says they were.
 

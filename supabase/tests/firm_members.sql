@@ -708,6 +708,14 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.remove_member(%L, %L)', acme, pg_temp.id('fut_late'))), 'PT404', 'a removal that lost the race is reported as already changed');
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.suspend_member(%L, %L)', acme, pg_temp.id('fut_late'))), 'PT404', 'and so is a suspension');
   RESET ROLE;
+  -- the history rule's one allowance is exactly that: a date still ahead moved earlier, to no earlier than now
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+  VALUES (acme, pg_temp.new_user('fut_hist'), 'agent', now() - interval '1 day', now() + interval '30 days');
+  PERFORM pg_temp.is(pg_temp.attempt(format('UPDATE public.firm_memberships SET valid_until = now() + interval ''60 days'' WHERE user_id = %L', pg_temp.id('fut_hist'))), '42501', 'a date still ahead is not moved later');
+  PERFORM pg_temp.is(pg_temp.attempt(format('UPDATE public.firm_memberships SET valid_until = now() - interval ''1 hour'' WHERE user_id = %L', pg_temp.id('fut_hist'))), '42501', 'nor into the past');
+  PERFORM pg_temp.is(pg_temp.attempt(format('UPDATE public.firm_memberships SET valid_until = NULL WHERE user_id = %L', pg_temp.id('fut_hist'))), '42501', 'nor taken away');
+  PERFORM pg_temp.is(pg_temp.attempt(format('UPDATE public.firm_memberships SET role = ''lead'' WHERE user_id = %L', pg_temp.id('fut_hist'))), '42501', 'and nothing else of the row changes');
+  PERFORM pg_temp.is(pg_temp.attempt(format('UPDATE public.firm_memberships SET valid_until = now() + interval ''10 days'' WHERE user_id = %L', pg_temp.id('fut_hist'))), 'rows:1', 'but it can be moved earlier, still ahead');
   RAISE NOTICE 'firm_members: future-dated passed';
 END $$;
 
@@ -756,7 +764,7 @@ END $$;
 
 DO $$
 DECLARE
-  p uuid := pg_temp.id('lock_p'); q uuid := pg_temp.id('lock_q'); pid2 integer;
+  p uuid := pg_temp.id('lock_p'); q uuid := pg_temp.id('lock_q'); pid2 integer; refused text;
 BEGIN
   -- two endings of the same person's last two memberships, in two firms, at once
   PERFORM race.dblink_connect('lock_first', pg_temp.race_dsn());
@@ -796,7 +804,9 @@ BEGIN
   PERFORM race.dblink_exec('lock_first', 'COMMIT');
   BEGIN
     PERFORM * FROM race.dblink_get_result('lock_second') AS t(r text);
-  EXCEPTION WHEN OTHERS THEN NULL;
+    refused := 'stored';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS refused = RETURNED_SQLSTATE;
   END;
   BEGIN
     PERFORM race.dblink_exec('lock_second', 'COMMIT');
@@ -804,7 +814,9 @@ BEGIN
   END;
   PERFORM race.dblink_disconnect('lock_first');
   PERFORM race.dblink_disconnect('lock_second');
+  PERFORM pg_temp.is(refused, '42501', 'the store that waited for the ending is refused: the person is no longer a member');
   PERFORM pg_temp.is(pg_temp.stored('lock_late'), false, 'a store racing the end of the last membership leaves no mailbox for a non-member');
+
   RAISE NOTICE 'firm_members: two-session mailbox passed';
 END $$;
 
