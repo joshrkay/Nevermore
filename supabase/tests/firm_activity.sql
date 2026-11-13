@@ -415,6 +415,16 @@ SELECT pg_temp.is((SELECT array_agg(email ORDER BY email) FROM public.firm_activ
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity), (SELECT count(*) FROM public.firm_activity WHERE firm_id = pg_temp.id('firm_a')),
   'reading the table directly shows only their own firm''s rows');
 
+-- Which firm's record a signed-in person reads: the firm they are a current owner of, none for anyone else.
+SELECT pg_temp.is(public.my_owner_firm(), pg_temp.id('firm_a'), 'an owner is told their firm');
+SELECT pg_temp.as_user('agent_a');
+SELECT pg_temp.is(public.my_owner_firm(), NULL::uuid, 'an agent is told no firm');
+SELECT pg_temp.as_user('platform_admin');
+SELECT pg_temp.is(public.my_owner_firm(), NULL::uuid, 'a platform admin who is no owner is told no firm');
+SELECT pg_temp.as_user('lead_a');
+SELECT pg_temp.is(public.my_owner_firm(), pg_temp.id('firm_b'), 'a lead in one firm and owner of another is told the one they own');
+SELECT pg_temp.as_user('owner_a');
+
 -- Role is per firm: lead_a is an owner of firm B and only a lead in firm A.
 SELECT pg_temp.as_user('lead_a');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_temp.id('firm_a')), '42501', 'a lead reading their firm''s record');

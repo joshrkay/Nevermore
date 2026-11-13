@@ -75,6 +75,11 @@ const {
   reissueQuoteRequestAddress,
   openQuoteRequestThread,
   mailAttachmentUrl,
+  recordActivity,
+  fetchOwnedFirm,
+  listFirmActivity,
+  listFirmActivityPeople,
+  FIRM_ACTIVITY_PAGE_SIZE,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -690,5 +695,63 @@ describe("documentFile: an uploaded document's file, for a bundle", () => {
     const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
     expect(err.message).toBe("Your session has expired. Sign in again to continue.");
     expect(err.unauthenticated).toBe(true);
+  });
+});
+
+describe("the firm's record of who did what", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("reports a submission opened by the kind and the record's id alone", async () => {
+    rpc.mockResolvedValue({ data: 1, error: null });
+    await recordActivity("submission_viewed", "submission", "s1");
+    expect(rpc).toHaveBeenCalledWith("record_member_activity", { p_kind: "submission_viewed", p_record_type: "submission", p_record_id: "s1" });
+  });
+
+  it("never fails the caller when the record can't be written", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "You are not a member of that record's firm", code: "42501" } });
+    await expect(recordActivity("document_downloaded", "document", "d1")).resolves.toBeUndefined();
+    rpc.mockRejectedValueOnce(new Error("offline"));
+    await expect(recordActivity("packet_downloaded", "manuscript", "v1")).resolves.toBeUndefined();
+  });
+
+  it("asks which firm the caller owns", async () => {
+    rpc.mockResolvedValueOnce({ data: "firm-1", error: null });
+    await expect(fetchOwnedFirm()).resolves.toBe("firm-1");
+    expect(rpc).toHaveBeenCalledWith("my_owner_firm");
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchOwnedFirm()).resolves.toBeNull();
+  });
+
+  const row = (id: number) => ({ id, at: "2026-11-12T10:00:00Z", actor_id: "u1", actor_email: "a@x.test", kind: "submission_viewed", record_type: "submission", record_id: `s${id}`, subject_user_id: null, subject_email: null, role: null });
+
+  it("asks for the first page with the filters it was given, and one more row to know whether another page follows", async () => {
+    rpc.mockResolvedValue({ data: [row(3), row(2), row(1)], error: null });
+    const page = await listFirmActivity("firm-1", { person: "u1", kind: "send_recorded", page: 1 });
+    expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
+      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_offset: 0,
+    });
+    expect(page.entries.map((e) => e.id)).toEqual([3, 2, 1]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("says another page follows when there is one more row than a page, and keeps to the page", async () => {
+    rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE + 1 }, (_, i) => row(100 - i)), error: null });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, page: 3 });
+    expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
+      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_offset: 2 * FIRM_ACTIVITY_PAGE_SIZE,
+    });
+    expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it("is refused for anyone who isn't an owner of the firm, and says so as a refusal", async () => {
+    failWith({ message: "Only a firm's owners can read its record", code: "42501" });
+    expect((await caught(() => listFirmActivity("firm-1", { person: null, kind: null, page: 1 }))).forbidden).toBe(true);
+  });
+
+  it("lists the people who appear in the record", async () => {
+    rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test" }], error: null });
+    await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test" }]);
+    expect(rpc).toHaveBeenCalledWith("firm_activity_people", { p_firm_id: "firm-1" });
   });
 });

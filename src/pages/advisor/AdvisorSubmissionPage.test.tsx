@@ -33,6 +33,7 @@ const api = {
   mailAttachmentUrl: vi.fn(),
   correctQuoteRequestNote: vi.fn(),
   reissueQuoteRequestAddress: vi.fn(),
+  recordActivity: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
@@ -157,6 +158,31 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail());
     api.listEmailProblems.mockResolvedValue([]);
     intakeNow = null;
+  });
+
+  // CRM-P2.3: the firm's record of who did what. What is reported is the kind and the id of the record, never its content.
+  it("records that the submission was opened, once, and not when it is not found", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledWith("submission_viewed", "submission", "s1"));
+    expect(api.recordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("records nothing for a submission it can't find", async () => {
+    api.loadSubmission.mockResolvedValue(null);
+    renderPage();
+    expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
+    expect(api.recordActivity).not.toHaveBeenCalled();
+  });
+
+  it("records a document opened", async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", { value: { ...window.location, assign }, writable: true });
+    api.documentUrl.mockResolvedValue("https://storage.example/doc");
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Open census.xlsx" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/doc"));
+    expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "document", "d1");
   });
 
   it("shows every captured field with its source, the transcript and the documents", async () => {
@@ -821,6 +847,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));
     expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
+    expect(api.recordActivity).toHaveBeenCalledWith("packet_downloaded", "manuscript", "v1");
   });
 
   it("names a stored version from its own certification, never from the one on record now", async () => {

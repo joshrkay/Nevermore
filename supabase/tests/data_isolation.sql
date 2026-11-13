@@ -778,6 +778,7 @@ INSERT INTO callable VALUES
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
   ('record_member_activity(p_kind text, p_record_type text, p_record_id text)', 'own', NULL, 'a browser reporting a submission opened or a file downloaded, as the caller, about a record of a firm they belong to; refuses anyone else (supabase/tests/firm_activity.sql)'),
   ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_offset integer)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included (supabase/tests/firm_activity.sql)'),
+  ('my_owner_firm()', 'own', NULL, 'the firm the caller currently owns, or null; about the caller only; signed-out callers can''t call it'),
   ('firm_activity_people(p_firm_id uuid)', 'own', NULL, 'who appears in a firm''s record, for that firm''s owners only; 42501 for everyone else (supabase/tests/firm_activity.sql)'),
   ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
   ('advisor_needs_second_factor()',            'own',     NULL, 'whether the caller''s own password sign-in is all that holds back their role; false for anyone else'),

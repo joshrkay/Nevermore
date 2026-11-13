@@ -461,6 +461,24 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // A firm's record of who did what (20261116160000): kinds and ids, never content. Append-only; a firm's owners
+      // read their own firm's through firm_activity_list(); written only through record_firm_activity().
+      firm_activity: {
+        Row: {
+          actor_id: string | null
+          at: string
+          firm_id: string
+          id: number
+          kind: string
+          record_id: string
+          record_type: string
+          role: string | null
+          subject_user_id: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
       // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
       quote_request_notes: {
@@ -797,6 +815,36 @@ export type Database = {
       advisor_add_referral_partner: {
         Args: { p_code: string; p_name: string; p_kind: string }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+      }
+      // A page of the caller's firm's record, newest first, for the firm's owners only (20261116160000).
+      firm_activity_list: {
+        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_offset?: number }
+        Returns: {
+          actor_email: string | null
+          actor_id: string | null
+          at: string
+          id: number
+          kind: string
+          record_id: string
+          record_type: string
+          role: string | null
+          subject_email: string | null
+          subject_user_id: string | null
+        }[]
+      }
+      firm_activity_people: {
+        Args: { p_firm_id: string }
+        Returns: { email: string | null; user_id: string }[]
+      }
+      // The firm the caller currently owns, or null.
+      my_owner_firm: {
+        Args: Record<PropertyKey, never>
+        Returns: string | null
+      }
+      // A browser reporting a submission opened or a file downloaded; the firm and the person are worked out by the database.
+      record_member_activity: {
+        Args: { p_kind: string; p_record_id: string; p_record_type: string }
+        Returns: number
       }
       // Renames a referral partner or changes its kind; the code never changes.
       advisor_update_referral_partner: {

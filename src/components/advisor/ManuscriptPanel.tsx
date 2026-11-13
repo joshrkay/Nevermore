@@ -9,7 +9,7 @@ import { localToday } from "@/data/peoProfiles";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
-import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
+import { manuscriptUrl, recordActivity, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
 import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import { formatDateTime } from "./format";
@@ -108,6 +108,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
+      void recordActivity("packet_downloaded", "manuscript", v.id);
       window.location.assign(await manuscriptUrl(v, versionFilename(detail.data.company_name, v)));
     } catch (err) {
       toast.error((err as Error).message);

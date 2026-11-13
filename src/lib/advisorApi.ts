@@ -777,6 +777,64 @@ export async function reviewField(
   if (error) fail(error, "Couldn't save the review.");
 }
 
+/**
+ * Tells the firm's record of who did what that the caller opened a submission or downloaded a file (CRM-P2.3). Only the
+ * kind and the record's id are sent: the database works out the firm and the person, and refuses a record that isn't in
+ * a firm the caller belongs to. Best effort: a failure is never shown and never stops what the advisor was doing.
+ */
+export async function recordActivity(
+  kind: "submission_viewed" | "document_downloaded" | "packet_downloaded",
+  recordType: "submission" | "document" | "manuscript",
+  recordId: string,
+): Promise<void> {
+  try {
+    await supabase.rpc("record_member_activity", { p_kind: kind, p_record_type: recordType, p_record_id: recordId });
+  } catch {
+    // Not recorded; the advisor's work goes on.
+  }
+}
+
+export type FirmActivityEntry = Database["public"]["Functions"]["firm_activity_list"]["Returns"][number];
+export type FirmActivityPerson = Database["public"]["Functions"]["firm_activity_people"]["Returns"][number];
+/** Entries on a page of the firm's record. */
+export const FIRM_ACTIVITY_PAGE_SIZE = 25;
+
+/** The firm the signed-in person currently owns, or null: only an owner reads a firm's record. */
+export async function fetchOwnedFirm(): Promise<string | null> {
+  const { data, error } = await supabase.rpc("my_owner_firm");
+  if (error) fail(error, "Couldn't check your role in your firm.");
+  return data ?? null;
+}
+
+/** Who appears as the doer in the firm's record, for the person filter. Owners only. */
+export async function listFirmActivityPeople(firmId: string): Promise<FirmActivityPerson[]> {
+  const { data, error } = await supabase.rpc("firm_activity_people", { p_firm_id: firmId });
+  if (error) fail(error, "Couldn't load the people in the record.");
+  return data ?? [];
+}
+
+/**
+ * One page of the firm's record, newest first, filtered by the person who did it and the kind (null keeps all). Pages
+ * count from 1. One more row than a page is asked for, to say whether another page follows. Owners only: for anyone else
+ * the database refuses (code 42501, `forbidden` on the error).
+ */
+export async function listFirmActivity(
+  firmId: string,
+  opts: { person: string | null; kind: string | null; page: number },
+): Promise<{ entries: FirmActivityEntry[]; hasMore: boolean }> {
+  const page = Math.max(1, Math.floor(opts.page));
+  const { data, error } = await supabase.rpc("firm_activity_list", {
+    p_firm_id: firmId,
+    p_person: opts.person,
+    p_kind: opts.kind,
+    p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1,
+    p_offset: (page - 1) * FIRM_ACTIVITY_PAGE_SIZE,
+  });
+  if (error) fail(error, "Couldn't load the record.");
+  const rows = data ?? [];
+  return { entries: rows.slice(0, FIRM_ACTIVITY_PAGE_SIZE), hasMore: rows.length > FIRM_ACTIVITY_PAGE_SIZE };
+}
+
 /** How long a link to a stored file works. src/lib/fileLinks.test.ts holds every link to this. */
 export const SIGNED_URL_SECONDS = 60;
 

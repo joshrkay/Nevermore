@@ -32,9 +32,12 @@ CREATE TABLE public.firm_activity (
   subject_user_id uuid,
   role text,
   CONSTRAINT firm_activity_kind_check CHECK (kind IN (
+    -- sync:begin firm_activity_kinds
     'sign_in', 'submission_viewed', 'document_downloaded', 'packet_downloaded', 'send_recorded',
     'member_added', 'member_ended', 'owner_added', 'owner_ended',
-    'export_made', 'invitation_sent', 'member_removed', 'support_access')),
+    'export_made', 'invitation_sent', 'member_removed', 'support_access'
+    -- sync:end firm_activity_kinds
+  )),
   CONSTRAINT firm_activity_record_check CHECK (
     record_type IN ('submission', 'document', 'manuscript', 'quote_request', 'membership', 'firm')
     AND record_id ~ '^[A-Za-z0-9_-]{1,64}$'),
@@ -301,6 +304,27 @@ $$;
 
 REVOKE ALL ON FUNCTION public.firm_activity_people(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.firm_activity_people(uuid) TO authenticated;
+
+-- The firm whose record the caller reads: one they currently own, or null. For the page that lists it.
+CREATE FUNCTION public.my_owner_firm()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT m.firm_id
+  FROM public.firm_memberships m
+  WHERE auth.uid() IS NOT NULL
+    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+    AND m.user_id = auth.uid() AND m.role = 'owner'
+    AND public.membership_is_current(m.valid_from, m.valid_until)
+  ORDER BY m.valid_from, m.id
+  LIMIT 1
+$$;
+
+REVOKE ALL ON FUNCTION public.my_owner_firm() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.my_owner_firm() TO authenticated;
 
 -- ---------- Retention ----------
 

@@ -26,7 +26,7 @@ import { describeSource } from "@/data/referralPartners";
 import { lastCertifiedVersion } from "@/data/peoCompleteness";
 import type { FieldKey } from "@/data/provenance";
 import type { ExtraQuestionRef } from "@/data/extraAnswers";
-import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
+import { listEmailProblems, loadSubmission, recordActivity, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
 
 type Load =
@@ -61,6 +61,12 @@ const AdvisorSubmissionPage = () => {
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
   }, [id, attempt]);
+
+  // Opening a submission is recorded once, when it first loads: refreshing after a change isn't another opening.
+  const opened = load.kind === "ready";
+  useEffect(() => {
+    if (opened) void recordActivity("submission_viewed", "submission", id);
+  }, [opened, id]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
 

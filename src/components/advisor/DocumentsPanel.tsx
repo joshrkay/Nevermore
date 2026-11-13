@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import type { ReviewedDocument } from "@/data/advisor";
 import { categoryInfo } from "@/data/documentCategories";
 import { advisorScanNotice } from "@/data/documentStatus";
-import { documentUrl, type DocumentEvent } from "@/lib/advisorApi";
+import { documentUrl, recordActivity, type DocumentEvent } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
 interface DocumentsPanelProps {
@@ -21,6 +21,7 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
   const open = async (doc: ReviewedDocument) => {
     setOpening(doc.id);
     try {
+      void recordActivity("document_downloaded", "document", doc.id);
       window.location.assign(await documentUrl(doc));
     } catch (err) {
       toast.error((err as Error).message);
