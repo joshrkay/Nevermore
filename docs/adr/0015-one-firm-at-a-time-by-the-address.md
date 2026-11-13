@@ -1,6 +1,6 @@
 # One firm at a time, chosen by the address
 
-ADR 0014 (the console asks for a membership) made the console ask for a membership, and left one consequence open: a person who belongs to several firms was kept out, because every table and function answered them for all their firms at once and the console would have shown the firms' records mixed together. D-40 settles it, and this reverses that "kept out" consequence of 0014.
+ADR 0014 (the console asks for a membership, not the advisor role) left one consequence open: a person who belongs to several firms was kept out, because every table and function answered them for all their firms at once and the console would have shown the firms' records mixed together. D-40 settles it, and this reverses that "kept out" consequence of 0014.
 
 At a firm's address the browser sends the address with every request to the database, in the header `x-firm-address` (set once, where the Supabase client is made). PostgREST hands request headers to the database as `request.headers`; `request_firm_address()` reads the address from it and `address_admits_firm()` says whether a firm is the one holding it (a refused firm holds no address, D-31). `firm_role()`, which `is_firm_member()`, `can_see_firm_record()` and every firm rule are built on, now also asks `address_admits_firm()`. So at a firm's address a member of several firms reads, counts, changes and writes that firm's rows only, and a function that acts for "the caller's firm" (`firm_to_act_for`) acts for that firm.
 
