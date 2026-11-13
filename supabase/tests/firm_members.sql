@@ -414,7 +414,7 @@ DO $$
 DECLARE acme uuid := pg_temp.id('acme'); got text;
 BEGIN
   PERFORM pg_temp.as_user('acme_owner');
-  SELECT string_agg(l.email || ':' || l.role || ':' || l.state || CASE WHEN l.is_you THEN ':you' ELSE '' END, ', ' ORDER BY l.email) INTO got
+  SELECT string_agg(l.email || ':' || l.role || ':' || l.state || CASE WHEN l.is_you THEN ':you' ELSE '' END, ', ' ORDER BY l.email COLLATE "C") INTO got
   FROM public.firm_members(acme) l;
   PERFORM pg_temp.is(got,
     'acme_agent_2@example.test:agent:current, acme_lead@example.test:lead:suspended, acme_owner@example.test:owner:current:you, acme_owner_2@example.test:owner:current',
