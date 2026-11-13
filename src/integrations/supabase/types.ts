@@ -723,6 +723,17 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // A member reads their own firm (20261116090000): the columns granted to them.
+      firms: {
+        Row: {
+          id: string
+          name: string
+          address: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1016,6 +1027,35 @@ export type Database = {
       admin_decide_firm: {
         Args: { p_firm_id: string; p_approve: boolean; p_note?: string | null }
         Returns: undefined
+      }
+      // Invitations to join a firm (20261116190000). The token's hash is asked of, and never returned by, the database.
+      firm_role: {
+        Args: { p_firm_id: string }
+        Returns: string | null
+      }
+      firm_pending_invitations: {
+        Args: { p_firm_id: string }
+        Returns: {
+          invitation_id: string
+          email: string
+          role: string
+          team_id: string | null
+          invited_at: string
+          expires_at: string
+          expired: boolean
+          resent_at: string | null
+          email_sent_at: string | null
+          email_error: string | null
+          email_outcome: string | null
+        }[]
+      }
+      cancel_invitation: {
+        Args: { p_invitation_id: string }
+        Returns: undefined
+      }
+      accept_invitation: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: { firm_id: string; firm_address: string; role: string }[]
       }
       is_member_of_firm_address: {
         Args: { p_address: string }
