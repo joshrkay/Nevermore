@@ -157,6 +157,17 @@ describe("AdvisorActivityPage", () => {
     expect(within(rows[2]).getAllByRole("cell")[1].textContent).toBe("Nevermore");
   });
 
+  it("shows an invitation entry written before roles were recorded without a role, never as 'as null'", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [entry({ entry_key: "k8", kind: "invitation_sent", record_type: "firm", record_id: "firm-1", role: null })],
+      hasMore: false,
+    });
+    renderPage();
+    const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
+    expect(row).toHaveTextContent("Sent an invitation");
+    expect(row.textContent).not.toMatch(/ as |null/);
+  });
+
   it("names the person a membership change was about and their role, and never shows a missing person as blank", async () => {
     api.listFirmActivity.mockResolvedValue({
       entries: [

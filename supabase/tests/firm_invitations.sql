@@ -866,9 +866,16 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.is((SELECT send_count FROM public.firm_invitations WHERE id = invs[1]), 4, 'a refused resend changed nothing');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_invitations WHERE firm_id = rf), 5::bigint, 'and a refused invitation left nothing');
-  -- The oldest email is now just over twenty-four hours old (the record is append-only: the test lifts the guard to age it).
+  -- The oldest email is first twenty-three and a half hours old, still inside the window, then just over twenty-four hours old
+  -- (the record is append-only: the test lifts the guard to age it).
   ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
-  UPDATE public.firm_activity SET at = at - interval '24 hours 1 minute'
+  UPDATE public.firm_activity SET at = at - interval '23 hours 30 minutes'
+  WHERE entry_key = (SELECT a.entry_key FROM pg_temp.acts(rf, 'invitation_sent') a ORDER BY a.at, a.entry_key LIMIT 1);
+  PERFORM pg_temp.as_user('rate_owner');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('rate-r21b'))), 40),
+    left(head, 40), 'an email 23 and a half hours after the first is still refused');
+  RESET ROLE;
+  UPDATE public.firm_activity SET at = at - interval '31 minutes'
   WHERE entry_key = (SELECT a.entry_key FROM pg_temp.acts(rf, 'invitation_sent') a ORDER BY a.at, a.entry_key LIMIT 1);
   ALTER TABLE public.firm_activity ENABLE TRIGGER firm_activity_append_only;
   PERFORM pg_temp.as_user('rate_owner');
@@ -880,9 +887,13 @@ BEGIN
   PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('rate-r22'))), 40),
     left(head, 40), 'and the window rolls on: twenty in the last 24 hours refuse the next');
   RESET ROLE;
-  UPDATE public.firms SET approved_at = now(), decision = 'approved', decided_at = now() WHERE id = rf;
+  -- Approval is the time it was approved, with or without a recorded decision (a firm approved before decisions were kept has none).
+  UPDATE public.firms SET approved_at = now() WHERE id = rf;
   PERFORM pg_temp.as_user('rate_owner');
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('rate-r22'))), 'rows:1', 'an approved firm is not limited: it resends');
+  RESET ROLE;
+  UPDATE public.firms SET decision = 'approved', decided_at = now() WHERE id = rf;
+  PERFORM pg_temp.as_user('rate_owner');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, 'rate7@example.test', 'agent', NULL, %L)$q$, rf, pg_temp.hash_of('rate-7'))), 'rows:1', 'and invites');
   RESET ROLE;
   -- A waiting firm whose five invitations were accepted can invite again.
