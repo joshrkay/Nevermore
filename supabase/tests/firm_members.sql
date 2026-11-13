@@ -437,7 +437,7 @@ END $$;
 -- Break caught: lifting that gives back a different role or team, leaves two memberships, is done by the suspended person or a
 -- non-owner, or can be done to someone who isn't suspended.
 DO $$
-DECLARE acme uuid := pg_temp.id('acme'); lead_id uuid := pg_temp.id('acme_lead'); stmt text; team uuid := gen_random_uuid(); rows_before bigint;
+DECLARE acme uuid := pg_temp.id('acme'); lead_id uuid := pg_temp.id('acme_lead'); stmt text; rows_after_lift bigint;
 BEGIN
   stmt := format('SELECT public.lift_member_suspension(%L, %L)', acme, lead_id);
   PERFORM pg_temp.as_user('acme_lead');
@@ -452,8 +452,8 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.lift_member_suspension(%L, %L)', acme, pg_temp.id('acme_agent_2'))), 'PT404', 'a member who is not suspended has nothing to lift');
   PERFORM public.lift_member_suspension(acme, lead_id);
   RESET ROLE;
-  SELECT count(*) INTO rows_before FROM public.firm_memberships WHERE firm_id = acme AND user_id = lead_id;
-  PERFORM pg_temp.is(rows_before, 2::bigint, 'the ended membership is kept and a new one begins');
+  SELECT count(*) INTO rows_after_lift FROM public.firm_memberships WHERE firm_id = acme AND user_id = lead_id;
+  PERFORM pg_temp.is(rows_after_lift, 2::bigint, 'the ended membership is kept and a new one begins');
   PERFORM pg_temp.is((SELECT role FROM public.firm_memberships WHERE firm_id = acme AND user_id = lead_id AND valid_until IS NULL), 'lead', 'with the role they had');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_suspensions WHERE firm_id = acme AND user_id = lead_id AND ended_at IS NULL), 0::bigint, 'the suspension is closed');
   PERFORM pg_temp.is((SELECT ended_how FROM public.firm_member_suspensions WHERE firm_id = acme AND user_id = lead_id), 'lifted', 'as lifted');
@@ -663,7 +663,192 @@ BEGIN
   PERFORM public.remove_member(acme, pg_temp.id('mb_four'));
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.stored('mb_four'), false, 'removing someone who is suspended, their last membership: deleted');
+
+  -- removed from their last firm, then added to another: nothing comes back, they connect again
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (zenith, pg_temp.id('mb_one'), 'agent');
+  PERFORM pg_temp.is(pg_temp.stored('mb_one'), false, 'rejoining any firm after removal: no stored mailbox came back');
+  PERFORM pg_temp.is(pg_temp.usable('mb_one'), false, 'and none is usable until they connect again');
+  RESET ROLE;
+
+  -- a suspended person keeps the mailbox when a platform role they hold goes (drop_mailbox_without_role)
+  PERFORM pg_temp.new_user('mb_five');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, pg_temp.id('mb_five'), 'agent');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('mb_five'), 'advisor');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.store_mailbox('mb_five');
+  RESET ROLE;
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.suspend_member(acme, pg_temp.id('mb_five'));
+  RESET ROLE;
+  DELETE FROM public.user_roles WHERE user_id = pg_temp.id('mb_five');
+  PERFORM pg_temp.is(pg_temp.stored('mb_five'), true, 'a suspended person who loses a platform role keeps the stored mailbox');
   RAISE NOTICE 'firm_members: mailbox passed';
+END $$;
+
+-- ---------- a membership that already has a future end date ----------
+-- Break caught: an owner can't remove or suspend someone whose membership already lapses later (the history trigger refused it as a
+-- permission error, which the page showed as "you are not an owner"); or a removal that lost a race is reported as a permission error.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  PERFORM pg_temp.new_user('fut_one'); PERFORM pg_temp.new_user('fut_two'); PERFORM pg_temp.new_user('fut_late');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES
+    (acme, pg_temp.id('fut_one'), 'agent', now() - interval '1 day', now() + interval '30 days'),
+    (acme, pg_temp.id('fut_two'), 'agent', now() - interval '1 day', now() + interval '30 days'),
+    (acme, pg_temp.id('fut_late'), 'agent', now() - interval '1 day', now() + interval '1 microsecond');
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.remove_member(acme, pg_temp.id('fut_one'));
+  PERFORM public.suspend_member(acme, pg_temp.id('fut_two'));
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE user_id = pg_temp.id('fut_one') AND valid_until > now() + interval '1 day'), 0::bigint, 'a future-dated membership is ended now by a removal');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE user_id = pg_temp.id('fut_two') AND valid_until > now() + interval '1 day'), 0::bigint, 'and by a suspension');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_suspensions WHERE user_id = pg_temp.id('fut_two') AND ended_at IS NULL), 1::bigint, 'which is recorded');
+  -- a membership someone else has just ended (its end falls between this call's start and its row lock) is "not a member", not a permission error
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.remove_member(%L, %L)', acme, pg_temp.id('fut_late'))), 'PT404', 'a removal that lost the race is reported as already changed');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.suspend_member(%L, %L)', acme, pg_temp.id('fut_late'))), 'PT404', 'and so is a suspension');
+  RESET ROLE;
+  RAISE NOTICE 'firm_members: future-dated passed';
+END $$;
+
+-- ---------- a stored mailbox and two sessions at once (D-32) ----------
+-- A person's last membership ending and the stored mailbox are decided from other rows, so no constraint can say it: one lock per
+-- person (taken by mailbox_store and by every ending, before the eligibility check) makes them queue. Without it two endings in
+-- different firms each still see the other membership current and keep the mailbox, and a store that checked just before an ending
+-- commits leaves a mailbox for someone who is no longer a member. Each test holds the first session open until the second is seen
+-- waiting for it (or has finished, as it does without the lock), then lets the first commit.
+-- Break caught: either order leaves a stored mailbox for a person with no membership.
+CREATE FUNCTION pg_temp.race_dsn() RETURNS text LANGUAGE sql AS $$
+  SELECT format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1))
+$$;
+CREATE FUNCTION pg_temp.claims(n text) RETURNS text LANGUAGE sql AS $$
+  SELECT format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false, 'email', n || '@example.test')::text)
+$$;
+-- Waits until the connection is blocked by another, or has answered.
+CREATE FUNCTION pg_temp.wait_blocked_or_done(conn text, pid integer) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE tries integer := 0;
+BEGIN
+  WHILE cardinality(pg_blocking_pids(pid)) = 0 AND race.dblink_is_busy(conn) = 1 LOOP
+    tries := tries + 1;
+    IF tries > 100 THEN RETURN; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  p uuid; q uuid;
+BEGIN
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Lock Firm P', 'lock-firm-p', now()) RETURNING id INTO p;
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Lock Firm Q', 'lock-firm-q', now()) RETURNING id INTO q;
+  INSERT INTO fx VALUES ('lock_p', p), ('lock_q', q);
+  PERFORM pg_temp.new_user('lock_p_owner'); PERFORM pg_temp.new_user('lock_q_owner'); PERFORM pg_temp.new_user('lock_both'); PERFORM pg_temp.new_user('lock_late');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
+    (p, pg_temp.id('lock_p_owner'), 'owner'), (q, pg_temp.id('lock_q_owner'), 'owner'),
+    (p, pg_temp.id('lock_both'), 'agent'), (q, pg_temp.id('lock_both'), 'agent'),
+    (p, pg_temp.id('lock_late'), 'agent');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.store_mailbox('lock_both');
+  RESET ROLE;
+END $$;
+
+DO $$
+DECLARE
+  p uuid := pg_temp.id('lock_p'); q uuid := pg_temp.id('lock_q'); pid2 integer;
+BEGIN
+  -- two endings of the same person's last two memberships, in two firms, at once
+  PERFORM race.dblink_connect('lock_first', pg_temp.race_dsn());
+  PERFORM race.dblink_connect('lock_second', pg_temp.race_dsn());
+  PERFORM race.dblink_exec('lock_second', 'SET lock_timeout = ''20s''');
+  SELECT t.pid INTO pid2 FROM race.dblink('lock_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('lock_first', 'BEGIN');
+  PERFORM race.dblink_exec('lock_first', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('lock_first', pg_temp.claims('lock_p_owner')) AS t(c text);
+  PERFORM * FROM race.dblink('lock_first', format($q$SELECT public.remove_member(%L, %L)::text$q$, p, pg_temp.id('lock_both'))) AS t(r text);
+  PERFORM race.dblink_exec('lock_second', 'BEGIN');
+  PERFORM race.dblink_exec('lock_second', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('lock_second', pg_temp.claims('lock_q_owner')) AS t(c text);
+  PERFORM race.dblink_send_query('lock_second', format($q$SELECT public.remove_member(%L, %L)::text$q$, q, pg_temp.id('lock_both')));
+  PERFORM pg_temp.wait_blocked_or_done('lock_second', pid2);
+  PERFORM race.dblink_exec('lock_first', 'COMMIT');
+  PERFORM * FROM race.dblink_get_result('lock_second') AS t(r text);
+  PERFORM * FROM race.dblink_get_result('lock_second') AS t(r text);
+  PERFORM race.dblink_exec('lock_second', 'COMMIT');
+  PERFORM race.dblink_disconnect('lock_first');
+  PERFORM race.dblink_disconnect('lock_second');
+  PERFORM pg_temp.is(pg_temp.stored('lock_both'), false, 'two endings of the last two memberships at once: the mailbox does not outlive them');
+
+  -- a mailbox stored while the person's last membership is being ended
+  PERFORM race.dblink_connect('lock_first', pg_temp.race_dsn());
+  PERFORM race.dblink_connect('lock_second', pg_temp.race_dsn());
+  PERFORM race.dblink_exec('lock_second', 'SET lock_timeout = ''20s''');
+  SELECT t.pid INTO pid2 FROM race.dblink('lock_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('lock_first', 'BEGIN');
+  PERFORM race.dblink_exec('lock_first', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('lock_first', pg_temp.claims('lock_p_owner')) AS t(c text);
+  PERFORM * FROM race.dblink('lock_first', format($q$SELECT public.remove_member(%L, %L)::text$q$, p, pg_temp.id('lock_late'))) AS t(r text);
+  PERFORM race.dblink_exec('lock_second', 'BEGIN');
+  PERFORM race.dblink_exec('lock_second', 'SET LOCAL ROLE service_role');
+  PERFORM race.dblink_send_query('lock_second', format($q$SELECT public.mailbox_store(%L, 'google', 'late@gmail.example', 'scope', 'CIPHERTEXT', 'IV')::text$q$, pg_temp.id('lock_late')));
+  PERFORM pg_temp.wait_blocked_or_done('lock_second', pid2);
+  PERFORM race.dblink_exec('lock_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('lock_second') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  BEGIN
+    PERFORM race.dblink_exec('lock_second', 'COMMIT');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('lock_first');
+  PERFORM race.dblink_disconnect('lock_second');
+  PERFORM pg_temp.is(pg_temp.stored('lock_late'), false, 'a store racing the end of the last membership leaves no mailbox for a non-member');
+  RAISE NOTICE 'firm_members: two-session mailbox passed';
+END $$;
+
+-- ---------- an hourly cleanup for memberships that reach their date ----------
+-- Break caught: the last membership ends by date alone (no trigger fires) and the credential stays stored for ever; the cleanup deletes
+-- a current member's, a suspended person's, or one that someone else is still being kept for; or anyone can call it.
+DO $$
+DECLARE zenith uuid := pg_temp.id('zenith');
+BEGIN
+  PERFORM pg_temp.new_user('cl_lapsed'); PERFORM pg_temp.new_user('cl_current'); PERFORM pg_temp.new_user('cl_suspended'); PERFORM pg_temp.new_user('cl_never');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES
+    (zenith, pg_temp.id('cl_lapsed'), 'agent', now() - interval '1 day', now() + interval '1 second'),
+    (zenith, pg_temp.id('cl_current'), 'agent', now() - interval '1 day', NULL),
+    (zenith, pg_temp.id('cl_suspended'), 'agent', now() - interval '1 day', NULL);
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.store_mailbox('cl_lapsed'); PERFORM pg_temp.store_mailbox('cl_current'); PERFORM pg_temp.store_mailbox('cl_suspended');
+  RESET ROLE;
+  -- cl_never never had a membership: a stored row with no right to be there (inserted directly, as an old one would be)
+  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+  VALUES (pg_temp.id('cl_never'), 'google', 'never@gmail.example', 'scope', 'C', 'I');
+  PERFORM pg_temp.as_user('zenith_owner');
+  PERFORM public.suspend_member(zenith, pg_temp.id('cl_suspended'));
+  RESET ROLE;
+END $$;
+
+-- The date passes between two statements: a transaction sees one now().
+SELECT pg_sleep(1.5) \gset
+
+DO $$
+DECLARE n integer;
+BEGIN
+  PERFORM pg_temp.is(pg_temp.stored('cl_lapsed'), true, 'a membership that reached its date by itself leaves the mailbox stored, until the cleanup runs');
+  PERFORM pg_temp.is(pg_temp.usable('cl_lapsed'), false, 'but it gives them nothing');
+  PERFORM pg_temp.as_user('zenith_owner');
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT public.drop_mailboxes_of_former_members()'), '42501', 'a person signed in can''t run the cleanup');
+  PERFORM pg_temp.as_service();
+  n := public.drop_mailboxes_of_former_members();
+  RESET ROLE;
+  PERFORM pg_temp.is(n >= 2, true, 'the cleanup says how many it deleted');
+  PERFORM pg_temp.is(pg_temp.stored('cl_lapsed'), false, 'the cleanup deletes the mailbox of someone whose last membership reached its date');
+  PERFORM pg_temp.is(pg_temp.stored('cl_never'), false, 'and of someone with no membership at all');
+  PERFORM pg_temp.is(pg_temp.stored('cl_current'), true, 'but not of a current member');
+  PERFORM pg_temp.is(pg_temp.stored('cl_suspended'), true, 'nor of a suspended person');
+  RAISE NOTICE 'firm_members: cleanup passed';
 END $$;
 
 -- ---------- what the person stops receiving, and what they leave behind ----------
@@ -712,6 +897,35 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.accept_invitation(encode(extensions.digest(convert_to(repeat('b', 64), 'UTF8'), 'sha256'), 'hex'), 'alert-firm')), 1::bigint, 'and can still be accepted');
   RESET ROLE;
   RAISE NOTICE 'firm_members: alerts and invitations passed';
+END $$;
+
+-- The people an alert was first prepared for are written on the event once and never cleared (D-35, D-102): the frozen message is
+-- disposable (a definitive refusal clears it, and it ages out), so the dispatcher needs them elsewhere to keep a retry from reaching
+-- someone who joined afterwards.
+-- Break caught: the list is not stored; a later freeze overwrites it; a definitive failure or a rebuild clears it.
+DO $$
+DECLARE
+  sid uuid; ev uuid; msg jsonb;
+BEGIN
+  SELECT id INTO sid FROM public.chamber_sessions WHERE firm_id = pg_temp.id('alert_firm') LIMIT 1;
+  INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload, status, attempts, locked_until)
+  VALUES ('advisor_notification', sid, gen_random_uuid()::text, '{}', 'claimed', 1, now() + interval '10 minutes') RETURNING id INTO ev;
+  PERFORM pg_temp.as_service();
+  msg := jsonb_build_object('from', 'a', 'to', jsonb_build_array('first@example.test', 'second@example.test'), 'subject', 's', 'text', 't', 'html', 'h');
+  PERFORM public.freeze_outbox_message(ev, 1, msg, false);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT first_recipients FROM public.outbox_events WHERE id = ev), '["first@example.test", "second@example.test"]'::jsonb, 'the first preparation''s recipients are kept on the event');
+  PERFORM pg_temp.as_service();
+  PERFORM public.fail_outbox_event(ev, 'auth:403', 60, 1, true);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT pending_send IS NULL FROM public.outbox_events WHERE id = ev), true, 'a definitive refusal clears the frozen message');
+  PERFORM pg_temp.is((SELECT first_recipients FROM public.outbox_events WHERE id = ev), '["first@example.test", "second@example.test"]'::jsonb, 'but not the recipients');
+  UPDATE public.outbox_events SET status = 'claimed', attempts = 2, locked_until = now() + interval '10 minutes', next_attempt_at = now() WHERE id = ev;
+  PERFORM pg_temp.as_service();
+  PERFORM public.freeze_outbox_message(ev, 2, jsonb_set(msg, '{to}', '["third@example.test"]'), false);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT first_recipients FROM public.outbox_events WHERE id = ev), '["first@example.test", "second@example.test"]'::jsonb, 'and a later freeze, for other people, does not replace them');
+  RAISE NOTICE 'firm_members: first recipients passed';
 END $$;
 
 -- A session held at the firm's address: the address asks "is this person a member of this firm" (D-27), and a removed or suspended

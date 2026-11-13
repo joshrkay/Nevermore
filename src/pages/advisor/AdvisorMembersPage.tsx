@@ -37,7 +37,7 @@ function confirmation(change: Change, firmName: string): { title: string; body: 
     case "suspend":
       return {
         title: `Suspend ${email}?`,
-        body: `They lose access at once and stop receiving the firm's alerts, but stay on this list as ${role === "owner" ? "an owner" : role === "lead" ? "a lead" : "an agent"} until you lift the suspension. A mailbox they connected stays stored but can't be used meanwhile.`,
+        body: `They lose access at once and stop receiving the firm's alerts, but stay on this list as ${WITH_ARTICLE[role]} until you lift the suspension. A mailbox they connected stays stored but can't be used meanwhile.`,
         action: `Suspend ${email}`,
       };
     case "lift":
@@ -95,17 +95,29 @@ const AdvisorMembersPage = () => {
     setDone(null);
     try {
       await (action === "remove" ? removeMember : action === "suspend" ? suspendMember : liftSuspension)(firm.id, member.userId);
-      setDone(
-        action === "remove" ? `${member.email} was removed from ${firm.name}.`
-          : action === "suspend" ? `${member.email} is suspended.`
-          : `${member.email}'s suspension is lifted.`,
-      );
-      setAsking(null);
-      setLoad(await refresh());
     } catch (err) {
       setAsking(null);
-      if ((err as { forbidden?: boolean }).forbidden) setLoad({ kind: "not_allowed" });
-      else setProblem((err as Error).message);
+      const failed = err as Error & { forbidden?: boolean; unauthenticated?: boolean };
+      // An expired session is the load error's to handle (it signs the person out); a refusal means they are no longer an owner.
+      if (failed.unauthenticated) setLoad({ kind: "error", error: failed });
+      else if (failed.forbidden) setLoad({ kind: "not_allowed" });
+      else setProblem(failed.message);
+      setBusy(false);
+      return;
+    }
+    // The change is made. Reloading the list is a separate matter: if it fails, the list says so and offers to try again, and the
+    // change is still reported as made.
+    setDone(
+      action === "remove" ? `${member.email} was removed from ${firm.name}.`
+        : action === "suspend" ? `${member.email} is suspended.`
+        : `${member.email}'s suspension is lifted.`,
+    );
+    setAsking(null);
+    try {
+      setLoad(await refresh());
+    } catch (err) {
+      const failed = err as Error & { forbidden?: boolean };
+      setLoad(failed.forbidden ? { kind: "not_allowed" } : { kind: "error", error: failed });
     }
     setBusy(false);
   };
