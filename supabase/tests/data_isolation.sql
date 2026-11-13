@@ -159,6 +159,7 @@
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
+\i supabase/migrations/20261117120000_table_settings.sql
 \i supabase/migrations/20261117100000_queue_query.sql
 SET client_min_messages = notice;
 
@@ -597,6 +598,27 @@ BEGIN
   IF (SELECT count(*) FROM public.chamber_certifications) <> 2 THEN RAISE EXCEPTION 'setup: expected two certifications'; END IF;
 END $$;
 
+-- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
+-- Each firm has, written as the superuser: its agent's private view (the advisor's, agent_b's), its owner's private view and
+-- its owner's shared view (the admin's, owner_b's), and the agent's own columns for the queue. Nobody reads any of them
+-- through the API (the matrix); the function probes in 4e use them.
+DO $$
+DECLARE
+  f text;
+  fid uuid;
+  agent uuid;
+  owner uuid;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+    fid := pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END);
+    agent := pg_temp.id(CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END);
+    owner := pg_temp.id(CASE f WHEN 'a' THEN 'admin' ELSE 'owner_b' END);
+    INSERT INTO public.saved_views (firm_id, user_id, table_name, name) VALUES (fid, agent, 'submissions', 'Agent view'), (fid, owner, 'submissions', 'Owner view');
+    INSERT INTO public.saved_views (firm_id, user_id, table_name, name, shared, shared_by, shared_at) VALUES (fid, owner, 'submissions', 'Shared view', true, owner, now());
+    INSERT INTO public.table_preferences (firm_id, user_id, table_name, columns) VALUES (fid, agent, 'submissions', '["company_name"]');
+  END LOOP;
+END $$;
+
 -- ---------- 1. the matrix ----------
 -- Rows each caller sees of each source. A missing caller key means 0; "all" means every row there is. Every
 -- source must hold at least one row, or the check would prove nothing.
@@ -699,6 +721,14 @@ INSERT INTO matrix VALUES
   ('public.ai_request_log',                             '{}', NULL),
   ('public.ai_ip_log',                                  '{}', NULL),
   ('public.ai_global_usage',                            '{}', NULL);
+
+-- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
+-- Nobody reads either through the API, their own rows included: a current member reaches their own and the firm's shared
+-- views and their own columns only through the functions (supabase/tests/table_settings.sql). The two-firm probe below proves
+-- the firms apart; the function probes in 4e prove the functions do.
+INSERT INTO matrix VALUES
+  ('public.saved_views',                                '{}', NULL),
+  ('public.table_preferences',                          '{}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -1094,6 +1124,18 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.queue_list_submissions(''[]'', ''company_name'', ''asc'', 1)', 'the queue: one page, filtered and sorted in the database (D-44)'),
   ('queue_view_counts(p_views jsonb, p_search text, p_time_zone text)', 'advisor',
                                                                      'SELECT count(*) FROM public.queue_view_counts(''[{"name":"All"}]'')', 'the count on each of the queue''s view tabs');
+
+-- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000; supabase/tests/table_settings.sql) ----
+INSERT INTO callable VALUES
+  ('list_saved_views(p_firm_id uuid, p_table text)', 'own', NULL, 'a current member lists their own and the firm''s shared views of a table, each saying whether they may change, share or unshare it; 42501 for anyone else'),
+  ('save_view(p_firm_id uuid, p_table text, p_name text, p_filters jsonb, p_sort jsonb, p_columns jsonb)', 'own', NULL, 'a current member saves a private view of their own; 42501 for anyone else'),
+  ('rename_saved_view(p_view_id uuid, p_name text)', 'own', NULL, 'the saver, a current member, renames their own view; PT404 for a view the caller may not read, the same as for one that does not exist'),
+  ('change_saved_view(p_view_id uuid, p_filters jsonb, p_sort jsonb, p_columns jsonb)', 'own', NULL, 'the saver, a current member, changes their own view; PT404 for a view the caller may not read'),
+  ('delete_saved_view(p_view_id uuid)', 'own', NULL, 'the saver, a current member, deletes their own view; PT404 for a view the caller may not read'),
+  ('share_saved_view(p_view_id uuid)', 'own', NULL, 'a current owner shares a view they saved; PT404 for a view the caller may not read, 42501 for a member who is no owner'),
+  ('unshare_saved_view(p_view_id uuid)', 'own', NULL, 'a current owner stops sharing a shared view of their firm; PT404 for a view the caller may not read, 42501 for a member who is no owner'),
+  ('my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid)', 'own', NULL, 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else'),
+  ('set_my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid, p_columns jsonb)', 'own', NULL, 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else');
 
 DO $$
 DECLARE
@@ -1575,6 +1617,21 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
    $$SELECT total::text FROM public.queue_view_counts('[{"name":"Submitted","filters":[{"field":"intake_status","op":"any_of","value":["submitted"]}]}]')$$,
    $$SELECT count(*)::text FROM public.chamber_sessions s JOIN public.submission_workflow w ON w.session_id = s.id WHERE s.firm_id = {firm} AND s.status = 'submitted'$$);
 
+-- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
+-- Every function is a current member's, on their own firm's views: {view} is the agent's private view (advisor, agent_b),
+-- {oview} the owner's private one and {sview} the owner's shared one (admin, owner_b). Another firm's member, a platform
+-- admin, a former member and a non-member are refused, by id (PT404, as for a view that does not exist) and by firm (42501).
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('list_saved_views', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.list_saved_views({firm}, 'submissions')$$),
+  ('save_view', 'advisor', 'by_id', $$SELECT public.save_view({firm}, 'submissions', 'Probe view', '[]', NULL, NULL)::text$$),
+  ('rename_saved_view', 'advisor', 'by_id', $$SELECT public.rename_saved_view({view}, 'Probe renamed')::text$$),
+  ('change_saved_view', 'advisor', 'by_id', $$SELECT public.change_saved_view({view}, '[{"field":"status","op":"is_empty"}]', NULL, NULL)::text$$),
+  ('delete_saved_view', 'advisor', 'by_id', $$SELECT public.delete_saved_view({view})::text$$),
+  ('share_saved_view', 'admin', 'by_id', $$SELECT public.share_saved_view({oview})::text$$),
+  ('unshare_saved_view', 'admin', 'by_id', $$SELECT public.unshare_saved_view({sview})::text$$),
+  ('my_table_columns', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.my_table_columns({firm}, 'submissions', {sview})$$),
+  ('set_my_table_columns', 'advisor', 'by_id', $$SELECT public.set_my_table_columns({firm}, 'submissions', {sview}, '["company_name"]')::text$$);
+
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
 BEGIN
@@ -1612,6 +1669,13 @@ BEGIN
     INSERT INTO fprobe_ids VALUES (f, 'evt', qr);
   END LOOP;
 END $$;
+
+-- ---- CRM-S3.1b with S3.4b: the views the probes above name, one set per firm (made before the matrix) ----
+INSERT INTO fprobe_ids
+SELECT CASE v.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END,
+       CASE v.name WHEN 'Agent view' THEN 'view' WHEN 'Owner view' THEN 'oview' ELSE 'sview' END, v.id::text
+FROM public.saved_views v
+WHERE v.name IN ('Agent view', 'Owner view', 'Shared view');
 
 DO $$
 DECLARE
@@ -2301,6 +2365,17 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
    $m$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES ({firm}, 'invitation_sent', 'firm', {firm}::text) RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
+-- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
+-- A firm's views and its people's column choices: their own firm_id. Closed to the API (a member reaches them through the
+-- functions), so no member reads a row directly and there is no positive control here; every other caller reads, counts,
+-- changes and deletes none of it, inserts none, and nobody moves one to the other firm.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.saved_views', 'firm', 'its own firm_id; closed to the API, a member reads their own and the shared views through a function',
+   $m$INSERT INTO public.saved_views (firm_id, user_id, table_name, name) VALUES ({firm}, {u}, 'submissions', 'Probe {tag}') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.table_preferences', 'firm', 'its own firm_id; closed to the API, a member reads their own columns through a function',
+   $m$INSERT INTO public.table_preferences (firm_id, user_id, table_name, columns) VALUES ({firm}, {u}, 'submissions', '["probe"]') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -2815,6 +2890,18 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('resend_invitation', 'firm_scoped', 'a current owner of the invitation''s firm sends it again with a new link; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
   ('cancel_invitation', 'firm_scoped', 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
   ('firm_pending_invitations', 'firm_scoped', 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (4e)');
+
+-- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000; supabase/tests/table_settings.sql) ----
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('list_saved_views', 'firm_scoped', 'a current member lists their own and the firm''s shared views of a table; 42501 for anyone else (4e)'),
+  ('save_view', 'firm_scoped', 'a current member saves a private view of their own in that firm; 42501 for anyone else (4e)'),
+  ('rename_saved_view', 'firm_scoped', 'the saver renames their own view; the same refusal for a view the caller may not read as for one that does not exist (4e)'),
+  ('change_saved_view', 'firm_scoped', 'the saver changes their own view; the same refusal for a view the caller may not read as for one that does not exist (4e)'),
+  ('delete_saved_view', 'firm_scoped', 'the saver deletes their own view; the same refusal for a view the caller may not read as for one that does not exist (4e)'),
+  ('share_saved_view', 'firm_scoped', 'a current owner shares a view they saved; refused for every other caller (4e)'),
+  ('unshare_saved_view', 'firm_scoped', 'a current owner stops sharing a shared view of their firm; refused for every other caller (4e)'),
+  ('my_table_columns', 'firm_scoped', 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else (4e)'),
+  ('set_my_table_columns', 'firm_scoped', 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else (4e)');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_allowed_organisation', 'platform_wide', 'the organisations whose members get the advisor role: the platform''s, kept by platform admins'),
