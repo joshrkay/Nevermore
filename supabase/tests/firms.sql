@@ -350,6 +350,12 @@ BEGIN
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), acme_owner, 'owner');
   PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (%L, %L, 'agent')$q$,
     pg_temp.id('acme'), acme_owner), '23P01', 'a second current membership of the same firm');
+  -- Overlap is by dates, not only by an identical open end: a membership that began earlier and ran into this one.
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES (%L, %L, 'agent', now() - interval '3 days', now() + interval '1 day')$q$,
+    pg_temp.id('acme'), acme_owner), '23P01', 'a membership overlapping the current one by dates');
+  -- A person may be a member again once the earlier membership has ended.
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES (%L, %L, 'agent', now() - interval '3 days', now() - interval '2 days')$q$,
+    pg_temp.id('acme'), acme_owner), 'rows:1', 'an earlier membership that ended before this one began');
   -- A membership is never changed in place: not its role, team, person, firm or start.
   PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET role = 'lead' WHERE user_id = %L$q$, pg_temp.id('advisor_1')), '42501', 'changing a role in place');
   PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET team_id = %L WHERE user_id = %L$q$, pg_temp.id('sales'), pg_temp.id('advisor_1')), '42501', 'changing a team in place');
@@ -397,6 +403,17 @@ BEGIN
   UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('acme_owner') AND valid_until IS NULL;
   PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L AND valid_until IS NULL$q$, second_owner),
     '23514', 'ending the last owner after the first left');
+  -- A future owner is not a current owner, and an owner row that is already over is no owner to keep.
+  INSERT INTO public.firms (name, address) VALUES ('Swap Co', 'swap-co'), ('Dormant Co', 'dormant-co');
+  INSERT INTO fx SELECT 'swap', id FROM public.firms WHERE address = 'swap-co';
+  INSERT INTO fx SELECT 'dormant', id FROM public.firms WHERE address = 'dormant-co';
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('swap'), pg_temp.id('acme_owner'), 'owner');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from) VALUES (pg_temp.id('swap'), a_lead, 'owner', now() + interval '1 day');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L$q$, pg_temp.id('swap'), pg_temp.id('acme_owner')),
+    '23514', 'ending the only current owner while a future owner is waiting');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+  VALUES (pg_temp.id('dormant'), a_lead, 'owner', now() - interval '2 days', now() - interval '1 day');
+  PERFORM pg_temp.expect(format($q$DELETE FROM public.firm_memberships WHERE firm_id = %L$q$, pg_temp.id('dormant')), 'rows:1', 'deleting a membership that was over already');
   RAISE NOTICE 'firms: owner cases passed';
 END $$;
 
