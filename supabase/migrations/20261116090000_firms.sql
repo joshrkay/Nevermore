@@ -1,3 +1,11 @@
+-- The one place Edgar Allan Advisory's id is written: the first firm, which every intake without a firm belongs to.
+-- Later stories that need "the default firm" call this.
+CREATE FUNCTION public.default_firm_id()
+RETURNS uuid
+LANGUAGE sql
+IMMUTABLE
+AS $$ SELECT '00000000-0000-4000-8000-00000000eaa1'::uuid $$;
+
 CREATE TABLE public.firms (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
@@ -8,7 +16,14 @@ CREATE TABLE public.firms (
 );
 
 INSERT INTO public.firms (id, name, address, visibility, approved_at)
-VALUES ('00000000-0000-4000-8000-00000000eaa1', 'Edgar Allan Advisory', 'edgar-allan-advisory', 'everyone', now());
+VALUES (public.default_firm_id(), 'Edgar Allan Advisory', 'edgar-allan-advisory', 'everyone', now());
+
+-- "Current" is written once: begun, and not ended (an end date is exclusive). Every guard and helper uses this.
+CREATE FUNCTION public.membership_is_current(p_valid_from timestamptz, p_valid_until timestamptz)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$ SELECT p_valid_from <= now() AND (p_valid_until IS NULL OR p_valid_until > now()) $$;
 
 CREATE TABLE public.firm_memberships (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -20,14 +35,14 @@ CREATE TABLE public.firm_memberships (
 );
 
 INSERT INTO public.firm_memberships (firm_id, user_id, role)
-SELECT '00000000-0000-4000-8000-00000000eaa1', r.user_id,
+SELECT public.default_firm_id(), r.user_id,
        CASE WHEN bool_or(r.role = 'admin') THEN 'owner' ELSE 'agent' END
 FROM public.user_roles r
 WHERE r.role IN ('admin', 'advisor')
 GROUP BY r.user_id;
 
 ALTER TABLE public.chamber_sessions
-  ADD COLUMN firm_id uuid NOT NULL DEFAULT '00000000-0000-4000-8000-00000000eaa1' REFERENCES public.firms (id);
+  ADD COLUMN firm_id uuid NOT NULL DEFAULT public.default_firm_id() REFERENCES public.firms (id);
 
 CREATE FUNCTION public.keep_intake_firm()
 RETURNS trigger
@@ -39,7 +54,7 @@ BEGIN
     RETURN NEW;
   END IF;
   IF TG_OP = 'INSERT' THEN
-    NEW.firm_id := '00000000-0000-4000-8000-00000000eaa1';
+    NEW.firm_id := public.default_firm_id();
   ELSE
     NEW.firm_id := OLD.firm_id;
   END IF;
@@ -65,10 +80,16 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE peo text;
 BEGIN
+  -- D-26: an address is refused as a PEO's only when, with everything but letters and digits removed and in lower
+  -- case, it is exactly a listed PEO's name or short name treated the same way. The short name is the cleaned name
+  -- cut to 20 characters, as the quote reply addresses cut it. Nothing else is partial: a name that merely contains or
+  -- starts or ends with a PEO's (petrinet, adpbenefits) is the firm's own. Platform admins approve each firm before
+  -- it can send (Q-1.2), which is where a look-alike is caught.
   SELECT p.name INTO peo
   FROM public.peos p
   WHERE p.listed
-    AND position(regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g') IN replace(NEW.address, '-', '')) > 0
+    AND regexp_replace(lower(NEW.address), '[^a-z0-9]', '', 'g')
+      IN (regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g'), left(regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g'), 20))
   LIMIT 1;
   IF FOUND THEN
     RAISE EXCEPTION 'A firm address can''t read as a PEO (%)', peo USING ERRCODE = '23514';
@@ -148,19 +169,36 @@ CREATE TRIGGER firm_memberships_history
   BEFORE UPDATE ON public.firm_memberships
   FOR EACH ROW EXECUTE FUNCTION public.keep_membership_history();
 
--- A firm always keeps a current owner (PRD 8.2). Ending, deleting or cascading away a membership that was a current
--- owner's is refused unless another current owner remains, so ownership is passed by adding the new owner first.
+-- A firm always keeps a current owner (PRD 8.2). An owner with an end date is going to lapse, so only an owner
+-- with no end date lets another current owner go: ending, deleting or cascading away a current owner's membership
+-- is refused unless an open-ended current owner remains, and an owner is not added with an end date unless one
+-- already exists. Ownership is passed by adding the new owner first. The firm row is locked first (FOR NO KEY UPDATE,
+-- which waits for another owner change but not for the foreign-key inserts that only share-lock the firm), so two
+-- transactions ending different owners queue instead of each seeing the other still there.
 CREATE FUNCTION public.keep_firm_owner()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+DECLARE r public.firm_memberships;
 BEGIN
-  IF OLD.role = 'owner' AND OLD.valid_from <= now() AND (OLD.valid_until IS NULL OR OLD.valid_until > now())
-     AND NOT EXISTS (
+  r := CASE WHEN TG_OP = 'INSERT' THEN NEW ELSE OLD END;
+  IF r.role <> 'owner' THEN
+    RETURN NULL;
+  END IF;
+  -- A new owner counts only with an end date still ahead (the start date is not in question: least() puts it in the past).
+  IF TG_OP = 'INSERT' AND (r.valid_until IS NULL OR NOT public.membership_is_current(least(r.valid_from, now()), r.valid_until)) THEN
+    RETURN NULL;
+  END IF;
+  IF TG_OP <> 'INSERT' AND NOT public.membership_is_current(r.valid_from, r.valid_until) THEN
+    RETURN NULL;
+  END IF;
+  PERFORM 1 FROM public.firms WHERE id = r.firm_id FOR NO KEY UPDATE;
+  IF NOT EXISTS (
        SELECT 1 FROM public.firm_memberships m
-       WHERE m.firm_id = OLD.firm_id AND m.role = 'owner' AND m.id <> OLD.id
-         AND m.valid_from <= now() AND (m.valid_until IS NULL OR m.valid_until > now())
+       WHERE m.firm_id = r.firm_id AND m.role = 'owner' AND m.id <> r.id
+         AND m.valid_until IS NULL AND public.membership_is_current(m.valid_from, m.valid_until)
      ) THEN
     RAISE EXCEPTION 'A firm keeps at least one current owner' USING ERRCODE = '23514';
   END IF;
@@ -172,6 +210,10 @@ REVOKE ALL ON FUNCTION public.keep_firm_owner() FROM PUBLIC, anon, authenticated
 
 CREATE TRIGGER firm_memberships_keep_owner
   AFTER UPDATE OR DELETE ON public.firm_memberships
+  FOR EACH ROW EXECUTE FUNCTION public.keep_firm_owner();
+
+CREATE TRIGGER firm_memberships_keep_owner_insert
+  AFTER INSERT ON public.firm_memberships
   FOR EACH ROW EXECUTE FUNCTION public.keep_firm_owner();
 
 -- The caller's role in a firm today: from the dated memberships, a current one only (begun, not ended). NULL for
@@ -190,8 +232,7 @@ AS $$
     AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
     AND m.firm_id = p_firm_id
     AND m.user_id = auth.uid()
-    AND m.valid_from <= now()
-    AND (m.valid_until IS NULL OR m.valid_until > now())
+    AND public.membership_is_current(m.valid_from, m.valid_until)
 $$;
 
 CREATE FUNCTION public.is_firm_member(p_firm_id uuid)

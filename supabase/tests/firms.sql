@@ -8,6 +8,9 @@
 -- firm address rules, teams that stay inside their firm, memberships that are dated and never overwritten, a
 -- firm that always keeps a current owner, and the helpers later stories call to ask whether the caller is a
 -- current member of a firm, and with what role.
+-- The list of earlier migrations below is pinned on purpose to what existed before firms (the file loads
+-- firms.sql itself after it). Stories that change the firm tables' policies later add their firm assertions in
+-- their own test files, not here: this file keeps testing P-1.1's version.
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -287,13 +290,39 @@ BEGIN
   -- Anything that reads as Nevermore.
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Brand', 'nevermore-brokers')$q$, '23514', 'an address naming Nevermore');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Brand', 'never-more')$q$, '23514', 'an address spelling Nevermore with a hyphen');
-  -- Anything that reads as a listed PEO.
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinet-partners')$q$, '23514', 'an address naming TriNet');
+  -- D-26: an address is a PEO's only when, with everything but letters and digits removed, it is exactly a
+  -- listed PEO's name or short name (the name cut to 20 characters). Exact, so a name that merely contains or starts with one is the firm's own.
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinet')$q$, '23514', 'an address that is TriNet');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-totalsource')$q$, '23514', 'an address naming ADP TotalSource');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-total-source')$q$, '23514', 'ADP TotalSource with hyphens');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'tri-net')$q$, '23514', 'TriNet with a hyphen');
   PERFORM pg_temp.expect($q$UPDATE public.firms SET address = 'insperity' WHERE address = 'acme'$q$, '23514', 'a firm changing its address to Insperity');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pet', 'petrinet')$q$, 'rows:1', 'an address ending with TriNet');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Adj', 'adjustworks')$q$, 'rows:1', 'an address holding Justworks-like letters');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Trip', 'trippling')$q$, 'rows:1', 'an address holding Rippling');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Adp', 'adpbenefits')$q$, 'rows:1', 'an address starting with ADP');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Adp', 'adp')$q$, 'rows:1', 'an address that is only the first word of a PEO');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Tri', 'trinetpartners')$q$, 'rows:1', 'TriNet with a word glued on');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Tri', 'my-trinet-benefits')$q$, 'rows:1', 'TriNet as a word of the address');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Ins', 'myinsperity')$q$, 'rows:1', 'Insperity with a word in front');
+  -- A PEO an admin adds is matched the same way, spaces and punctuation ignored.
+  INSERT INTO public.peos (name) VALUES ('The Marathon Group');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Smith', 'the-smith-agency')$q$, 'rows:1', 'an address starting with a common first word');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Mar', 'the-marathon-group')$q$, '23514', 'an address spelling the whole name');
+  -- A PEO's short name is its cleaned name cut to 20 characters, as the reply addresses cut it (D-26).
+  INSERT INTO public.peos (name) VALUES ('Paychex Business Solutions');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusinesssolut')$q$, '23514', 'an address equal to a long PEO name''s short name');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychex-business-solutions')$q$, '23514', 'a long PEO name with hyphens');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusinesssolutio')$q$, 'rows:1', 'an address longer than the short name but not the name');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusiness')$q$, 'rows:1', 'an address shorter than the short name');
+  -- A listed PEO whose name leaves nothing (or almost nothing) to compare holds no address back.
+  INSERT INTO public.peos (name) VALUES ('Ö'), ('A1');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Zed', 'zzz-brokers')$q$, 'rows:1', 'an address with a PEO named Ö listed');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Zed', 'a1-brokers')$q$, 'rows:1', 'an address with a PEO named A1 listed');
+  UPDATE public.peos SET listed = false WHERE name IN ('Ö', 'A1');
   -- A PEO that is no longer listed (a name, not an offer) doesn't hold a name back.
   UPDATE public.peos SET listed = false WHERE name = 'Justworks';
-  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'justworks-fans')$q$, 'rows:1', 'an address naming a PEO no longer listed');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'justworks')$q$, 'rows:1', 'an address that is a PEO no longer listed');
   UPDATE public.peos SET listed = true WHERE name = 'Justworks';
   RAISE NOTICE 'firms: firm address cases passed';
 END $$;
@@ -414,6 +443,33 @@ BEGIN
   INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
   VALUES (pg_temp.id('dormant'), a_lead, 'owner', now() - interval '2 days', now() - interval '1 day');
   PERFORM pg_temp.expect(format($q$DELETE FROM public.firm_memberships WHERE firm_id = %L$q$, pg_temp.id('dormant')), 'rows:1', 'deleting a membership that was over already');
+  -- Only an owner with no end date lets another owner go: one with an end date will lapse and leave nobody.
+  INSERT INTO public.firms (name, address) VALUES ('Lapse Co', 'lapse-co'), ('Later Co', 'later-co'), ('Nobody Co', 'nobody-co');
+  INSERT INTO fx SELECT 'lapse', id FROM public.firms WHERE address = 'lapse-co';
+  INSERT INTO fx SELECT 'later', id FROM public.firms WHERE address = 'later-co';
+  INSERT INTO fx SELECT 'nobody', id FROM public.firms WHERE address = 'nobody-co';
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('later'), pg_temp.id('acme_owner'), 'owner');
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_until) VALUES (%L, %L, 'owner', now() + interval '1 day')$q$,
+    pg_temp.id('nobody'), a_lead), '23514', 'a first owner who already has an end date');
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_until) VALUES (%L, %L, 'owner', now() + interval '1 day')$q$,
+    pg_temp.id('later'), a_lead), 'rows:1', 'a second owner with an end date, beside an open-ended one');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L$q$, pg_temp.id('later'), pg_temp.id('acme_owner')),
+    '23514', 'ending the open-ended owner while the other has an end date');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('lapse'), pg_temp.id('acme_owner'), 'owner'), (pg_temp.id('lapse'), pg_temp.new_user('lapse_owner_2'), 'owner');
+  UPDATE public.firm_memberships SET valid_until = now() + interval '1 second'
+  WHERE firm_id = pg_temp.id('lapse') AND user_id = pg_temp.id('lapse_owner_2');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L$q$, pg_temp.id('lapse'), pg_temp.id('acme_owner')),
+    '23514', 'ending the other owner once one has a future end');
+  -- The guard locks the firm row as its owner, so it works for a role that may change memberships but may not
+  -- update firms (the lock needs that privilege).
+  REVOKE UPDATE ON public.firms FROM service_role;
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L AND valid_until IS NULL$q$, pg_temp.id('swap'), pg_temp.id('acme_owner')),
+    '23514', 'the service role ending a firm''s only current owner');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L AND valid_until IS NULL$q$, pg_temp.id('lapse'), pg_temp.id('acme_owner')),
+    '23514', 'the service role ending an owner when the other has an end date');
+  RESET ROLE;
+  GRANT UPDATE ON public.firms TO service_role;
   RAISE NOTICE 'firms: owner cases passed';
 END $$;
 
@@ -514,4 +570,87 @@ BEGIN
   PERFORM pg_temp.expect($q$DELETE FROM public.firms$q$, '42501', 'an owner deleting a firm');
   RESET ROLE;
   RAISE NOTICE 'firms: row security cases passed';
+END $$;
+
+-- ---------- two owners ended at once ----------
+-- Each transaction alone sees the other owner still there, so without the firm lock both would pass and the firm
+-- would end with no owner. Two real connections (dblink) race: the first ends one owner and holds its transaction
+-- open until the second, ending the other owner, is seen waiting on it; once the first commits the second must
+-- find no owner left and fail with 23514.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- Committed first, so the other connections can see the firm.
+DO $$
+DECLARE f uuid;
+BEGIN
+  INSERT INTO public.firms (name, address) VALUES ('Race Firm', 'race-firm') RETURNING id INTO f;
+  INSERT INTO fx VALUES ('race_firm', f);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role)
+  VALUES (f, pg_temp.new_user('race_owner_1'), 'owner'), (f, pg_temp.new_user('race_owner_2'), 'owner');
+END $$;
+
+DO $$
+DECLARE
+  f uuid := pg_temp.id('race_firm');
+  o1 uuid := pg_temp.id('race_owner_1');
+  o2 uuid := pg_temp.id('race_owner_2');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  second_pid integer;
+  tries integer := 0;
+  s text;
+  left_owners bigint;
+BEGIN
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  PERFORM race.dblink_exec('race_first', format('UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L', f, o1));
+  PERFORM race.dblink_send_query('race_second', format('UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L', f, o2));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the second owner change never waited for the first'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_second') AS t(r text);
+    RAISE EXCEPTION 'FAIL: the second owner was ended too';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    IF s <> '23514' THEN RAISE EXCEPTION 'FAIL: the second owner change gave %, expected 23514', s; END IF;
+  END;
+  PERFORM race.dblink_disconnect('race_first');
+  PERFORM race.dblink_disconnect('race_second');
+  SELECT count(*) INTO left_owners FROM public.firm_memberships WHERE firm_id = f AND role = 'owner' AND valid_until IS NULL;
+  PERFORM pg_temp.is(left_owners, 1::bigint, 'owners left after two were ended at once');
+  RAISE NOTICE 'firms: two-session owner race passed';
+END $$;
+
+-- ---------- an owner change does not hold up inserts that reference the firm ----------
+-- The guard locks the firm row FOR NO KEY UPDATE, which waits for another owner change but not for a foreign-key
+-- insert (it only share-locks the firm). A FOR UPDATE lock would make this insert wait: here it runs on a second
+-- connection with a short lock timeout while the first holds an uncommitted owner change.
+DO $$
+DECLARE
+  f uuid;
+  o1 uuid := pg_temp.new_user('lock_owner_1');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+BEGIN
+  INSERT INTO public.firms (name, address) VALUES ('Lock Firm', 'lock-firm') RETURNING id INTO f;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (f, o1, 'owner'), (f, pg_temp.new_user('lock_owner_2'), 'owner');
+  COMMIT;
+  PERFORM race.dblink_connect('lock_first', dsn);
+  PERFORM race.dblink_connect('lock_second', dsn);
+  PERFORM race.dblink_exec('lock_second', 'SET lock_timeout = ''3s''');
+  PERFORM race.dblink_exec('lock_first', 'BEGIN');
+  PERFORM race.dblink_exec('lock_first', format('UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L', f, o1));
+  PERFORM race.dblink_exec('lock_second', format('INSERT INTO public.firm_teams (firm_id, name) VALUES (%L, %L)', f, 'Added during an owner change'));
+  PERFORM race.dblink_exec('lock_first', 'COMMIT');
+  PERFORM race.dblink_disconnect('lock_first');
+  PERFORM race.dblink_disconnect('lock_second');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_teams WHERE firm_id = f), 1::bigint, 'teams added while an owner change was open');
+  RAISE NOTICE 'firms: insert during an owner change passed';
 END $$;

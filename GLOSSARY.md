@@ -44,7 +44,7 @@ _Avoid_: carrier (an insurance carrier is a different business), vendor, provide
 
 **Advisor**:
 A member of the advisory team who reviews certified intakes and works them through the pipeline.
-_Avoid_: agent, broker, reviewer
+_Avoid_: agent (except the firm role, see **Owner**, **lead**, **agent**), broker, reviewer
 
 **Lenore**:
 The AI intake assistant the prospect talks to, by text or by voice: "Lenore, the intake assistant at Nevermore". One persona, whichever mode is used: warm, quick, a little informal, in plain words and short sentences, never jokey about the prospect's data.
@@ -248,7 +248,7 @@ _Avoid_: nudge, expiry warning
 ### Firms
 
 **Firm** (code: `firms`):
-A brokerage that works intakes on Nevermore, with its own people, its own records and its own address. Edgar Allan Advisory is the first firm: it has every intake that existed before firms did, is approved, and is set to "everyone sees everything". A firm's records are visible to its current members only; a platform `admin` is not a member of any firm (D-16). An intake started without a firm belongs to Edgar Allan Advisory.
+A brokerage that works intakes on Nevermore, with its own people, its own records and its own address. Edgar Allan Advisory is the first firm: it has every intake that existed before firms did, is approved, and is set to "everyone sees everything". A firm's records are visible to its current members only; the platform `admin` role by itself grants no firm access (D-16); an admin reads a firm only through a membership, as Edgar Allan Advisory's owners do (D-15). An intake started without a firm belongs to Edgar Allan Advisory.
 _Avoid_: organisation (the Google domain or Microsoft tenant that lets an advisor sign in), company (the employer), account (a CRM record of an employer)
 
 **Firm address** (code: `firms.address`):
@@ -286,7 +286,7 @@ A row-security or storage policy that requires current membership of the row's f
 _Avoid_: tenant filter, RLS (on its own)
 
 **Owner**, **lead**, **agent** (code: `firm_memberships.role`):
-The three roles in a firm (D-5). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
+The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0011). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
 _Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)
 
 ### Advisors

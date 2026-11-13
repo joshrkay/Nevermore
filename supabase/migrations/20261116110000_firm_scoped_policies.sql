@@ -36,8 +36,7 @@ AS $$
     AND public.second_factor_rule_met()
     AND m.firm_id = p_firm_id
     AND m.user_id = auth.uid()
-    AND m.valid_from <= now()
-    AND (m.valid_until IS NULL OR m.valid_until > now())
+    AND public.membership_is_current(m.valid_from, m.valid_until)
 $$;
 
 -- May the caller see a record of this firm that this person owns? The one question every firm-owned table asks (leads,
@@ -59,14 +58,14 @@ AS $$
           SELECT m.team_id
           FROM public.firm_memberships m
           WHERE m.firm_id = p_firm_id AND m.user_id = auth.uid() AND m.team_id IS NOT NULL
-            AND m.valid_from <= now() AND (m.valid_until IS NULL OR m.valid_until > now())
+            AND public.membership_is_current(m.valid_from, m.valid_until)
           UNION
           SELECT t.id FROM public.firm_teams t JOIN my_teams ON t.parent_team_id = my_teams.id
         )
         SELECT 1
         FROM public.firm_memberships o
         WHERE o.firm_id = p_firm_id AND o.user_id = p_owner_id
-          AND o.valid_from <= now() AND (o.valid_until IS NULL OR o.valid_until > now())
+          AND public.membership_is_current(o.valid_from, o.valid_until)
           AND o.team_id IN (SELECT id FROM my_teams)
       )
     )
@@ -161,7 +160,7 @@ SET search_path = public
 AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.firm_memberships m
-    WHERE m.user_id = p_user_id AND m.valid_from <= now() AND (m.valid_until IS NULL OR m.valid_until > now())
+    WHERE m.user_id = p_user_id AND public.membership_is_current(m.valid_from, m.valid_until)
       AND public.is_firm_member(m.firm_id)
   )
 $$;
@@ -175,7 +174,7 @@ GRANT EXECUTE ON FUNCTION public.intake_in_my_firm(uuid), public.intake_folder_i
 -- carries its own firm, taken from the intake when the record is made. Every record made so far is Edgar Allan Advisory's,
 -- as is every intake that existed before firms did, which is what the column starts as.
 ALTER TABLE public.intake_deletions
-  ADD COLUMN firm_id uuid NOT NULL DEFAULT '00000000-0000-4000-8000-00000000eaa1' REFERENCES public.firms (id);
+  ADD COLUMN firm_id uuid NOT NULL DEFAULT public.default_firm_id() REFERENCES public.firms (id);
 
 CREATE FUNCTION public.keep_deletion_firm()
 RETURNS trigger
@@ -308,7 +307,7 @@ CREATE POLICY quote_request_message_attachments_firm_read ON public.quote_reques
 -- only firm that exists with them, and no other firm reads them.
 DROP POLICY "Advisors can view referral partners" ON public.referral_partners;
 CREATE POLICY referral_partners_firm_read ON public.referral_partners
-  FOR SELECT TO authenticated USING (public.is_firm_member('00000000-0000-4000-8000-00000000eaa1'));
+  FOR SELECT TO authenticated USING (public.is_firm_member(public.default_firm_id()));
 
 -- Storage: the same membership, through the intake a file's folder names.
 DROP POLICY "Advisors can read PEO mail attachments" ON storage.objects;
