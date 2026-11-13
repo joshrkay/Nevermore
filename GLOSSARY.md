@@ -303,7 +303,7 @@ Sending a pending invitation again: a new token replaces the old one, so the old
 _Avoid_: reinvite
 
 **Platform admin** (code: the `admin` role in `user_roles`):
-A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files; held mail, which belongs to no firm until one is assigned, is theirs to read.
+A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files, through a table or through a function; held mail, which belongs to no firm until one is assigned, is theirs to read.
 _Avoid_: admin (on its own, where a firm's owner could be meant), super user
 
 **Record owner**:
@@ -317,6 +317,14 @@ _Avoid_: permission check, ACL
 **Firm rule** (code: the policies that call `is_firm_member` or a helper built on it):
 A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. A password sign-in that has not completed a second factor is not a member to it (D-19): `firm_role` asks the same rule as `has_role`, so no firm's data opens without it. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
 _Avoid_: tenant filter, RLS (on its own)
+
+**Firm-scoped function** (code: the `firm_scoped` class of `fn_class` in `supabase/tests/data_isolation.sql`):
+A database function that runs as its owner, so row security does not bind it, and reads or changes a firm's data for an advisor or platform admin: the queue, the outbox, the funnel, setting a status, reviewing a field, recording a quote send, a platform admin's deletion request. It asks the firm rule itself, taking the firm from the row it is given and never from the caller: a row of a firm the caller is not a current member of is answered as a row that isn't there (a list leaves it out, a call by id says not found). The role it also asks for, advisor or platform admin, is not what opens a firm's data.
+_Avoid_: scoped RPC, tenant-aware function
+
+**Function registry** (code: `fn_class`, `function_gate_problems()` in `supabase/tests/data_isolation.sql`):
+The list in the isolation test of every function in `public` that runs as its owner or that the API roles can execute, each classed: firm-scoped (and probed with two firms), platform-wide by design, a person's own, public, service-only, a trigger, or deferred to a named story. It is compared with the database catalogue, never with a function's text, so a new privileged function nobody classed fails the build, as a new table nobody listed does.
+_Avoid_: allowlist (the older list of what the API roles may call, which says who may call it, not what it does with a firm's data)
 
 **Owner**, **lead**, **agent** (code: `firm_memberships.role`):
 The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0011). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
