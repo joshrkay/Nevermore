@@ -405,6 +405,15 @@ export const DATA_CLASSES: DataClass[] = [
     retention: "For good, as the profile versions that name them are, so a census can always be filled as the PEO asked at the time. A blocked one stays in quarantine for incident review.",
     deletion: "Nothing about an intake is in them, so deleting an intake leaves them. A template is removed by hand if a PEO asks (docs/DATA_HANDLING.md).",
   },
+  {
+    id: "firms_and_members",
+    label: "Firms, teams and who belongs to them",
+    sensitivity: "confidential",
+    examples: "A brokerage's name and address in the web address, who sees its records, its teams, and which accounts are members of it, in what role and from and until when. Nothing about an intake's answers.",
+    stored: { tables: ["firms", "firm_teams", "firm_memberships"], buckets: [], elsewhere: [] },
+    retention: "For good: a membership is never changed, only ended, so who could see a record on a given day can always be answered.",
+    deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. Closing a firm is built in a later story (docs/DATA_HANDLING.md).",
+  },
 ];
 
 /** The classes a table or bucket belongs to. */
