@@ -142,6 +142,7 @@
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
+\i supabase/migrations/20261116190000_firm_invitations.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -317,6 +318,10 @@ BEGIN
     (firm_b, owb, 'owner', NULL), (firm_b, agb, 'agent', team_b);
   INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
   VALUES (firm_a, fag, 'agent', now() - interval '30 days', now() - interval '1 day');
+  -- A pending invitation to each firm (20261116190000): reached only through the invite functions, by nobody directly.
+  INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, invited_by, expires_at) VALUES
+    (firm_a, 'invitee_a@example.test', 'agent', encode(extensions.digest('invitation-a', 'sha256'), 'hex'), adm, now() + interval '7 days'),
+    (firm_b, 'invitee_b@example.test', 'agent', encode(extensions.digest('invitation-b', 'sha256'), 'hex'), owb, now() + interval '7 days');
 
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
@@ -629,6 +634,9 @@ INSERT INTO matrix VALUES
   ('public.firms',                                      '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
   ('public.firm_teams',                                 '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
   ('public.firm_memberships',                           '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  -- Invitations to join a firm (20261116190000): nobody reads them through the API, owners included; an owner reaches
+  -- the pending ones through firm_pending_invitations(), and the token's hash is never returned (supabase/tests/firm_invitations.sql).
+  ('public.firm_invitations',                           '{}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
   ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
   -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
@@ -905,6 +913,11 @@ INSERT INTO callable VALUES
   ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('sign_up_firm(p_name text, p_address text)', 'own',     NULL, 'a signed-in person with a verified email makes a firm of their own and becomes its owner; refuses guests and unverified accounts; acts only for the caller'),
+  ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (supabase/tests/firm_invitations.sql)'),
+  ('firm_pending_invitations(p_firm_id uuid)', 'own',   NULL, 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (supabase/tests/firm_invitations.sql)'),
+  ('cancel_invitation(p_invitation_id uuid)', 'own',    NULL, 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist'),
+  ('resend_invitation(p_invitation_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the invitation''s firm sends it again with a new token; the same refusal for another firm''s invitation as for one that does not exist'),
+  ('accept_invitation(p_token_hash text)',   'own',     NULL, 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm; acts only for the caller and the one invitation its token opens'),
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
@@ -1498,6 +1511,12 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
   ('storage.objects WHERE bucket_id = ''peo-mail''', 'firm', 'by the quote request of the attachment recorded as stored',
    $m$SELECT pg_temp.store_peo_mail({msg}, {intake}, '{tag}')$m$);
 INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
+  -- A firm's invitation: its own firm_id. No member reads it directly, owners included (an owner reads the pending ones through
+  -- a function), so there is no positive control; every other caller, the other firm's members included, reads, changes and
+  -- deletes none of it.
+  ('public.firm_invitations', 'firm', 'its own firm_id; closed to the API, owners read the pending ones through a function',
+   $m$INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at)
+      VALUES ({firm}, 'probe-{tag}@example.test', 'agent', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '7 days') RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
@@ -1508,7 +1527,7 @@ INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
-UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.firm_invitations');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
