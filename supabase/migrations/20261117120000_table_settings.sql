@@ -404,7 +404,8 @@ $$;
 REVOKE ALL ON FUNCTION public.delete_saved_view(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_saved_view(uuid) TO authenticated;
 
--- Shares a view with the firm: a current owner, and a view they saved. Sharing one already shared changes nothing.
+-- Shares a view with the firm: a current owner, and a view they saved (another person's private view is one they can't
+-- read, so it is refused as not there). Sharing one already shared changes nothing.
 CREATE FUNCTION public.share_saved_view(p_view_id uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -417,9 +418,6 @@ DECLARE
 BEGIN
   IF public.firm_role(v.firm_id) IS DISTINCT FROM 'owner' THEN
     RAISE EXCEPTION 'Only an owner of the firm can share a view' USING ERRCODE = '42501';
-  END IF;
-  IF v.user_id <> auth.uid() THEN
-    RAISE EXCEPTION 'An owner shares a view they saved' USING ERRCODE = '42501';
   END IF;
   IF v.shared THEN
     RETURN;
