@@ -1922,6 +1922,7 @@ DECLARE
   file_a constant text := (SELECT file_id FROM public.chamber_sessions WHERE id = pg_temp.id('pa_cert'));
   r text;
   cols text;
+  want integer;
 BEGIN
   -- The firm of a message is never the writer's: on a quote request it is that request's firm, held it is the firm its address
   -- belonged to, and an address no firm ever had gives the message no firm.
@@ -1939,6 +1940,10 @@ BEGIN
     VALUES (''revoked-unknown'', ''revoked_address'', ''received'', ''x@example.test'')'),
     $q$SELECT COALESCE(firm_id::text, 'none') FROM public.quote_request_messages WHERE provider_message_id = 'revoked-unknown'$q$);
   IF r <> 'none' THEN RAISE EXCEPTION 'FAIL: held mail with no address got firm %', r; END IF;
+  -- Held mail keeps the firm it was held for: nobody moves it to another.
+  r := pg_temp.after(format('UPDATE public.quote_request_messages SET firm_id = %L WHERE id = %s', fb, ha),
+    format('SELECT firm_id::text FROM public.quote_request_messages WHERE id = %s', ha));
+  IF r <> fa::text THEN RAISE EXCEPTION 'FAIL: held mail of the first firm was moved to firm %', r; END IF;
   -- A message on a quote request must have its firm: a message with none is refused.
   BEGIN
     SET LOCAL session_replication_role = replica;
@@ -1988,6 +1993,23 @@ BEGIN
       RAISE EXCEPTION 'FAIL: an advisor discarded held mail (%)', r;
     END IF;
   END LOOP;
+
+  -- A held message's stored file is its firm's members' to read, and nobody else's.
+  RESET ROLE;
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  VALUES (ha, 'held-att', 'held.pdf', 1, 'stored', 'clean', 'peo-mail', 'held/' || ha || '/held.pdf');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', 'held/' || ha || '/held.pdf');
+  FOREACH r IN ARRAY ARRAY['advisor', 'admin', 'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'prospect_a', 'guest_a', 'signed_out'] LOOP
+    PERFORM pg_temp.become(r);
+    want := CASE WHEN r IN ('advisor', 'admin', 'agent_2', 'lead_1') THEN 1 ELSE 0 END;
+    IF pg_temp.visible(format('storage.objects WHERE bucket_id = ''peo-mail'' AND name = %L', 'held/' || ha || '/held.pdf')) <> want
+       OR pg_temp.visible(format('public.quote_request_message_attachments WHERE message_id = %s', ha)) <> want THEN
+      RAISE EXCEPTION 'FAIL: % reads, or can''t read, the file of mail held for the first firm', r;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  DELETE FROM storage.objects WHERE name = 'held/' || ha || '/held.pdf';
+  DELETE FROM public.quote_request_message_attachments WHERE provider_attachment_id = 'held-att';
 
   -- What a platform admin who is no firm's member sees of held mail: which message, why, since when, and a File ID and a PEO. Nothing
   -- of the sender, subject, text or files.
