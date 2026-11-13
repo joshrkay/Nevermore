@@ -71,7 +71,7 @@ AS $$
 DECLARE
   r record;
 BEGIN
-  IF auth.uid() IS NULL OR COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) THEN
+  IF auth.uid() IS NULL OR COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) OR NOT public.second_factor_rule_met() THEN
     RAISE EXCEPTION 'Sign in to continue' USING ERRCODE = '42501';
   END IF;
   IF (p_kind, p_record_type) NOT IN (
@@ -202,7 +202,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' THEN
+  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' OR NOT public.second_factor_rule_met() THEN
     RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
   END IF;
   IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 OR (p_before_at IS NULL) <> (p_before_id IS NULL) THEN
@@ -243,6 +243,7 @@ AS $$
   JOIN public.firms f ON f.id = m.firm_id
   WHERE auth.uid() IS NOT NULL
     AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+    AND public.second_factor_rule_met()
     AND m.user_id = auth.uid() AND m.role = 'owner'
     AND public.membership_is_current(m.valid_from, m.valid_until)
   ORDER BY f.name, f.id
@@ -250,3 +251,43 @@ $$;
 
 REVOKE ALL ON FUNCTION public.my_owner_firms() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.my_owner_firms() TO authenticated;
+
+-- The people filter is read under the same rule as the list.
+CREATE OR REPLACE FUNCTION public.firm_activity_people(p_firm_id uuid)
+RETURNS TABLE (user_id uuid, email text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' OR NOT public.second_factor_rule_met() THEN
+    RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    SELECT a.actor_id, u.email::text
+    FROM (SELECT DISTINCT f.actor_id FROM public.firm_activity f WHERE f.firm_id = p_firm_id AND f.actor_id IS NOT NULL) a
+    LEFT JOIN auth.users u ON u.id = a.actor_id
+    ORDER BY u.email;
+END;
+$$;
+
+-- ---------- A firm's owner is held back for the second factor too ----------
+-- A password sign-in that has not completed a second factor is held back (D-19) for a platform role, and now for a
+-- current owner of a firm as well, who may have no platform role: the same sign-in screens then send them to set one up.
+-- Anyone who holds neither a role nor a current ownership is never asked.
+CREATE OR REPLACE FUNCTION public.advisor_needs_second_factor()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.is_signed_in_person()
+    AND NOT public.second_factor_rule_met()
+    AND (
+      EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid())
+      OR EXISTS (SELECT 1 FROM public.firm_memberships m
+                 WHERE m.user_id = auth.uid() AND m.role = 'owner' AND public.membership_is_current(m.valid_from, m.valid_until))
+    );
+$$;

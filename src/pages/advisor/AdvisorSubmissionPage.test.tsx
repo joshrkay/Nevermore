@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { Supplement } from "@/data/peoSupplement";
@@ -144,6 +144,21 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+const GoTo = ({ id }: { id: string }) => {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate(`/advisor/submissions/${id}`)}>go to {id}</button>;
+};
+const renderWithNavigation = () =>
+  render(
+    <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+      <GoTo id="s2" />
+      <GoTo id="s1" />
+      <Routes>
+        <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
 describe("AdvisorSubmissionPage", () => {
   // A test that fakes the clock gets the real one back even when it fails.
   afterEach(() => vi.useRealTimers());
@@ -166,6 +181,33 @@ describe("AdvisorSubmissionPage", () => {
     await screen.findByRole("heading", { name: "Signed Co" });
     await waitFor(() => expect(api.recordActivity).toHaveBeenCalledWith("submission_viewed", "submission", "s1"));
     expect(api.recordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("records the opening of a second submission only once it has loaded, and never for one that is missing", async () => {
+    let arrive: (d: SubmissionDetail | null) => void = () => undefined;
+    renderWithNavigation();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledTimes(1));
+    // The router reuses the page for s2: s1's detail is still on screen while s2 loads.
+    api.loadSubmission.mockImplementation((id: string) => (id === "s2" ? new Promise((resolve) => { arrive = resolve; }) : Promise.resolve(detail())));
+    fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2"));
+    expect(api.recordActivity).not.toHaveBeenCalledWith("submission_viewed", "submission", "s2");
+    // s2 turns out not to exist: nothing is recorded for it.
+    await act(async () => arrive(null));
+    expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
+    expect(api.recordActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a second submission once when it loads", async () => {
+    renderWithNavigation();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledTimes(1));
+    api.loadSubmission.mockImplementation((id: string) => Promise.resolve(detail({ id })));
+    fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
+    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledWith("submission_viewed", "submission", "s2"));
+    expect(api.recordActivity.mock.calls.filter((c) => c[2] === "s2")).toHaveLength(1);
+    expect(api.recordActivity).toHaveBeenCalledTimes(2);
   });
 
   it("records nothing for a submission it can't find", async () => {

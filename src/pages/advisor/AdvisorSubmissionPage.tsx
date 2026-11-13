@@ -62,11 +62,12 @@ const AdvisorSubmissionPage = () => {
     return () => { cancelled = true; };
   }, [id, attempt]);
 
-  // Opening a submission is recorded once, when it first loads: refreshing after a change isn't another opening.
-  const opened = load.kind === "ready";
+  // Opening a submission is recorded once per load of it, and only for the one on screen: while the router reuses this
+  // page for another submission the old detail is still here, and refreshing after a change keeps the same detail's id.
+  const loadedId = load.kind === "ready" ? load.detail.id : null;
   useEffect(() => {
-    if (opened) void recordActivity("submission_viewed", "submission", id);
-  }, [opened, id]);
+    if (loadedId !== null && loadedId === id) void recordActivity("submission_viewed", "submission", loadedId);
+  }, [loadedId, id]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
 

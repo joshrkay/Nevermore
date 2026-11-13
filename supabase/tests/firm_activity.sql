@@ -515,6 +515,32 @@ SELECT set_config('role', 'anon', false);
 SELECT pg_temp.expect('SELECT * FROM public.my_owner_firms()', '42501', 'someone signed out asking which firms they own');
 SELECT pg_temp.as_user('owner_a');
 
+-- A password sign-in that hasn't completed a second factor reads nothing, as for a platform role (D-19), and is told it
+-- is held back for that, whether or not the owner has a platform role (owner_ab has none).
+CREATE FUNCTION pg_temp.as_password_user(n text, level text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false,
+    'amr', jsonb_build_array(jsonb_build_object('method', 'password')), 'aal', level)::text, false);
+  PERFORM set_config('role', 'authenticated', false);
+END $$;
+GRANT EXECUTE ON FUNCTION pg_temp.as_password_user(text, text) TO authenticated;
+SELECT pg_temp.as_password_user('owner_ab', 'aal1');
+SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 0::bigint, 'an owner holding only a password sign-in is told no firm');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_temp.id('firm_a')), '42501', 'an owner holding only a password sign-in reading the record');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_people(%L)', pg_temp.id('firm_a')), '42501', 'an owner holding only a password sign-in reading who is in it');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_a')),
+  '42501', 'an owner holding only a password sign-in reporting a view');
+SELECT pg_temp.is(public.advisor_needs_second_factor(), true, 'an owner with no platform role is held back for the second factor');
+SELECT pg_temp.as_password_user('owner_ab', 'aal2');
+SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 2::bigint, 'with the second factor done the owner is told both firms');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_a'))) > 0, true, 'and reads the record');
+SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'and is no longer held back');
+SELECT pg_temp.as_password_user('prospect_a', 'aal1');
+SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'someone who belongs to no firm and has no role is never asked');
+SELECT pg_temp.as_user('owner_ab');
+SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'a sign-in that wasn''t by password is never asked');
+
 -- Role is per firm: lead_a is an owner of firm B and only a lead in firm A.
 SELECT pg_temp.as_user('lead_a');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_temp.id('firm_a')), '42501', 'a lead reading their firm''s record');
