@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorReply } from "@/lib/functionError";
 import { hashInvitationToken } from "../../supabase/functions/_shared/invitationToken.ts";
 
 // What the screens ask the database and the invite-member server function for invitations (story CRM-P1.2). The database
@@ -22,17 +23,9 @@ export interface PendingInvitation {
 
 type DbError = { code?: string; message?: string };
 
-/** What the server function said when it refused or failed, or null when the reply can't be read. */
-async function serverReason(error: { context?: unknown }): Promise<string | null> {
-  const context = error.context;
-  if (!(context instanceof Response)) return null;
-  const body = (await context.json().catch(() => null)) as { error?: unknown } | null;
-  return typeof body?.error === "string" ? body.error : null;
-}
-
 async function callServer(body: Record<string, unknown>): Promise<{ invitationId: string; delivery: Delivery }> {
   const { data, error } = await supabase.functions.invoke("invite-member", { body });
-  if (error) throw new Error((await serverReason(error as { context?: unknown })) ?? "Couldn't send the invitation. Try again.");
+  if (error) throw new Error((await functionErrorReply(error as { context?: unknown })).reason ?? "Couldn't send the invitation. Try again.");
   const reply = data as { invitation_id?: string; delivery?: string } | null;
   if (!reply?.invitation_id) throw new Error("Couldn't send the invitation. Try again.");
   // An answer that does not say it went is not a success.

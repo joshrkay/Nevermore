@@ -13,6 +13,7 @@ import { parseBaseUrl, parseFrom } from "../dispatch-outbox/config.ts";
 import { escapeHtml, EMAIL_PATTERN, oneLine } from "../dispatch-outbox/messages.ts";
 import { selectEmailAdapter, sendEmail, type EmailMessage } from "../dispatch-outbox/providers.ts";
 import { bearerToken } from "../_shared/serviceAuth.ts";
+import { UUID } from "../_shared/uuid.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,7 +38,6 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 const ROLES: readonly string[] = ["owner", "lead", "agent"];
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Request_ =
   | { action: "invite"; firmId: string; email: string; role: string; teamId: string | null }

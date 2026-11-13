@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import type { ReviewedDocument } from "@/data/advisor";
 import { categoryInfo } from "@/data/documentCategories";
 import { advisorScanNotice } from "@/data/documentStatus";
-import { documentUrl, type DocumentEvent } from "@/lib/advisorApi";
+import { documentUrl, recordActivity, type DocumentEvent } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
 interface DocumentsPanelProps {
@@ -22,6 +22,8 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
     setOpening(doc.id);
     try {
       window.location.assign(await documentUrl(doc));
+      // Recorded only once a link was signed and handed to the browser (the link itself is never kept here).
+      void recordActivity("document_downloaded", "document", doc.id);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {

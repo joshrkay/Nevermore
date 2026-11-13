@@ -291,7 +291,7 @@ A person's place in a firm, with a role, an optional team and the dates it began
 _Avoid_: seat, user (for a member)
 
 **Invitation** (code: `firm_invitations`, `invite_member`, `accept_invitation`):
-An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29). A firm still waiting for approval can invite and be joined, but holds at most five pending invitations until it is approved; a refused firm cannot invite or resend, and a pending invitation to it cannot be accepted (D-34).
+An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29). A firm still waiting for approval can invite and be joined, but holds at most five pending invitations and causes at most ten invitation emails (made or resent, withdrawn ones still counted) until it is approved; a refused firm cannot invite or resend, and a pending invitation to it cannot be accepted (D-34).
 _Avoid_: invite (as the noun), request to join (that is joining by organisation, CRM-P1.4)
 
 **Invitation link** (code: `/join#token=...`, `JoinFirmPage`):
@@ -337,6 +337,24 @@ _Avoid_: allowlist (the older list of what the API roles may call, which says wh
 **Owner**, **lead**, **agent** (code: `firm_memberships.role`):
 The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0011). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
 _Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)
+
+**Firm activity** (code: `firm_activity`):
+A firm's record of who did what: one row for each sign-in to the firm's console, submission opened, file downloaded, send recorded, export, invitation, removal, support access and membership, role or ownership change, with who did it, when, the kind and the id of the record it was about. Never content: no answer, name, email text or file. Nobody can change or delete a row, an admin included; the daily retention job removes entries after 90 days (D4). A firm's current owners read their own firm's and nobody else does, a platform admin included (D-16). Written only through `record_firm_activity` (server code; no actor argument), `open_submission` (the function that hands a submission to a member: the database writes the opening itself, so a browser cannot report a view it did not make), `record_member_activity` (a browser, for exact pairs of kind and record only, a repeat within 30 seconds being one entry) and, for membership changes, the triggers, which write through the internal `firm_activity_append`. The limit: a file saved from a storage link, or built in the browser (census, JSON, PDF, bundle), and a sign-in are seen only by the browser, so a member can still report one that did not happen; the entry says the person reported it, not that the database served it (the storage service signs the link, outside the database, and cannot write an entry). A membership entry records when the change was made, not when it takes effect: an end given a date in the future is written at once, and nothing is written when the date arrives. All of them take the firm from the record and the actor from the caller's own sign-in; nothing takes either from the caller. An owner reads only after the second factor (D-19), the rule written once in `can_read_firm_activity`. Read a page at a time by a cursor of time and a random key, never by an offset and never by the table's number, which is shared by every firm and so is never given to a reader.
+_Avoid_: audit log, access log, activity feed, history (a submission's status history is a different record)
+
+**Retention role** (code: `firm_activity_pruner`):
+The one database role allowed to delete a firm-record entry, and only past the window. It cannot sign in, no API role belongs to it, and only `prune_firm_activity()` runs as it; a delete is allowed by who is running it, never by a setting a caller can make (ADR 0012).
+_Avoid_: admin delete, purge flag
+
+**Record cursor**:
+Where a page of the firm's record starts: after the entry with a given time and id, the two things the record is ordered by, so an entry arriving between two pages never repeats or skips a row.
+_Avoid_: offset, page number (as the way a page is found)
+
+**Owned firm**:
+A firm the caller is a current owner of, as the database answers (`my_owner_firms()`). A page that reads a firm's record says which firm it wants, and the database checks the caller currently owns that one; there is no "the caller's firm" for someone who owns two.
+
+**Entry kind** (code: `firm_activity.kind`):
+What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
 
 ### Advisors
 

@@ -7,7 +7,7 @@ import {
   buildTimeline, describeAttachment, hasNewMail, isThreadEvent, latestRecordedAt, splitQuotedText, type ThreadAttachment, type TimelineEntry,
 } from "@/data/mailThread";
 import {
-  mailAttachmentUrl, moveMessageOffThread, openQuoteRequestThread,
+  mailAttachmentUrl, moveMessageOffThread, openQuoteRequestThread, recordActivity,
   type QuoteRequestEventRow, type QuoteRequestMailAttachmentRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
@@ -54,7 +54,9 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
   const open = async (a: ThreadAttachment) => {
     setOpening(a.id);
     try {
-      window.location.assign(await mailAttachmentUrl(a));
+      const url = await mailAttachmentUrl(a);
+      void recordActivity("document_downloaded", "quote_request", String(entry.requestId));
+      window.location.assign(url);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {

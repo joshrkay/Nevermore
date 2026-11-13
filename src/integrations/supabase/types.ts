@@ -461,6 +461,25 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // A firm's record of who did what (20261116160001): kinds and ids, never content. Append-only; a firm's owners
+      // read their own firm's through firm_activity_list(); written only through record_firm_activity().
+      firm_activity: {
+        Row: {
+          // The stored actor is never granted to a firm: only that an entry was by Nevermore's own people (D-33).
+          actor_is_staff: boolean
+          at: string
+          entry_key: string
+          firm_id: string
+          kind: string
+          record_id: string
+          record_type: string
+          role: string | null
+          subject_user_id: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
       // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
       quote_request_notes: {
@@ -808,6 +827,48 @@ export type Database = {
       advisor_add_referral_partner: {
         Args: { p_code: string; p_name: string; p_kind: string }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+      }
+      // A page of one firm's record (p_firm_id), newest first, for that firm's current owners only (20261116160001).
+      firm_activity_list: {
+        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_key?: string | null; p_nevermore?: boolean }
+        Returns: {
+          actor_email: string | null
+          actor_id: string | null
+          at: string
+          // True when a person at Nevermore did it: no id and no email, shown as "Nevermore" (D-33).
+          by_nevermore: boolean
+          entry_key: string
+          kind: string
+          record_id: string
+          record_type: string
+          role: string | null
+          subject_email: string | null
+          subject_user_id: string | null
+        }[]
+      }
+      firm_activity_people: {
+        Args: { p_firm_id: string }
+        Returns: { email: string | null; is_nevermore: boolean; user_id: string | null }[]
+      }
+      // The firms the caller currently owns, by name.
+      my_owner_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: { firm_id: string; name: string }[]
+      }
+      // The firm at an address, for a current member of it; null for anyone else.
+      my_firm_at_address: {
+        Args: { p_address: string }
+        Returns: string | null
+      }
+      // A submission handed to a current member of its firm; the database writes the opening in the firm's record (20261116160001). No row for anyone else.
+      open_submission: {
+        Args: { p_session_id: string }
+        Returns: Database["public"]["Tables"]["chamber_sessions"]["Row"][]
+      }
+      // A browser reporting a file it downloaded or built, or a sign-in; the firm and the person are worked out by the database.
+      record_member_activity: {
+        Args: { p_kind: string; p_record_id: string; p_record_type: string }
+        Returns: undefined
       }
       // Renames a referral partner or changes its kind; the code never changes.
       advisor_update_referral_partner: {

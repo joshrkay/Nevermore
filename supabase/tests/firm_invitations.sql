@@ -103,9 +103,10 @@
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
+\i supabase/migrations/20261116160001_firm_activity.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
+\i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
-\i supabase/migrations/20261116190001_invitation_review_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -169,14 +170,11 @@ CREATE FUNCTION pg_temp.hash_of(token text) RETURNS text LANGUAGE sql IMMUTABLE 
   SELECT encode(extensions.digest(convert_to(token, 'UTF8'), 'sha256'), 'hex')
 $$;
 
--- The hook that CRM-P2.3 takes over records every invitation event here, so the tests can read what the story hands it.
-CREATE TABLE public.test_firm_events (id bigint GENERATED ALWAYS AS IDENTITY, firm_id uuid, kind text, actor uuid, detail jsonb);
-CREATE OR REPLACE FUNCTION public.record_firm_event(p_firm_id uuid, p_kind text, p_actor uuid, p_detail jsonb)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-BEGIN
-  INSERT INTO public.test_firm_events (firm_id, kind, actor, detail) VALUES (p_firm_id, p_kind, p_actor, p_detail);
-END $$;
-REVOKE ALL ON FUNCTION public.record_firm_event(uuid, text, uuid, jsonb) FROM PUBLIC, anon, authenticated;
+-- What the firm's record holds (the real record_firm_event of CRM-P2.3, not a stand-in: a kind the record refuses would fail
+-- every invitation). Read as the table's owner, so the tests see every firm's entries; the actor is the caller's own sign-in.
+CREATE FUNCTION pg_temp.acts(fid uuid, k text) RETURNS SETOF public.firm_activity LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT * FROM public.firm_activity WHERE firm_id = fid AND kind = k
+$$;
 
 -- ---------- set up: two firms, each with an owner, a lead and an agent; a platform admin; people with no firm ----------
 DO $$
@@ -298,7 +296,7 @@ BEGIN
   SELECT row_to_json(i)::text INTO inv_row FROM public.firm_invitations i WHERE i.id = r.invitation_id;
   PERFORM pg_temp.is(position('raw-secret-token' IN inv_row), 0, 'the stored row does not contain the token');
   PERFORM pg_temp.is((SELECT token_hash FROM public.firm_invitations WHERE id = r.invitation_id), pg_temp.hash_of('raw-secret-token'), 'only its hash');
-  SELECT string_agg(e.detail::text, ' ') INTO event_text FROM public.test_firm_events e;
+  SELECT string_agg(to_jsonb(e)::text, ' ') INTO event_text FROM public.firm_activity e;
   PERFORM pg_temp.is(position('raw-secret-token' IN event_text), 0, 'the event record never holds the token');
   PERFORM pg_temp.is(position(pg_temp.hash_of('raw-secret-token') IN event_text), 0, 'nor its hash');
   PERFORM pg_temp.is(r.expires_at > now() + interval '6 days 23 hours' AND r.expires_at <= now() + interval '7 days', true, 'the invitation lasts seven days');
@@ -308,17 +306,16 @@ END $$;
 -- ---------- the record ----------
 -- Break caught: an invitation is made with no event handed to the hook, or the event misses who, the firm, the role or the email.
 DO $$
-DECLARE e record; acme uuid := pg_temp.id('acme');
+DECLARE acme uuid := pg_temp.id('acme');
 BEGIN
-  SELECT * INTO e FROM public.test_firm_events WHERE kind = 'member_invited' AND detail ->> 'email' = 'newcomer@example.test' AND firm_id = acme;
-  PERFORM pg_temp.is(e.actor, pg_temp.id('acme_owner'), 'the event names who invited');
-  PERFORM pg_temp.is(e.detail ->> 'role', 'agent', 'the role');
-  PERFORM pg_temp.is(e.detail ->> 'invitation_id' IS NOT NULL, true, 'and the invitation');
+  PERFORM pg_temp.is((SELECT count(*) > 0 FROM pg_temp.acts(acme, 'invitation_sent') a WHERE a.record_type = 'firm' AND a.record_id = acme::text), true, 'an invitation is an entry in the firm''s record');
+  PERFORM pg_temp.is((SELECT count(DISTINCT a.actor_id) FROM pg_temp.acts(acme, 'invitation_sent') a), 1::bigint, 'by one person');
+  PERFORM pg_temp.is((SELECT DISTINCT a.actor_id FROM pg_temp.acts(acme, 'invitation_sent') a), pg_temp.id('acme_owner'), 'the owner who invited');
   PERFORM pg_temp.as_user('zenith_owner');
   PERFORM public.invite_member(pg_temp.id('zenith'), 'zenith_hire@example.test', 'lead', NULL, pg_temp.hash_of('zenith-hire'));
   RESET ROLE;
-  PERFORM pg_temp.is((SELECT count(*) FROM public.test_firm_events WHERE kind = 'member_invited' AND firm_id = pg_temp.id('zenith')), 1::bigint, 'Zenith''s invitation is recorded against Zenith');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.test_firm_events WHERE kind = 'member_invited' AND firm_id = acme AND detail ->> 'email' = 'zenith_hire@example.test'), 0::bigint, 'and not against Acme');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(pg_temp.id('zenith'), 'invitation_sent')), 1::bigint, 'Zenith''s invitation is recorded against Zenith');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(acme, 'invitation_sent') a WHERE a.actor_id = pg_temp.id('zenith_owner')), 0::bigint, 'and not against Acme');
   RAISE NOTICE 'firm_invitations: record cases passed';
 END $$;
 
@@ -351,8 +348,8 @@ BEGIN
   PERFORM pg_temp.is(i.accepted_by, pg_temp.id('newcomer2'), 'by this person');
   PERFORM pg_temp.is(i.accepted_at IS NOT NULL, true, 'and when');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE firm_id = acme AND user_id = pg_temp.id('newcomer2')), 1::bigint, 'exactly one membership');
-  PERFORM pg_temp.is((SELECT e.actor FROM public.test_firm_events e WHERE e.kind = 'member_invitation_accepted' AND e.firm_id = acme), pg_temp.id('newcomer2'), 'the acceptance is recorded with who');
-  PERFORM pg_temp.is((SELECT e.detail ->> 'role' FROM public.test_firm_events e WHERE e.kind = 'member_invitation_accepted' AND e.firm_id = acme), 'lead', 'and the role');
+  PERFORM pg_temp.is((SELECT a.actor_id FROM pg_temp.acts(acme, 'member_added') a WHERE a.subject_user_id = pg_temp.id('newcomer2')), pg_temp.id('newcomer2'), 'the joining is recorded with who, as a member added');
+  PERFORM pg_temp.is((SELECT a.role FROM pg_temp.acts(acme, 'member_added') a WHERE a.subject_user_id = pg_temp.id('newcomer2')), 'lead', 'and the role');
   RAISE NOTICE 'firm_invitations: accepting cases passed';
 END $$;
 
@@ -529,8 +526,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT status FROM public.firm_invitations WHERE id = inv), 'cancelled', 'the owner withdraws it');
   PERFORM pg_temp.is((SELECT cancelled_by FROM public.firm_invitations WHERE id = inv), pg_temp.id('acme_owner'), 'recording who');
   PERFORM pg_temp.is((SELECT cancelled_at IS NOT NULL FROM public.firm_invitations WHERE id = inv), true, 'and when');
-  PERFORM pg_temp.is((SELECT e.actor FROM public.test_firm_events e WHERE e.kind = 'member_invitation_cancelled' AND (e.detail ->> 'invitation_id')::uuid = inv), pg_temp.id('acme_owner'), 'the withdrawal is recorded with who');
-  PERFORM pg_temp.is((SELECT e.detail ->> 'role' FROM public.test_firm_events e WHERE e.kind = 'member_invitation_cancelled' AND (e.detail ->> 'invitation_id')::uuid = inv), 'agent', 'and the role');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(pg_temp.id('acme'), 'invitation_withdrawn') a WHERE a.actor_id = pg_temp.id('acme_owner')), 1::bigint, 'the withdrawal is recorded with who');
   PERFORM pg_temp.as_user('dual');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('dual-token'), 'acme-brokers')), 'PT410: This invitation was withdrawn', 'a withdrawn link says so and opens nothing');
   PERFORM pg_temp.as_user('acme_owner');
@@ -560,8 +556,9 @@ END $$;
 -- links for one invitation); the new link does not work; an expired invitation is not revived (a new seven days); the
 -- resend is not recorded; a used or withdrawn invitation is resent.
 DO $$
-DECLARE acme uuid := pg_temp.id('acme'); inv uuid; canc uuid; r record; who text;
+DECLARE acme uuid := pg_temp.id('acme'); inv uuid; canc uuid; r record; who text; before_sent bigint;
 BEGIN
+  SELECT count(*) INTO before_sent FROM pg_temp.acts(acme, 'invitation_sent');
   PERFORM pg_temp.as_user('acme_owner');
   SELECT p.invitation_id INTO inv FROM public.firm_pending_invitations(acme) p WHERE p.email = 'no-account-yet@example.test';
   PERFORM pg_temp.is((SELECT p.expired FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), true, 'the invitation has expired');
@@ -581,8 +578,8 @@ BEGIN
   PERFORM pg_temp.is((SELECT p.expired FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), false, 'it no longer reads as expired');
   PERFORM pg_temp.is((SELECT p.resent_at IS NOT NULL FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), true, 'and says it was resent');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_pending_invitations(acme) p WHERE p.email = 'no-account-yet@example.test'), 1::bigint, 'still one invitation, not two');
-  PERFORM pg_temp.is((SELECT e.actor FROM public.test_firm_events e WHERE e.kind = 'member_invitation_resent' AND (e.detail ->> 'invitation_id')::uuid = inv), pg_temp.id('acme_owner'), 'the resend is recorded with who');
   RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(acme, 'invitation_sent') a WHERE a.actor_id = pg_temp.id('acme_owner')) > before_sent, true, 'the resend is recorded with who, as another invitation sent');
   PERFORM pg_temp.new_user('no-account-yet');
   PERFORM pg_temp.as_user('no-account-yet');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('expiring-two'), 'acme-brokers')), 'PT404: This invitation link is not valid', 'the old link no longer works');
@@ -808,6 +805,38 @@ BEGIN
   RAISE NOTICE 'firm_invitations: waiting firm cap cases passed';
 END $$;
 
+-- ---------- a waiting firm cannot use the mail in bulk by withdrawing and resending (D-34) ----------
+-- Break caught: the five-pending cap is the only limit, so a firm waiting for approval invites and withdraws without end, or
+-- resends one invitation without end, and every one is an email from Nevermore's sender; or the limit counts only what is still
+-- pending; or it still binds once the firm is approved.
+DO $$
+DECLARE sf uuid; n integer; inv uuid; msg text := 'PT409: A firm waiting for approval can send at most ten invitation emails until it is approved';
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address) VALUES ('Spam Firm', 'spam-firm') RETURNING id INTO sf;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (sf, pg_temp.new_user('spam_owner'), 'owner');
+  PERFORM pg_temp.as_user('spam_owner');
+  FOR n IN 1..9 LOOP
+    SELECT r.invitation_id INTO inv FROM public.invite_member(sf, 'spam' || n || '@example.test', 'agent', NULL, pg_temp.hash_of('spam-' || n)) r;
+    PERFORM public.cancel_invitation(inv);
+  END LOOP;
+  SELECT r.invitation_id INTO inv FROM public.invite_member(sf, 'spam10@example.test', 'agent', NULL, pg_temp.hash_of('spam-10')) r;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.invite_member(%L, 'spam11@example.test', 'agent', NULL, %L)$q$, sf, pg_temp.hash_of('spam-11'))), msg,
+    'withdrawing frees a slot of the five but not the emails already sent: the eleventh email is refused');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', inv, pg_temp.hash_of('spam-10b'))), msg,
+    'and so is a resend, which is an email too');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT token_hash FROM public.firm_invitations WHERE id = inv), pg_temp.hash_of('spam-10'), 'a refused resend changed nothing');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_invitations WHERE firm_id = sf), 10::bigint, 'and the refused invitation left nothing');
+  -- Once approved, the limit is gone.
+  UPDATE public.firms SET approved_at = now(), decision = 'approved', decided_at = now() WHERE id = sf;
+  PERFORM pg_temp.as_user('spam_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT * FROM public.resend_invitation(%L, %L)', inv, pg_temp.hash_of('spam-10b'))), 'rows:1', 'once approved the firm can resend');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, 'spam11@example.test', 'agent', NULL, %L)$q$, sf, pg_temp.hash_of('spam-11'))), 'rows:1', 'and invite');
+  RESET ROLE;
+  RAISE NOTICE 'firm_invitations: waiting firm send limit cases passed';
+END $$;
+
 DO $$
 DECLARE rf uuid := pg_temp.id('refused'); inv uuid;
 BEGIN
@@ -901,6 +930,74 @@ BEGIN
   SELECT count(*) INTO pending FROM public.firm_invitations WHERE firm_id = f AND status = 'pending';
   PERFORM pg_temp.is(pending, 5::bigint, 'pending invitations of the waiting firm after two were made at once');
   RAISE NOTICE 'firm_invitations: two-session cap race passed';
+END $$;
+
+-- ---------- two owners of a waiting firm resend at the same moment (D-32) ----------
+-- The limit of ten emails is read and spent under the firm's row lock, as inviting is. The firm has caused nine emails (two
+-- invitations, one resent seven times); without the lock two resends at once would each see nine and make eleven.
+DO $$
+DECLARE f uuid; a uuid; b uuid; n integer;
+BEGIN
+  INSERT INTO public.firms (name, address) VALUES ('Resend Race Firm', 'resend-race-firm') RETURNING id INTO f;
+  INSERT INTO fx VALUES ('resend_race_firm', f);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role)
+  VALUES (f, pg_temp.new_user('rr_owner_1'), 'owner'), (f, pg_temp.new_user('rr_owner_2'), 'owner');
+  PERFORM pg_temp.as_user('rr_owner_1');
+  SELECT r.invitation_id INTO a FROM public.invite_member(f, 'rr-a@example.test', 'agent', NULL, pg_temp.hash_of('rr-a-0')) r;
+  SELECT r.invitation_id INTO b FROM public.invite_member(f, 'rr-b@example.test', 'agent', NULL, pg_temp.hash_of('rr-b-0')) r;
+  FOR n IN 1..7 LOOP
+    PERFORM public.resend_invitation(a, pg_temp.hash_of('rr-a-' || n));
+  END LOOP;
+  RESET ROLE;
+  INSERT INTO fx VALUES ('rr_a', a), ('rr_b', b);
+END $$;
+
+DO $$
+DECLARE
+  f uuid := pg_temp.id('resend_race_firm');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  as_second text := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('rr_owner_2'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'rr_owner_2@example.test')::text);
+  as_first text := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('rr_owner_1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'rr_owner_1@example.test')::text);
+  second_pid integer;
+  tries integer := 0;
+  s text;
+BEGIN
+  PERFORM race.dblink_connect('rr_first', dsn);
+  PERFORM race.dblink_connect('rr_second', dsn);
+  PERFORM race.dblink_exec('rr_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('rr_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('rr_first', 'BEGIN');
+  PERFORM race.dblink_exec('rr_first', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('rr_first', as_first) AS t(c text);
+  PERFORM * FROM race.dblink('rr_first', format($q$SELECT public.resend_invitation(%L, %L)::text$q$, pg_temp.id('rr_a'), pg_temp.hash_of('rr-a-8'))) AS t(r text);
+  PERFORM race.dblink_exec('rr_second', 'BEGIN');
+  PERFORM race.dblink_exec('rr_second', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('rr_second', as_second) AS t(c text);
+  PERFORM race.dblink_send_query('rr_second', format($q$SELECT public.resend_invitation(%L, %L)::text$q$, pg_temp.id('rr_b'), pg_temp.hash_of('rr-b-1')));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the second resend never waited for the first'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('rr_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('rr_second') AS t(r text);
+    RAISE EXCEPTION 'FAIL: the eleventh email was allowed too';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    IF s <> 'PT409' THEN RAISE EXCEPTION 'FAIL: the second resend gave %, expected PT409', s; END IF;
+  END;
+  PERFORM race.dblink_disconnect('rr_first');
+  BEGIN
+    PERFORM race.dblink_exec('rr_second', 'ROLLBACK');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('rr_second');
+  PERFORM pg_temp.is((SELECT sum(send_count) FROM public.firm_invitations WHERE firm_id = f), 10::bigint, 'emails of the waiting firm after two resends were made at once');
+  RAISE NOTICE 'firm_invitations: two-session resend race passed';
 END $$;
 
 -- ---------- an address that could never be emailed is not kept ----------

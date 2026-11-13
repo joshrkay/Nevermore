@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Link, MemoryRouter } from "react-router-dom";
 
 const auth = {
-  user: null as { id: string; email?: string } | null,
+  user: null as { id: string; email?: string; last_sign_in_at?: string } | null,
   loading: false,
   isAnonymous: false,
   signOut: vi.fn(),
@@ -12,9 +12,11 @@ const auth = {
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const fetchFirmName = vi.fn();
 const fetchIsMemberOfFirmAddress = vi.fn();
+const recordFirmSignIn = vi.fn();
 vi.mock("@/lib/firmApi", () => ({
   fetchFirmName: (...a: unknown[]) => fetchFirmName(...a),
   fetchIsMemberOfFirmAddress: (...a: unknown[]) => fetchIsMemberOfFirmAddress(...a),
+  recordFirmSignIn: (...a: unknown[]) => recordFirmSignIn(...a),
 }));
 
 const { FirmAddressProvider } = await import("@/hooks/useFirmAddress");
@@ -42,6 +44,8 @@ describe("the firm address gate", () => {
     auth.signOut.mockReset();
     fetchFirmName.mockReset().mockResolvedValue("Acme Brokers");
     fetchIsMemberOfFirmAddress.mockReset().mockResolvedValue(true);
+    recordFirmSignIn.mockReset().mockResolvedValue(true);
+    try { window.localStorage.clear(); } catch { /* no storage here */ }
   });
 
   it("changes nothing on the bare domain or www: no question is asked, whoever is signed in", async () => {
@@ -305,5 +309,63 @@ describe("the firm address gate", () => {
     fireEvent.click(screen.getByRole("link", { name: "Continue" }));
     expect(await screen.findByText("The console")).toBeInTheDocument();
     expect(screen.queryByText("You aren't a member of this firm")).not.toBeInTheDocument();
+  });
+
+  // A sign-in to a firm's console is one entry in the firm's record (CRM-P2.3), written once the person is known to be a
+  // member of the firm the address names, and once for each sign-in rather than for each page they open.
+  describe("the sign-in recorded in the firm's record", () => {
+    it("is reported once, for the firm the address names, when a current member reaches the console", async () => {
+      auth.user = { id: "u1", last_sign_in_at: "2026-11-13T09:00:00Z" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledWith("acme-brokers"));
+      expect(recordFirmSignIn).toHaveBeenCalledTimes(1);
+    });
+
+    it("is not reported again for the same sign-in, on another page or after a reload, but is for the next sign-in", async () => {
+      auth.user = { id: "u1", last_sign_in_at: "2026-11-13T10:00:00Z" };
+      const first = renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledTimes(1));
+      first.unmount();
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor/outbox");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      await act(async () => {});
+      expect(recordFirmSignIn).toHaveBeenCalledTimes(1);
+      auth.user = { id: "u1", last_sign_in_at: "2026-11-14T10:00:00Z" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledTimes(2));
+    });
+
+    it("is tried again on the next page when it could not be written, and not marked as done", async () => {
+      recordFirmSignIn.mockResolvedValueOnce(false);
+      auth.user = { id: "u1", last_sign_in_at: "2026-11-13T11:00:00Z" };
+      const first = renderAt("acme-brokers.nevermorepeo.com");
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledTimes(1));
+      await act(async () => {});
+      first.unmount();
+      renderAt("acme-brokers.nevermorepeo.com");
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledTimes(2));
+    });
+
+    it("is never reported for someone who isn't a member, a signed-out visitor, a guest, an address no firm holds or the bare domain", async () => {
+      const cases: [string, () => void][] = [
+        ["acme-brokers.nevermorepeo.com", () => { fetchIsMemberOfFirmAddress.mockResolvedValue(false); auth.user = { id: "u1", last_sign_in_at: "t1" }; }],
+        ["acme-brokers.nevermorepeo.com", () => { auth.user = null; }],
+        ["acme-brokers.nevermorepeo.com", () => { auth.user = { id: "g1", last_sign_in_at: "t2" }; auth.isAnonymous = true; }],
+        ["no-such-firm.nevermorepeo.com", () => { fetchFirmName.mockResolvedValue(null); auth.user = { id: "u1", last_sign_in_at: "t3" }; }],
+        ["nevermorepeo.com", () => { auth.user = { id: "u1", last_sign_in_at: "t4" }; }],
+      ];
+      for (const [host, arrange] of cases) {
+        arrange();
+        const view = renderAt(host);
+        await act(async () => {});
+        await act(async () => {});
+        view.unmount();
+        auth.isAnonymous = false;
+        fetchFirmName.mockResolvedValue("Acme Brokers");
+        fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+      }
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+    });
   });
 });
