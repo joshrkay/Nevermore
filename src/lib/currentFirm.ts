@@ -9,9 +9,11 @@ export type Refusal = "none" | "not_this_firm" | "several";
 /**
  * The one firm the console acts for, from the person's own memberships and the address they are at (stories P-1.4 and
  * CRM-S1.1b). At a firm's address it is that firm, when the person is a current member of it, whatever other firms they belong
- * to: there the database answers for that firm alone (D-40, ADR 0015). On the bare domain the database answers for every firm
- * the person belongs to, so a member of exactly one firm has that firm and a member of several has none until they choose one,
- * at its address. Every guard, link and page that asks "is this person a member / an owner here" asks this and nothing else.
+ * to, and their role is the one they hold there: the browser names the address on every request and the database answers for
+ * that firm alone (D-40, ADR 0016), so every page there, member pages and the owner's Activity page alike, shows that firm's
+ * records only. On the bare domain the database answers for every firm the person belongs to, so a member of exactly one firm
+ * has that firm and a member of several has none until they choose one, at its address. Every guard, link and page that asks
+ * "is this person a member / an owner here" asks this and nothing else.
  */
 export function currentFirm(firms: MyFirm[], address: string | null): { firm: MyFirm } | { refusal: Refusal } {
   if (firms.length === 0) return { refusal: "none" };
@@ -21,10 +23,4 @@ export function currentFirm(firms: MyFirm[], address: string | null): { firm: My
   }
   if (firms.length > 1) return { refusal: "several" };
   return { firm: firms[0] };
-}
-
-/** Whether the person is an owner of the console's current firm (and not merely of some firm). */
-export function isOwnerHere(firms: MyFirm[], address: string | null): boolean {
-  const here = currentFirm(firms, address);
-  return "firm" in here && here.firm.role === "owner";
 }

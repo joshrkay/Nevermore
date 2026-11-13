@@ -232,13 +232,26 @@ describe("RequireFirm as an owner (the owner of the firm at this address)", () =
     expect(reportOpsEvent).toHaveBeenCalledWith("auth_denied", { code: "firm_owner_route" });
   });
 
-  it("refuses an owner of one firm who is only an agent at another firm's address", async () => {
+  it("lets in an owner of two firms at the address of one of them: the page's firm is that address's", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta Brokers" };
+    fetchMyFirms.mockResolvedValue([ownerOf(alpha), ownerOf(beta)]);
+    renderGuarded("owner");
+    expect(await screen.findByText("The record")).toBeInTheDocument();
+  });
+
+  it("refuses an owner of Beta who is only an agent at Alpha's address, and says it is for owners (not that they belong to several firms)", async () => {
     firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
-    // Owner of Beta, agent at Alpha, and this is Alpha's address.
     fetchMyFirms.mockResolvedValue([{ ...beta, role: "owner" }, alpha]);
     renderGuarded("owner");
     expect(await screen.findByRole("heading", { name: "For a firm's owners" })).toBeInTheDocument();
     expect(screen.queryByText("The record")).not.toBeInTheDocument();
+  });
+
+  it("lets that same person into the member pages at Alpha's address, where the database answers for Alpha alone (D-40)", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+    fetchMyFirms.mockResolvedValue([{ ...beta, role: "owner" }, alpha]);
+    renderGuarded();
+    expect(await screen.findByText("Firm console")).toBeInTheDocument();
   });
 
   it("refuses an owner of one firm at the address of a firm they do not belong to", async () => {

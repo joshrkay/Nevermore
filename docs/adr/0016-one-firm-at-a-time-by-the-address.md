@@ -1,6 +1,6 @@
 # One firm at a time, chosen by the address
 
-ADR 0014 (the console asks for a membership, not the advisor role) left one consequence open: a person who belongs to several firms was kept out, because every table and function answered them for all their firms at once and the console would have shown the firms' records mixed together. D-40 settles it, and this reverses that "kept out" consequence of 0014.
+ADR 0014 (the console asks for a membership, not the advisor role) kept a person who belongs to several firms out of the console, because every table and function answered them for all their firms at once and the console would have shown the firms' records mixed together. ADR 0015 made the address name the current firm, but only the owner-only Activity page could use it, since that page checks the address's firm itself; the member pages stayed closed to such a person. D-40 settles it: this ADR builds on 0015 by making the database itself answer for the address's firm, and so reverses the "kept out" consequence of 0014 for every page at a firm's address.
 
 At a firm's address the browser sends the address with every request to the database, in the header `x-firm-address` (set once, where the Supabase client is made). PostgREST hands request headers to the database as `request.headers`; `request_firm_address()` reads the address from it and `address_admits_firm()` says whether a firm is the one holding it (a refused firm holds no address, D-31). `firm_role()`, which `is_firm_member()`, `can_see_firm_record()` and every firm rule are built on, now also asks `address_admits_firm()`. So at a firm's address a member of several firms reads, counts, changes and writes that firm's rows only, and a function that acts for "the caller's firm" (`firm_to_act_for`) acts for that firm.
 
@@ -14,6 +14,7 @@ The address only narrows. Membership stays the lock (D-18): a header can be sent
 
 ## Consequences
 
+- `currentFirm()` (ADR 0015) stays the one rule: at a firm's address it is that firm for a current member of it, for member and owner pages alike, and the member guard no longer refuses a member of several firms there.
 - On the bare domain a member of several firms is sent to "Choose a firm" (`/choose-firm`), a list of links to each firm's address, where they sign in. At a firm's address they are let in when they are a current member of it.
 - Two functions answer about the person, not a firm's rows, and are not narrowed: `my_firms()` (the person's own firms) and `is_member_of_firm_address()`. `require_advisor()` and `advisor_needs_second_factor()` are not narrowed either; every row behind them is.
 - A check that refuses because the caller IS a member must not ask the narrowed helper, or another firm's address turns the refusal off. `admin_decide_firm()` ("an admin does not decide on a firm they belong to") now asks the caller's memberships directly. A later story that writes such a check does the same.

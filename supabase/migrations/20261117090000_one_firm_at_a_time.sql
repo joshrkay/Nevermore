@@ -1,4 +1,4 @@
--- One firm at a time (story CRM-S1.1b; docs/BROKER_CRM_BUILD.md D-18, D-27, D-31, D-40; ADR 0015).
+-- One firm at a time (story CRM-S1.1b; docs/BROKER_CRM_BUILD.md D-18, D-27, D-31, D-40; ADR 0016).
 --
 -- Until now every table and function answered a person for every firm they currently belong to, so a member of two firms saw
 -- both firms' rows mixed in every list, and the console kept such a person out (ADR 0014, the membership ADR). At a firm's address the browser now

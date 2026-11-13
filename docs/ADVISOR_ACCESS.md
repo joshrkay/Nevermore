@@ -7,7 +7,7 @@ access (`supabase/migrations/20261022090000_advisor_operations.sql`, and since s
 `20261116210000_console_per_firm.sql`, docs/adr/0014). The console asks for a current membership of a firm (`my_firms()`), not
 for a platform role; a platform admin who belongs to no firm gets the platform's pages only (D-16).
 
-One firm at a time (story CRM-S1.1b, D-40, docs/adr/0015). At a firm's address the browser sends that address with every
+One firm at a time (story CRM-S1.1b, D-40, docs/adr/0016). At a firm's address the browser sends that address with every
 request to the database (the `x-firm-address` header, `src/integrations/supabase/client.ts`), and the membership helpers then
 answer for that firm only (`20261117090000_one_firm_at_a_time.sql`). The address only narrows; membership is still the lock. So a
 member of several firms is let into the console at the address of any firm they belong to, and sees that firm's records alone.

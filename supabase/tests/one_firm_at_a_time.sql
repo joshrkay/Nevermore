@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh one_firm_at_a_time
--- One firm at a time (story CRM-S1.1b; docs/BROKER_CRM_BUILD.md D-18, D-27, D-31, D-40; ADR 0015;
+-- One firm at a time (story CRM-S1.1b; docs/BROKER_CRM_BUILD.md D-18, D-27, D-31, D-40; ADR 0016;
 -- 20261117090000_one_firm_at_a_time.sql). At a firm's address the browser sends that address in the request header
 -- x-firm-address, which PostgREST hands the database as request.headers, and the membership helpers then also require
 -- that a row's firm is that address's firm. The address only narrows: membership is still the lock.
@@ -129,6 +129,7 @@
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
+\i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
 \i supabase/migrations/20261117090000_one_firm_at_a_time.sql
 SET client_min_messages = notice;
 

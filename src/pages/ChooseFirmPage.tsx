@@ -6,7 +6,7 @@ import { loadMyFirms, useMyFirms } from "@/hooks/useOwnedFirms";
 import { firmUrlFrom } from "@/lib/firmHost";
 
 /**
- * "Choose a firm" (story CRM-S1.1b, D-40, ADR 0015). On the bare domain the database answers a person for every firm they
+ * "Choose a firm" (story CRM-S1.1b, D-40, ADR 0016). On the bare domain the database answers a person for every firm they
  * belong to, so a member of several firms works at one firm's own address, where it answers for that firm alone. This page
  * lists their firms (my_firms(), which is never narrowed) as links to each firm's address; a session belongs to one address,
  * so they sign in there. It only shows the way: the database decides what each address shows (D-18).

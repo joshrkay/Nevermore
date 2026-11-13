@@ -274,7 +274,7 @@ What a firm's address shows before anyone signs in: the firm's name, and nothing
 What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only, and false for a refused firm's address. The database, not this screen, refuses them the data (D-18).
 
 **Address narrowing** (code: `x-firm-address`, `address_admits_firm`, `request_firm_address`):
-At a firm's address the browser names the address on every request to the database, and the membership helper (`firm_role`, so `is_firm_member` and every firm rule built on it) then answers only for the firm that holds that address (D-40, ADR 0015). It only narrows: membership is still the lock (D-18), so another firm's address, an address no firm holds or a refused firm's address shows nothing, and a header anyone can send grants nothing. A request with no address (the bare domain, the service role, a scheduled job) is answered as before. The list of a person's own firms (`my_firms`) is not narrowed.
+At a firm's address the browser names the address on every request to the database, and the membership helper (`firm_role`, so `is_firm_member` and every firm rule built on it) then answers only for the firm that holds that address (D-40, ADR 0016). It only narrows: membership is still the lock (D-18), so another firm's address, an address no firm holds or a refused firm's address shows nothing, and a header anyone can send grants nothing. A request with no address (the bare domain, the service role, a scheduled job) is answered as before. The list of a person's own firms (`my_firms`) is not narrowed.
 _Avoid_: firm switcher, firm context (no firm is put in the session or the token)
 
 **Choose a firm** (code: `ChooseFirmPage`, `/choose-firm`):
@@ -392,7 +392,7 @@ _Avoid_: layout, sidebar (in screen words)
 The grey page, white cards, blue actions and dark navy menu of `docs/prd-screens/`. The shell puts the class on the document's root element while it is mounted, so a dialog or sheet drawn outside the shell takes the look; the employer's intake and the landing page never have it (D-41).
 
 **Current firm** (code: `currentFirm()`, `src/lib/currentFirm.ts`):
-The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs; on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
+The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs, whatever other firms they belong to (it says so, so a member route can keep them out); on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several on the bare domain) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
 _Avoid_: active firm, selected firm
 
 **Platform page** (code: `RequirePlatformAdmin`):
