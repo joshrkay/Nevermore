@@ -1,6 +1,7 @@
 -- Assigning held mail needs a quote request that is still open. The list an admin picks from (admin_assignable_quote_requests) leaves closed
 -- ones out, but the lookup of the chosen one did not: a request that closed after the admin loaded the list could still be assigned to.
--- Both the plan and the apply step now answer a closed quote request as one that isn't there. Nothing else changes.
+-- Both the plan and the apply step now answer a closed quote request as one that isn't there. The apply step also locks the request it assigns to,
+-- so a close that is in flight is waited for and the check is read again (D-32). Nothing else changes.
 CREATE OR REPLACE FUNCTION public.plan_mail_move(p_message_id bigint, p_target bigint, p_actor uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
@@ -89,7 +90,9 @@ BEGIN
     IF msg.quote_request_id IS NOT NULL THEN
       RAISE EXCEPTION 'Only a held message can be assigned' USING ERRCODE = '55000';
     END IF;
-    SELECT * INTO target FROM public.quote_requests WHERE id = p_target AND status <> 'closed';
+    -- FOR UPDATE: a request being closed by another transaction is waited for, and the open check is read again afterwards, so the
+    -- mail is never put on a request that closed between the check and this commit.
+    SELECT * INTO target FROM public.quote_requests WHERE id = p_target AND status <> 'closed' FOR UPDATE;
     SELECT s.firm_id INTO target_firm FROM public.chamber_sessions s WHERE s.id = target.session_id;
     IF NOT FOUND OR (msg.firm_id IS NOT NULL AND msg.firm_id IS DISTINCT FROM target_firm) THEN
       RAISE EXCEPTION 'Quote request not found' USING ERRCODE = 'PT404';

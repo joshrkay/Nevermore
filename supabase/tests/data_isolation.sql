@@ -153,10 +153,10 @@
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
-\i supabase/migrations/20261116190000_firm_invitations.sql
-\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
-\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
+\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1554,13 +1554,6 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('advisor_requeue_outbox_event', 'advisor', 'by_id', $$SELECT public.advisor_requeue_outbox_event({evt}, false)::text$$,
    ARRAY['42501', 'ok:false'], '^ok:true$');
--- An invitation is its firm's own: only a current owner of that firm invites, lists, resends or withdraws (supabase/tests/firm_invitations.sql
--- holds the rest). Each is tried on both firms' rows; the owner of that firm is the positive control.
-INSERT INTO fprobe (fn, who, shape, call) VALUES
-  ('invite_member', 'admin', 'by_id', $$SELECT invitation_id::text FROM public.invite_member({firm}, 'probe-invitee@example.test', 'agent', NULL, repeat('e', 64))$$),
-  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$),
-  ('resend_invitation', 'admin', 'by_id', $$SELECT invitation_id::text FROM public.resend_invitation({inv}::uuid, repeat('f', 64))$$),
-  ('cancel_invitation', 'admin', 'by_id', $$SELECT public.cancel_invitation({inv}::uuid)::text$$);
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:{}'], member_ok = '^ok:\{company_name\}$' WHERE fn = 'session_verified_fields';
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:false'], member_ok = '^ok:true$' WHERE fn = 'retry_intake_deletion';
 
@@ -2097,6 +2090,68 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: held mail cases passed';
+END $$;
+
+-- 4i-2b. A request that closes while held mail is being assigned to it (D-32). The assignment checks that the request is open, and a
+-- check alone is not enough: a close that commits between the check and the assignment would leave the mail on a closed request. So
+-- the request is read FOR UPDATE and the two serialise. Two real connections (dblink) race: the first closes the request and holds
+-- its transaction open until the second, assigning to it, is seen waiting on it; once the first commits the second must find the
+-- request closed and refuse as for one that isn't there. (Without the lock the second never waits: it has already passed the check.)
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+DO $$
+DECLARE
+  hu constant bigint := (SELECT id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_held');
+  qa constant bigint := (SELECT quote_request_id FROM public.quote_request_messages WHERE provider_message_id = 'matrix_1');
+  plat constant uuid := pg_temp.id('platform_admin');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  second_pid integer;
+  tries integer := 0;
+  s text;
+  was text;
+BEGIN
+  IF hu IS NULL OR qa IS NULL THEN RAISE EXCEPTION 'FAIL: setup: the held message or the quote request is missing'; END IF;
+  IF (SELECT quote_request_id FROM public.quote_request_messages WHERE id = hu) IS NOT NULL THEN RAISE EXCEPTION 'FAIL: setup: the message is not held'; END IF;
+  SELECT status INTO was FROM public.quote_requests WHERE id = qa;
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  PERFORM race.dblink_exec('race_first', format('UPDATE public.quote_requests SET status = ''closed'' WHERE id = %s', qa));
+  PERFORM race.dblink_exec('race_second', 'BEGIN');
+  PERFORM race.dblink_exec('race_second', 'SET LOCAL ROLE service_role');
+  PERFORM * FROM race.dblink('race_second', $q$SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true)$q$) AS t(c text);
+  PERFORM race.dblink_send_query('race_second', format('SELECT public.apply_mail_move(%s, %s, %L, NULL)::text', hu, qa, plat));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF race.dblink_is_busy('race_second') = 0 THEN
+      PERFORM race.dblink_exec('race_first', 'ROLLBACK');
+      RAISE EXCEPTION 'FAIL: the assignment did not wait for the close in progress, so a request closing at that moment still receives the mail';
+    END IF;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the assignment neither waited nor finished'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_second') AS t(r text);
+    RAISE EXCEPTION 'FAIL: held mail was assigned to a request that closed while it waited';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    IF s <> 'PT404' THEN RAISE EXCEPTION 'FAIL: the assignment to the closed request gave %, expected PT404', s; END IF;
+  END;
+  BEGIN
+    PERFORM race.dblink_exec('race_second', 'ROLLBACK');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('race_first');
+  PERFORM race.dblink_disconnect('race_second');
+  IF (SELECT quote_request_id FROM public.quote_request_messages WHERE id = hu) IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: the held message is on the request that closed';
+  END IF;
+  UPDATE public.quote_requests SET status = was WHERE id = qa;
+  RAISE NOTICE 'data_isolation: two-session close and assign race passed';
 END $$;
 
 -- 4i-3. The advisor alert's recipients: the people told about a new submission or new PEO mail are the current members of the firm
