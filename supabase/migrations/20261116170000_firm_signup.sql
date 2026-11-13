@@ -24,6 +24,7 @@ AS $$
 DECLARE
   fid uuid;
   clean_name text := btrim(COALESCE(p_name, ''));
+  violated text;
 BEGIN
   -- A signed-in person, not a guest, whose email the provider or the confirmation link has verified. Anyone else
   -- gets the same refusal, so the call tells nothing about which accounts exist.
@@ -36,12 +37,21 @@ BEGIN
     RAISE EXCEPTION 'A firm''s name is 1 to 80 characters' USING ERRCODE = '23514';
   END IF;
   -- One firm waiting at a time per person (D-30): nobody can hold addresses they have no use for, or fill the admin's
-  -- list. The lock makes two calls from the same person at once take turns, so both cannot pass the check.
-  PERFORM pg_advisory_xact_lock(hashtext('sign_up_firm:' || auth.uid()::text));
+  -- list. The unique index firms_one_waiting_per_signer is the rule; this check only gives the usual message early.
   IF EXISTS (SELECT 1 FROM public.firms f WHERE f.signed_up_by = auth.uid() AND f.decision IS NULL) THEN
     RAISE EXCEPTION 'You already have a firm waiting for approval' USING ERRCODE = 'PT409';
   END IF;
-  INSERT INTO public.firms (name, address, signed_up_by) VALUES (clean_name, lower(btrim(p_address)), auth.uid()) RETURNING id INTO fid;
+  BEGIN
+    INSERT INTO public.firms (name, address, signed_up_by) VALUES (clean_name, lower(btrim(p_address)), auth.uid()) RETURNING id INTO fid;
+  EXCEPTION WHEN unique_violation THEN
+    -- Two sign-ups from one person at the same moment both pass the check; the index refuses the second, which sees
+    -- the same message as the check gives. Any other unique violation (a taken address) stays as it is.
+    GET STACKED DIAGNOSTICS violated = CONSTRAINT_NAME;
+    IF violated = 'firms_one_waiting_per_signer' THEN
+      RAISE EXCEPTION 'You already have a firm waiting for approval' USING ERRCODE = 'PT409';
+    END IF;
+    RAISE;
+  END;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fid, auth.uid(), 'owner');
   PERFORM public.record_firm_event(fid, 'firm_signed_up', auth.uid(), jsonb_build_object('address', lower(btrim(p_address))));
   RETURN fid;
@@ -96,6 +106,10 @@ ALTER TABLE public.firms
   ADD COLUMN decision_note text CHECK (char_length(decision_note) <= 500),
   ADD CONSTRAINT firms_decision_is_whole CHECK ((decision IS NULL) = (decided_at IS NULL)),
   ADD CONSTRAINT firms_refused_is_not_approved CHECK (decision IS DISTINCT FROM 'refused' OR approved_at IS NULL);
+
+-- A person has at most one firm waiting for a decision (D-30), enforced here so no path can break it. Waiting means
+-- undecided. Once the firm is approved or refused the person may sign up another; firms with no signer are not limited.
+CREATE UNIQUE INDEX firms_one_waiting_per_signer ON public.firms (signed_up_by) WHERE decision IS NULL;
 
 -- A firm's own members read the firm, not the admin's side of the decision: the note and who decided stay behind the
 -- admin functions (D-16). Column by column, so a column added later is not readable until it is granted here.

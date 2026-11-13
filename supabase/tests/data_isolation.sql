@@ -1226,7 +1226,13 @@ DECLARE ids text[];
 BEGIN
   EXECUTE format('SELECT COALESCE(array_agg(ctid::text), ''{}'') FROM %s', src) INTO ids;
   RETURN ids;
-EXCEPTION WHEN insufficient_privilege THEN RETURN '{}';
+EXCEPTION WHEN insufficient_privilege THEN
+  -- A table readable column by column (public.firms) gives no access to ctid: its rows are named by its first column.
+  BEGIN
+    EXECUTE format('SELECT COALESCE(array_agg(%I::text), ''{}'') FROM %s', pg_temp.src_column(src), src) INTO ids;
+    RETURN ids;
+  EXCEPTION WHEN insufficient_privilege THEN RETURN '{}';
+  END;
 END $$;
 
 -- The table a matrix source names, and a column to write back to it.
@@ -1483,7 +1489,7 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
    $m$SELECT ctid::text FROM public.submission_workflow WHERE session_id = {intake}$m$),
   -- A firm's own row, and a membership of it: a member reads their own firm, their own membership and nobody else's.
   ('public.firms', 'firm', 'a member reads their own firm',
-   $m$SELECT ctid::text FROM public.firms WHERE id = {firm}$m$),
+   $m$SELECT id::text FROM public.firms WHERE id = {firm}$m$),
   -- Storage: a file is a firm's by the intake its folder names.
   ('storage.objects WHERE bucket_id = ''documents''', 'firm', 'by the intake in the folder',
    $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', {u} || '/' || {intake} || '/probe-{tag}.csv') RETURNING ctid::text$m$),

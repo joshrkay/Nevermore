@@ -519,7 +519,36 @@ BEGIN
   PERFORM pg_temp.as_user('squatter');
   fid := public.sign_up_firm('Squat One', 'squat-one');
   PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Squat Two', 'squat-two')$q$), 'PT409', 'a person with a firm still waiting can not sign up another, and the refusal has its own code');
+  -- The rule is the database's (D-29), not the function's: the table owner inserting a second waiting firm for the
+  -- same person, bypassing sign_up_firm, is refused by the unique index.
   RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.firms (name, address, signed_up_by) VALUES ('Squat Direct', 'squat-direct', %L)$q$, pg_temp.id('squatter'))),
+    '23505', 'a direct insert of a second waiting firm for the same person is refused by the index');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firms WHERE address = 'squat-direct'), 0::bigint, 'and leaves no row');
+  -- A different person's waiting firm, and firms nobody signed up (signed_up_by empty), are not touched by the rule.
+  PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.firms (name, address) VALUES ('Nobody One', 'nobody-one'), ('Nobody Two', 'nobody-two')$q$),
+    'rows:2', 'firms with no one who signed them up do not collide with each other');
+  DELETE FROM public.firms WHERE address IN ('nobody-one', 'nobody-two');
+  -- The race loser: another call by the same person commits a waiting firm between this call's check and its insert.
+  -- A trigger that plays the winner at exactly that moment makes the check miss deterministically. The loser sees the
+  -- ordinary message and code, not a raw constraint error; a taken address stays the plain unique violation.
+  CREATE FUNCTION pg_temp.play_winner() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN
+    INSERT INTO public.firms (name, address, signed_up_by) VALUES ('Race Winner', 'race-winner', NEW.signed_up_by);
+    RETURN NEW;
+  END $f$;
+  PERFORM pg_temp.new_user('racer');
+  CREATE TRIGGER play_winner BEFORE INSERT ON public.firms FOR EACH ROW WHEN (NEW.address = 'race-loser') EXECUTE FUNCTION pg_temp.play_winner();
+  PERFORM pg_temp.as_user('racer');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Race Loser', 'race-loser')$q$), 'PT409', 'the loser of a race gets the normal refusal');
+  BEGIN
+    PERFORM public.sign_up_firm('Race Loser', 'race-loser');
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM pg_temp.is(SQLERRM, 'You already have a firm waiting for approval', 'with the same friendly message');
+  END;
+  RESET ROLE;
+  DROP TRIGGER play_winner ON public.firms;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firms WHERE address IN ('race-winner', 'race-loser')), 0::bigint, 'and the lost race leaves no firm behind');
   PERFORM pg_temp.as_user('platform_admin');
   PERFORM public.admin_decide_firm(fid, false, 'squatting');
   PERFORM pg_temp.as_user('squatter');
