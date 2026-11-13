@@ -57,6 +57,16 @@ doesn't.
 | PEO template workbooks | Confidential | The blank census spreadsheet a PEO asks to have filled, uploaded by an admin, with its file name, size, hash and virus-check result. Scanned before anyone can use it (docs/adr/0002); only a clean one is read, by anyone signed in, and the census is written into a copy in the reader's browser. Never anything about an intake | `peo_census_templates`; the `peo-templates` bucket (clean), `quarantine` (blocked or not checked); the malware scanner while it checks one | For good, as the profile versions that name them | Deleting an intake leaves them. By hand, if a PEO asks |
 | Firms, teams and who belongs to them | Confidential | A brokerage's name and address in the web address, who sees its records, its teams, and which accounts are members of it, in what role and from and until when. Nothing about an intake's answers | `firms`, `firm_teams`, `firm_memberships` | For good: a membership is never changed, only ended | A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. Closing a firm is built in a later story |
 
+Who reads a firm's data (story CRM-P2.1a, decisions D-15, D-16 and D-18). Every table and storage rule that holds a firm's
+intakes, files or advisor work lets a person read a row only if they are a current member of that row's firm, whatever
+roles they hold in `user_roles`; the firm is the intake's own and never comes from the browser. A platform admin is not
+thereby a member of any firm. The tables that hold nothing of any firm's stay platform-wide: the PEO list with its profiles,
+contacts and template workbooks (every firm reads the same, an admin keeps them), `ops_events` and `ops_alerts`,
+`allowed_organisations` and `advisor_role_events`. Mail that arrived for no quote request is held for platform admins until
+one is assigned. A record of a deletion (`intake_deletions`) carries its firm, so it stays readable by that firm after the
+intake it names is gone. `supabase/tests/data_isolation.sql` proves it with two firms and fails a table that holds firm data
+with no firm rule.
+
 The prospect's browser also keeps a copy of answers whose save hasn't been confirmed, for at most 7 days, in
 that browser only (`src/data/intakeBackup.ts`). It also keeps the referral code and campaign tags of the last
 tagged link the visitor followed, for at most 30 days, and sends them with the intake when one is started
