@@ -119,6 +119,7 @@
 \i supabase/migrations/20261115120000_extra_answers.sql
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
+\i supabase/migrations/20261116090000_firms.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 SET client_min_messages = notice;
 
@@ -434,6 +435,11 @@ BEGIN
   VALUES ('google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
   INSERT INTO public.advisor_role_events (kind, provider, org_id, org_label, actor_id, actor_email)
   VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
+  -- Firms (20261116090000): the migration seeded Edgar Allan Advisory before these accounts held their roles, so
+  -- the advisor and the admin join it here as it would have joined them (D-15), with one team.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role)
+  VALUES (public.default_firm_id(), adv, 'agent'), (public.default_firm_id(), adm, 'owner');
+  INSERT INTO public.firm_teams (firm_id, name) VALUES (public.default_firm_id(), 'Sales');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
@@ -516,6 +522,11 @@ INSERT INTO matrix VALUES
   -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
   ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
   ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
+  -- Firms, their teams and dated memberships (20261116090000): a current member reads their own firm and its teams, and
+  -- their own membership; nobody else, prospects and guests included. No existing table's policy reads them yet.
+  ('public.firms',                                      '{"advisor":1,"admin":1}'),
+  ('public.firm_teams',                                 '{"advisor":1,"admin":1}'),
+  ('public.firm_memberships',                           '{"advisor":1,"admin":1}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -756,6 +767,11 @@ GRANT SELECT ON callable TO anon, authenticated, service_role;
 INSERT INTO callable VALUES
   ('has_role(_role app_role)',                 'anyone',  NULL, 'row security policies call it as the caller; answers about the caller only'),
   ('is_advisor()',                             'anyone',  NULL, 'row security policies and RequireAdvisor call it; answers about the caller only'),
+  ('firm_role(p_firm_id uuid)',               'own',     NULL, 'the caller''s own current role in a firm, NULL for anyone not a member; signed-out callers can''t call it'),
+  ('is_firm_member(p_firm_id uuid)',          'own',     NULL, 'whether the caller is a current member of a firm; about the caller only; signed-out callers can''t call it'),
+  ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
+  ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
+                                                                     'pure: whether a membership has begun and not ended, as of now; reads nothing'),
   ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
   ('advisor_needs_second_factor()',            'own',     NULL, 'whether the caller''s own password sign-in is all that holds back their role; false for anyone else'),
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
