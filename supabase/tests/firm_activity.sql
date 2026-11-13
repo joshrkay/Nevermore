@@ -352,6 +352,11 @@ SELECT public.record_member_activity('document_downloaded', 'submission', pg_tem
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'submission'
   AND actor_id = pg_temp.id('agent_a')), 1::bigint, 'reporting the same download again within moments adds nothing');
+SELECT pg_temp.as_user('lead_a');
+SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'submission'
+  AND actor_id = pg_temp.id('lead_a')), 1::bigint, 'someone else reporting the same download is their own entry, not hidden by the first');
 -- A browser is not told the number of the entry it wrote: numbering is shared by every firm.
 SELECT pg_temp.is((SELECT prorettype::regtype::text FROM pg_proc WHERE proname = 'record_member_activity'), 'void',
   'the browser function hands back nothing, so ids cannot be used to count other firms'' entries');
@@ -363,6 +368,18 @@ SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, 
   '42501', 'a server function naming someone who is not a member of the record''s firm');
 SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('prospect_b'), 'export_made', 'firm', pg_temp.id('firm_a')),
   '42501', 'a server function naming a guest');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.new_user('guest_member');
+UPDATE auth.users SET is_anonymous = true WHERE id = pg_temp.id('guest_member');
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_a'), pg_temp.id('guest_member'), 'agent');
+SELECT pg_temp.new_user('ended_a');
+INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+VALUES (pg_temp.id('firm_a'), pg_temp.id('ended_a'), 'agent', now() - interval '2 days', now() - interval '1 day');
+SELECT pg_temp.as_service();
+SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('guest_member'), 'export_made', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a server function naming a guest account that holds a membership');
+SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('ended_a'), 'export_made', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a server function naming someone whose membership has ended');
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = pg_temp.id('firm_a')
   AND actor_id = pg_temp.id('lead_a')), 1::bigint, 'a server-path entry carries the member as the actor');
@@ -477,6 +494,14 @@ INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES 
 SELECT pg_temp.as_user('owner_a');
 SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 2, (current_setting('test.page_one')::bigint[])[2])::text, current_setting('test.page_rest'),
   'an entry arriving between two pages makes the next page neither repeat nor skip a row');
+-- Two entries with the very same time are told apart by their ids: a page can end between them.
+SELECT pg_temp.as_owner();
+INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, at) VALUES
+  (pg_temp.id('firm_a'), 'support_access', 'firm', pg_temp.id('firm_a')::text, now() - interval '5 days'),
+  (pg_temp.id('firm_a'), 'support_access', 'firm', pg_temp.id('firm_a')::text, now() - interval '5 days');
+SELECT pg_temp.as_user('owner_a');
+SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, 'support_access', 1, (pg_temp.ids('firm_a', NULL, 'support_access', 1))[1]),
+  ARRAY[(pg_temp.truth('firm_a', NULL, 'support_access'))[2]], 'a page ending between two entries of the same time continues with the other');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 101, NULL, NULL)', pg_temp.id('firm_a')), '22023', 'a page of more than 100');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, now(), NULL)', pg_temp.id('firm_a')), '22023', 'a cursor with a time and no id');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, NULL, 5)', pg_temp.id('firm_a')), '22023', 'a cursor with an id and no time');
@@ -496,8 +521,8 @@ INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
 SELECT pg_temp.as_user('owner_a');
 SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_a')], 'an owner is told their firm');
 SELECT pg_temp.as_user('owner_ab');
-SELECT pg_temp.is((SELECT array_agg(firm_id ORDER BY name) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_b'), pg_temp.id('firm_a')],
-  'an owner of two firms is told both, by name');
+SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_b'), pg_temp.id('firm_a')],
+  'an owner of two firms is told both, in the order of their names (Beta Brokers, Edgar Allan Advisory)');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_a'))) > 0, true, 'an owner of two firms reads the first firm''s record');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b'))) > 0, true, 'and the second firm''s');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_b')) WHERE record_id = pg_temp.id('intake_a')::text), 0::bigint,
