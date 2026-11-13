@@ -4,19 +4,22 @@ import { LogOut } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { useAuth } from "@/hooks/useAuth";
 import LegalLinks from "@/components/LegalLinks";
-import { useMyFirms, useOwnedFirms } from "@/hooks/useOwnedFirms";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
+import { useMyFirms } from "@/hooks/useOwnedFirms";
+import { isOwnerHere } from "@/lib/currentFirm";
 import { fetchIsAdmin } from "@/lib/advisorApi";
 
 const AdvisorHeader = () => {
   const { user, signOut } = useAuth();
-  // The record of who did what is for a firm's owners: the link is offered only once the database says the person owns a
-  // firm. Until then, or if that can't be asked, it isn't shown (the page is refused to anyone else anyway).
-  const firms = useOwnedFirms();
-  const ownsAFirm = firms !== null && firms.length > 0;
   // The firm's pages are for its members and the platform's for the platform's admins (D-16: an admin is no member of any
   // firm). Each is offered once the database says so, and not before or when it can't be asked.
   const mine = useMyFirms();
+  const firmAddress = useFirmAddress();
+  const address = firmAddress.status === "known" ? firmAddress.address : null;
   const isMember = mine !== null && mine.length > 0;
+  // The record of who did what is for the owners of the firm the console is showing (the same firm the guard and the page
+  // use), not for anyone who owns some firm: until the database says so, or if it can't be asked, the link isn't shown.
+  const ownsThisFirm = mine !== null && isOwnerHere(mine, address);
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +102,7 @@ const AdvisorHeader = () => {
           </NavLink>
             </>
           )}
-          {ownsAFirm && (
+          {ownsThisFirm && (
             <NavLink
               to="/advisor/activity"
               className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
