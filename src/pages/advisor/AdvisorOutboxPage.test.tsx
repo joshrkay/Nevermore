@@ -5,6 +5,8 @@ import type { OutboxEvent, OutboxSummaryRow } from "@/lib/advisorApi";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
+// The header asks which firm the address names; these pages are tested at the bare domain.
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const listOutboxEvents = vi.fn();
 const outboxSummary = vi.fn();
 const requeueOutboxEvent = vi.fn();

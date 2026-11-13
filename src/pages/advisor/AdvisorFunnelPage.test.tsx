@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
+// The header asks which firm the address names; these pages are tested at the bare domain.
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const loadFunnel = vi.fn();
 const loadIntakeSourcesOfMyFirms = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({
