@@ -417,6 +417,9 @@ _Avoid_: layout, sidebar (in screen words)
 **Workspace look** (code: the `theme-workspace` class, `src/index.css`):
 The grey page, white cards, blue actions and dark navy menu of `docs/prd-screens/`. The shell puts the class on the document's root element while it is mounted, so a dialog or sheet drawn outside the shell takes the look; the employer's intake and the landing page never have it (D-41).
 
+**Workspace form** (code: `src/components/workspace/form/`):
+The one way a workspace form validates, reports and closes (CRM-S4.1, D-51). A required field says "Required" in words under its label; an error shows under its field when the person leaves it or presses save, and the first field in error takes the focus; Save is never disabled to point at an error, only while a save is in flight. A failed save keeps everything typed, says what failed beside the form's buttons and never closes the form; a refusal that belongs to one field shows under that field. Closing with unsaved changes asks first (Cancel, Escape, a dialog's close, moving to another page, the browser's leave-page prompt), and never after a save. "Edit" on a record turns its details into fields in place, with Save and Cancel.
+
 **Current firm** (code: `currentFirm()`, `src/lib/currentFirm.ts`):
 The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs, whatever other firms they belong to (it says so, so a member route can keep them out); on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several on the bare domain) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
 _Avoid_: active firm, selected firm
