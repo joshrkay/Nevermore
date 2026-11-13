@@ -463,7 +463,12 @@ BEGIN
 
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
-  PERFORM public.request_intake_deletion(pb_open, 'The owner asked by email; verified from the account address');
+  -- (Prospect B's is the second firm's: the admin is no member of it, so it is written here, as the superuser, as a request
+  -- by that firm's own owner would be.)
+  RESET ROLE;
+  INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, requested_by, requested_by_email)
+  VALUES (pb_open, pb, 'request', 'The owner asked by email; verified from the account address', owb, 'owner_b@example.test');
+  PERFORM pg_temp.become('admin');
   PERFORM public.request_intake_deletion(pa_open, 'The owner asked by email; verified from the account address');
   -- The admin publishes TriNet's requirement profile, naming a contact (20261115090000); the other four PEOs keep
   -- their empty drafts.
@@ -1426,7 +1431,20 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
   ('advisor_correct_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_correct_quote_request_note({note}, 'call', current_date, 'probe')::text$$),
-  ('advisor_reissue_quote_request_address', 'advisor', 'by_id', $$SELECT public.advisor_reissue_quote_request_address({qr})::text$$);
+  ('advisor_reissue_quote_request_address', 'advisor', 'by_id', $$SELECT public.advisor_reissue_quote_request_address({qr})::text$$),
+  ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
+  ('set_submission_needs_action', 'advisor', 'by_id', $$SELECT public.set_submission_needs_action({sid}, true, 'probe')::text$$),
+  ('review_submission_field', 'advisor', 'by_id', $$SELECT public.review_submission_field({sid}, 'company_name', 'follow_up')::text$$),
+  ('record_manuscript_version', 'advisor', 'by_id',
+   $$SELECT public.record_manuscript_version({sid}, 2, {sid} || '/probe.pdf', repeat('d', 64), 0, 0, false, NULL, NULL)::text$$),
+  ('advisor_request_information', 'advisor', 'by_id', $$SELECT public.advisor_request_information({sid}, 'probe', '{}')::text$$),
+  -- Their own intake's verified fields are the prospect's to read (the owner is no outsider); another firm's advisor gets none.
+  ('session_verified_fields', 'advisor', 'by_id', $$SELECT public.session_verified_fields({sid})::text$$),
+  ('request_intake_deletion', 'admin', 'by_id', $$SELECT public.request_intake_deletion({draft}, 'probe reason')::text$$),
+  ('revoke_chamber_session', 'admin', 'by_id', $$SELECT public.revoke_chamber_session({draft}, 'probe reason')::text$$),
+  ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$);
+UPDATE fprobe SET refused = ARRAY['42501', 'ok:{}'], member_ok = '^ok:\{company_name\}$' WHERE fn = 'session_verified_fields';
+UPDATE fprobe SET refused = ARRAY['42501', 'ok:false'], member_ok = '^ok:true$' WHERE fn = 'retry_intake_deletion';
 
 DO $$
 DECLARE
@@ -1440,6 +1458,11 @@ BEGIN
       (f, 'draft', pg_temp.id(CASE f WHEN 'a' THEN 'pa_open' ELSE 'pb_open' END)::text),
       (f, 'qr', qr),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
+    -- A deletion that failed, to retry: written as the superuser, and taken away again below.
+    INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
+    VALUES (pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), 'request', 'probe', 'failed')
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'del', qr);
   END LOOP;
 END $$;
 
@@ -1507,6 +1530,8 @@ BEGIN
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
 END $$;
+
+DELETE FROM public.intake_deletions WHERE id::text IN (SELECT v FROM fprobe_ids WHERE k = 'del');
 
 -- ---------- 4d. a deletion record keeps its firm after its intake is gone ----------
 DO $$
