@@ -4,9 +4,10 @@
 --    works out its costly columns (missing items, open items) for every row; asked for one page, it works them out for that
 --    page's rows only. So when a request means nothing advisor_list_submissions can't say with its own arguments (no filter
 --    but one stage, needs action and waiting on a PEO, no sort but the two it has, oldest wait and earliest expiry, both
---    ascending), queue_list_submissions now asks it for the one page, with its total. Anything else, and a page past the
---    end (where no row carries the total), takes the full path as before. The two give the same rows, order and total
---    (supabase/tests/queue_query.sql, section 9), so nobody can tell which ran.
+--    ascending), queue_list_submissions now asks it for the one page, with its total; for a page past the end, where no row
+--    carries the total, it asks again for the first row alone, which carries it. Anything else takes the full path as
+--    before. The two give the same rows, order and total (supabase/tests/queue_query.sql, section 9), so nobody can tell
+--    which ran.
 -- 2. The caller's time zone is an IANA name (Area/Location) or UTC, nothing else: an abbreviation such as PST is a fixed
 --    offset with no daylight saving, so a date filter would be an hour out half the year; specials such as Z, zulu,
 --    localtime and Factory are not a person's zone.
@@ -90,7 +91,8 @@ END;
 $$;
 
 -- One page from advisor_list_submissions's own arguments, shaped as queue_page_full shapes it (the same row as queue_rows,
--- the same keys), or NULL for an empty page past the first, whose total no row carries.
+-- the same keys). An empty page past the first takes its total from the first row alone (a page of one, which works out
+-- the costly columns for that row only).
 CREATE FUNCTION public.queue_page_fast(p_args jsonb, p_page integer, p_search text)
 RETURNS jsonb
 LANGUAGE sql
@@ -106,7 +108,7 @@ AS $$
         needs_action, needs_action_note, quote_requests_sent, quotes_received, oldest_waiting_on, earliest_quote_expires_on,
         sent_older_version, new_peo_mail_requests, start_month, total_count, ord)
   )
-  SELECT CASE WHEN count(*) = 0 AND p_page > 1 THEN NULL ELSE jsonb_build_object(
+  SELECT jsonb_build_object(
     'rows', COALESCE(jsonb_agg(to_jsonb(ROW(
         l.session_id, l.company_name, l.contact_name, l.employee_count, l.pipeline_status, l.intake_status, l.signer_name,
         l.submitted_at, l.created_at, l.updated_at, l.missing_required, l.open_fields, l.flagged_fields, l.verified_fields,
@@ -115,10 +117,13 @@ AS $$
         l.new_peo_mail_requests > 0,
         EXISTS (SELECT 1 FROM public.quote_requests q WHERE q.session_id = l.session_id AND q.status = 'sent')
       )::public.queue_row) ORDER BY l.ord), '[]'::jsonb),
-    'total', COALESCE(max(l.total_count), 0),
+    'total', COALESCE(max(l.total_count), CASE WHEN p_page > 1 THEN (
+      SELECT f.total_count FROM public.advisor_list_submissions(p_args ->> 'status', p_search, 1, 0,
+        (p_args ->> 'action')::boolean, (p_args ->> 'waiting')::boolean, p_args ->> 'sort') f
+    ) END, 0),
     'page', p_page,
     'page_size', 50
-  ) END
+  )
   FROM l
 $$;
 
@@ -146,7 +151,6 @@ DECLARE
   checked jsonb;
   args jsonb;
   pg integer := COALESCE(p_page, 1);
-  result jsonb;
 BEGIN
   -- The same checks, in the same order, as the full path, so a refusal reads the same whichever path would have run.
   PERFORM public.require_advisor();
@@ -164,10 +168,7 @@ BEGIN
 
   args := public.queue_fast_arguments(checked, p_sort, p_direction);
   IF args IS NOT NULL THEN
-    result := public.queue_page_fast(args, pg, p_search);
-    IF result IS NOT NULL THEN
-      RETURN result;
-    END IF;
+    RETURN public.queue_page_fast(args, pg, p_search);
   END IF;
   RETURN public.queue_page_full(p_filters, p_sort, p_direction, pg, p_search, p_time_zone);
 END;

@@ -823,7 +823,7 @@ SELECT pg_temp.is((SELECT count(*) FROM public.chamber_sessions), (SELECT n FROM
 -- ---------- 9. The faster path (20261117100500) ----------
 -- Requests advisor_list_submissions can answer with its own arguments are answered from one paged call to it. The faster
 -- path and the full path give the same rows, order and total, page by page, the page past the end included (where the
--- faster path steps aside), with and without a search, for each caller's own firm.
+-- faster path takes the total from the first row alone), with and without a search, for each caller's own firm.
 CREATE TEMP TABLE fast_cases (filters jsonb, sort text, dir text, search text);
 INSERT INTO fast_cases VALUES
   ('[]', NULL, 'asc', NULL), ('[]', NULL, 'desc', NULL), ('[]', NULL, 'asc', 'acme'), ('[]', NULL, 'asc', 'filler'), ('[]', NULL, 'asc', 'nothing at all'),
@@ -866,25 +866,22 @@ BEGIN
         IF listed IS DISTINCT FROM full_res THEN
           RAISE EXCEPTION 'FAIL: as %, % / sort % % / search % page % differs from the full path', w, c.filters, c.sort, c.dir, c.search, p;
         END IF;
-        IF fast_res IS NULL THEN
-          IF jsonb_array_length(full_res -> 'rows') > 0 OR p = 1 THEN
-            RAISE EXCEPTION 'FAIL: as %, the faster path stepped aside from page % of % with rows on it', w, p, c.filters;
-          END IF;
+        IF fast_res IS DISTINCT FROM full_res THEN
+          RAISE EXCEPTION 'FAIL: as %, % / sort % / search % page %: the faster path gave % rows of total %, the full path % of %',
+            w, c.filters, c.sort, c.search, p, jsonb_array_length(fast_res -> 'rows'), fast_res ->> 'total',
+            jsonb_array_length(full_res -> 'rows'), full_res ->> 'total';
+        END IF;
+        IF jsonb_array_length(full_res -> 'rows') = 0 AND p > 1 AND (full_res ->> 'total')::bigint > 0 THEN
           past_end := past_end + 1;
         ELSE
-          IF fast_res IS DISTINCT FROM full_res THEN
-            RAISE EXCEPTION 'FAIL: as %, % / sort % / search % page %: the faster path gave % rows of total %, the full path % of %',
-              w, c.filters, c.sort, c.search, p, jsonb_array_length(fast_res -> 'rows'), fast_res ->> 'total',
-              jsonb_array_length(full_res -> 'rows'), full_res ->> 'total';
-          END IF;
           fast_pages := fast_pages + 1;
         END IF;
       END LOOP;
     END LOOP;
   END LOOP;
   -- Both kinds happened: pages the faster path answered (some second pages among them), and pages past the end it left.
-  IF fast_pages < 35 OR past_end < 20 THEN RAISE EXCEPTION 'FAIL: % faster pages and % past the end: the comparison proves little', fast_pages, past_end; END IF;
-  RAISE NOTICE 'queue_query: % pages by the faster path matched the full path; % pages past the end went the full way', fast_pages, past_end;
+  IF fast_pages < 35 OR past_end < 20 THEN RAISE EXCEPTION 'FAIL: % faster pages and % past the end with rows before it: the comparison proves little', fast_pages, past_end; END IF;
+  RAISE NOTICE 'queue_query: the faster path matched the full path on % pages and % pages past the end', fast_pages, past_end;
 END $$;
 SELECT pg_temp.as_owner();
 
