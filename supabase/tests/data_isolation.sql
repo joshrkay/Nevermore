@@ -24,14 +24,19 @@
 --    change an expired one.
 -- 4. Prospects against advisor records and functions; advisors against admin-only, service-only and
 --    prospect-owned data.
--- 4c. One firm against the other, table by table: what a member of one can read, change or delete of the other's.
+-- 4c. One firm against the other, table by table, on the matrix's rows: what a member of one can read, change or delete of the other's.
 -- 4d. A deletion record keeps its firm after its intake is gone.
--- 5. Catalogue checks, so the matrix can't fall behind the schema: every public table declares whether it holds a firm's
---    data and the catalogue fails a table that holds it with no firm rule (5a); every public table has row security and
---    a row in the matrix; every function the API roles can execute is in the allowlist below with a reason;
---    every bucket is private; the API roles hold no TRUNCATE, REFERENCES or TRIGGER; every SECURITY DEFINER
---    function pins its search_path.
---
+-- 5. The gate and the catalogue checks, so the matrix can't fall behind the schema:
+--    5a every public table and storage bucket is in the registry with what it holds (a firm's data, platform-wide data, a
+--       person's own data, or nothing the API reaches); a table or bucket missing from it fails (D-28);
+--    5b every firm table and bucket is probed: a row is made for each of two firms and every caller (the other firm's members,
+--       a non-member, a former member, a platform admin) reads, counts, changes and deletes none of it; no policy text is read;
+--    5c the gate's own negative cases: the two shapes a text check was fooled by, a second open policy, a rule that shows
+--       nothing to the firm, a table with no way to make a row, one whose probe cannot run, an unregistered table and bucket;
+--    then: every public table has row security and a row in the matrix; every function the API roles can execute is in the
+--    allowlist below with a reason; every bucket is private; the API roles hold no TRUNCATE, REFERENCES or TRIGGER; every
+--    SECURITY DEFINER function pins its search_path.
+
 -- When you add a migration, add it to the list below and bump the count after it. When you add a table,
 -- bucket or API-callable function, the catalogue checks fail until you add it to the matrix or allowlist.
 \set ON_ERROR_STOP 1
@@ -1383,264 +1388,397 @@ BEGIN
   RAISE NOTICE 'data_isolation: deletion record cases passed';
 END $$;
 
--- ---------- 5a. every table that holds firm data has a firm rule ----------
--- Each public table declares what its rows are, and the catalogue holds it to that:
---   firm       some policy asks for membership of the row's firm (is_firm_member() or a helper built on it), and no policy
---              opens the table to an advisor or admin by role alone
+-- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
+-- The check that a table "has a firm rule" is by behaviour, never by reading a policy's text: a policy can mention a firm
+-- helper without tying it to the row being read, and a text check passes on a table that is open across firms.
+-- Every public table and every storage bucket is registered here with what its rows are:
+--   firm       a firm's data. It carries make_row, how to make one row that belongs to a firm: a statement that inserts the row
+--              (or selects an existing one) and returns its ctid::text. {firm} is the firm's id, {intake} a new intake of that
+--              firm owned by a new person {u}, {qr} a new quote request on it, {msg} a new message on that, {tag} a unique word.
+--              The probe (5b) makes one row for each of the two firms and proves the other firm's members, a non-member, a
+--              former member and a platform admin read, count, change and delete none of it.
 --   platform   nothing of any firm's: the same for every firm, kept by platform admins; no firm_id, session_id or
---              quote_request_id column
---   own        a person's own rows only; every policy compares auth.uid(), and no policy opens it by role
+--              quote_request_id column unless names_intakes says a failure report may name the intake
+--   own        a person's own rows only (the matrix shows each caller reads just theirs)
 --   closed     no policy at all: the API roles read and write nothing, only functions and the service role do
--- A new table that isn't declared here fails the build, as does one that holds a firm's data and is declared otherwise.
-CREATE TEMP TABLE table_scope (tbl text PRIMARY KEY, scope text NOT NULL CHECK (scope IN ('firm', 'platform', 'own', 'closed')), why text NOT NULL,
-  names_intakes boolean NOT NULL DEFAULT false);
-INSERT INTO table_scope (tbl, scope, why, names_intakes) VALUES
-  ('advisor_field_reviews', 'firm', 'by intake', false), ('advisor_notes', 'firm', 'by intake', false), ('advisor_review_events', 'firm', 'by intake', false),
-  ('ai_extraction_events', 'firm', 'by intake; a call with no intake is a platform admin''s', false),
-  ('chamber_certifications', 'firm', 'by intake', false), ('chamber_sessions', 'firm', 'its own firm_id', false),
-  ('document_events', 'firm', 'by intake', false), ('documents', 'firm', 'by intake', false),
-  ('firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to', false),
-  ('firm_teams', 'firm', 'its own firm_id', false), ('firms', 'firm', 'a member reads their own firm', false),
-  ('information_requests', 'firm', 'by intake', false),
-  ('intake_consents', 'firm', 'by the owner of an intake of the firm; a person reads their own', false),
-  ('intake_deletions', 'firm', 'its own firm_id, kept after the intake is gone', false),
-  ('intake_lifecycle_events', 'firm', 'by intake', false), ('manuscript_versions', 'firm', 'by intake', false),
-  ('profiles', 'firm', 'by the owner of an intake of the firm, or a colleague; a person reads their own', false),
-  ('quote_request_addresses', 'firm', 'by quote request', false), ('quote_request_events', 'firm', 'by quote request', false),
-  ('quote_request_message_attachments', 'firm', 'by message', false), ('quote_request_messages', 'firm', 'by quote request; held mail is a platform admin''s', false),
-  ('quote_request_notes', 'firm', 'by quote request', false), ('quote_request_thread_reads', 'firm', 'by quote request', false),
-  ('quote_requests', 'firm', 'by intake', false),
-  ('referral_partners', 'firm', 'Edgar Allan Advisory''s until CRM-P2.1c gives them a firm', false),
-  ('submission_status_history', 'firm', 'by intake', false), ('submission_workflow', 'firm', 'by intake', false),
-  ('allowed_organisations', 'platform', 'who may claim the advisor role: a platform admin''s', false),
-  ('advisor_role_events', 'platform', 'the log of those grants: a platform admin''s', false),
-  ('ops_alerts', 'platform', 'monitoring: a platform admin''s', false),
+-- A table or bucket that isn't registered fails the build, as does a firm one with no make_row, one whose probe did not run,
+-- and one the probe finds open across firms.
+CREATE TEMP TABLE registry (src text PRIMARY KEY, scope text NOT NULL CHECK (scope IN ('firm', 'platform', 'own', 'closed')), why text NOT NULL,
+  names_intakes boolean NOT NULL DEFAULT false,
+  make_row text,
+  -- false when a member of the firm legitimately reads only some rows of it (a membership: their own)
+  member_reads boolean NOT NULL DEFAULT true,
+  -- true when only Edgar Allan Advisory can have such a row until a later story gives the table a firm
+  firm_a_only boolean NOT NULL DEFAULT false);
+CREATE TEMP TABLE probe_ran (src text PRIMARY KEY, ran boolean NOT NULL, detail text);
+
+INSERT INTO registry (src, scope, why, make_row) VALUES
+  ('public.advisor_field_reviews', 'firm', 'by intake',
+   $m$INSERT INTO public.advisor_field_reviews (session_id, field, review_state, updated_by) VALUES ({intake}, 'company_name', 'verified', {u}) RETURNING ctid::text$m$),
+  ('public.advisor_notes', 'firm', 'by intake',
+   $m$INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES ({intake}, {u}, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.advisor_review_events', 'firm', 'by intake',
+   $m$INSERT INTO public.advisor_review_events (session_id, field, correction_changed, had_correction, has_correction, actor_id) VALUES ({intake}, 'company_name', false, false, false, {u}) RETURNING ctid::text$m$),
+  ('public.ai_extraction_events', 'firm', 'by intake; a call with no intake is a platform admin''s',
+   $m$INSERT INTO public.ai_extraction_events (request_id, function_name, session_id, outcome, http_status) VALUES (gen_random_uuid(), 'chamber-extract', {intake}, 'ok', 200) RETURNING ctid::text$m$),
+  ('public.chamber_certifications', 'firm', 'by intake',
+   $m$SELECT pg_temp.make_certification({intake}, {u}, '{tag}')$m$),
+  ('public.chamber_sessions', 'firm', 'its own firm_id',
+   $m$SELECT ctid::text FROM public.chamber_sessions WHERE id = {intake}$m$),
+  ('public.document_events', 'firm', 'by intake',
+   $m$INSERT INTO public.document_events (session_id, document_id, kind, file_name) VALUES ({intake}, gen_random_uuid(), 'added', 'probe.csv') RETURNING ctid::text$m$),
+  ('public.documents', 'firm', 'by intake',
+   $m$INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES ({u}, {intake}, 'probe.csv', '1 KB', {u} || '/' || {intake} || '/probe.csv') RETURNING ctid::text$m$),
+  ('public.firm_teams', 'firm', 'its own firm_id',
+   $m$INSERT INTO public.firm_teams (firm_id, name) VALUES ({firm}, 'Probe {tag}') RETURNING ctid::text$m$),
+  ('public.information_requests', 'firm', 'by intake',
+   $m$INSERT INTO public.information_requests (session_id, message) VALUES ({intake}, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.intake_consents', 'firm', 'by the owner of an intake of the firm; a person reads their own',
+   $m$SELECT ctid::text FROM public.intake_consents WHERE user_id = {u}$m$),
+  ('public.intake_deletions', 'firm', 'its own firm_id, kept after the intake is gone',
+   $m$INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, firm_id) VALUES ({intake}, {u}, 'request', 'probe', {firm}) RETURNING ctid::text$m$),
+  ('public.intake_lifecycle_events', 'firm', 'by intake',
+   $m$INSERT INTO public.intake_lifecycle_events (session_id, user_id, from_status, to_status) VALUES ({intake}, {u}, 'in_progress', 'archived') RETURNING ctid::text$m$),
+  ('public.manuscript_versions', 'firm', 'by intake',
+   $m$INSERT INTO public.manuscript_versions (session_id, version, file_id, storage_path, pdf_sha256, certified_data_hash, certified_signed_at, generated_by)
+      VALUES ({intake}, 99, 'EAA-PROBE', {intake} || '/v99-probe.pdf', repeat('a', 64), 'h', now(), {u}) RETURNING ctid::text$m$),
+  ('public.profiles', 'firm', 'by the owner of an intake of the firm, or a colleague; a person reads their own',
+   $m$SELECT ctid::text FROM public.profiles WHERE user_id = {u}$m$),
+  ('public.quote_request_addresses', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_addresses (quote_request_id, session_id, local_part) VALUES ({qr}, {intake}, 'probe-{tag}') RETURNING ctid::text$m$),
+  ('public.quote_request_events', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_events (quote_request_id, session_id, field) VALUES ({qr}, {intake}, 'note') RETURNING ctid::text$m$),
+  ('public.quote_request_message_attachments', 'firm', 'by message',
+   $m$INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status) VALUES ({msg}, 'probe-{tag}', 'probe.pdf', 1, 'pending') RETURNING ctid::text$m$),
+  ('public.quote_request_messages', 'firm', 'by quote request; held mail is a platform admin''s',
+   $m$SELECT ctid::text FROM public.quote_request_messages WHERE id = {msg}$m$),
+  ('public.quote_request_notes', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_notes (quote_request_id, session_id, kind, noted_on, body) VALUES ({qr}, {intake}, 'call', current_date, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.quote_request_thread_reads', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at) VALUES ({qr}, now()) RETURNING ctid::text$m$),
+  ('public.quote_requests', 'firm', 'by intake',
+   $m$SELECT ctid::text FROM public.quote_requests WHERE id = {qr}$m$),
+  ('public.submission_status_history', 'firm', 'by intake',
+   $m$INSERT INTO public.submission_status_history (session_id, to_status) VALUES ({intake}, 'under_review') RETURNING ctid::text$m$),
+  ('public.submission_workflow', 'firm', 'by intake',
+   $m$SELECT ctid::text FROM public.submission_workflow WHERE session_id = {intake}$m$),
+  -- A firm's own row, and a membership of it: a member reads their own firm, their own membership and nobody else's.
+  ('public.firms', 'firm', 'a member reads their own firm',
+   $m$SELECT ctid::text FROM public.firms WHERE id = {firm}$m$),
+  -- Storage: a file is a firm's by the intake its folder names.
+  ('storage.objects WHERE bucket_id = ''documents''', 'firm', 'by the intake in the folder',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', {u} || '/' || {intake} || '/probe-{tag}.csv') RETURNING ctid::text$m$),
+  ('storage.objects WHERE bucket_id = ''manuscripts''', 'firm', 'by the intake in the folder',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', {intake} || '/v99-probe-{tag}.pdf') RETURNING ctid::text$m$),
+  ('storage.objects WHERE bucket_id = ''peo-mail''', 'firm', 'by the quote request of the attachment recorded as stored',
+   $m$SELECT pg_temp.store_peo_mail({msg}, {intake}, '{tag}')$m$);
+INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
+  ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
+   $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
+INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
+  ('public.referral_partners', 'firm', 'Edgar Allan Advisory''s until CRM-P2.1c gives them a firm',
+   $m$INSERT INTO public.referral_partners (code, name, kind) VALUES ('probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$, true);
+INSERT INTO registry (src, scope, why, names_intakes) VALUES
+  ('public.allowed_organisations', 'platform', 'who may claim the advisor role: a platform admin''s', false),
+  ('public.advisor_role_events', 'platform', 'the log of those grants: a platform admin''s', false),
+  ('public.ops_alerts', 'platform', 'monitoring: a platform admin''s', false),
   -- A failure report can name the intake it happened in, for a platform admin investigating it; it holds no answer, name or file.
-  ('ops_events', 'platform', 'monitoring: a platform admin''s', true),
-  ('peo_census_templates', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
-  ('peo_contacts', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
-  ('peo_profile_versions', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
-  ('peos', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
-  ('user_roles', 'own', 'a person reads their own roles', false),
-  ('ai_global_usage', 'closed', 'rate limits', false), ('ai_ip_log', 'closed', 'rate limits', false), ('ai_request_log', 'closed', 'rate limits', false),
-  ('broker_mailboxes', 'closed', 'encrypted tokens', false), ('email_delivery_events', 'closed', 'delivery log', false),
-  ('email_suppressions', 'closed', 'do-not-send list', false), ('intake_milestones', 'closed', 'read as counts through a function', false),
-  ('outbox_events', 'closed', 'queued email', false), ('submission_reference_counters', 'closed', 'File ID sequence', false);
+  ('public.ops_events', 'platform', 'monitoring: a platform admin''s', true),
+  ('public.peo_census_templates', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('public.peo_contacts', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('public.peo_profile_versions', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('public.peos', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', 'platform', 'PEO template workbooks: the same for every firm', false),
+  ('public.user_roles', 'own', 'a person reads their own roles', false),
+  ('public.ai_global_usage', 'closed', 'rate limits', false), ('public.ai_ip_log', 'closed', 'rate limits', false), ('public.ai_request_log', 'closed', 'rate limits', false),
+  ('public.broker_mailboxes', 'closed', 'encrypted tokens', false), ('public.email_delivery_events', 'closed', 'delivery log', false),
+  ('public.email_suppressions', 'closed', 'do-not-send list', false), ('public.intake_milestones', 'closed', 'read as counts through a function', false),
+  ('public.outbox_events', 'closed', 'queued email', false), ('public.submission_reference_counters', 'closed', 'File ID sequence', false),
+  ('storage.objects WHERE bucket_id = ''quarantine''', 'closed', 'uploads whose malware scan has not passed: the service role''s', false);
 
--- Splits an expression at a keyword (' OR ' or ' AND ') that sits outside brackets, quotes and CASE ... END.
-CREATE FUNCTION pg_temp.top_split(e text, kw text) RETURNS text[] LANGUAGE plpgsql AS $$
-DECLARE
-  parts text[] := '{}';
-  depth int := 0; cases int := 0; i int := 1; start int := 1; n int := length(e);
-  ch text; quoted boolean := false; prev text;
+-- ---------- 5b. the probe: two firms, one row each, from every caller ----------
+-- Makes a row of the registry's make_row for one firm ('a' or 'b') as the superuser and returns its ctid. Each row hangs off a
+-- new intake of that firm owned by a new person, so no caller owns anything the probe makes.
+CREATE FUNCTION pg_temp.store_peo_mail(msg bigint, intake uuid, tag text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE path text := intake || '/' || msg || '/probe-' || tag || '.pdf'; r text;
 BEGIN
-  WHILE i <= n LOOP
-    ch := substr(e, i, 1);
-    prev := CASE WHEN i = 1 THEN ' ' ELSE substr(e, i - 1, 1) END;
-    IF ch = '''' THEN quoted := NOT quoted;
-    ELSIF NOT quoted THEN
-      IF ch = '(' THEN depth := depth + 1;
-      ELSIF ch = ')' THEN depth := depth - 1;
-      ELSIF prev !~ '\w' AND substr(e, i, 5) = 'CASE ' THEN cases := cases + 1;
-      ELSIF prev !~ '\w' AND substr(e, i, 3) = 'END' AND substr(e, i + 3, 1) !~ '\w' THEN cases := cases - 1;
-      ELSIF depth = 0 AND cases = 0 AND substr(e, i, length(kw)) = kw THEN
-        parts := parts || substr(e, start, i - start);
-        i := i + length(kw) - 1; start := i + 1;
-      END IF;
-    END IF;
-    i := i + 1;
-  END LOOP;
-  RETURN parts || substr(e, start);
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  VALUES (msg, 'probe-' || tag, 'probe.pdf', 1, 'stored', 'clean', 'peo-mail', path);
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', path) RETURNING ctid::text INTO r;
+  RETURN r;
 END $$;
 
--- Does the expression keep a row to the caller's firm or the caller's own row? An OR is limited only if every branch is; an AND
--- if any conjunct is. A bare helper call, an own-row comparison made at the top level (not inside a sub-select, and never
--- auth.uid() against itself), an EXISTS that calls a helper, or the held-mail CASE whose ELSE is itself limited, is an anchor.
--- Anything else (true, IS NOT NULL, an inline role lookup) is not.
-CREATE FUNCTION pg_temp.limited_to_firm(expr text, fns text) RETURNS boolean LANGUAGE plpgsql AS $$
-DECLARE
-  e text := btrim(regexp_replace(expr, '\s+', ' ', 'g'));
-  parts text[]; part text; m text[]; depth int; i int; ok boolean;
-  uid constant text := '(\( ?SELECT )?\(?auth\.uid\(\)( AS uid)?\)?(::text)?\)?';
-  col constant text := '(\w+(\.\w+)?|\(storage\.foldername\(name\)\)\[\d\])';
+-- A certification as certifying leaves it, with the triggers that guard how one is made switched off for this one row.
+CREATE FUNCTION pg_temp.make_certification(intake uuid, u uuid, tag text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
 BEGIN
-  -- Strip brackets that wrap the whole expression.
-  LOOP
-    EXIT WHEN e = '' OR left(e, 1) <> '(' OR right(e, 1) <> ')';
-    depth := 0; ok := true;
-    FOR i IN 1 .. length(e) LOOP
-      IF substr(e, i, 1) = '(' THEN depth := depth + 1; ELSIF substr(e, i, 1) = ')' THEN depth := depth - 1; END IF;
-      IF depth = 0 AND i < length(e) THEN ok := false; EXIT; END IF;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO public.chamber_certifications (session_id, user_id, signer_name, signer_title, consent_version, consent_text, signed_at, data_sha256, superseded_at, file_id)
+  VALUES (intake, u, 'Probe', 'CEO', 'v1', 'I certify.', now(), 'h' || tag, now(), 'EAA-9999-' || upper(tag)) RETURNING ctid::text INTO r;
+  PERFORM set_config('session_replication_role', 'origin', true);
+  RETURN r;
+END $$;
+
+CREATE FUNCTION pg_temp.make_row(make text, firm text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  tag text := substr(md5(random()::text), 1, 10);
+  fid uuid := pg_temp.id('firm_' || firm);
+  u uuid;
+  s uuid;
+  q bigint;
+  m bigint;
+  sql text := make;
+  r text;
+BEGIN
+  RESET ROLE;
+  u := pg_temp.new_user('probe_' || tag || '@example.test', false);
+  IF make LIKE '%{intake}%' OR make LIKE '%{qr}%' OR make LIKE '%{msg}%' OR make LIKE '%intake_consents%' OR make LIKE '%chamber_sessions%' OR make LIKE '%profiles%' THEN
+    INSERT INTO public.intake_consents (user_id, consent_version, consent_text) VALUES (u, 'v1', 'I agree.');
+    INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (u, '{"company_name":"Probe"}') RETURNING id INTO s;
+    UPDATE public.chamber_sessions SET firm_id = fid WHERE id = s;
+  END IF;
+  IF make LIKE '%{qr}%' OR make LIKE '%{msg}%' THEN
+    INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (s, 'Probe PEO', 'sent') RETURNING id INTO q;
+  END IF;
+  IF make LIKE '%{msg}%' THEN
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
+    VALUES ('probe-' || tag, q, s, 'received', 'probe@example.test') RETURNING id INTO m;
+  END IF;
+  sql := replace(replace(replace(replace(replace(replace(sql, '{firm}', quote_literal(fid)), '{u}', quote_literal(u)),
+           '{intake}', COALESCE(quote_literal(s), 'NULL')), '{qr}', COALESCE(q::text, 'NULL')), '{msg}', COALESCE(m::text, 'NULL')), '{tag}', tag);
+  EXECUTE sql INTO r;
+  RETURN r;
+END $$;
+
+-- Which firm's members a caller is, as the matrix has it: the first firm's, the second's, or neither (a non-member, a former
+-- member, a platform admin, a guest, a prospect, an advisor behind a guest token or with no second factor, signed out).
+CREATE FUNCTION pg_temp.member_of(who text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN who IN ('advisor', 'admin', 'agent_2', 'lead_1', 'advisor_pw_mfa') THEN 'a'
+              WHEN who IN ('agent_b', 'owner_b') THEN 'b' END
+$$;
+
+CREATE FUNCTION pg_temp.count_ids(tbl text, ids text[]) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n bigint;
+BEGIN
+  EXECUTE format('SELECT count(*) FROM %s WHERE ctid::text = ANY (%L)', tbl, ids) INTO n;
+  RETURN n;
+EXCEPTION WHEN insufficient_privilege THEN RETURN 0;
+END $$;
+
+-- Makes a row for each firm in one registered table or bucket, then as every caller: reads it, counts it, tries to change it
+-- and to delete it. Only a current member of the row's own firm may read it. Nothing is left behind. Returns what is wrong,
+-- or NULL; sets ran when the probe reached its end.
+CREATE FUNCTION pg_temp.probe_firm(p_src text, p_make text, p_member_reads boolean, p_firm_a_only boolean, OUT problems text, OUT ran boolean)
+LANGUAGE plpgsql AS $$
+DECLARE
+  tbl text := pg_temp.src_table(p_src);
+  col text := pg_temp.src_column(p_src);
+  rows_of jsonb := '{}';
+  f text;
+  who text;
+  side text;
+  ids text[];
+  one text[];
+  res text;
+BEGIN
+  problems := '';
+  ran := false;
+  BEGIN
+    FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+      IF f = 'b' AND p_firm_a_only THEN CONTINUE; END IF;
+      rows_of := rows_of || jsonb_build_object(f, pg_temp.make_row(p_make, f));
     END LOOP;
-    EXIT WHEN NOT ok;
-    e := btrim(substr(e, 2, length(e) - 2));
-  END LOOP;
-  IF e = '' THEN RETURN false; END IF;
-  parts := pg_temp.top_split(e, ' OR ');
-  IF array_length(parts, 1) > 1 THEN
-    FOREACH part IN ARRAY parts LOOP IF NOT pg_temp.limited_to_firm(part, fns) THEN RETURN false; END IF; END LOOP;
-    RETURN true;
-  END IF;
-  parts := pg_temp.top_split(e, ' AND ');
-  IF array_length(parts, 1) > 1 THEN
-    FOREACH part IN ARRAY parts LOOP IF pg_temp.limited_to_firm(part, fns) THEN RETURN true; END IF; END LOOP;
-    RETURN false;
-  END IF;
-  IF e ~ ('^(' || fns || ')\(') AND e ~ '\)$' THEN RETURN true; END IF;
-  IF e ~ ('^' || col || ' = ' || uid || '$') OR e ~ ('^\(?( ?SELECT )?auth\.uid\(\)( AS uid)?\)?(::text)? = ' || col || '$') THEN RETURN true; END IF;
-  IF e ~ '^EXISTS \(' AND e ~ ('(' || fns || ')\(') AND e !~ ' OR ' AND e !~ '\muser_roles\M' THEN RETURN true; END IF;
-  m := regexp_match(e, '^CASE WHEN \(?(session_id|quote_request_id) IS NULL\)? THEN (public\.)?has_role\(''admin''(::\w+)?\) ELSE (.*) END$');
-  IF m IS NOT NULL THEN RETURN pg_temp.limited_to_firm(m[4], fns); END IF;
-  RETURN false;
+    FOREACH who IN ARRAY pg_temp.matrix_callers() LOOP
+      CONTINUE WHEN who = 'service';
+      side := pg_temp.member_of(who);
+      PERFORM pg_temp.become(who);
+      ids := pg_temp.row_ids(p_src);
+      FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+        CONTINUE WHEN rows_of ->> f IS NULL;
+        one := ARRAY[rows_of ->> f];
+        IF f IS DISTINCT FROM side THEN
+          IF (rows_of ->> f) = ANY (ids) THEN problems := problems || format(E'\n    %s reads a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
+          IF pg_temp.count_ids(tbl, one) <> 0 THEN problems := problems || format(E'\n    %s counts a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
+          res := pg_temp.attempt(format('UPDATE %s SET %I = %I WHERE ctid::text = ANY (%L)', tbl, col, col, one));
+          IF res LIKE 'rows:%' AND res <> 'rows:0' THEN problems := problems || format(E'\n    %s changes a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
+          res := pg_temp.attempt(format('DELETE FROM %s WHERE ctid::text = ANY (%L)', tbl, one));
+          IF res LIKE 'rows:%' AND res <> 'rows:0' THEN problems := problems || format(E'\n    %s deletes a row of the %s firm', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END); END IF;
+        ELSIF p_member_reads AND NOT (rows_of ->> f) = ANY (ids) THEN
+          -- A positive control: a rule that shows a firm's rows to nobody would pass every check above.
+          problems := problems || format(E'\n    %s, a member of the %s firm, cannot read its row', who, CASE f WHEN 'a' THEN 'first' ELSE 'second' END);
+        END IF;
+      END LOOP;
+      RESET ROLE;
+    END LOOP;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ998', MESSAGE = 'probe finished; roll its rows back';
+  EXCEPTION
+    WHEN SQLSTATE 'ZZ998' THEN ran := true;
+    WHEN OTHERS THEN problems := problems || format(E'\n    the probe could not run: %s', SQLERRM);
+  END;
+  RESET ROLE;
+  problems := NULLIF(problems, '');
 END $$;
 
--- The problems with a database's row security, one per line, or NULL.
-CREATE FUNCTION pg_temp.firm_rule_gaps() RETURNS text LANGUAGE plpgsql AS $$
+-- Everything wrong with how the database separates firms, one per line, or NULL. It registers nothing itself: it checks
+-- the registry against the catalogue, then runs the probe of every firm table and bucket.
+CREATE FUNCTION pg_temp.isolation_gaps() RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
-  firm_fn constant text := 'is_firm_member|firm_role|can_see_firm_record|intake_in_my_firm|intake_folder_in_my_firm|quote_request_in_my_firm|can_read_peo_mail|intake_owner_in_my_firm|colleague_in_my_firm';
-  -- The prospect's own final Manuscript, and PEO template workbooks (they hold no firm's data), are the other readers of storage.
-  storage_fn constant text := firm_fn || '|is_own_final_manuscript|is_clean_census_template_file';
-  by_role constant text := '(is_advisor|has_role)\(';
-  c record;
-  sc table_scope%ROWTYPE;
-  pol record;
   gaps text := '';
+  c record;
+  r record;
+  pr record;
   holds_firm_data boolean;
-  firm_rule boolean;
 BEGIN
+  DELETE FROM probe_ran;
+  -- Every public table and every bucket is registered, and nothing registered is gone.
   FOR c IN SELECT cl.oid, cl.relname FROM pg_class cl WHERE cl.relnamespace = 'public'::regnamespace AND cl.relkind IN ('r', 'p') ORDER BY cl.relname LOOP
-    SELECT * INTO sc FROM table_scope WHERE tbl = c.relname;
-    IF NOT FOUND THEN
-      gaps := gaps || format(E'\n  %s is not declared in table_scope: say whether it holds a firm''s data and give it a firm rule', c.relname);
+    IF NOT EXISTS (SELECT 1 FROM registry WHERE src = 'public.' || c.relname) THEN
+      gaps := gaps || format(E'\n  public.%s is not in the registry: say whether it holds a firm''s data, and if so how to make a row of it', c.relname);
+    END IF;
+  END LOOP;
+  FOR c IN SELECT b.id FROM storage.buckets b ORDER BY b.id LOOP
+    IF NOT EXISTS (SELECT 1 FROM registry WHERE src = format('storage.objects WHERE bucket_id = %L', c.id)) THEN
+      gaps := gaps || format(E'\n  bucket %s is not in the registry: say whether it holds a firm''s files, and if so how to make one', c.id);
+    END IF;
+  END LOOP;
+  FOR r IN SELECT * FROM registry ORDER BY src LOOP
+    IF r.src LIKE 'public.%' AND NOT EXISTS (SELECT 1 FROM pg_class cl WHERE cl.relnamespace = 'public'::regnamespace AND cl.relkind IN ('r', 'p') AND 'public.' || cl.relname = r.src) THEN
+      gaps := gaps || format(E'\n  %s is in the registry but there is no such table', r.src);
       CONTINUE;
     END IF;
-    holds_firm_data := EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-                                 AND a.attname IN ('firm_id', 'session_id', 'quote_request_id'));
-    firm_rule := false;
-    FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') AS qual, COALESCE(p.with_check, '') AS with_check,
-                      COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expr FROM pg_policies p
-               WHERE p.schemaname = 'public' AND p.tablename = c.relname LOOP
-      IF pol.expr ~ ('(' || firm_fn || ')\(') THEN firm_rule := true; END IF;
-      -- Permissive policies are ORed, so every policy on a firm table must itself be limited to the caller's firm or own row:
-      -- no OR branch that is not, no role check, no inline role lookup, no `true`.
-      IF sc.scope = 'firm' AND ((pol.qual <> '' AND NOT pg_temp.limited_to_firm(pol.qual, firm_fn))
-                                OR (pol.with_check <> '' AND NOT pg_temp.limited_to_firm(pol.with_check, firm_fn))) THEN
-        gaps := gaps || format(E'\n  %s: policy "%s" is not limited to a firm''s membership or the caller''s own row', c.relname, pol.policyname);
+    IF r.src LIKE 'storage.objects%' AND NOT EXISTS (SELECT 1 FROM storage.buckets b WHERE format('storage.objects WHERE bucket_id = %L', b.id) = r.src) THEN
+      gaps := gaps || format(E'\n  %s is in the registry but there is no such bucket', r.src);
+      CONTINUE;
+    END IF;
+    IF r.scope = 'firm' THEN
+      IF r.make_row IS NULL THEN
+        gaps := gaps || format(E'\n  %s holds a firm''s data and has no way to make a row, so no probe', r.src);
+        CONTINUE;
       END IF;
-      IF sc.scope = 'own' AND (pol.expr ~ by_role OR pol.expr !~ 'auth\.uid\(\)') THEN
-        gaps := gaps || format(E'\n  %s: policy "%s" is not about the caller''s own rows', c.relname, pol.policyname);
+      SELECT * INTO pr FROM pg_temp.probe_firm(r.src, r.make_row, r.member_reads, r.firm_a_only);
+      INSERT INTO probe_ran VALUES (r.src, pr.ran, pr.problems);
+      IF pr.ran AND pr.problems IS NOT NULL THEN gaps := gaps || format(E'\n  %s is open across firms:%s', r.src, pr.problems); END IF;
+    ELSIF r.scope = 'closed' AND r.src LIKE 'public.%' THEN
+      IF EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = substr(r.src, 8)) THEN
+        gaps := gaps || format(E'\n  %s is declared closed but has a policy', r.src);
       END IF;
-      IF sc.scope = 'closed' THEN
-        gaps := gaps || format(E'\n  %s is declared closed but has policy "%s"', c.relname, pol.policyname);
+    ELSIF r.scope IN ('platform', 'own') AND r.src LIKE 'public.%' THEN
+      holds_firm_data := EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = r.src::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                                   AND a.attname IN ('firm_id', 'session_id', 'quote_request_id'));
+      IF holds_firm_data AND NOT r.names_intakes THEN
+        gaps := gaps || format(E'\n  %s has a firm_id, session_id or quote_request_id column but is declared %s', r.src, r.scope);
       END IF;
-    END LOOP;
-    IF sc.scope = 'firm' AND NOT firm_rule THEN gaps := gaps || format(E'\n  %s holds firm data and has no firm rule', c.relname); END IF;
-    IF sc.scope IN ('platform', 'own') AND holds_firm_data AND NOT sc.names_intakes THEN
-      gaps := gaps || format(E'\n  %s has a firm_id, session_id or quote_request_id column but is declared %s', c.relname, sc.scope);
     END IF;
   END LOOP;
-  -- Storage: the same rule as a firm table. Each policy is limited to the membership of the file's firm, the prospect's own
-  -- folder or their final Manuscript; none opens a bucket by role, by `true` or by being signed in.
-  FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') AS qual, COALESCE(p.with_check, '') AS with_check FROM pg_policies p
-             WHERE p.schemaname = 'storage' AND p.tablename = 'objects' LOOP
-    IF (pol.qual <> '' AND NOT pg_temp.limited_to_firm(pol.qual, storage_fn))
-       OR (pol.with_check <> '' AND NOT pg_temp.limited_to_firm(pol.with_check, storage_fn)) THEN
-      gaps := gaps || format(E'\n  storage.objects: policy "%s" is not limited to membership of the file''s firm or the caller''s own folder', pol.policyname);
-    END IF;
+  -- A firm table whose probe did not run fails, whatever else is true.
+  FOR r IN SELECT g.src, p.detail FROM registry g LEFT JOIN probe_ran p ON p.src = g.src
+           WHERE g.scope = 'firm' AND g.make_row IS NOT NULL AND p.ran IS NOT TRUE LOOP
+    gaps := gaps || format(E'\n  %s: no probe ran%s', r.src, COALESCE(E'\n  ' || r.detail, ''));
   END LOOP;
   RETURN NULLIF(gaps, '');
 END $$;
 
 DO $$
-DECLARE
-  gaps text := pg_temp.firm_rule_gaps();
-  probed text;
+DECLARE gaps text := pg_temp.isolation_gaps();
 BEGIN
-  IF gaps IS NOT NULL THEN RAISE EXCEPTION E'FAIL: tables whose firm rule is missing or wrong:%', gaps; END IF;
+  IF gaps IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the firms are not kept apart:%', gaps; END IF;
+  RAISE NOTICE 'data_isolation: % firm tables and buckets probed with two firms', (SELECT count(*) FROM probe_ran WHERE ran);
+END $$;
 
-  -- The check can fail: a new table holding intake rows, undeclared; one declared platform-wide that holds firm data; one
-  -- declared firm that is opened by role alone; one declared firm with no policy; a storage rule by role alone.
-  CREATE TABLE public.probe_undeclared (id int, session_id uuid);
-  ALTER TABLE public.probe_undeclared ENABLE ROW LEVEL SECURITY;
-  CREATE TABLE public.probe_platform (id int, firm_id uuid);
-  ALTER TABLE public.probe_platform ENABLE ROW LEVEL SECURITY;
-  CREATE TABLE public.probe_by_role (id int, session_id uuid);
-  ALTER TABLE public.probe_by_role ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY probe_by_role_read ON public.probe_by_role FOR SELECT TO authenticated USING (is_advisor());
-  CREATE TABLE public.probe_mixed (id int, session_id uuid);
-  ALTER TABLE public.probe_mixed ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY probe_mixed_read ON public.probe_mixed FOR SELECT TO authenticated USING (is_advisor() OR intake_in_my_firm(session_id));
-  CREATE TABLE public.probe_open_extra (id int, session_id uuid);
-  ALTER TABLE public.probe_open_extra ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY probe_open_extra_firm ON public.probe_open_extra FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
-  CREATE POLICY probe_open_extra_all ON public.probe_open_extra FOR SELECT TO authenticated USING (true);
-  CREATE TABLE public.probe_no_rule (id int, session_id uuid);
-  ALTER TABLE public.probe_no_rule ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY probe_no_rule_read ON public.probe_no_rule FOR SELECT TO authenticated USING (auth.uid() IS NOT NULL);
-  CREATE POLICY probe_storage_by_role ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'documents' AND is_advisor());
-  -- Policies shaped to look right while opening every firm's rows: each must be flagged.
-  CREATE TABLE public.probe_or_true (id int, session_id uuid);
-  CREATE TABLE public.probe_or_notnull (id int, session_id uuid, user_id uuid);
-  CREATE TABLE public.probe_inline_role (id int, session_id uuid);
-  CREATE TABLE public.probe_own_or_true (id int, session_id uuid, user_id uuid);
-  CREATE TABLE public.probe_uid_self (id int, session_id uuid);
-  CREATE TABLE public.probe_case_else (id int, session_id uuid);
-  ALTER TABLE public.probe_or_true ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.probe_or_notnull ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.probe_inline_role ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.probe_own_or_true ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.probe_uid_self ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.probe_case_else ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY p ON public.probe_or_true FOR SELECT TO authenticated USING (true OR intake_in_my_firm(session_id));
-  CREATE POLICY p ON public.probe_or_notnull FOR SELECT TO authenticated USING (session_id IS NOT NULL OR user_id = auth.uid());
-  CREATE POLICY p0 ON public.probe_inline_role FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
-  CREATE POLICY p ON public.probe_inline_role FOR SELECT TO authenticated
-    USING (EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = auth.uid() AND r.role = 'advisor'));
-  CREATE POLICY p ON public.probe_own_or_true FOR SELECT TO authenticated USING (auth.uid() = user_id OR true);
-  CREATE POLICY p ON public.probe_uid_self FOR SELECT TO authenticated USING (auth.uid() = auth.uid() OR intake_in_my_firm(session_id));
-  CREATE POLICY p ON public.probe_case_else FOR SELECT TO authenticated
-    USING (CASE WHEN session_id IS NULL THEN has_role('admin') ELSE true END OR intake_in_my_firm(session_id));
-  CREATE POLICY probe_storage_open ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'documents' AND true);
-  CREATE POLICY probe_storage_signed_in ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'manuscripts' AND auth.uid() IS NOT NULL);
-  -- The shapes the real schema uses must still pass.
-  CREATE TABLE public.probe_fine (id int, session_id uuid, user_id uuid);
+-- ---------- 5c. the gate can fail ----------
+-- Each of these is a table (or bucket) the gate must refuse, and one the gate must accept. The first two are the shapes
+-- reviewers used to fool a check that read policy text: the policy mentions a firm helper, never ties it to the row read.
+DO $$
+DECLARE
+  g text;
+BEGIN
+  IF pg_temp.isolation_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: before the negative cases, the gate is not clean:%', pg_temp.isolation_gaps(); END IF;
+
+  CREATE TABLE public.probe_exists_firms (id int, firm_id uuid);
+  CREATE TABLE public.probe_exists_session (id int, session_id uuid);
+  CREATE TABLE public.probe_second_policy (id int, session_id uuid);
+  CREATE TABLE public.probe_no_maker (id int, session_id uuid);
+  CREATE TABLE public.probe_shows_nobody (id int, session_id uuid);
+  CREATE TABLE public.probe_unregistered (id int, session_id uuid);
+  CREATE TABLE public.probe_bad_maker (id int, session_id uuid);
+  CREATE TABLE public.probe_fine (id int, session_id uuid);
+  ALTER TABLE public.probe_exists_firms ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_exists_session ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_second_policy ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_no_maker ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_shows_nobody ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_unregistered ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_bad_maker ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.probe_fine ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY probe_fine_own ON public.probe_fine FOR SELECT TO authenticated USING ((user_id = (SELECT auth.uid())) AND (session_id IS NOT NULL));
-  CREATE POLICY probe_fine_firm ON public.probe_fine FOR SELECT TO authenticated
-    USING (CASE WHEN session_id IS NULL THEN has_role('admin') ELSE intake_in_my_firm(session_id) END);
-  INSERT INTO table_scope (tbl, scope, why) VALUES ('probe_platform', 'platform', 'probe'), ('probe_by_role', 'firm', 'probe'), ('probe_no_rule', 'firm', 'probe'), ('probe_mixed', 'firm', 'probe'), ('probe_open_extra', 'firm', 'probe'),
-    ('probe_or_true', 'firm', 'probe'), ('probe_or_notnull', 'firm', 'probe'), ('probe_inline_role', 'firm', 'probe'), ('probe_own_or_true', 'firm', 'probe'),
-    ('probe_uid_self', 'firm', 'probe'), ('probe_case_else', 'firm', 'probe'), ('probe_fine', 'firm', 'probe');
-  probed := pg_temp.firm_rule_gaps();
-  IF probed IS NULL
-     OR probed NOT LIKE '%probe_undeclared is not declared%'
-     OR probed NOT LIKE '%probe_platform has a firm_id%'
-     OR probed NOT LIKE '%probe_by_role: policy "probe_by_role_read" is not limited%'
-     OR probed NOT LIKE '%probe_mixed: policy "probe_mixed_read" is not limited%'
-     OR probed NOT LIKE '%probe_open_extra: policy "probe_open_extra_all" is not limited%'
-     OR probed NOT LIKE '%probe_or_true: policy "p" is not limited%'
-     OR probed NOT LIKE '%probe_or_notnull: policy "p" is not limited%'
-     OR probed NOT LIKE '%probe_inline_role: policy "p" is not limited%'
-     OR probed LIKE '%probe_inline_role: policy "p0"%'
-     OR probed NOT LIKE '%probe_own_or_true: policy "p" is not limited%'
-     OR probed NOT LIKE '%probe_uid_self: policy "p" is not limited%'
-     OR probed NOT LIKE '%probe_case_else: policy "p" is not limited%'
-     OR probed LIKE '%probe_fine%'
-     OR probed NOT LIKE '%storage.objects: policy "probe_storage_open" is not limited%'
-     OR probed NOT LIKE '%storage.objects: policy "probe_storage_signed_in" is not limited%'
-     OR probed LIKE '%probe_open_extra: policy "probe_open_extra_firm"%'
-     OR probed NOT LIKE '%probe_no_rule holds firm data and has no firm rule%'
-     OR probed NOT LIKE '%storage.objects: policy "probe_storage_by_role" is not limited%' THEN
-    RAISE EXCEPTION E'FAIL: the firm rule check missed a table with no firm rule: %', probed;
+  GRANT ALL ON public.probe_exists_firms, public.probe_exists_session, public.probe_second_policy, public.probe_no_maker,
+    public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered, public.probe_fine TO anon, authenticated;
+  -- Any member of any firm reads every firm's rows: the helper is asked about firms the caller can see, not about the row.
+  CREATE POLICY p ON public.probe_exists_firms FOR ALL TO authenticated
+    USING (EXISTS (SELECT 1 FROM firms f WHERE is_firm_member(f.id)));
+  -- The same through the intakes the caller can see.
+  CREATE POLICY p ON public.probe_exists_session FOR ALL TO authenticated
+    USING (EXISTS (SELECT 1 FROM chamber_sessions s WHERE intake_in_my_firm(s.id)));
+  -- One policy is tied to the row; a second, permissive one opens the table to anyone with a session on it.
+  CREATE POLICY p_read ON public.probe_second_policy FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p_extra ON public.probe_second_policy FOR ALL TO authenticated USING (session_id IS NOT NULL);
+  CREATE POLICY p ON public.probe_no_maker FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  -- A rule that shows a firm's rows to no one passes every check that the other firm sees nothing; the positive control catches it.
+  CREATE POLICY p ON public.probe_shows_nobody FOR ALL TO authenticated USING (false);
+  CREATE POLICY p ON public.probe_unregistered FOR ALL TO authenticated USING (true);
+  CREATE POLICY p ON public.probe_bad_maker FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  -- What the real schema does: the helper is given the row's own column.
+  CREATE POLICY p ON public.probe_fine FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  INSERT INTO registry (src, scope, why, make_row) VALUES
+    ('public.probe_exists_firms', 'firm', 'probe', $m$INSERT INTO public.probe_exists_firms (id, firm_id) VALUES (1, {firm}) RETURNING ctid::text$m$),
+    ('public.probe_exists_session', 'firm', 'probe', $m$INSERT INTO public.probe_exists_session (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_second_policy', 'firm', 'probe', $m$INSERT INTO public.probe_second_policy (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_no_maker', 'firm', 'probe', NULL),
+    -- Its way to make a row fails (no such column), so the probe never ran: that fails the gate, not passes it.
+    ('public.probe_bad_maker', 'firm', 'probe', $m$INSERT INTO public.probe_bad_maker (id, nothing) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_shows_nobody', 'firm', 'probe', $m$INSERT INTO public.probe_shows_nobody (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_fine', 'firm', 'probe', $m$INSERT INTO public.probe_fine (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$);
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL
+     OR g NOT LIKE '%probe_exists_firms%'
+     OR g NOT LIKE '%probe_exists_session%'
+     OR g NOT LIKE '%probe_second_policy%'
+     OR g NOT LIKE '%probe_no_maker holds a firm''s data and has no way to make a row%'
+     OR g NOT LIKE '%probe_bad_maker: no probe ran%'
+     OR g NOT LIKE '%probe_shows_nobody is open across firms:%advisor, a member of the first firm, cannot read its row%'
+     OR g NOT LIKE '%advisor reads a row of the second firm%'
+     OR g NOT LIKE '%advisor counts a row of the second firm%'
+     OR g NOT LIKE '%advisor changes a row of the second firm%'
+     OR g NOT LIKE '%advisor deletes a row of the second firm%'
+     OR g NOT LIKE '%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%platform_admin reads a row of the first firm%'
+     OR g NOT LIKE '%former_agent reads a row of the first firm%'
+     OR g NOT LIKE '%prospect_a reads a row of the first firm%'
+     OR g NOT LIKE '%probe_unregistered%'
+     OR g LIKE '%probe_fine%' THEN
+    RAISE EXCEPTION E'FAIL: the gate did not name exactly the open, unprobed and unregistered tables:%', g;
   END IF;
-  DROP POLICY probe_storage_by_role ON storage.objects;
-  DROP POLICY probe_storage_open ON storage.objects;
-  DROP POLICY probe_storage_signed_in ON storage.objects;
-  DROP TABLE public.probe_undeclared, public.probe_platform, public.probe_by_role, public.probe_no_rule, public.probe_mixed, public.probe_open_extra,
-    public.probe_or_true, public.probe_or_notnull, public.probe_inline_role, public.probe_own_or_true, public.probe_uid_self, public.probe_case_else, public.probe_fine;
-  DELETE FROM table_scope WHERE tbl LIKE 'probe\_%';
-  IF pg_temp.firm_rule_gaps() IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the firm rule probes were left behind'; END IF;
-  RAISE NOTICE 'data_isolation: every table that holds firm data has a firm rule';
+  -- Each alone makes it fail.
+  DELETE FROM registry WHERE src IN ('public.probe_exists_session', 'public.probe_second_policy', 'public.probe_no_maker', 'public.probe_shows_nobody', 'public.probe_bad_maker');
+  DROP TABLE public.probe_exists_session, public.probe_second_policy, public.probe_no_maker, public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered;
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe_exists_firms%' OR g LIKE '%probe_fine%' THEN RAISE EXCEPTION E'FAIL: the gate passed a policy that asks is_firm_member about the firms the caller can see:%', g; END IF;
+  DELETE FROM registry WHERE src = 'public.probe_exists_firms';
+  DROP TABLE public.probe_exists_firms;
+  IF pg_temp.isolation_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the gate flags a table that ties the helper to its row:%', pg_temp.isolation_gaps(); END IF;
+  -- A bucket that isn't registered, and a registered one that is gone.
+  INSERT INTO storage.buckets (id, name, public) VALUES ('probe-bucket', 'probe-bucket', false);
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe-bucket%' THEN RAISE EXCEPTION E'FAIL: the gate passed a bucket that is not registered:%', g; END IF;
+  DELETE FROM storage.buckets WHERE id = 'probe-bucket';
+  INSERT INTO registry (src, scope, why) VALUES ('public.probe_gone', 'platform', 'probe');
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe_gone%' THEN RAISE EXCEPTION E'FAIL: the gate passed a registered table that does not exist:%', g; END IF;
+  DELETE FROM registry WHERE src = 'public.probe_gone';
+  -- A probe that did not run is a failure too.
+  DELETE FROM registry WHERE src = 'public.probe_fine';
+  DROP TABLE public.probe_fine;
+  IF pg_temp.isolation_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the probes were left behind:%', pg_temp.isolation_gaps(); END IF;
+  RAISE NOTICE 'data_isolation: the gate fails on the open, unprobed and unregistered tables it should';
 END $$;
 
 -- ---------- 5. catalogue checks ----------
