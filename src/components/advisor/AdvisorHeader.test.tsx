@@ -114,6 +114,20 @@ describe("the console header's menu", () => {
     expect(screen.queryByText("Beta Brokers")).not.toBeInTheDocument();
   });
 
+  it("badges the platform's own view as Platform, and a member of several firms as Firm even when they are also an admin", async () => {
+    api.fetchMyFirms.mockResolvedValue([]);
+    api.fetchIsAdmin.mockResolvedValue(true);
+    const first = renderHeader();
+    expect(await screen.findByText("Platform")).toBeInTheDocument();
+    first.unmount();
+    clearMyFirms();
+    api.fetchMyFirms.mockResolvedValue([alpha, beta]);
+    renderHeader();
+    await settle();
+    expect(screen.getByText("Firm")).toBeInTheDocument();
+    expect(screen.queryByText("Platform")).not.toBeInTheDocument();
+  });
+
   it("offers nothing of a firm until it is known, or when it can't be had", async () => {
     api.fetchMyFirms.mockRejectedValue(new Error("offline"));
     api.fetchIsAdmin.mockRejectedValue(new Error("offline"));
