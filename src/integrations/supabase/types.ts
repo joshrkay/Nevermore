@@ -595,6 +595,8 @@ export type Database = {
           code: string
           created_at: string
           created_by_email: string | null
+          // The firm the partner belongs to (20261116200000); a code is unique within it.
+          firm_id: string
           // One of REFERRAL_PARTNER_KINDS (src/data/referralPartners.ts).
           kind: string
           name: string
@@ -723,6 +725,17 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // A member reads their own firm (20261116090000): the columns granted to them.
+      firms: {
+        Row: {
+          id: string
+          name: string
+          address: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -814,7 +827,7 @@ export type Database = {
       }
       // Adds a referral partner under a new code; a code already taken is refused (23505).
       advisor_add_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string }
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
       // A page of one firm's record (p_firm_id), newest first, for that firm's current owners only (20261116160001).
@@ -866,7 +879,7 @@ export type Database = {
       }
       // Renames a referral partner or changes its kind; the code never changes.
       advisor_update_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string }
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
       advisor_list_outbox_events: {
@@ -1021,6 +1034,35 @@ export type Database = {
       admin_decide_firm: {
         Args: { p_firm_id: string; p_approve: boolean; p_note?: string | null }
         Returns: undefined
+      }
+      // Invitations to join a firm (20261116190000). The token's hash is asked of, and never returned by, the database.
+      firm_role: {
+        Args: { p_firm_id: string }
+        Returns: string | null
+      }
+      firm_pending_invitations: {
+        Args: { p_firm_id: string }
+        Returns: {
+          invitation_id: string
+          email: string
+          role: string
+          team_id: string | null
+          invited_at: string
+          expires_at: string
+          expired: boolean
+          resent_at: string | null
+          email_sent_at: string | null
+          email_error: string | null
+          email_outcome: string | null
+        }[]
+      }
+      cancel_invitation: {
+        Args: { p_invitation_id: string }
+        Returns: undefined
+      }
+      accept_invitation: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: { firm_id: string; firm_address: string; role: string }[]
       }
       is_member_of_firm_address: {
         Args: { p_address: string }

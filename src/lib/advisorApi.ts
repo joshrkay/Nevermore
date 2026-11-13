@@ -27,6 +27,7 @@ import {
 } from "@/data/advisor";
 
 import { downloadName } from "../../supabase/functions/_shared/fileSignature.ts";
+import { functionErrorReply } from "@/lib/functionError";
 // Every call here is authorized by the database (row security and advisor-only functions);
 // the advisor routes in the UI are a convenience on top of that, not the control.
 
@@ -586,13 +587,9 @@ type HeldMailAction =
 async function heldMail(body: HeldMailAction, fallback: string): Promise<void> {
   const { error } = await supabase.functions.invoke("held-mail", { body });
   if (!error) return;
-  let message = fallback;
-  const context = (error as { context?: unknown }).context;
-  if (context instanceof Response) {
-    const said = await context.json().catch(() => null) as { error?: unknown } | null;
-    if (typeof said?.error === "string") message = said.error;
-    if (context.status === 403) throw new AdvisorApiError(message, "42501");
-  }
+  const { reason, status } = await functionErrorReply(error as { context?: unknown });
+  const message = reason ?? fallback;
+  if (status === 403) throw new AdvisorApiError(message, "42501");
   throw new AdvisorApiError(message);
 }
 

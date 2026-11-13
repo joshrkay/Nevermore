@@ -180,7 +180,7 @@ A dated entry an advisor adds to a quote request's timeline for something that h
 _Avoid_: activity, log entry, comment
 
 **Holding list**:
-Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Only an admin assigns a held message to a quote request or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
+Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Mail to a firm's own revoked address, or moved off its thread, is **held for that firm**: its current members read it. Mail to an address nobody held belongs to no firm. A platform admin, who belongs to no firm, sees only a File ID and a PEO for each (never a sender, subject or text). Only a platform admin assigns a held message to a quote request (of the same firm, if it has one) or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
 _Avoid_: unmatched inbox, spam folder, quarantine (quarantine holds files waiting for or failing a malware scan)
 
 **Market authorization**:
@@ -234,7 +234,7 @@ _Avoid_: checkout, submit page
 ### Communications
 
 **Advisor Alert**:
-The email telling the advisory team that a submission arrived or was updated.
+The email telling a firm that a submission arrived or was updated. It goes to the **alert recipients**: the current members of the firm the intake belongs to, looked up each time it is sent, so a member who leaves stops receiving at once. Never another firm's people, a platform admin who belongs to no firm, or a platform-wide list. The new-PEO-mail notice goes to the same people.
 _Avoid_: internal notification, new-submission notification
 
 **Confirmation**:
@@ -290,6 +290,26 @@ _Avoid_: department, office
 A person's place in a firm, with a role, an optional team and the dates it began and ended. It is never changed: a change ends one row and adds another, so who could see a record on a given day can be answered. A person holds one membership of a firm at a time, and a firm always keeps at least one current owner. A **current member** is one whose membership has begun and not ended; `is_firm_member` and `firm_role` answer for the caller.
 _Avoid_: seat, user (for a member)
 
+**Invitation** (code: `firm_invitations`, `invite_member`, `accept_invitation`):
+An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29). A firm still waiting for approval can invite and be joined, but holds at most five pending invitations and causes at most ten invitation emails (made or resent, withdrawn ones still counted) until it is approved; a refused firm cannot invite or resend, and a pending invitation to it cannot be accepted (D-34).
+_Avoid_: invite (as the noun), request to join (that is joining by organisation, CRM-P1.4)
+
+**Invitation link** (code: `/join#token=...`, `JoinFirmPage`):
+The link in an invitation's email, opened at the firm's own address. The secret in it is made by the `invite-member` server function, sent once in that email and never stored, returned or logged. It is in the part after the `#`, which a browser never sends to a server, so no request log and no Referer holds it and no route contains it; the page reads it, removes it from the address bar at once, and keeps it only in that tab until the person has joined. The browser hashes it before asking the database to accept, and gives the database the address it was opened at: the link is accepted only at the address of the firm it belongs to (D-34). A link that is used, expired, withdrawn or replaced by a resend opens nothing and says so in plain words, in the same words whether or not the invited email has an account.
+_Avoid_: magic link, invite code, join URL (as if the secret were in the path)
+
+**Resend** (code: `resend_invitation`):
+Sending a pending invitation again: a new token replaces the old one, so the old link stops working, and seven days start from now. Used and withdrawn invitations are not resent.
+_Avoid_: reinvite
+
+**Send** (the invitation's link, one generation of it; code: the token hash that `record_invitation_delivery` is given):
+One link and the email that carries it. A resend makes a new send. How an email fared is recorded against the send it belongs to, and a result for a send that has since been replaced is dropped, so two resends finishing out of order cannot mark the current link delivered when its email failed, or the reverse.
+_Avoid_: attempt (that is one try at the mail provider inside a send)
+
+**Unknown delivery** (code: `email_outcome = 'unknown'`):
+What an invitation's email is when the mail provider may have accepted it though it did not say so (a network failure, a timeout, most server errors). It is tried once more with the same message and key, which the provider drops if the first was accepted; if the answer is still unclear it is kept as unknown, shown to the owner as "not sure the email was delivered", never as failed, and sending again is described as replacing the first link. The other outcomes are `sent` and `failed` (the provider certainly refused it).
+_Avoid_: pending email, soft failure
+
 **Platform admin** (code: the `admin` role in `user_roles`):
 A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files, through a table or through a function; held mail, which belongs to no firm until one is assigned, is theirs to read.
 _Avoid_: admin (on its own, where a firm's owner could be meant), super user
@@ -305,6 +325,13 @@ _Avoid_: permission check, ACL
 **Firm rule** (code: the policies that call `is_firm_member` or a helper built on it):
 A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. A password sign-in that has not completed a second factor is not a member to it (D-19): `firm_role` asks the same rule as `has_role`, so no firm's data opens without it. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
 _Avoid_: tenant filter, RLS (on its own)
+
+**Alert recipients** (code: `outbox_alert_recipients()`):
+The current members of the firm an intake belongs to, whom the Advisor Alert and the new-PEO-mail notice go to. See **Advisor Alert**.
+_Avoid_: distribution list, advisory team list
+
+**Held for a firm** (code: `quote_request_messages.firm_id` on held mail):
+Held mail that carries the firm its address belonged to, or whose thread a member of that firm moved it off. A held message with no firm is read by nobody. See **Holding list**.
 
 **Firm-scoped function** (code: the `firm_scoped` class of `fn_class` in `supabase/tests/data_isolation.sql`):
 A database function that runs as its owner, so row security does not bind it, and reads or changes a firm's data for an advisor or platform admin: the queue, the outbox, the funnel, setting a status, reviewing a field, recording a quote send, a platform admin's deletion request. It asks the firm rule itself, taking the firm from the row it is given and never from the caller: a row of a firm the caller is not a current member of is answered as a row that isn't there (a list leaves it out, a call by id says not found). The role it also asks for, advisor or platform admin, is not what opens a firm's data.
@@ -334,7 +361,7 @@ _Avoid_: offset, page number (as the way a page is found)
 A firm the caller is a current owner of, as the database answers (`my_owner_firms()`). A page that reads a firm's record says which firm it wants, and the database checks the caller currently owns that one; there is no "the caller's firm" for someone who owns two.
 
 **Entry kind** (code: `firm_activity.kind`):
-What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
+What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
 
 ### Advisors
 
@@ -366,7 +393,7 @@ A person or firm outside the advisory team who sends employers to the site with 
 _Avoid_: partner on its own, affiliate, referrer
 
 **Referral code**:
-The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
+The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
 _Avoid_: promo code, tracking code
 
 **Second factor**:

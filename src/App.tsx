@@ -39,6 +39,8 @@ const AdvisorOrganisationsPage = lazy(() => import("./pages/advisor/AdvisorOrgan
 const AdvisorActivityPage = lazy(() => import("./pages/advisor/AdvisorActivityPage"));
 const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
 const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
+const JoinFirmPage = lazy(() => import("./pages/JoinFirmPage"));
+const FirmInvitationsPage = lazy(() => import("./pages/FirmInvitationsPage"));
 // Read rarely, so kept out of the main bundle too.
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
@@ -72,6 +74,8 @@ const App = () => (
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/firms/new" element={<SignUpFirmPage />} />
+                <Route path="/join" element={<JoinFirmPage />} />
+                <Route path="/firm/invitations" element={<FirmInvitationsPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />
                 {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
