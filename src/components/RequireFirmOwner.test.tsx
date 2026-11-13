@@ -17,7 +17,7 @@ const fetchNeedsSecondFactor = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({ fetchOwnedFirms: () => fetchOwnedFirms(), fetchNeedsSecondFactor: () => fetchNeedsSecondFactor() }));
 vi.mock("@/lib/monitoring", () => ({ reportOpsEvent: vi.fn() }));
 
-const { clearOwnedFirms } = await import("@/lib/ownedFirms");
+const { clearOwnedFirms } = await import("@/hooks/useOwnedFirms");
 const { default: RequireFirmOwner } = await import("./RequireFirmOwner");
 
 const Login = () => <p>Login page returning to {(useLocation().state as { from?: { pathname: string } }).from?.pathname ?? "nowhere"}</p>;

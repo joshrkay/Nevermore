@@ -849,23 +849,7 @@ export type Database = {
       // A submission handed to a current member of its firm; the database writes the opening in the firm's record (20261116160001). No row for anyone else.
       open_submission: {
         Args: { p_session_id: string }
-        Returns: {
-          chamber_data: Json
-          created_at: string
-          extra_answers: Json
-          field_provenance: Json
-          file_id: string | null
-          id: string
-          referral_code: string | null
-          status: string
-          submission: Json | null
-          transcript: Json
-          updated_at: string
-          user_id: string
-          utm_campaign: string | null
-          utm_medium: string | null
-          utm_source: string | null
-        }[]
+        Returns: Database["public"]["Tables"]["chamber_sessions"]["Row"][]
       }
       // A browser reporting a file it downloaded or built, or a sign-in; the firm and the person are worked out by the database.
       record_member_activity: {

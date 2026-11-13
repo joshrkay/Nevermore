@@ -6,7 +6,7 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "advisor@ex
 const api = { fetchOwnedFirms: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
 
-const { clearOwnedFirms } = await import("@/lib/ownedFirms");
+const { clearOwnedFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorHeader } = await import("./AdvisorHeader");
 const renderHeader = () => render(<MemoryRouter><AdvisorHeader /></MemoryRouter>);
 // Lets the question to the database be answered before the page is looked at.

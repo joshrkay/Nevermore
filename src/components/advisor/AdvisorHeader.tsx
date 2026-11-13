@@ -3,7 +3,7 @@ import { LogOut } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { useAuth } from "@/hooks/useAuth";
 import LegalLinks from "@/components/LegalLinks";
-import { useOwnedFirms } from "@/lib/ownedFirms";
+import { useOwnedFirms } from "@/hooks/useOwnedFirms";
 
 const AdvisorHeader = () => {
   const { user, signOut } = useAuth();

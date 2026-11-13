@@ -50,7 +50,8 @@ CREATE TABLE public.firm_activity (
     -- sync:begin firm_activity_kinds
     'sign_in', 'submission_viewed', 'document_downloaded', 'packet_downloaded', 'send_recorded',
     'member_added', 'member_ended', 'owner_added', 'owner_ended',
-    'export_made', 'invitation_sent', 'member_removed', 'support_access'
+    'export_made', 'invitation_sent', 'member_removed', 'support_access',
+    'firm_signed_up', 'firm_approved', 'firm_refused'
     -- sync:end firm_activity_kinds
   )),
   CONSTRAINT firm_activity_record_check CHECK (
@@ -209,6 +210,28 @@ $$;
 
 REVOKE ALL ON FUNCTION public.firm_activity_append(uuid, text, text, text, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
 
+-- Inserts as the caller's own sign-in unless the same person already wrote the same entry within 30 seconds: the one place
+-- that window is written. Internal; the browser report and the opening of a submission call it.
+CREATE FUNCTION public.firm_activity_append_once(
+  p_actor_id uuid, p_firm_id uuid, p_kind text, p_record_type text, p_record_id text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF EXISTS (
+       SELECT 1 FROM public.firm_activity a
+       WHERE a.firm_id = p_firm_id AND a.actor_id = p_actor_id AND a.kind = p_kind
+         AND a.record_type = p_record_type AND a.record_id = p_record_id AND a.at > now() - interval '30 seconds') THEN
+    RETURN;
+  END IF;
+  PERFORM public.firm_activity_insert(p_actor_id, p_firm_id, p_kind, p_record_type, p_record_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.firm_activity_append_once(uuid, uuid, text, text, text) FROM PUBLIC, anon, authenticated, service_role;
+
 -- The one function other code calls to write an entry. The firm comes from the record and the actor from the caller's
 -- own sign-in, so neither is an argument and a caller can't name another.
 CREATE FUNCTION public.record_firm_activity(p_kind text, p_record_type text, p_record_id text)
@@ -262,13 +285,7 @@ BEGIN
   IF NOT FOUND OR NOT public.is_firm_member(r.firm_id) THEN
     RAISE EXCEPTION 'You are not a member of that record''s firm' USING ERRCODE = '42501';
   END IF;
-  IF EXISTS (
-       SELECT 1 FROM public.firm_activity a
-       WHERE a.firm_id = r.firm_id AND a.actor_id = auth.uid() AND a.kind = p_kind
-         AND a.record_type = p_record_type AND a.record_id = r.canonical_id AND a.at > now() - interval '30 seconds') THEN
-    RETURN;
-  END IF;
-  PERFORM public.firm_activity_insert(auth.uid(), r.firm_id, p_kind, p_record_type, r.canonical_id);
+  PERFORM public.firm_activity_append_once(auth.uid(), r.firm_id, p_kind, p_record_type, r.canonical_id);
 END;
 $$;
 
@@ -281,10 +298,7 @@ GRANT EXECUTE ON FUNCTION public.record_member_activity(text, text, text) TO aut
 -- collapses a repeat within 30 seconds. Anyone else gets no row and leaves no entry. Nothing here takes an actor or a
 -- firm.
 CREATE FUNCTION public.open_submission(p_session_id uuid)
-RETURNS TABLE (
-  id uuid, user_id uuid, chamber_data jsonb, field_provenance jsonb, extra_answers jsonb, transcript jsonb, status text,
-  submission jsonb, created_at timestamptz, updated_at timestamptz, file_id text, referral_code text,
-  utm_source text, utm_medium text, utm_campaign text)
+RETURNS SETOF public.chamber_sessions
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
@@ -300,16 +314,8 @@ BEGIN
   IF v_firm IS NULL OR NOT public.is_firm_member(v_firm) THEN
     RETURN;
   END IF;
-  IF NOT EXISTS (
-       SELECT 1 FROM public.firm_activity a
-       WHERE a.firm_id = v_firm AND a.actor_id = auth.uid() AND a.kind = 'submission_viewed'
-         AND a.record_type = 'submission' AND a.record_id = p_session_id::text AND a.at > now() - interval '30 seconds') THEN
-    PERFORM public.firm_activity_insert(auth.uid(), v_firm, 'submission_viewed', 'submission', p_session_id::text);
-  END IF;
-  RETURN QUERY
-    SELECT s.id, s.user_id, s.chamber_data, s.field_provenance, s.extra_answers, s.transcript, s.status, s.submission,
-           s.created_at, s.updated_at, s.file_id, s.referral_code, s.utm_source, s.utm_medium, s.utm_campaign
-    FROM public.chamber_sessions s WHERE s.id = p_session_id;
+  PERFORM public.firm_activity_append_once(auth.uid(), v_firm, 'submission_viewed', 'submission', p_session_id::text);
+  RETURN QUERY SELECT * FROM public.chamber_sessions s WHERE s.id = p_session_id;
 END;
 $$;
 

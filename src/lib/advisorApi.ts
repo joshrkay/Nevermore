@@ -327,10 +327,9 @@ interface RecordedCertification {
 export async function loadSubmission(id: string, opening = false): Promise<SubmissionDetail | null> {
   // Opening a submission goes through the database function that hands it over and writes the entry in the firm's record
   // (CRM-P2.3), so a browser never reports a view; a refresh after a change reads the table and is no opening.
-  const sessionColumns = "id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign";
   const sessionRead = opening
     ? supabase.rpc("open_submission", { p_session_id: id }).then(({ data, error }) => ({ data: data?.[0] ?? null, error }))
-    : supabase.from("chamber_sessions").select(sessionColumns).eq("id", id).maybeSingle();
+    : supabase.from("chamber_sessions").select("*").eq("id", id).maybeSingle();
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
     sessionRead,
     supabase

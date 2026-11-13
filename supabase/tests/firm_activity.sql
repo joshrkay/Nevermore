@@ -104,6 +104,8 @@
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116160001_firm_activity.sql
+\i supabase/migrations/20261116170000_firm_signup.sql
+\i supabase/migrations/20261116170001_firm_events_recorded.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -677,9 +679,31 @@ SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)',
 SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 1::bigint, 'a member opening a submission of their firm is handed it');
 SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 1::bigint, 'and again within moments');
 SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(NULL)), 0::bigint, 'no submission named, nothing handed over');
+SELECT pg_temp.is((SELECT o IS NOT DISTINCT FROM s FROM public.open_submission(pg_temp.id('intake_a')) o, public.chamber_sessions s WHERE s.id = pg_temp.id('intake_a')),
+  true, 'what a member is handed is the row of the table itself, every column in its place');
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = pg_temp.id('lead_a') AND kind = 'submission_viewed'
   AND record_id = pg_temp.id('intake_a')::text), 1::bigint, 'one entry for opening it twice within 30 seconds');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'submission_viewed' AND record_id = pg_temp.id('intake_a')::text
   AND actor_id IN (pg_temp.id('agent_b'), pg_temp.id('platform_admin'))), 0::bigint, 'nobody outside the firm left an entry');
+
+-- ---------- 13. A firm's sign-up and its decision are in its record, as the person who did them, with no content ----------
+SELECT pg_temp.as_owner();
+SELECT pg_temp.new_user('founder_c');
+UPDATE auth.users SET email_confirmed_at = now() WHERE id IN (pg_temp.id('founder_c'), pg_temp.id('platform_admin'));
+SELECT pg_temp.as_user('founder_c');
+SELECT set_config('nevermore.fid', public.sign_up_firm('Gamma Brokers', 'gamma-brokers')::text, false);
+SELECT pg_temp.as_user('platform_admin');
+SELECT public.admin_decide_firm(current_setting('nevermore.fid')::uuid, true, 'a private note');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM pg_temp.entries(current_setting('nevermore.fid')::uuid) WHERE actor = 'founder_c' AND kind = 'firm_signed_up'
+  AND record_type = 'firm' AND record_id = current_setting('nevermore.fid')), 1::bigint, 'the sign-up is recorded against the firm, as the person who signed up');
+SELECT pg_temp.is((SELECT count(*) FROM pg_temp.entries(current_setting('nevermore.fid')::uuid) WHERE actor = 'platform_admin' AND kind = 'firm_approved'
+  AND record_type = 'firm' AND record_id = current_setting('nevermore.fid')), 1::bigint, 'the approval is recorded as the admin who decided');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = current_setting('nevermore.fid')::uuid AND kind IN ('firm_signed_up', 'firm_approved')
+  AND (subject_user_id IS NOT NULL OR role IS NOT NULL OR record_id <> current_setting('nevermore.fid'))), 0::bigint, 'and neither holds the address or the note');
+SELECT pg_temp.as_user('founder_c');
+SELECT pg_temp.expect(format('SELECT public.record_firm_event(%L, %L, %L, %L)', current_setting('nevermore.fid'), 'firm_refused', pg_temp.id('founder_c'), '{}'),
+  '42501', 'a signed-in caller writing a firm event of their own');
+SELECT pg_temp.as_owner();
 \echo firm_activity: ok

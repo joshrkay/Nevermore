@@ -4,7 +4,7 @@ const fetchOwnedFirms = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("@/lib/advisorApi", () => ({ fetchOwnedFirms: () => fetchOwnedFirms() }));
 
-const { loadOwnedFirms, clearOwnedFirms } = await import("./ownedFirms");
+const { loadOwnedFirms, clearOwnedFirms } = await import("./useOwnedFirms");
 
 const alpha = [{ firm_id: "f1", name: "Alpha" }];
 
@@ -25,6 +25,14 @@ describe("loadOwnedFirms", () => {
     await loadOwnedFirms("u1");
     fetchOwnedFirms.mockResolvedValue([]);
     expect(await loadOwnedFirms("u2")).toEqual([]);
+    expect(fetchOwnedFirms).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks again once the sign-in has changed, such as after the second factor: an answer given before it is not kept", async () => {
+    fetchOwnedFirms.mockResolvedValue([]);
+    expect(await loadOwnedFirms("u1", "password-token")).toEqual([]);
+    fetchOwnedFirms.mockResolvedValue(alpha);
+    expect(await loadOwnedFirms("u1", "second-factor-token")).toEqual(alpha);
     expect(fetchOwnedFirms).toHaveBeenCalledTimes(2);
   });
 

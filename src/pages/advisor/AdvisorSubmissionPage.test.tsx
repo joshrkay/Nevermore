@@ -192,11 +192,12 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2", true));
   });
 
-  it("records nothing for a submission it can't find", async () => {
+  it("shows 'Submission not found.' for a submission it can't find, asking for it once as an opening", async () => {
     api.loadSubmission.mockResolvedValue(null);
     renderPage();
     expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
-    expect(api.recordActivity).not.toHaveBeenCalled();
+    expect(api.loadSubmission).toHaveBeenCalledTimes(1);
+    expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
   });
 
   it("records a document opened", async () => {

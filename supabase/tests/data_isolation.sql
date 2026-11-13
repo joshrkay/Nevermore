@@ -143,6 +143,7 @@
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116160001_firm_activity.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
+\i supabase/migrations/20261116170001_firm_events_recorded.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

@@ -8,7 +8,7 @@ const api = { fetchOwnedFirms: vi.fn(), listFirmActivityPeople: vi.fn(), listFir
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
-const { clearOwnedFirms } = await import("@/lib/ownedFirms");
+const { clearOwnedFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorActivityPage } = await import("./AdvisorActivityPage");
 const { AdvisorApiError } = await import("@/lib/advisorApi");
 
@@ -139,7 +139,7 @@ describe("AdvisorActivityPage", () => {
     renderPage();
     const kind = await screen.findByLabelText("Kind");
     const options = within(kind).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toHaveLength(14);
+    expect(options).toHaveLength(17);
     expect(options.slice(0, 3)).toEqual(["Every kind", "Signed in", "Opened a submission"]);
     fireEvent.change(kind, { target: { value: "packet_downloaded" } });
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "packet_downloaded", after: null }));
