@@ -423,9 +423,8 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "internal",
     examples: "For each firm, who did what and when: a sign-in to the firm's console, a submission opened, a file downloaded, a send recorded, an export, an invitation, a removal, support access, and every change to who belongs to the firm and in what role. The kind of thing and the id of the record only: never an answer, a name, an email's text or a file's contents.",
     stored: { tables: ["firm_activity"], buckets: [], elsewhere: [] },
-    retention: `${RETENTION.firmActivityDays} days, the window for operational events (D4); no one can change or delete an entry before then, an admin included.`,
+    retention: `${RETENTION.firmActivityDays} days, the window for operational events (D4); no one can change or delete an entry before then, an admin included. The window is a draft (D4): counsel may ask for longer.`,
     deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included.",
-    awaitingCounsel: "The window is a draft (D4): counsel may ask for a longer one for a record of who opened what.",
   },
 ];
 

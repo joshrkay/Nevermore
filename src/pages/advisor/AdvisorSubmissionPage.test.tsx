@@ -287,6 +287,8 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent"));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
+    // Refreshing after a change is not another opening of the submission.
+    expect(api.recordActivity.mock.calls.filter((c) => c[0] === "submission_viewed")).toHaveLength(1);
   });
 
   it("asks the prospect for information about the answers marked Needs follow-up, and lists what was asked", async () => {

@@ -744,6 +744,21 @@ describe("the firm's record of who did what", () => {
     expect(page.hasMore).toBe(true);
   });
 
+  it("says no page follows when the record ends exactly at the end of a page", async () => {
+    rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE }, (_, i) => row(100 - i)), error: null });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, page: 1 });
+    expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("treats a page before the first, or a fraction of one, as the first", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    await listFirmActivity("firm-1", { person: null, kind: null, page: 0 });
+    await listFirmActivity("firm-1", { person: null, kind: null, page: -4 });
+    await listFirmActivity("firm-1", { person: null, kind: null, page: 2.7 });
+    expect(rpc.mock.calls.map((c) => (c[1] as { p_offset: number }).p_offset)).toEqual([0, 0, FIRM_ACTIVITY_PAGE_SIZE]);
+  });
+
   it("is refused for anyone who isn't an owner of the firm, and says so as a refusal", async () => {
     failWith({ message: "Only a firm's owners can read its record", code: "42501" });
     expect((await caught(() => listFirmActivity("firm-1", { person: null, kind: null, page: 1 }))).forbidden).toBe(true);

@@ -110,8 +110,10 @@ describe("AdvisorActivityPage", () => {
     const rows = within(await screen.findByRole("table")).getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("Added a member");
     expect(rows[0]).toHaveTextContent("lead@example.com (lead)");
-    expect(rows[1]).toHaveTextContent("System");
-    expect(rows[2]).toHaveTextContent("A former member");
+    const whoOf = (row: HTMLElement) => within(row).getAllByRole("cell")[1].textContent;
+    expect(whoOf(rows[0])).toBe("agent@example.com");
+    expect(whoOf(rows[1])).toBe("System");
+    expect(whoOf(rows[2])).toBe("A former member");
     expect(rows[2]).toHaveTextContent("A former member (agent)");
   });
 
@@ -163,5 +165,28 @@ describe("AdvisorActivityPage", () => {
     fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
     await screen.findByText("Page 1");
     expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", page: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    await screen.findByText("Page 2");
+    fireEvent.change(screen.getByLabelText("Person"), { target: { value: "u2" } });
+    await screen.findByText("Page 1");
+    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: "sign_in", page: 1 });
+  });
+
+  it("keeps showing the entries while a changed filter loads, rather than blanking the page", async () => {
+    renderPage();
+    const kind = await screen.findByLabelText("Kind");
+    api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+    fireEvent.change(kind, { target: { value: "sign_in" } });
+    await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("shows a kind this version doesn't know as the database wrote it, not as a blank", async () => {
+    api.listFirmActivity.mockResolvedValue({ entries: [entry({ kind: "something_new", record_type: "report", record_id: "r1" })], hasMore: false });
+    renderPage();
+    const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
+    expect(within(row).getAllByRole("cell")[2]).toHaveTextContent("something_new");
+    expect(row).toHaveTextContent("report r1");
   });
 });

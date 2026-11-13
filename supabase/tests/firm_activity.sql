@@ -238,6 +238,13 @@ INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id(
 UPDATE public.firm_memberships SET valid_until = now() + interval '1 hour' WHERE user_id = pg_temp.id('owner_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'owner_ended' AND subject_user_id = pg_temp.id('owner_b')
   AND firm_id = pg_temp.id('firm_b')), 1::bigint, 'an owner ending is recorded as an ownership change');
+-- Touching a membership without ending it records nothing.
+DO $$
+DECLARE before_count bigint := (SELECT count(*) FROM public.firm_activity);
+BEGIN
+  UPDATE public.firm_memberships SET valid_until = valid_until WHERE user_id = pg_temp.id('lead_a') AND firm_id = pg_temp.id('firm_a');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity), before_count, 'an update that ends nothing is not a change');
+END $$;
 -- Removing an account removes its memberships; the record of them stays.
 DELETE FROM auth.users WHERE id = pg_temp.id('agent_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'member_ended' AND subject_user_id = pg_temp.id('agent_b')
@@ -461,4 +468,20 @@ SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'sign_
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'sign_in' AND at > now() - interval '90 days'), 1::bigint, 'an entry inside the window is kept');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind <> 'sign_in'), (SELECT count(*) FROM public.firm_activity WHERE kind <> 'sign_in' AND at > now() - interval '90 days'), 'the job left everything else');
 SELECT pg_temp.expect('DELETE FROM public.firm_activity WHERE true', '42501', 'a delete after the job has run');
+
+-- ---------- 9. What later stories record against a membership, and a send made again ----------
+SELECT pg_temp.as_service();
+SELECT public.record_firm_activity('member_removed', 'membership', (SELECT m.id::text FROM public.firm_memberships m WHERE m.user_id = pg_temp.id('lead_a') AND m.firm_id = pg_temp.id('firm_a')));
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'member_removed' AND subject_user_id = pg_temp.id('lead_a') AND role = 'lead'
+  AND firm_id = pg_temp.id('firm_a')), 1::bigint, 'a removal recorded against a membership is about that person, in their role, in the membership''s firm');
+SELECT pg_temp.as_user('agent_a');
+SELECT public.advisor_record_quote_send(pg_temp.id('intake_c'), 'TriNet', '2026-11-11');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'send_recorded' AND record_id = current_setting('test.quote_request')), 2::bigint,
+  'sending to the same PEO again is another send recorded');
+SELECT pg_temp.as_user('lead_a');
+SELECT pg_temp.is((SELECT array_agg(email) FROM public.firm_activity_people(pg_temp.id('firm_b'))), ARRAY['owner_a@example.test'],
+  'the people offered are those in the firm''s own record, not another firm''s');
+SELECT pg_temp.as_owner();
 \echo firm_activity: ok
