@@ -7,11 +7,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const auth = { user: { id: "u1", email: "owner@example.com" }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 // The page's calls to the database, by the names advisorApi gives them; AdvisorApiError is the real one, so a refusal is read as it is.
-const api = { fetchOwnedFirms: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
+const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
-const { clearOwnedFirms } = await import("@/hooks/useOwnedFirms");
+const { clearOwnedFirms, clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorActivityPage } = await import("./AdvisorActivityPage");
 const { AdvisorApiError, NEVERMORE_FILTER } = await import("@/lib/advisorApi");
 
@@ -24,8 +26,12 @@ const entry = (over: Record<string, unknown> = {}) => ({
 describe("AdvisorActivityPage", () => {
   beforeEach(() => {
     clearOwnedFirms();
+    clearMyFirms();
+    firmAddress = { status: "none" };
     auth.session = { access_token: "tok-1" };
     for (const fn of Object.values(api)) fn.mockReset();
+    api.fetchMyFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" }]);
+    api.fetchIsAdmin.mockResolvedValue(false);
     api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
     api.listFirmActivityPeople.mockResolvedValue([{ user_id: "u1", email: "agent@example.com", is_nevermore: false }, { user_id: "u2", email: "lead@example.com", is_nevermore: false }]);
     api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
@@ -69,10 +75,10 @@ describe("AdvisorActivityPage", () => {
   });
 
   it("says the same when the database refuses the read, however the page got there", async () => {
-    api.listFirmActivity.mockRejectedValue(new AdvisorApiError("You don't have advisor access.", "42501"));
+    api.listFirmActivity.mockRejectedValue(new AdvisorApiError("You don't have access to this firm's records.", "42501"));
     renderPage();
     expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
-    expect(screen.queryByText(/You no longer have advisor access/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/You no longer have access to this firm's records/)).not.toBeInTheDocument();
   });
 
   it("shows that it is loading until the record arrives", async () => {
@@ -132,10 +138,10 @@ describe("AdvisorActivityPage", () => {
     expect(api.fetchOwnedFirms).toHaveBeenCalledTimes(2);
   });
 
-  it("is reached from the advisor console's navigation", async () => {
+  it("is reached from the console's navigation", async () => {
     renderPage();
     await screen.findByRole("table");
-    expect(within(screen.getByRole("navigation", { name: "Advisor" })).getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/advisor/activity");
+    expect(await within(screen.getByRole("navigation", { name: "Console" })).findByRole("link", { name: "Activity" })).toHaveAttribute("href", "/advisor/activity");
   });
 
   it("names the person a membership change was about and their role, and never shows a missing person as blank", async () => {
@@ -247,6 +253,47 @@ describe("AdvisorActivityPage", () => {
       await screen.findByRole("table");
       expect(api.listFirmActivity).toHaveBeenCalledWith("firm-2", { person: null, kind: null, after: null });
       expect(screen.getByLabelText("Firm")).toHaveValue("firm-2");
+    });
+
+    describe("at a firm's own address", () => {
+      const mine = [
+        { firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" },
+        { firm_id: "firm-2", name: "Beta Brokers", address: "beta", role: "owner" },
+      ];
+      beforeEach(() => {
+        api.fetchMyFirms.mockResolvedValue(mine);
+        firmAddress = { status: "known", address: "beta", name: "Beta Brokers" };
+      });
+
+      it("reads the address's firm and asks which firm of no one: the address chooses", async () => {
+        renderPage();
+        await screen.findByRole("table");
+        expect(api.listFirmActivity).toHaveBeenCalledWith("firm-2", { person: null, kind: null, after: null });
+        expect(api.listFirmActivity).not.toHaveBeenCalledWith("firm-1", expect.anything());
+      });
+
+      it("reads the address's firm whichever firm the link names", async () => {
+        renderPage("/advisor/activity?firm=firm-1");
+        await screen.findByRole("table");
+        expect(api.listFirmActivity).toHaveBeenCalledWith("firm-2", { person: null, kind: null, after: null });
+        expect(api.listFirmActivity).not.toHaveBeenCalledWith("firm-1", expect.anything());
+      });
+
+      it("reads nothing at an address of a firm the person doesn't belong to at all, whatever other firm they own", async () => {
+        api.fetchOwnedFirms.mockResolvedValue([firms[0]]);
+        api.fetchMyFirms.mockResolvedValue([mine[0]]);
+        renderPage("/advisor/activity?firm=firm-1");
+        expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
+        expect(api.listFirmActivity).not.toHaveBeenCalled();
+      });
+
+      it("reads nothing of a firm at an address the person doesn't own: an owner of another firm only is told it is for owners", async () => {
+        api.fetchOwnedFirms.mockResolvedValue([firms[0]]);
+        api.fetchMyFirms.mockResolvedValue([mine[0], { ...mine[1], role: "agent" }]);
+        renderPage();
+        expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
+        expect(api.listFirmActivity).not.toHaveBeenCalled();
+      });
     });
 
     it("is told it is for owners when the address names a firm they don't own, and nothing is read", async () => {
