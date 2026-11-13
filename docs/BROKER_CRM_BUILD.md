@@ -57,6 +57,7 @@ These came from reading Epic 1's stories against the code.
 | D-22 | CRM-P2.5 (the employer ends a firm's access) moves to Epic 5, after firm links exist |
 | D-23 | CRM-P1.4 replaces the admin's organisation list: `/advisor/organisations` and `claim_advisor_role_by_organisation` are retired in that story |
 | D-24 | An acceptance criterion about something a later epic creates (exports, send buttons, the Settings page, tables for leads, accounts, opportunities and quotes) is met in the story that creates that thing. The Epic 1 story builds the mechanism and applies it to what exists, and its pull request lists what was deferred and to which story |
+| D-26 | A firm address is refused as a PEO's only when, with everything but letters and digits removed and in lower case, it is exactly a listed PEO's name or short name. No partial, prefix or contains matching: three review rounds showed any fuzzier rule both lets real look-alikes through and refuses innocent names. Platform admins approve each firm before it can send (Q-1.2), which is where a look-alike is caught |
 
 ### Epic 1 build order
 
