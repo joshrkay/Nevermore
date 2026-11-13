@@ -298,7 +298,7 @@ A row-security or storage policy that requires current membership of the row's f
 _Avoid_: tenant filter, RLS (on its own)
 
 **Firm-scoped function** (code: the `firm_scoped` class of `fn_class` in `supabase/tests/data_isolation.sql`):
-A database function that runs as its owner, so row security does not bind it, and reads or changes a firm's data for an advisor or platform admin: the queue, the outbox, the funnel, setting a status, reviewing a field, recording a quote send, a platform admin's deletion request. It asks the firm rule itself, taking the firm from the row it is given and never from the caller: a row of a firm the caller is not a current member of is answered as a row that isn't there (a list leaves it out, a call by id says not found). The role it also asks for, advisor or admin, is not what opens a firm's data.
+A database function that runs as its owner, so row security does not bind it, and reads or changes a firm's data for an advisor or platform admin: the queue, the outbox, the funnel, setting a status, reviewing a field, recording a quote send, a platform admin's deletion request. It asks the firm rule itself, taking the firm from the row it is given and never from the caller: a row of a firm the caller is not a current member of is answered as a row that isn't there (a list leaves it out, a call by id says not found). The role it also asks for, advisor or platform admin, is not what opens a firm's data.
 _Avoid_: scoped RPC, tenant-aware function
 
 **Function registry** (code: `fn_class`, `function_gate_problems()` in `supabase/tests/data_isolation.sql`):

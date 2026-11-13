@@ -870,7 +870,21 @@ ALTER TABLE public.intake_milestones ADD COLUMN firm_id uuid REFERENCES public.f
 UPDATE public.intake_milestones m SET firm_id = s.firm_id FROM public.chamber_sessions s WHERE s.id = m.session_id;
 -- Steps of intakes deleted before this migration have no link left. Every intake belonged to Edgar Allan Advisory until now
 -- (CRM P-1.1), so those steps are its own: nobody loses sight of a submission (D-15).
-UPDATE public.intake_milestones SET firm_id = public.default_firm_id() WHERE firm_id IS NULL;
+CREATE FUNCTION public.backfill_intake_milestone_firms()
+RETURNS integer
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  n integer;
+BEGIN
+  UPDATE public.intake_milestones SET firm_id = public.default_firm_id() WHERE session_id IS NULL AND firm_id IS NULL;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.backfill_intake_milestone_firms() FROM PUBLIC, anon, authenticated;
+SELECT public.backfill_intake_milestone_firms();
 CREATE OR REPLACE FUNCTION public.intake_milestone_firm()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -879,9 +893,11 @@ AS $$
 BEGIN
   IF NEW.session_id IS NOT NULL THEN
     -- A linked step is always in its intake's firm, so a moved intake's steps follow it.
-    NEW.firm_id := (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id);
-  ELSIF TG_OP = 'UPDATE' AND NEW.firm_id IS NOT NULL THEN
-    -- The intake went (the link goes null) and the step stays in its firm. A null firm_id is let through: it is the
+    -- FOR SHARE: a step written while its intake is being moved waits for the move to commit, then reads the new firm
+    -- (the foreign key's own lock does not conflict with a firm_id update, and the move's trigger can't see an uncommitted step).
+    NEW.firm_id := (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id FOR SHARE);
+  ELSIF TG_OP = 'UPDATE' AND NEW.firm_id IS NOT NULL AND OLD.firm_id IS NOT NULL THEN
+    -- The intake went (the link goes null) and the step stays in its firm (a firm-less step may be given one: the backfill). A null firm_id is let through: it is the
     -- foreign key emptying it because the firm itself was deleted.
     NEW.firm_id := OLD.firm_id;
   END IF;

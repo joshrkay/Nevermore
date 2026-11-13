@@ -1680,7 +1680,26 @@ DECLARE
   sid uuid;
   fb uuid := pg_temp.id('firm_b');
   tmp uuid := gen_random_uuid();
+  old_step bigint;
+  kept_step bigint;
 BEGIN
+  -- Steps of intakes deleted before the firm column existed have no firm and no link: the backfill gives them to the default
+  -- firm (without it, the default firm's funnel and source report silently lose them).
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone) VALUES (NULL, now(), 'started') RETURNING id INTO old_step;
+  IF (SELECT firm_id FROM public.intake_milestones WHERE id = old_step) IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: setup: an unlinked step got a firm on insert';
+  END IF;
+  PERFORM public.backfill_intake_milestone_firms();
+  IF (SELECT firm_id FROM public.intake_milestones WHERE id = old_step) IS DISTINCT FROM public.default_firm_id() THEN
+    RAISE EXCEPTION 'FAIL: the backfill did not give an old unlinked step to the default firm';
+  END IF;
+  PERFORM pg_temp.become('advisor');
+  IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '1 day', now() + interval '1 day') WHERE milestone = 'started') < 1 THEN
+    RAISE EXCEPTION 'FAIL: the default firm''s funnel does not count a backfilled old step';
+  END IF;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  DELETE FROM public.intake_milestones WHERE id = old_step;
   -- An intake moved to another firm (the service role does this) takes its steps with it.
   SELECT id INTO sid FROM public.chamber_sessions WHERE firm_id = public.default_firm_id() LIMIT 1;
   PERFORM public.note_intake_milestone(sid, 'answered');
@@ -1699,10 +1718,11 @@ BEGIN
     RAISE EXCEPTION 'FAIL: setup: the steps did not follow the intake to the new firm';
   END IF;
   -- Deleting an intake keeps its steps without the link (the intake goes first, then the firm).
+  SELECT id INTO kept_step FROM public.intake_milestones WHERE session_id = sid AND milestone = 'answered';
   UPDATE public.intake_milestones SET session_id = NULL WHERE session_id = sid;
   UPDATE public.chamber_sessions SET firm_id = public.default_firm_id() WHERE id = sid;
   DELETE FROM public.firms WHERE id = tmp;
-  IF NOT EXISTS (SELECT 1 FROM public.intake_milestones WHERE session_id IS NULL AND firm_id IS NULL AND milestone = 'answered') THEN
+  IF NOT EXISTS (SELECT 1 FROM public.intake_milestones WHERE id = kept_step AND session_id IS NULL AND firm_id IS NULL) THEN
     RAISE EXCEPTION 'FAIL: deleting a firm lost its steps';
   END IF;
   RAISE NOTICE 'data_isolation: step firm cases passed';
@@ -1715,14 +1735,14 @@ DECLARE
   r text;
 BEGIN
   SELECT id INTO other FROM public.chamber_sessions WHERE firm_id = pg_temp.id('firm_b') LIMIT 1;
-  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin'] LOOP
+  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin', 'former_agent', 'guest_a'] LOOP
     PERFORM pg_temp.become(r);
     IF NOT public.report_client_event('app_error', 'xfirm_' || r, NULL, '/x', other) THEN RAISE EXCEPTION 'setup: report dropped'; END IF;
   END LOOP;
   PERFORM pg_temp.become('agent_b');
   IF NOT public.report_client_event('app_error', 'xfirm_own', NULL, '/x', other) THEN RAISE EXCEPTION 'setup: report dropped'; END IF;
   RESET ROLE;
-  IF EXISTS (SELECT 1 FROM public.ops_events WHERE code IN ('xfirm_advisor', 'xfirm_platform_admin') AND session_id IS NOT NULL) THEN
+  IF EXISTS (SELECT 1 FROM public.ops_events WHERE code IN ('xfirm_advisor', 'xfirm_platform_admin', 'xfirm_former_agent', 'xfirm_guest_a') AND session_id IS NOT NULL) THEN
     RAISE EXCEPTION 'FAIL: a failure report was tied to another firm''s intake';
   END IF;
   IF (SELECT session_id FROM public.ops_events WHERE code = 'xfirm_own') IS DISTINCT FROM other THEN
