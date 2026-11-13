@@ -128,6 +128,23 @@ describe("AdvisorActivityPage", () => {
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: NEVERMORE_FILTER, kind: null, after: null }));
   });
 
+  // Suspending a firm and lifting the suspension (story CRM-P1.8) are in the firm's record, shown as done by Nevermore.
+  it("names a suspension and the lifting of one in words, as done by Nevermore", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [
+        entry({ entry_key: "k9", kind: "firm_restored", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null, by_nevermore: true }),
+        entry({ entry_key: "k10", kind: "firm_suspended", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null, by_nevermore: true }),
+      ],
+      hasMore: false,
+    });
+    renderPage();
+    const rows = within(await screen.findByRole("table")).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("Lifted the firm's suspension");
+    expect(rows[2]).toHaveTextContent("Suspended the firm");
+    expect(within(rows[1]).getAllByRole("cell")[1].textContent).toBe("Nevermore");
+    expect(within(rows[2]).getAllByRole("cell")[1].textContent).toBe("Nevermore");
+  });
+
   it("asks which firms the person owns again when the sign-in changes, such as after the second factor", async () => {
     api.fetchOwnedFirms.mockResolvedValueOnce([]).mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
     const view = renderPage();
@@ -208,7 +225,7 @@ describe("AdvisorActivityPage", () => {
     renderPage();
     const kind = await screen.findByLabelText("Kind");
     const options = within(kind).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toHaveLength(18);
+    expect(options).toHaveLength(20);
     expect(options.slice(0, 3)).toEqual(["Every kind", "Signed in", "Opened a submission"]);
     fireEvent.change(kind, { target: { value: "packet_downloaded" } });
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "packet_downloaded", after: null }));
