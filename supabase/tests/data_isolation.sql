@@ -438,7 +438,9 @@ BEGIN
   -- The record chamber-extract keeps of a call (US-2.4a), on prospect A's submission.
   INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, outcome, error_code, http_status)
   VALUES (gen_random_uuid(), 'chamber-extract', pa, pa_cert, 'error', 'timeout', 504),
-         (gen_random_uuid(), 'chamber-extract', pb, pb_cert, 'error', 'timeout', 504);
+         (gen_random_uuid(), 'chamber-extract', pb, pb_cert, 'error', 'timeout', 504),
+         -- A call that failed before it knew which intake it was for: no firm's, a platform admin's.
+         (gen_random_uuid(), 'chamber-extract', NULL, NULL, 'error', 'bad_request', 400);
 
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
@@ -614,7 +616,7 @@ INSERT INTO matrix VALUES
   ('public.ops_events',                                 '{"admin":"all","platform_admin":"all"}', NULL),
   ('public.ops_alerts',                                 '{"admin":"all","platform_admin":"all"}', NULL),
   -- AI call records (US-2.4a) are for a firm's advisors investigating its intake.
-  ('public.ai_extraction_events',                       '{}', '{"A":1,"B":1}'),
+  ('public.ai_extraction_events',                       '{"admin":2,"platform_admin":1}', '{"A":1,"B":1}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
   ('public.outbox_events',                              '{}', NULL),
   -- The File ID sequence (20261104110000): taken by the certification trigger, read by nobody.
@@ -1244,6 +1246,9 @@ BEGIN
   PERFORM pg_temp.expect(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, auth.uid(), %L)', pg_temp.id('pa_cert'), 'x'), 'rows:1', 'a member adding a note to their own firm''s intake');
   PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pb_cert') || '/v9-other.pdf'), '42501', 'a member storing a Manuscript for another firm''s intake');
   PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pa_cert') || '/v9-own.pdf'), 'rows:1', 'a member storing a Manuscript for their own firm''s intake');
+  PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, %L, %L)', pg_temp.id('pa_cert'), pg_temp.id('agent_2'), 'x'), 'a member adding a note in a colleague''s name');
+  -- No Manuscript is stored for an intake whose deletion is pending (prospect A's open draft).
+  PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pa_open') || '/v1-pending.pdf'), '42501', 'a member storing a Manuscript for an intake being deleted');
   PERFORM pg_temp.become('agent_b');
   PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, auth.uid(), %L)', pg_temp.id('pa_cert'), 'x'), 'the other firm''s member adding a note to an intake');
   PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pa_cert') || '/v9-other.pdf'), '42501', 'the other firm''s member storing a Manuscript');
@@ -1256,6 +1261,33 @@ BEGIN
   PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', pg_temp.id('pa_cert') || '/v8-unrecorded.pdf'), 'rows:1', 'a member removing their firm''s unrecorded Manuscript upload');
   RESET ROLE;
   DELETE FROM storage.objects WHERE name = pg_temp.id('pa_cert') || '/v8-unrecorded.pdf';
+
+  -- Odd files in the buckets (a folder that is no intake's id, a file with no folder) are read by no firm's member and
+  -- never make a read fail.
+  RESET ROLE;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', 'loose.csv'), ('documents', 'x/y/odd.csv'), ('manuscripts', 'notes/odd.pdf'), ('manuscripts', 'odd.pdf');
+  FOREACH a IN ARRAY ARRAY['advisor', 'agent_b', 'platform_admin'] LOOP
+    PERFORM pg_temp.become(a);
+    IF pg_temp.visible('storage.objects WHERE name IN (''loose.csv'', ''x/y/odd.csv'', ''notes/odd.pdf'', ''odd.pdf'')') <> 0 THEN
+      RAISE EXCEPTION 'FAIL: % reads a file in no intake''s folder', a;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  DELETE FROM storage.objects WHERE name IN ('loose.csv', 'x/y/odd.csv', 'notes/odd.pdf', 'odd.pdf');
+
+  -- A file that has not passed its malware scan stays withheld from the firm's members too, until it does.
+  UPDATE public.documents SET scan_verdict = 'pending' WHERE storage_path = pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv';
+  PERFORM pg_temp.become('advisor');
+  IF pg_temp.visible(format('storage.objects WHERE name = %L', pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv')) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a member reads a file whose malware scan hasn''t passed';
+  END IF;
+  RESET ROLE;
+  UPDATE public.documents SET scan_verdict = 'clean' WHERE storage_path = pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv';
+  PERFORM pg_temp.become('advisor');
+  IF pg_temp.visible(format('storage.objects WHERE name = %L', pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv')) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: a member can''t read a file whose malware scan has passed';
+  END IF;
+  RESET ROLE;
 
   -- A platform admin is a member of no firm (D-16): their role opens nothing of either firm's; held mail, which belongs to no firm, is theirs.
   PERFORM pg_temp.become('platform_admin');
@@ -1292,6 +1324,7 @@ END $$;
 DO $$
 DECLARE
   d uuid;
+  gone uuid;
   sid constant uuid := pg_temp.id('pb_open');
   r text;
 BEGIN
@@ -1300,6 +1333,12 @@ BEGIN
   IF (SELECT firm_id FROM public.intake_deletions WHERE id = d) <> pg_temp.id('firm_b') THEN
     RAISE EXCEPTION 'FAIL: a deletion record of the second firm''s intake isn''t the second firm''s';
   END IF;
+  -- One for an intake that isn't there (it was never the second firm's to name) is Edgar Allan Advisory's, as every record was.
+  INSERT INTO public.intake_deletions (session_id, trigger, reason) VALUES (gen_random_uuid(), 'request', 'x') RETURNING id INTO gone;
+  IF (SELECT firm_id FROM public.intake_deletions WHERE id = gone) <> pg_temp.id('firm_a') THEN
+    RAISE EXCEPTION 'FAIL: a deletion record of an intake that is gone isn''t Edgar Allan Advisory''s';
+  END IF;
+  DELETE FROM public.intake_deletions WHERE id = gone;
   UPDATE public.intake_deletions SET firm_id = pg_temp.id('firm_a') WHERE id = d;
   IF (SELECT firm_id FROM public.intake_deletions WHERE id = d) <> pg_temp.id('firm_b') THEN
     RAISE EXCEPTION 'FAIL: a deletion record was moved to another firm';

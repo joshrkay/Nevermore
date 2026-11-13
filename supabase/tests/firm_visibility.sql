@@ -215,8 +215,17 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.sees('lead_n', 'north', 'nobody'), false, 'a lead seeing a record with no owner');
   -- Only down the tree: a lead of a team under another sees none of the team above.
   PERFORM pg_temp.is(pg_temp.sees('agent_east', 'north', 'agent_sales'), false, 'an agent seeing the team above theirs');
+  -- Only a lead sees down the tree: an agent in a team with another under it sees none of what is under theirs.
+  PERFORM pg_temp.is(pg_temp.sees('agent_sales', 'north', 'agent_east'), false, 'an agent seeing the record of a team under theirs');
   -- The same lead in another firm is nothing there.
   PERFORM pg_temp.is(pg_temp.sees('lead_n', 'south', 'agent_s'), false, 'a lead seeing another firm''s record');
+
+  -- The records of a member whose membership in the team has ended are no longer the team's: the lead doesn't see them, an owner does.
+  PERFORM pg_temp.new_user('agent_gone');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id, valid_from, valid_until)
+  VALUES (north, pg_temp.id('agent_gone'), 'agent', pg_temp.id('sales'), now() - interval '2 days', now() - interval '1 day');
+  PERFORM pg_temp.is(pg_temp.sees('lead_n', 'north', 'agent_gone'), false, 'a lead seeing a record of someone who has left their team');
+  PERFORM pg_temp.is(pg_temp.sees('owner_n', 'north', 'agent_gone'), true, 'an owner seeing a record of someone who has left');
 
   -- A lead with no team sees their own only.
   RESET ROLE;

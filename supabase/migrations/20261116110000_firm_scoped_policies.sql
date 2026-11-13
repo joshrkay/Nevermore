@@ -132,11 +132,10 @@ GRANT EXECUTE ON FUNCTION public.intake_in_my_firm(uuid), public.intake_folder_i
   public.can_read_peo_mail(bigint), public.intake_owner_in_my_firm(uuid), public.colleague_in_my_firm(uuid) TO authenticated;
 
 -- A deletion record outlives its intake (it says what was deleted, when and on whose request, never the content), so it
--- carries its own firm, taken from the intake when the record is made.
+-- carries its own firm, taken from the intake when the record is made. Every record made so far is Edgar Allan Advisory's,
+-- as is every intake that existed before firms did, which is what the column starts as.
 ALTER TABLE public.intake_deletions
   ADD COLUMN firm_id uuid NOT NULL DEFAULT '00000000-0000-4000-8000-00000000eaa1' REFERENCES public.firms (id);
-
-UPDATE public.intake_deletions d SET firm_id = s.firm_id FROM public.chamber_sessions s WHERE s.id = d.session_id;
 
 CREATE FUNCTION public.keep_deletion_firm()
 RETURNS trigger
@@ -146,10 +145,7 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    SELECT s.firm_id INTO NEW.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id;
-    IF NEW.firm_id IS NULL THEN
-      NEW.firm_id := '00000000-0000-4000-8000-00000000eaa1';
-    END IF;
+    NEW.firm_id := COALESCE((SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id), NEW.firm_id);
   ELSE
     NEW.firm_id := OLD.firm_id;
   END IF;
