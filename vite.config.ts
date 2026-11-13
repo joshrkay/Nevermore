@@ -27,6 +27,8 @@ export default defineConfig(({ mode, command }) => ({
       overlay: false,
     },
   },
+  // The end-to-end tests serve the production build at <firm address>.localhost (e2e/stack/config.mjs firmUrl).
+  preview: { allowedHosts: [".localhost"] },
   define: supabaseEnv(mode, command),
   // seoPages: a head for each public page, sitemap.xml and llms.txt (scripts/seoBuild.ts).
   plugins: [react(), mode === "development" && componentTagger(), seoPages()].filter(Boolean),

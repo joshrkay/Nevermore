@@ -255,6 +255,18 @@ _Avoid_: organisation (the Google domain or Microsoft tenant that lets an adviso
 The firm's name in a web address (`name.nevermorepeo.com`): 3 to 40 lower-case letters, digits or hyphens, never starting or ending with a hyphen, unique, and refused when it is a system word (`www`, `app`, `api`, `mail`, `admin`, `status`, `quotes`) or reads as Nevermore or a listed PEO. It chooses what a screen shows; it is never the lock (D-18).
 _Avoid_: subdomain, slug, URL
 
+**Firm host** (code: `firmAddressFromHost`, `src/lib/firmHost.ts`):
+The firm address read out of the host the app is served on: `name.nevermorepeo.com`, or `name.localhost` for local development and the end-to-end tests. The bare domain, `www` and any other host name no firm and keep today's behaviour; a name with more than one label in front of the domain matches no firm and shows as not found. It only picks what the screen shows (D-17, D-18).
+
+**Public firm name** (code: `firm_public_name`):
+What a firm's address shows before anyone signs in: the approved firm's name, and nothing else. An address nobody holds and a firm not yet approved give the same answer (nothing), so the public cannot tell which firms are signing up. Firms have no logo field yet.
+
+**Not a member screen**:
+What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only. The database, not this screen, refuses them the data (D-18).
+
+**Session per address**:
+A sign-in belongs to one firm address: the browser keeps its session per origin, so signing in at one firm's address does not sign the person in at another's, and the provider sends them back to the address they started from. A person in two firms signs in to each.
+
 **Visibility** (code: `firms.visibility`):
 A firm's setting for who sees its records: `by_level` (an agent sees what they own, a lead their team's, an owner everything) or `everyone` ("everyone sees everything"). A new firm sees by level.
 

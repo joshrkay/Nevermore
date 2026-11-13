@@ -145,6 +145,13 @@ verifies:
   a wildcard such as `https://nevermore-*.vercel.app/**`: anyone can name a Vercel project to match
   it. A sign-up on a preview deployment needs no entry: its 6-digit code works there, and its link
   confirms on the production site instead.
+- **Firm addresses** (story CRM-P1.3a): a firm signs in at `https://<firm address>.nevermorepeo.com`, and the
+  provider sends the broker back to that address, so each one must be allowed:
+  add `https://*.nevermorepeo.com/**` to **Redirect URLs**. Only Nevermore creates names under the domain (an
+  approved firm's address), and the sign-in tokens go to the address the broker started from. Without this entry
+  Supabase falls back to the Site URL and the broker lands on the bare domain. Beyond this entry, wildcard DNS for
+  the domain and the wildcard domain on the Vercel project are needed (see the pull request for CRM-P1.3a). The
+  Google and Microsoft sign-in settings are unchanged: they return to Supabase's own address.
 - **Confirm signup** template (Authentication → Emails): a 6-digit `{{ .Token }}`, which the sign-up
   page accepts, and a link to `{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email`, which
   confirms only when the person clicks **Confirm my email**. `{{ .RedirectTo }}` is the callback

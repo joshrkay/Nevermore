@@ -53,6 +53,8 @@ export default defineConfig({
       // A production build rather than `vite dev`: the dev server can re-optimise a dependency (jspdf,
       // on the lazy Manuscript route) mid-test and reload the page. The VITE_* values are set to
       // empty strings, not left out, so a developer's .env cannot leak into the build.
+      // The app is reached at `localhost` and at `<firm address>.localhost` (firmUrl in e2e/stack/config.mjs): the browser
+      // sends every `*.localhost` name here, and vite.config.ts lets preview answer to them.
       command:
         "npx vite build --outDir e2e/.output/app --emptyOutDir && " +
         `npx vite preview --outDir e2e/.output/app --port ${APP_PORT} --strictPort --host localhost`,
