@@ -18,7 +18,7 @@ export interface DispatchConfig {
 type Env = (name: string) => string | undefined;
 
 /** `Name <address>` or a bare address. A display name cannot carry line breaks or brackets. */
-function parseFrom(value: string | undefined): string | null {
+export function parseFrom(value: string | undefined): string | null {
   const v = value?.trim();
   if (!v) return null;
   const named = v.match(/^([^<>\r\n]{1,100})<([^<>\s]+)>$/);
@@ -27,7 +27,7 @@ function parseFrom(value: string | undefined): string | null {
 }
 
 /** An https origin (plain http only for localhost), without a trailing slash. */
-function parseBaseUrl(value: string | undefined): string | null {
+export function parseBaseUrl(value: string | undefined): string | null {
   try {
     const url = new URL((value ?? "").trim());
     const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";

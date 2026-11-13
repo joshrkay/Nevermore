@@ -7,6 +7,8 @@ import { fetchIsMemberOfFirmAddress, recordFirmSignIn } from "@/lib/firmApi";
 import NotFound from "@/pages/NotFound";
 import { AUTH_CALLBACK_PATH } from "@/lib/authRedirect";
 import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
+import { JOIN_PATH } from "@/lib/invitationLink";
+import { onMembershipChanged } from "@/lib/membershipChanged";
 
 // The pages a sign-in lands on hold no data and finish by redirecting. At an existing firm's address they are left
 // alone: hiding one while the new session is checked would unmount it half-way, and its one-time code would be spent
@@ -61,6 +63,9 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   // A guest session is an employer's intake, not a sign-in to a firm.
   const signedIn = Boolean(userId) && !isAnonymous;
 
+  // Joining a firm changes the answer: ask again, or the answer kept from before would refuse them until a reload.
+  useEffect(() => onMembershipChanged(() => setAttempt((n) => n + 1)), []);
+
   useEffect(() => {
     if (!address || !signedIn) return;
     let cancelled = false;
@@ -108,6 +113,9 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     );
   }
   if (SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
+  // An invitation's link is opened by someone who is not a member yet, to become one. The page holds no firm data and the
+  // database decides who may accept (CRM-P1.2); every other page still refuses a person who is not a member.
+  if (pathname === JOIN_PATH) return <>{children}</>;
   if (loading) return <Checking />;
   if (!signedIn) return <>{children}</>;
   if (membership === "checking") return <Checking />;

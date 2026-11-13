@@ -24,6 +24,7 @@ import { AiCallError, AiUnavailableError, askWithinBudget, DOCUMENT_MAX_TOKENS, 
 import { MAX_EXTRACT_BYTES, sha256Hex, type Candidate, type TextSection } from "./parse.ts";
 import type { AskModel, Outcome } from "./read.ts";
 import { PROMPT_VERSION, REPORT_TOOL } from "./schema.ts";
+import { UUID } from "../_shared/uuid.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,7 +32,6 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "X-Request-Id",
 };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // The body is `{ "document_id": "<uuid>" }`; it is read no further than this.
 export const MAX_REQUEST_BYTES = 4 * 1024;
 const DOCUMENT_COLUMNS = "id, user_id, session_id, file_name, storage_path, size_bytes, status, category, file_sha256, scan_verdict";
