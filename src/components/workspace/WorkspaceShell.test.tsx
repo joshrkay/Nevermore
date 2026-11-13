@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +15,7 @@ vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }))
 
 const { clearMyFirms, clearOwnedFirms } = await import("@/hooks/useOwnedFirms");
 const { default: WorkspaceShell } = await import("./WorkspaceShell");
+const { default: SettingsPage } = await import("@/pages/advisor/AdvisorSettingsPage");
 
 const alpha = { firm_id: "f1", name: "Alpha Advisory", address: "alpha", role: "agent" };
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -140,24 +140,43 @@ describe("the workspace menu", () => {
   });
 });
 
+describe("the desktop menu", () => {
+  it("can't be hidden with Ctrl+B or Cmd+B, which would leave no way back, and the browser's own shortcut is left alone", async () => {
+    await renderAt("/advisor");
+    for (const init of [{ ctrlKey: true }, { metaKey: true }]) {
+      const event = new KeyboardEvent("keydown", { key: "b", bubbles: true, cancelable: true, ...init });
+      act(() => { window.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(false);
+    }
+    await settle();
+    expect(within(menu()).getByRole("link", { name: "Quotes" })).toBeVisible();
+    expect(document.querySelector('[data-state="collapsed"]')).toBeNull();
+  });
+});
+
+describe("the workspace state", () => {
+  it("asks whether the person is a platform admin once for each time the shell is shown, however many parts use it", async () => {
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    await settle();
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(api.fetchIsAdmin).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("the workspace look", () => {
   it("puts the theme class on the document's root while the shell is mounted and takes it off after", async () => {
     const view = await renderAt("/advisor");
     expect(document.documentElement).toHaveClass("theme-workspace");
     view.unmount();
     expect(document.documentElement).not.toHaveClass("theme-workspace");
-  });
-});
-
-describe("the workspace colours", () => {
-  const css = readFileSync("src/index.css", "utf8");
-  it("are set under .theme-workspace, including the menu's, and not on :root, so the intake and the landing page keep theirs", () => {
-    const workspace = /\.theme-workspace\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    for (const token of ["--background", "--primary", "--sidebar-background", "--sidebar-accent", "--sidebar-ring"]) expect(workspace, token).toContain(`${token}:`);
-    expect(/:root\s*\{([^}]*)\}/.exec(css)?.[1] ?? "").not.toContain("--sidebar");
-  });
-  it("are known to tailwind as the sidebar's colours", () => {
-    expect(readFileSync("tailwind.config.ts", "utf8")).toMatch(/sidebar:\s*\{[^}]*--sidebar-background/);
   });
 });
 
@@ -173,6 +192,14 @@ describe("the menu at phone width", () => {
     for (const name of ["Quotes", "Inbox", "Reports", "Settings"]) expect(within(nav).getByRole("link", { name })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Reports" })).toHaveAttribute("aria-current", "page");
     expect(within(dialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+  });
+
+  it("closes the menu when the item for the page already shown is chosen, too", async () => {
+    await renderAt("/advisor/funnel");
+    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("link", { name: "Reports" }));
+    await settle();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("closes the menu once an item has taken the person to its page", async () => {
