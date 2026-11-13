@@ -1519,6 +1519,13 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   -- A referral partner is its firm's own: adding one to a firm, or changing one by its code, is that firm's members' alone.
   ('advisor_add_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_add_referral_partner('probe-added', 'Probe', 'other', {firm})::text$$),
   ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm})::text$$);
+-- Invitations (CRM-P1.2): only a current owner of the firm invites, resends, withdraws and lists. The matrix's admin and second
+-- firm owner are those owners; every other caller, the other firm's owner and a platform admin included, is refused (D-16, D-18).
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('invite_member', 'admin', 'by_id', $$SELECT public.invite_member({firm}, 'probe@example.test', 'agent', NULL, repeat('a', 64))::text$$),
+  ('resend_invitation', 'admin', 'by_id', $$SELECT public.resend_invitation({inv}, repeat('b', 64))::text$$),
+  ('cancel_invitation', 'admin', 'by_id', $$SELECT public.cancel_invitation({inv})::text$$),
+  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$);
 INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
   ('advisor_list_submissions', 'advisor', 'list',
    $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)$$, ARRAY['advisor', 'agent_b']),
@@ -1567,6 +1574,7 @@ BEGIN
       (f, 'qr', qr),
       (f, 'firm', pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)::text),
       (f, 'partner', CASE f WHEN 'a' THEN 'acme-cfo' ELSE 'beta-cfo' END),
+      (f, 'inv', (SELECT i.id::text FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY i.created_at LIMIT 1)),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
@@ -2283,7 +2291,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
