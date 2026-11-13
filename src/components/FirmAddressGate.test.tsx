@@ -215,6 +215,25 @@ describe("the firm address gate", () => {
     expect(fetchFirmName).toHaveBeenCalledTimes(2);
   });
 
+  it("does not mount a callback page when the firm lookup itself fails: it says so instead", async () => {
+    fetchFirmName.mockRejectedValue(new Error("down"));
+    auth.user = { id: "u1" };
+    renderAt("acme-brokers.nevermorepeo.com", "/broker/callback");
+    expect(await screen.findByText("We couldn't load this page")).toBeInTheDocument();
+    expect(screen.queryByText("The console")).not.toBeInTheDocument();
+  });
+
+  it("shows only the checking spinner, and no Sign out, at an address no firm holds while the session is still being read", async () => {
+    fetchFirmName.mockResolvedValue(null);
+    auth.user = { id: "u1" };
+    auth.loading = true;
+    renderAt("no-such-firm.nevermorepeo.com");
+    await waitFor(() => expect(fetchFirmName).toHaveBeenCalled());
+    expect(await screen.findByRole("status")).toBeInTheDocument();
+    expect(screen.queryByText("Oops! Page not found")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+  });
+
   it("holds the console back while the session is still being read", async () => {
     auth.loading = true;
     renderAt("acme-brokers.nevermorepeo.com");
