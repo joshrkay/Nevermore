@@ -74,6 +74,11 @@ describe("signing up a firm", () => {
     await expect(signUpFirm("Fresh", "fresh")).rejects.toThrow("Sign in with a verified email to sign up a firm.");
   });
 
+  it("says a firm is already waiting, not that the person must sign in", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT409", message: "You already have a firm waiting for approval" } });
+    await expect(signUpFirm("Fresh", "fresh")).rejects.toThrow("You already have a firm waiting for approval.");
+  });
+
   it("says it could not sign the firm up for anything else", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000", message: "boom" } });
     await expect(signUpFirm("Fresh", "fresh")).rejects.toThrow("Couldn't sign your firm up. Try again.");

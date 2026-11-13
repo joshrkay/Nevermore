@@ -4,7 +4,7 @@ import { classifyApiError } from "@/lib/advisorApi";
 // What the screens at a firm address ask the database (story CRM-P1.3a). Both answers only choose what to show;
 // the database still checks membership on every row and function (D-18).
 
-/** The name an address shows before sign-in: the firm's name for any firm that exists, approved or not, or null when no firm holds it. */
+/** The name an address shows before sign-in: the firm's name for any firm that exists and is not refused, approved or waiting, or null when no firm holds it or the firm was refused (a refused firm is treated as unknown). */
 export async function fetchFirmName(address: string): Promise<string | null> {
   const { data, error } = await supabase.rpc("firm_public_name", { p_address: address });
   if (error) throw new Error("Couldn't look up this firm address.");
@@ -41,6 +41,7 @@ export async function signUpFirm(name: string, address: string): Promise<string>
   if (error) {
     if (error.code === "23505") throw new Error("That address is taken. Choose another.");
     if (error.code === "23514") throw new Error(refusalReason(error));
+    if (error.code === "PT409") throw new Error("You already have a firm waiting for approval.");
     if (error.code === "42501") throw new Error("Sign in with a verified email to sign up a firm.");
     throw new Error("Couldn't sign your firm up. Try again.");
   }

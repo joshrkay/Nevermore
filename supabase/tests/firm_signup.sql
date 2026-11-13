@@ -518,7 +518,7 @@ BEGIN
   PERFORM pg_temp.new_user('squatter');
   PERFORM pg_temp.as_user('squatter');
   fid := public.sign_up_firm('Squat One', 'squat-one');
-  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Squat Two', 'squat-two')$q$), '42501', 'a person with a firm still waiting can not sign up another');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Squat Two', 'squat-two')$q$), 'PT409', 'a person with a firm still waiting can not sign up another, and the refusal has its own code');
   RESET ROLE;
   PERFORM pg_temp.as_user('platform_admin');
   PERFORM public.admin_decide_firm(fid, false, 'squatting');

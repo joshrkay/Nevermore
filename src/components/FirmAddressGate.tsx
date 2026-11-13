@@ -18,7 +18,7 @@ type Membership = "checking" | "member" | "not_member" | "error";
 /**
  * What a firm's address shows (story CRM-P1.3a, D-17, D-18, D-27). On the bare domain it changes nothing. At an address
  * no firm holds: a plain not-found page for everyone, with a sign-out when a session exists there anyway; no sign-in
- * screen and no callback page. At a firm that exists (approved or still waiting): a signed-out visitor reaches the
+ * screen and no callback page. At a firm that exists and is not refused (approved or still waiting; a refused firm is treated as an address no firm holds, D-30): a signed-out visitor reaches the
  * sign-in screens, which name the firm; a signed-in current member reaches the console; a signed-in person who is not a
  * current member sees "You aren't a member of this firm" and a sign-out, and nothing else, whichever firm they do
  * belong to. This decides only what to render: the database refuses the data to a non-member anyway, and no firm is
