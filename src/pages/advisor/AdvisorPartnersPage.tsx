@@ -54,7 +54,8 @@ const AdvisorPartnersPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading" });
+    // Only the first load replaces the page with "Loading…". A refresh keeps the rows on screen, so a row someone is editing survives it (D-49).
+    setLoad((shown) => (shown.kind === "ready" ? shown : { kind: "loading" }));
     const { from, to } = funnelRange("30d");
     Promise.all([listReferralPartners(), loadIntakeSources(from, to)])
       .then(([partners, sources]) => !cancelled && setLoad({ kind: "ready", partners, counts: countsByPartner(sourceRows(sources)) }))
@@ -228,7 +229,7 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
 
   return (
     <WorkspaceFormProvider api={api}>
-    <tr className="border-b border-border/60 align-top">
+    <tr className="border-b border-border/60 align-top" onKeyDown={api.onKeyDown}>
       <th scope="row" className="py-3 pr-4 font-normal text-left">
         {editing ? (
           <WorkspaceForm api={api} actions={null} aria-label={`Edit ${partner.name}`} className="space-y-2 min-w-48">
