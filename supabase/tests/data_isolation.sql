@@ -1059,8 +1059,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
   ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
-  ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
-                                                                     'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now())', 'the funnel by source'),
+  ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone, p_firm_id uuid)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now(), public.default_firm_id())', 'the funnel by source'),
   ('advisor_add_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_add_referral_partner(''probe-partner'', ''Probe'', ''other'')', 'adding a referral partner'),
   ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
@@ -1545,12 +1545,12 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
   ('advisor_intake_funnel', 'advisor', 'count',
    $$SELECT COALESCE(sum(intakes), 0)::text FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day')$$,
    $$SELECT count(*)::text FROM public.intake_milestones m JOIN public.chamber_sessions s ON s.id = m.session_id
-     WHERE s.firm_id = {firm} AND m.started_at >= now() - interval '300 days' AND m.started_at < now() + interval '1 day'$$),
-  ('advisor_intake_sources', 'advisor', 'count',
-   $$SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)::text
-     FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')$$,
-   $$SELECT count(*)::text FROM public.intake_milestones m JOIN public.chamber_sessions s ON s.id = m.session_id
      WHERE s.firm_id = {firm} AND m.started_at >= now() - interval '300 days' AND m.started_at < now() + interval '1 day'$$);
+-- The funnel by source is asked for one firm, and only a current member of that firm is served it (the positive control reads a number).
+INSERT INTO fprobe (fn, who, shape, call, member_ok) VALUES
+  ('advisor_intake_sources', 'advisor', 'by_id',
+   $$SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)::text
+     FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', {firm})$$, '^ok:[1-9][0-9]*$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('advisor_requeue_outbox_event', 'advisor', 'by_id', $$SELECT public.advisor_requeue_outbox_event({evt}, false)::text$$,
    ARRAY['42501', 'ok:false'], '^ok:true$');
@@ -1730,7 +1730,7 @@ BEGIN
   PERFORM pg_temp.become('agent_b');
   SELECT COALESCE(sum(intakes), 0) INTO before_b FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
   SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
-    INTO src_b FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day');
+    INTO src_b FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', pg_temp.id('firm_b'));
   PERFORM pg_temp.become('advisor');
   SELECT COALESCE(sum(intakes), 0) INTO before_a FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
   RESET ROLE;
@@ -1741,7 +1741,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL: the funnel lost the steps of a deleted intake of its firm';
   END IF;
   IF (SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
-        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')) <> src_b THEN
+        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', pg_temp.id('firm_b'))) <> src_b THEN
     RAISE EXCEPTION 'FAIL: the source report lost the steps of a deleted intake of its firm';
   END IF;
   PERFORM pg_temp.become('advisor');
@@ -1781,7 +1781,7 @@ BEGIN
   IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '201 days', now() - interval '199 days')) <> 1 THEN
     RAISE EXCEPTION 'FAIL: the default firm''s funnel does not count a backfilled old step exactly once';
   END IF;
-  IF (SELECT COALESCE(sum(started), 0) FROM public.advisor_intake_sources(now() - interval '201 days', now() - interval '199 days')) <> 1 THEN
+  IF (SELECT COALESCE(sum(started), 0) FROM public.advisor_intake_sources(now() - interval '201 days', now() - interval '199 days', public.default_firm_id())) <> 1 THEN
     RAISE EXCEPTION 'FAIL: the default firm''s source report does not count a backfilled old step exactly once';
   END IF;
   PERFORM pg_temp.become('agent_b');
@@ -1911,19 +1911,47 @@ BEGIN
   SET LOCAL session_replication_role = replica;
   UPDATE public.intake_milestones SET referral_code = 'acme-cfo' WHERE milestone = 'started' AND firm_id IN (fa, fb) AND session_id IS NOT NULL;
   RESET session_replication_role;
-  r := pg_temp.call_as('advisor', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  r := pg_temp.call_as('advisor', format($q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fa));
   IF r <> 'ok:Acme CFO Partners' THEN RAISE EXCEPTION 'FAIL: the first firm''s funnel named partner(s) %', r; END IF;
-  r := pg_temp.call_as('agent_b', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  r := pg_temp.call_as('agent_b', format($q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fb));
   IF r <> 'ok:Beta CFO Partners' THEN RAISE EXCEPTION 'FAIL: the second firm''s funnel named partner(s) %', r; END IF;
-  -- A member of both firms gets one row for the code in each firm, each saying whose it is, never one merged row.
+  -- A code that only the second firm holds names nobody on the first firm's intake: a code is matched to a partner within the intake's own firm.
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = 'beta-cfo' WHERE milestone = 'started' AND firm_id = fa AND session_id IS NOT NULL;
+  RESET session_replication_role;
+  r := pg_temp.call_as('advisor', format($q$SELECT string_agg(DISTINCT COALESCE(partner_name, 'nobody'), ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'beta-cfo'$q$, fa));
+  IF r <> 'ok:nobody' THEN RAISE EXCEPTION 'FAIL: the second firm''s code on the first firm''s intake was attributed to %', r; END IF;
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = 'acme-cfo' WHERE milestone = 'started' AND firm_id = fa AND session_id IS NOT NULL;
+  RESET session_replication_role;
+  -- A member of both firms is served the firm they name, each row saying whose it is, never a merged row.
   RESET ROLE;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fa, pg_temp.id('agent_b'), 'agent');
-  r := pg_temp.call_as('agent_b', $q$SELECT string_agg(firm_id::text || '=' || partner_name, ',' ORDER BY partner_name) FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
-  IF r <> format('ok:%s=Acme CFO Partners,%s=Beta CFO Partners', fa, fb) THEN RAISE EXCEPTION 'FAIL: a member of both firms was given %', r; END IF;
+  r := pg_temp.call_as('agent_b', format($q$SELECT string_agg(DISTINCT firm_id::text || '=' || COALESCE(partner_name, 'nobody'), ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fa));
+  IF r <> format('ok:%s=Acme CFO Partners', fa) THEN RAISE EXCEPTION 'FAIL: naming the first firm, a member of both was given %', r; END IF;
+  r := pg_temp.call_as('agent_b', format($q$SELECT string_agg(DISTINCT firm_id::text || '=' || COALESCE(partner_name, 'nobody'), ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L) WHERE referral_code = 'acme-cfo'$q$, fb));
+  IF r <> format('ok:%s=Beta CFO Partners', fb) THEN RAISE EXCEPTION 'FAIL: naming the second firm, a member of both was given %', r; END IF;
+  -- The report's 200 rows are the named firm's own: another membership's volume cannot push its rows out.
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone, firm_id, utm_source)
+  SELECT NULL, now() - interval '2 days', 'started', fb, 'bulk-' || g FROM generate_series(1, 230) g;
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone, firm_id, utm_source)
+  SELECT NULL, now() - interval '2 days', 'started', fa, 'quiet-' || g FROM generate_series(1, 2) g;
+  RESET session_replication_role;
+  r := pg_temp.call_as('agent_b', format($q$SELECT count(*) FILTER (WHERE utm_source LIKE 'quiet-%%')::text || '/' || count(*) FILTER (WHERE utm_source LIKE 'bulk-%%')::text FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L)$q$, fa));
+  IF r <> 'ok:2/0' THEN RAISE EXCEPTION 'FAIL: the first firm''s report, asked for by a member of both, was %, expected its two quiet rows and none of the second firm''s', r; END IF;
+  r := pg_temp.call_as('agent_b', format($q$SELECT count(*)::text FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L)$q$, fb));
+  IF r <> 'ok:200' THEN RAISE EXCEPTION 'FAIL: the second firm''s report holds % rows, expected the limit of 200', r; END IF;
   RESET ROLE;
+  -- Someone who is not a current member of the firm named is refused, whatever their other firms.
+  r := pg_temp.call_as('advisor', format($q$SELECT count(*)::text FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day', %L)$q$, fb));
+  IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: the first firm''s advisor read the second firm''s funnel by source (%)', r; END IF;
   DELETE FROM public.firm_memberships WHERE firm_id = fa AND user_id = pg_temp.id('agent_b');
   SET LOCAL session_replication_role = replica;
-  UPDATE public.intake_milestones SET referral_code = NULL WHERE referral_code = 'acme-cfo';
+  DELETE FROM public.intake_milestones WHERE utm_source LIKE 'bulk-%' OR utm_source LIKE 'quiet-%';
+  RESET session_replication_role;
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = NULL WHERE referral_code IN ('acme-cfo', 'beta-cfo');
   RESET session_replication_role;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: referral partner cases passed';

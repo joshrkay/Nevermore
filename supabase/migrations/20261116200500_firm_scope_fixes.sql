@@ -123,12 +123,15 @@ BEGIN
 END;
 $$;
 
--- The funnel by source names the firm of each row. A referral code is unique within a firm, not across firms, so a member of two
--- firms that both use a code would otherwise see one merged row for it. Each row is now one firm's, and the console keys a partner's
--- counts by (firm, code). The new column is last, so every caller that reads the others by name is unchanged. Who may call it and
--- what it counts are as before.
+-- The funnel by source is asked for one firm. It used to group the rows of every firm the caller belongs to and apply one limit of 200
+-- rows to all of them, so a member of two firms saw one firm's volume push the other's rows out, and the page, which is one firm's,
+-- had no way to ask for only its own. Now the firm is named, the caller must be a current member of it, and its rows are chosen
+-- before they are grouped and limited. Who may call it is otherwise as before (D-18: a function that runs as its owner asks the firm
+-- itself). A referral code is unique within a firm, not across firms, so each row names its firm's own partner only: a code that
+-- another firm holds attributes nothing here. The firm stays a column, so a caller that reads the others by name is unchanged.
+-- The old two-argument function is dropped, so no overload is left behind.
 DROP FUNCTION public.advisor_intake_sources(timestamp with time zone, timestamp with time zone);
-CREATE FUNCTION public.advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)
+CREATE FUNCTION public.advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone, p_firm_id uuid)
  RETURNS TABLE(referral_code text, partner_name text, utm_source text, utm_medium text, utm_campaign text, started bigint, answered bigint, document_uploaded bigint, census_provided bigint, ready_to_certify bigint, email_verified bigint, certified bigint, manuscript_downloaded bigint, firm_id uuid)
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
@@ -137,6 +140,9 @@ AS $function$
 #variable_conflict use_column
 BEGIN
   PERFORM public.require_advisor();
+  IF p_firm_id IS NULL OR NOT public.is_firm_member(p_firm_id) THEN
+    RAISE EXCEPTION 'Advisor access required' USING ERRCODE = '42501';
+  END IF;
   IF p_from IS NULL OR p_to IS NULL OR p_from >= p_to THEN
     RAISE EXCEPTION 'The period must start before it ends' USING ERRCODE = '22023';
   END IF;
@@ -156,12 +162,12 @@ BEGIN
            m.firm_id
     FROM public.intake_milestones m
     LEFT JOIN public.referral_partners p ON p.code = m.referral_code AND p.firm_id = m.firm_id
-    WHERE m.started_at >= p_from AND m.started_at < p_to AND public.is_firm_member(m.firm_id)
+    WHERE m.firm_id = p_firm_id AND m.started_at >= p_from AND m.started_at < p_to
     GROUP BY m.firm_id, m.referral_code, p.name, m.utm_source, m.utm_medium, m.utm_campaign
     ORDER BY count(*) FILTER (WHERE m.milestone = 'started') DESC,
              m.referral_code NULLS LAST, m.utm_source NULLS LAST, m.utm_medium NULLS LAST, m.utm_campaign NULLS LAST
     LIMIT 200;
 END;
 $function$;
-REVOKE ALL ON FUNCTION public.advisor_intake_sources(timestamptz, timestamptz) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.advisor_intake_sources(timestamptz, timestamptz) TO authenticated;
+REVOKE ALL ON FUNCTION public.advisor_intake_sources(timestamptz, timestamptz, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.advisor_intake_sources(timestamptz, timestamptz, uuid) TO authenticated;
