@@ -680,7 +680,7 @@ BEGIN
     (fid, pg_temp.new_user('al_suspended'), 'agent'), (fid, pg_temp.new_user('al_removed'), 'agent');
   INSERT INTO public.chamber_sessions (user_id, firm_id) VALUES (pg_temp.new_user('al_prospect'), fid) RETURNING id INTO sid;
   PERFORM pg_temp.as_service();
-  SELECT array_to_string(public.outbox_alert_recipients(sid), ',') INTO to_list;
+  SELECT COALESCE(string_agg(e, ',' ORDER BY e COLLATE "C"), '') INTO to_list FROM unnest(public.outbox_alert_recipients(sid)) AS e;
   PERFORM pg_temp.is(to_list, 'al_agent@example.test,al_owner@example.test,al_owner_2@example.test,al_removed@example.test,al_suspended@example.test', 'before: every current member is told');
   RESET ROLE;
 
@@ -694,7 +694,7 @@ BEGIN
   RESET ROLE;
 
   PERFORM pg_temp.as_service();
-  SELECT array_to_string(public.outbox_alert_recipients(sid), ',') INTO to_list;
+  SELECT COALESCE(string_agg(e, ',' ORDER BY e COLLATE "C"), '') INTO to_list FROM unnest(public.outbox_alert_recipients(sid)) AS e;
   PERFORM pg_temp.is(to_list, 'al_agent@example.test,al_owner@example.test', 'after: a removed and a suspended person are no longer told, at once');
   RESET ROLE;
 
