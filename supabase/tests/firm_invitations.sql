@@ -208,6 +208,7 @@ BEGIN
   SELECT * INTO r FROM public.invite_member(acme, 'newcomer@example.test', 'agent', NULL, pg_temp.hash_of('token-one'));
   PERFORM pg_temp.is(r.firm_name, 'Acme Brokers', 'the owner''s invitation names the firm, for the email');
   PERFORM pg_temp.is(r.firm_address, 'acme-brokers', 'and its address, where the link opens');
+  PERFORM pg_temp.is(r.email, 'newcomer@example.test', 'and the email to send it to, as kept (lower case, no spaces)');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_invitations WHERE firm_id = acme), 1::bigint, 'one invitation is stored');
   PERFORM pg_temp.is((SELECT role FROM public.firm_invitations WHERE id = r.invitation_id), 'agent', 'with the role given');
@@ -571,6 +572,7 @@ BEGIN
   SELECT * INTO r FROM public.resend_invitation(inv, pg_temp.hash_of('resent-token'));
   PERFORM pg_temp.is(r.firm_address, 'acme-brokers', 'the resend answers what the email needs: the firm''s address');
   PERFORM pg_temp.is(r.invitation_id, inv, 'and the same invitation');
+  PERFORM pg_temp.is(r.email, 'no-account-yet@example.test', 'and whom to send it to');
   PERFORM pg_temp.is(r.expires_at > now() + interval '6 days 23 hours', true, 'with seven days from now, the expired invitation revived');
   PERFORM pg_temp.is((SELECT p.expired FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), false, 'it no longer reads as expired');
   PERFORM pg_temp.is((SELECT p.resent_at IS NOT NULL FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), true, 'and says it was resent');

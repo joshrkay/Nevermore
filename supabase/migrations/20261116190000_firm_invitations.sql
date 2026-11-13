@@ -52,7 +52,7 @@ ALTER TABLE public.firm_invitations ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.firm_invitations FROM PUBLIC, anon, authenticated;
 
 CREATE FUNCTION public.invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)
-RETURNS TABLE (invitation_id uuid, firm_name text, firm_address text, expires_at timestamptz)
+RETURNS TABLE (invitation_id uuid, email text, firm_name text, firm_address text, expires_at timestamptz)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -92,7 +92,7 @@ BEGIN
   END;
   PERFORM public.record_firm_event(p_firm_id, 'member_invited', auth.uid(),
     jsonb_build_object('invitation_id', inv.id, 'email', clean_email, 'role', p_role));
-  RETURN QUERY SELECT inv.id, f.name, f.address, inv.expires_at;
+  RETURN QUERY SELECT inv.id, inv.email, f.name, f.address, inv.expires_at;
 END;
 $$;
 
@@ -207,7 +207,7 @@ GRANT EXECUTE ON FUNCTION public.cancel_invitation(uuid) TO authenticated;
 -- Sends an invitation again: the token is made anew by the server function (the old one was never stored and the old link
 -- stops working), and an expired invitation gets seven days from now. Used and withdrawn invitations are not resent.
 CREATE FUNCTION public.resend_invitation(p_invitation_id uuid, p_token_hash text)
-RETURNS TABLE (invitation_id uuid, firm_name text, firm_address text, expires_at timestamptz)
+RETURNS TABLE (invitation_id uuid, email text, firm_name text, firm_address text, expires_at timestamptz)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -230,7 +230,7 @@ BEGIN
   SELECT * INTO f FROM public.firms WHERE id = inv.firm_id;
   PERFORM public.record_firm_event(inv.firm_id, 'member_invitation_resent', auth.uid(),
     jsonb_build_object('invitation_id', inv.id, 'email', inv.email, 'role', inv.role));
-  RETURN QUERY SELECT inv.id, f.name, f.address, inv.expires_at;
+  RETURN QUERY SELECT inv.id, inv.email, f.name, f.address, inv.expires_at;
 END;
 $$;
 
