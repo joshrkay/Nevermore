@@ -36,12 +36,33 @@ Every way into an advisor page ends somewhere that says what happened:
 | Signed out on purpose | Sign-in page with "You've been signed out." The page is *not* remembered: the next person to sign in may be someone else, and lands on the queue |
 | Session ended on its own (refresh token expired, or sign-out in another tab) | Sign-in page with "Your session expired. Sign in again to continue." and a return to the same page |
 | The server rejects the token mid-use (`PGRST301`-`303`, "JWT expired") | "Your session has expired." The app ends the session and takes them to sign-in as above |
+| Signed in with a password as an advisor or admin, with no second factor this sign-in | "Add a second step to your sign-in" (an authenticator app, the first time) or "Enter your code" (at later sign-ins) at `/advisor/second-factor`, then back to the page asked for. Nothing of the console opens until then |
 | Signed in but not an advisor (a new broker, say) | "Waiting for access": the account is created and an administrator has to grant the role; nothing is shared until then. A way home or to another account |
 | Role revoked while signed in (database refuses with `42501`) | "You no longer have advisor access.", no retry offered |
 | Anything else (network, timeout) | "We couldn't load …" with the reason and Try again |
 
 `useAuth().sessionEnded` is `"signed_out"` or `"expired"`; Supabase reports both as `SIGNED_OUT`, so
 a sign-out the app asked for is remembered until the event arrives.
+
+### A second factor for password sign-ins (story CRM-P1.3b)
+
+Decision D-19: a second factor is asked for when *this sign-in* used a password, not whenever the account has one. A Google or
+Microsoft sign-in relies on that provider's and is never asked; prospects and guests are never asked.
+
+- **In the database** (`20261116150000_second_factor_for_password_sign_ins.sql`): `second_factor_rule_met()` reads the token's own
+  claims: it is false only when `amr` lists `password` and `aal` is not `aal2`. `has_role()` asks it, so `is_advisor()`,
+  `require_advisor()`, every advisor policy and every admin-only function refuse such a sign-in. The rule holds without the screen.
+  The `held-mail` and `mailbox` functions run as the service role and take the caller's id from their login, so before any work
+  they ask `is_advisor()` (or `has_role('admin')` to assign or discard held mail) with the caller's own login, and answer 403 to a
+  password sign-in with no second factor. Their own role checks in the database stay as a second line.
+  `advisor_needs_second_factor()` tells the screens that a person with a role is held back by this alone.
+- **On screen**: `RequireAdvisor` sends such a person to `/advisor/second-factor` instead of showing "Waiting for access". The
+  page sets up an authenticator app (Supabase Auth's TOTP calls) the first time and asks for its code at later sign-ins. After a
+  Google or Microsoft sign-in, or for someone with no role, it shows nothing and goes straight on.
+- **Setting it up on a project**: turn on TOTP multi-factor in the Supabase project's Authentication settings (enrol and verify).
+  Nothing else changes in the project.
+- **Firms**: until firm tables exist, "a firm's data" is what an advisor can open. The firm-scoping story (CRM-P2.1a) must carry the
+  same check into its membership helper, so a password sign-in without a second factor is not a member of any firm.
 
 ### Signing in with Google or Microsoft (story M-4.1)
 

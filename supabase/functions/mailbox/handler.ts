@@ -20,6 +20,7 @@ const corsHeaders = {
 };
 
 const MAX_BODY = 8192;
+const NOT_ADVISOR = "Only an advisor can connect a mailbox. Ask an administrator for access first.";
 
 export interface MailboxClient extends MailboxDb {
   auth: { getUser: () => PromiseLike<{ data: { user: { id: string; email?: string | null } | null } }> };
@@ -65,6 +66,13 @@ export async function handleMailboxRequest(req: Request, deps: MailboxDeps): Pro
   const user = deps.createClient(url, anonKey, { global: { headers: { Authorization: authorization as string } } });
   const { data: { user: who } } = await user.auth.getUser();
   if (!who) return json({ error: "Unauthorized" }, 401);
+
+  // Who they are comes from their id; whether their token may act as an advisor is asked of the database with their
+  // own login, so a password sign-in that has not completed a second factor is refused here too.
+  if (body.action === "connect" || body.action === "check" || body.action === "disconnect") {
+    const allowed = await user.rpc("is_advisor", {});
+    if (allowed.error || allowed.data !== true) return json({ error: NOT_ADVISOR, code: "not_advisor" }, 403);
+  }
 
   const configured = readMailboxConfig(deps.env);
   if (!configured.ok) {
@@ -125,7 +133,7 @@ async function connect(
   });
   if (stored.error) {
     deps.log(`MAILBOX_CONNECT_FAILED user=${who.id} provider=${provider} code=${stored.error.code ?? "unexpected"}`);
-    if (stored.error.code === "42501") return json({ error: "Only an advisor can connect a mailbox. Ask an administrator for access first.", code: "not_advisor" }, 403);
+    if (stored.error.code === "42501") return json({ error: NOT_ADVISOR, code: "not_advisor" }, 403);
     return json({ error: "Something went wrong. Try again.", code: "store_failed" }, 500);
   }
   deps.log(`MAILBOX_CONNECTED user=${who.id} provider=${provider}`);

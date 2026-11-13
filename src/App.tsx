@@ -24,6 +24,7 @@ const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 // Advisor tools are only for advisors; keep them out of the prospect's bundle.
 const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
 const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
+const SecondFactorPage = lazy(() => import("./pages/SecondFactorPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
@@ -74,6 +75,7 @@ const App = () => (
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 {/* A submission by its File ID; row security decides who may read it. */}
                 <Route path="/manuscript/:reference" element={<ManuscriptPage />} />
+                <Route path="/advisor/second-factor" element={<SecondFactorPage />} />
                 <Route path="/advisor" element={<RequireAdvisor><AdvisorDashboardPage /></RequireAdvisor>} />
                 <Route path="/advisor/submissions/:id" element={<RequireAdvisor><AdvisorSubmissionPage /></RequireAdvisor>} />
                 <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />

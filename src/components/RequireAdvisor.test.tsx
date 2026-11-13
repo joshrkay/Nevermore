@@ -11,7 +11,11 @@ const auth = {
 };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const fetchIsAdvisor = vi.fn();
-vi.mock("@/lib/advisorApi", () => ({ fetchIsAdvisor: () => fetchIsAdvisor() }));
+const fetchNeedsSecondFactor = vi.fn();
+vi.mock("@/lib/advisorApi", () => ({ fetchIsAdvisor: () => fetchIsAdvisor(), fetchNeedsSecondFactor: () => fetchNeedsSecondFactor() }));
+
+const reportOpsEvent = vi.fn();
+vi.mock("@/lib/monitoring", () => ({ reportOpsEvent: (...a: unknown[]) => reportOpsEvent(...a) }));
 
 const { default: RequireAdvisor } = await import("./RequireAdvisor");
 
@@ -25,12 +29,18 @@ const Login = () => {
   );
 };
 
+const SecondFactorStub = () => {
+  const state = useLocation().state as { from?: { pathname: string } } | null;
+  return <p>Second factor page returning to {state?.from?.pathname ?? "nowhere"}</p>;
+};
+
 const renderGuarded = () =>
   render(
     <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
       <Routes>
         <Route path="/advisor/submissions/:id" element={<RequireAdvisor><p>Advisor tools</p></RequireAdvisor>} />
         <Route path="/login" element={<Login />} />
+        <Route path="/advisor/second-factor" element={<SecondFactorStub />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -42,6 +52,8 @@ describe("RequireAdvisor", () => {
     auth.isAnonymous = false;
     auth.sessionEnded = null;
     fetchIsAdvisor.mockReset();
+    fetchNeedsSecondFactor.mockReset().mockResolvedValue(false);
+    reportOpsEvent.mockReset();
   });
 
   it("sends a signed-out visitor to sign in, remembering where they were going", () => {
@@ -85,6 +97,25 @@ describe("RequireAdvisor", () => {
     expect(await screen.findByText("Waiting for access")).toBeInTheDocument();
     expect(screen.getByText(/Your account \(pat@example.com\) is created. An administrator has to give you access/)).toBeInTheDocument();
     expect(screen.queryByText("Advisor tools")).not.toBeInTheDocument();
+    expect(reportOpsEvent).toHaveBeenCalledWith("auth_denied", { code: "advisor_route" });
+  });
+
+  it("sends an advisor who signed in with a password and has no second factor to add or enter one, not to the console", async () => {
+    fetchIsAdvisor.mockResolvedValue(false);
+    fetchNeedsSecondFactor.mockResolvedValue(true);
+    renderGuarded();
+    expect(await screen.findByText("Second factor page returning to /advisor/submissions/s1")).toBeInTheDocument();
+    expect(screen.queryByText("Advisor tools")).not.toBeInTheDocument();
+    expect(screen.queryByText("Waiting for access")).not.toBeInTheDocument();
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("offers a retry when it can't tell whether a second factor is what is missing", async () => {
+    fetchIsAdvisor.mockResolvedValue(false);
+    fetchNeedsSecondFactor.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(true);
+    renderGuarded();
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/Second factor page/)).toBeInTheDocument();
   });
 
   it("lets an advisor in", async () => {
