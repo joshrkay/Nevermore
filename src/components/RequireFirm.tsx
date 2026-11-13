@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
-import { useRef, type ReactNode } from "react";
+import { Link, Navigate } from "react-router-dom";
+import { useRef, type MutableRefObject, type ReactNode } from "react";
 import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
@@ -10,21 +10,28 @@ import RequireAccess, { AccessMessage } from "./RequireAccess";
 // and only decides what to render: the database refuses the data to everyone else anyway (D-18). A password sign-in still owes
 // its second factor first (D-19), for a member with no platform role as for one with it.
 
-/** Why a member can't open the console: they belong to no firm, to this address's firm not at all, or to several. */
-type Refusal = "none" | "not_this_firm" | "several";
+/**
+ * Why a member can't open the console here: they belong to no firm, or not to this address's firm; or, on the bare domain,
+ * they belong to several and choose one first.
+ */
+type Refusal = "none" | "not_this_firm" | "choose";
 
 /**
- * Whether the firms a person belongs to let them into the console at this address. The console shows one firm's records,
- * and the database narrows each answer to the firms the person belongs to and no further (D-18), so a person in two firms
- * would see both firms' records at once: they are kept out until the console can tell the two apart. At a firm's address
- * the firm must be one of theirs; on the bare domain a member of exactly one firm lands in it.
+ * Whether the firms a person belongs to let them into the console at this address. The console shows one firm's records. At
+ * a firm's address the database answers for that firm only (D-40, ADR 0014), so a current member of it is let in whatever
+ * other firms they belong to. On the bare domain it answers for every firm the person belongs to, so a member of exactly one
+ * lands in it, and a member of several is sent to choose a firm, whose address they then work at.
  */
 function refusal(firms: MyFirm[], address: string | null): Refusal | null {
   if (firms.length === 0) return "none";
-  if (address !== null && !firms.some((f) => f.address === address)) return "not_this_firm";
-  if (firms.length > 1) return "several";
+  if (address !== null) return firms.some((f) => f.address === address) ? null : "not_this_firm";
+  if (firms.length > 1) return "choose";
   return null;
 }
+
+/** Choosing a firm is not a refusal: the person is let past the check, then sent to choose. Read when the page mounts. */
+const EnterOrChoose = ({ seen, children }: { seen: MutableRefObject<{ refusal: Refusal | null }>; children: ReactNode }) =>
+  seen.current.refusal === "choose" ? <Navigate to="/choose-firm" replace /> : <>{children}</>;
 
 const SignOutLinks = () => {
   const { signOut } = useAuth();
@@ -50,7 +57,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
   const userId = user?.id ?? "";
   const sessionKey = session?.access_token ?? "";
   // What the check last learned, so the refusal can say which of the reasons it was.
-  const seen = useRef<{ firms: MyFirm[]; refusal: Refusal | null }>({ firms: [], refusal: "none" });
+  const seen = useRef<{ refusal: Refusal | null }>({ refusal: "none" });
 
   if (as === "owner") {
     return (
@@ -73,23 +80,12 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
     <RequireAccess
       check={async () => {
         const firms = await loadMyFirms(userId, sessionKey);
-        seen.current = { firms, refusal: refusal(firms, address) };
-        return seen.current.refusal === null;
+        seen.current = { refusal: refusal(firms, address) };
+        return seen.current.refusal === null || seen.current.refusal === "choose";
       }}
       deniedCode="firm_member_route"
       denied={(email) => {
-        const { firms, refusal: why } = seen.current;
-        if (why === "several") {
-          return (
-            <AccessMessage title="You're a member of more than one firm">
-              <p className="text-muted-foreground mb-4">
-                Your account{email ? ` (${email})` : ""} belongs to {firms.map((f) => f.name).join(" and ")}. The console shows one firm's
-                records at a time and can't yet keep two firms' records apart, so it stays closed to you until it can.
-              </p>
-              <SignOutLinks />
-            </AccessMessage>
-          );
-        }
+        const { refusal: why } = seen.current;
         if (why === "not_this_firm") {
           return (
             <AccessMessage title="You aren't a member of this firm">
@@ -108,7 +104,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
         );
       }}
     >
-      {children}
+      <EnterOrChoose seen={seen}>{children}</EnterOrChoose>
     </RequireAccess>
   );
 };
