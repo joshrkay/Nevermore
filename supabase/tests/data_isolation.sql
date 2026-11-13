@@ -1545,6 +1545,13 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('advisor_requeue_outbox_event', 'advisor', 'by_id', $$SELECT public.advisor_requeue_outbox_event({evt}, false)::text$$,
    ARRAY['42501', 'ok:false'], '^ok:true$');
+-- An invitation is its firm's own: only a current owner of that firm invites, lists, resends or withdraws (supabase/tests/firm_invitations.sql
+-- holds the rest). Each is tried on both firms' rows; the owner of that firm is the positive control.
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('invite_member', 'admin', 'by_id', $$SELECT invitation_id::text FROM public.invite_member({firm}, 'probe-invitee@example.test', 'agent', NULL, repeat('e', 64))$$),
+  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$),
+  ('resend_invitation', 'admin', 'by_id', $$SELECT invitation_id::text FROM public.resend_invitation({inv}::uuid, repeat('f', 64))$$),
+  ('cancel_invitation', 'admin', 'by_id', $$SELECT public.cancel_invitation({inv}::uuid)::text$$);
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:{}'], member_ok = '^ok:\{company_name\}$' WHERE fn = 'session_verified_fields';
 UPDATE fprobe SET refused = ARRAY['42501', 'ok:false'], member_ok = '^ok:true$' WHERE fn = 'retry_intake_deletion';
 
@@ -1568,6 +1575,7 @@ BEGIN
       (f, 'qr', qr),
       (f, 'firm', pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)::text),
       (f, 'partner', CASE f WHEN 'a' THEN 'acme-cfo' ELSE 'beta-cfo' END),
+      (f, 'inv', (SELECT i.id::text FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY i.created_at LIMIT 1)),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
@@ -2301,7 +2309,7 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
-UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.firm_invitations', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
   'public.quote_request_messages WHERE quote_request_id IS NULL');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
