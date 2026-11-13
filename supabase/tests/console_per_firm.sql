@@ -264,6 +264,13 @@ SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NU
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_b')), 0::bigint, 'and not the other firm''s');
 SELECT pg_temp.is((SELECT count(*) FROM public.peos), 0::bigint, 'and reads no PEO of the platform''s catalogue');
 SELECT pg_temp.is((SELECT firm_id FROM public.advisor_add_referral_partner('p1', 'A partner', 'accounting')), pg_temp.id('firm_a'), 'and adds a referral partner to their own firm, as CRM-P2.1c makes partners a firm''s own');
+SELECT pg_temp.is((SELECT name FROM public.advisor_update_referral_partner('p1', 'Renamed partner', 'accounting')), 'Renamed partner', 'edits it');
+SELECT pg_temp.as_owner();
+INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (pg_temp.id('firm_b'), 'b1', 'Other firm''s partner', 'accounting');
+SELECT pg_temp.as_user('roleless_a');
+SELECT pg_temp.is((SELECT string_agg(code, ',' ORDER BY code) FROM public.referral_partners), 'p1', 'lists their firm''s partners and none of the other firm''s');
+SELECT pg_temp.expect('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'')', 'PT404', 'cannot edit the other firm''s partner by its code');
+SELECT pg_temp.expect(format('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'', %L)', pg_temp.id('firm_b')), '42501', 'nor by naming that firm');
 SELECT pg_temp.as_user('owner_b');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0)), 1::bigint, 'an owner of a firm with no platform role lists their firm''s submission');
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_a')), 0::bigint, 'and none of Edgar Allan Advisory''s');
