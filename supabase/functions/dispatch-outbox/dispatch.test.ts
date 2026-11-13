@@ -1311,6 +1311,25 @@ describe("who an advisor alert goes to", () => {
       expect(sent[0].key).not.toBe(stored.key);
     });
 
+    // D-35: who is told is fixed when the alert is first prepared. A retry only drops the people who have left; it never adds the
+    // people who joined since, whose address would change the message's key for everyone who already has it.
+    it.each(kinds)("rebuilds a frozen %s for the people it named who are still members, and does not add anyone who joined since", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("sends a frozen %s to no one who joined since when everyone it named has left, and tries again", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
+    });
+
     it.each(kinds)("sends nothing from a frozen %s when no one is left to tell", async (_name, makeRow) => {
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => []) });
       await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);

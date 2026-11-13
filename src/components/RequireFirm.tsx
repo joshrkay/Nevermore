@@ -35,10 +35,11 @@ const SeveralFirms = ({ firms, email }: { firms: MyFirm[]; email?: string | null
 
 /**
  * A page of the firm's console. By default the person must be a current member of the firm, at a firm's address that
- * address's firm; `as="owner"` asks for a firm's owner (the firm's record of who did what). Whether they hold a platform role
+ * address's firm; `as="owner"` asks for a firm's owner, and `ownersOnly` finishes the sentence "Only a firm's owners can …" that
+ * tells anyone else what the page is for (the firm's record of who did what, its members). Whether they hold a platform role
  * is never asked.
  */
-const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "member" | "owner" }) => {
+const RequireFirm = ({ children, as = "member", ownersOnly = "read its record of who did what" }: { children: ReactNode; as?: "member" | "owner"; ownersOnly?: string }) => {
   const { user, session } = useAuth();
   const firmAddress = useFirmAddress();
   const address = firmAddress.status === "known" ? firmAddress.address : null;
@@ -62,7 +63,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
           if (why === "several") return <SeveralFirms firms={firms} email={email} />;
           return (
             <AccessMessage title="For a firm's owners">
-              <p className="text-muted-foreground mb-4">Only a firm's owners can read its record of who did what.</p>
+              <p className="text-muted-foreground mb-4">Only a firm's owners can {ownersOnly}.</p>
               <Link to="/advisor" className="text-primary underline hover:text-primary/90">Back to the console</Link>
             </AccessMessage>
           );

@@ -17,7 +17,7 @@ const AdvisorHeader = () => {
   const firmAddress = useFirmAddress();
   const address = firmAddress.status === "known" ? firmAddress.address : null;
   const isMember = mine !== null && mine.length > 0;
-  // The record of who did what is for the owners of the firm the console is showing (the same firm the guard and the page
+  // The members and the record of who did what are for the owners of the firm the console is showing (the same firm the guard and the page
   // use), not for anyone who owns some firm: until the database says so, or if it can't be asked, the link isn't shown.
   const ownsThisFirm = mine !== null && isOwnerHere(mine, address);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -103,12 +103,20 @@ const AdvisorHeader = () => {
             </>
           )}
           {ownsThisFirm && (
-            <NavLink
-              to="/advisor/activity"
-              className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
-            >
-              Activity
-            </NavLink>
+            <>
+          <NavLink
+            to="/advisor/members"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Members
+          </NavLink>
+          <NavLink
+            to="/advisor/activity"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Activity
+          </NavLink>
+            </>
           )}
         </nav>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
