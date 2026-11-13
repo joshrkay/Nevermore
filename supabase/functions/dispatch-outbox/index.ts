@@ -164,6 +164,11 @@ serve(async (req) => {
         });
         if (e) throw e;
       },
+      advisorRecipients: async (sessionId) => {
+        const { data: members, error: e } = await admin.rpc("outbox_alert_recipients", { p_session_id: sessionId });
+        if (e) throw e;
+        return Array.isArray(members) ? members.filter((a): a is string => typeof a === "string") : [];
+      },
       alertDead,
       log,
     });

@@ -8,7 +8,8 @@ import { EMAIL_PATTERN, oneLine, type OutboxKind } from "./messages.ts";
 export type Readiness<T> = ({ ok: true } & T) | { ok: false; problems: string[] };
 
 export interface DispatchConfig {
-  advisor: Readiness<{ from: string; to: string[]; appBaseUrl: string }>;
+  /** Who an advisor alert goes to is not a setting: it is the intake's firm's current members, asked of the database per event. */
+  advisor: Readiness<{ from: string; appBaseUrl: string }>;
   prospect: Readiness<{ from: string; supportEmail: string; responseTime: string }>;
   /** The prospect emails that link to the intake: an advisor's request for information, and the draft reminder. */
   prospectLink: Readiness<{ from: string; supportEmail: string; appBaseUrl: string }>;
@@ -17,7 +18,7 @@ export interface DispatchConfig {
 type Env = (name: string) => string | undefined;
 
 /** `Name <address>` or a bare address. A display name cannot carry line breaks or brackets. */
-function parseFrom(value: string | undefined): string | null {
+export function parseFrom(value: string | undefined): string | null {
   const v = value?.trim();
   if (!v) return null;
   const named = v.match(/^([^<>\r\n]{1,100})<([^<>\s]+)>$/);
@@ -25,14 +26,8 @@ function parseFrom(value: string | undefined): string | null {
   return EMAIL_PATTERN.test(v) ? v : null;
 }
 
-/** A comma-separated list of addresses (the advisory distribution list may be several). */
-function parseRecipients(value: string | undefined): string[] | null {
-  const parts = (value ?? "").split(",").map((p) => p.trim()).filter(Boolean);
-  return parts.length > 0 && parts.every((p) => EMAIL_PATTERN.test(p)) ? parts : null;
-}
-
 /** An https origin (plain http only for localhost), without a trailing slash. */
-function parseBaseUrl(value: string | undefined): string | null {
+export function parseBaseUrl(value: string | undefined): string | null {
   try {
     const url = new URL((value ?? "").trim());
     const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
@@ -46,7 +41,6 @@ function parseBaseUrl(value: string | undefined): string | null {
 
 export function readDispatchConfig(env: Env): DispatchConfig {
   const from = parseFrom(env("EMAIL_FROM"));
-  const advisorTo = parseRecipients(env("ADVISORY_NOTIFY_EMAIL"));
   const appBaseUrl = parseBaseUrl(env("APP_BASE_URL"));
   const supportEmail = oneLine(env("SUPPORT_EMAIL"), 254);
   const responseTime = oneLine(env("PROSPECT_RESPONSE_TIME"), 80);
@@ -54,11 +48,7 @@ export function readDispatchConfig(env: Env): DispatchConfig {
   const fromProblem = from ? [] : ["EMAIL_FROM is not set to a valid sender address"];
   const supportProblem = supportEmail && EMAIL_PATTERN.test(supportEmail) ? [] : ["SUPPORT_EMAIL is not set to a valid address"];
   const baseUrlProblem = appBaseUrl ? [] : ["APP_BASE_URL is not set to an https URL"];
-  const advisorProblems = [
-    ...fromProblem,
-    ...(advisorTo ? [] : ["ADVISORY_NOTIFY_EMAIL is not set to valid address(es)"]),
-    ...baseUrlProblem,
-  ];
+  const advisorProblems = [...fromProblem, ...baseUrlProblem];
   const prospectProblems = [
     ...fromProblem,
     ...supportProblem,
@@ -69,7 +59,7 @@ export function readDispatchConfig(env: Env): DispatchConfig {
   return {
     advisor:
       advisorProblems.length === 0
-        ? { ok: true, from: from!, to: advisorTo!, appBaseUrl: appBaseUrl! }
+        ? { ok: true, from: from!, appBaseUrl: appBaseUrl! }
         : { ok: false, problems: advisorProblems },
     prospect:
       prospectProblems.length === 0
