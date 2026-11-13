@@ -1824,7 +1824,10 @@ BEGIN
           cases := cases + 1;
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        -- Renaming, changing and deleting a saved view is the saver's alone (CRM-S3.1b), so there the member of both firms is no
+        -- positive control: at their own firm's address they get the same PT404 as any member who did not save the view.
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.fn NOT IN ('rename_saved_view', 'change_saved_view', 'delete_saved_view')
+                                                   THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
