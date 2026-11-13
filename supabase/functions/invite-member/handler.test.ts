@@ -141,12 +141,22 @@ describe("inviting a member (request and response)", () => {
   });
 
   it("rejects a request that is not an invitation or a resend, before the database is asked", async () => {
-    for (const body of [{}, { action: "delete" }, { action: "invite", firm_id: "nope", email: "a@b.co", role: "agent" }, { action: "invite", firm_id: FIRM, role: "agent" }, { action: "resend", invitation_id: 7 }]) {
+    for (const body of [{}, { action: "delete" }, { action: "invite", firm_id: "nope", email: "a@b.co", role: "agent" }, { action: "invite", firm_id: FIRM, role: "agent" }, { action: "resend", invitation_id: 7 }, { action: "resend", invitation_id: "not-an-id" }]) {
       const t = setup();
       const res = await handleInviteRequest(post(body), t.deps);
       expect(res.status, JSON.stringify(body)).toBe(400);
       expect(t.calls).toEqual([]);
     }
+  });
+
+  it("still answers that the email went out when recording that fails, and logs neither the address nor the token", async () => {
+    const t = setup({ rpc: { record_invitation_delivery: { error: { code: "XX000", message: "newcomer@example.test boom" } } } });
+    const res = await handleInviteRequest(post(invite), t.deps);
+    expect((await res.json()).emailed).toBe(true);
+    expect(t.logs).toHaveLength(1);
+    expect(t.logs[0]).toContain("record_delivery");
+    expect(t.logs.join("\n")).not.toContain("newcomer@example.test");
+    expect(t.logs.join("\n")).not.toContain(TOKEN);
   });
 
   it("passes a team on when one is named", async () => {
@@ -186,6 +196,20 @@ describe("resending an invitation (request and response)", () => {
       expect(res.status, code).toBe(status);
       expect(t.sent, code).toEqual([]);
     }
+  });
+});
+
+describe("sending the same invitation again", () => {
+  it("never repeats the provider's idempotency key for a resend, which would make it drop the new email, and never puts the token in it", async () => {
+    const first = setup();
+    await handleInviteRequest(post(invite), first.deps);
+    const second = setup({ rpc: { resend_invitation: { data: [{ ...made, expires_at: "2026-11-21T10:00:00Z" }] } } });
+    await handleInviteRequest(post({ action: "resend", invitation_id: INVITATION }), second.deps);
+    const keys = [first.sent[0].headers["Idempotency-Key"], second.sent[0].headers["Idempotency-Key"]];
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBeTruthy();
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys.join(" ")).not.toContain(TOKEN);
   });
 });
 

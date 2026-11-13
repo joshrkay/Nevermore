@@ -28,7 +28,6 @@ const JoinFirmPage = () => {
   const signedIn = Boolean(user) && !isAnonymous;
 
   const join = async () => {
-    if (busy) return;
     setBusy(true);
     setError(null);
     try {

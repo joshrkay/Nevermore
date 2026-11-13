@@ -107,5 +107,5 @@ export async function fetchMyFirm(address: string): Promise<{ id: string; name: 
   if (!data) return null;
   const { data: role, error: roleError } = await supabase.rpc("firm_role", { p_firm_id: data.id });
   if (roleError) throw new Error("Couldn't load your firm.");
-  return { id: data.id, name: data.name, role: typeof role === "string" ? (role as FirmRole) : null };
+  return { id: data.id, name: data.name, role: role as FirmRole | null };
 }

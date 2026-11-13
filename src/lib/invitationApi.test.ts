@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
+const from = vi.fn();
 const invoke = vi.fn();
-vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a), functions: { invoke: (...a: unknown[]) => invoke(...a) } } }));
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a), functions: { invoke: (...a: unknown[]) => invoke(...a) }, from: (...a: unknown[]) => from(...a) } }));
 
-const { inviteMember, resendInvitation, cancelInvitation, fetchPendingInvitations, acceptInvitation } = await import("./invitationApi");
+const { inviteMember, resendInvitation, cancelInvitation, fetchPendingInvitations, acceptInvitation, fetchMyFirm } = await import("./invitationApi");
 
 const refusedBy = (status: number, error: string) => ({ data: null, error: { name: "FunctionsHttpError", message: "Edge Function returned a non-2xx status code", context: new Response(JSON.stringify({ error }), { status }) } });
 
@@ -108,5 +109,43 @@ describe("accepting an invitation", () => {
   it("says it could not be accepted for anything else", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000", message: "boom" } });
     await expect(acceptInvitation("abc")).rejects.toThrow("Couldn't accept the invitation. Try again.");
+  });
+});
+
+describe("finding the firm at an address, and the caller's place in it", () => {
+  const firmsTable = (result: { data: unknown; error: unknown }) => {
+    const eq = vi.fn(() => ({ maybeSingle: async () => result }));
+    from.mockReturnValue({ select: () => ({ eq }) });
+    return eq;
+  };
+  beforeEach(() => { rpc.mockReset(); from.mockReset(); });
+
+  it("reads the firm at the address and asks the database for the caller's own role in it", async () => {
+    const eq = firmsTable({ data: { id: "f1", name: "Acme Brokers" }, error: null });
+    rpc.mockResolvedValue({ data: "owner", error: null });
+    expect(await fetchMyFirm("acme-brokers")).toEqual({ id: "f1", name: "Acme Brokers", role: "owner" });
+    expect(from).toHaveBeenCalledWith("firms");
+    expect(eq).toHaveBeenCalledWith("address", "acme-brokers");
+    expect(rpc).toHaveBeenCalledWith("firm_role", { p_firm_id: "f1" });
+  });
+
+  it("has no role when the database gives none", async () => {
+    firmsTable({ data: { id: "f1", name: "Acme Brokers" }, error: null });
+    rpc.mockResolvedValue({ data: null, error: null });
+    expect((await fetchMyFirm("acme-brokers"))?.role).toBeNull();
+  });
+
+  it("finds nothing at an address whose firm the caller can't read, and asks nothing more", async () => {
+    firmsTable({ data: null, error: null });
+    expect(await fetchMyFirm("elsewhere")).toBeNull();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("fails, rather than saying there is no firm, when either question fails", async () => {
+    firmsTable({ data: null, error: { message: "boom" } });
+    await expect(fetchMyFirm("acme-brokers")).rejects.toThrow("Couldn't load your firm.");
+    firmsTable({ data: { id: "f1", name: "Acme Brokers" }, error: null });
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await expect(fetchMyFirm("acme-brokers")).rejects.toThrow("Couldn't load your firm.");
   });
 });

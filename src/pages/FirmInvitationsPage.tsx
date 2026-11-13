@@ -61,7 +61,7 @@ const FirmInvitationsPage = () => {
 
   const send = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || load.kind !== "ready") return;
+    if (load.kind !== "ready") return;
     setBusy("invite");
     setError(null);
     try {

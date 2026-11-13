@@ -426,6 +426,9 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))), 'PT403', 'an owner of another firm is just a different email');
   PERFORM pg_temp.as_user('guest_visitor', true);
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))), '42501', 'a guest session may not accept');
+  -- A verified account with the right email, presenting a guest token (as the advisor behind a guest token is treated elsewhere).
+  PERFORM pg_temp.as_user('other_person', true);
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))), '42501', 'nor may a verified account presenting a guest token');
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(has_function_privilege('anon', 'public.accept_invitation(text)', 'EXECUTE'), false, 'a signed-out caller holds no right to');
   RESET ROLE;
