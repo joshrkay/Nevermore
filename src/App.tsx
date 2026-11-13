@@ -11,6 +11,8 @@ import Navbar from "./components/Navbar";
 import PageMeta from "./components/PageMeta";
 import RequireAuth from "./components/RequireAuth";
 import RequireAdvisor from "./components/RequireAdvisor";
+import FirmAddressGate from "./components/FirmAddressGate";
+import { FirmAddressProvider } from "@/hooks/useFirmAddress";
 import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
@@ -46,12 +48,14 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
+        <FirmAddressProvider>
         <BrowserRouter>
           {/* The title, description and robots rule of the page at this address (src/data/seo.ts). */}
           <PageMeta />
           <ErrorBoundary>
             <Suspense fallback={null}>
               <AuthRedirectGate>
+              <FirmAddressGate>
               <Routes>
                 <Route
                   path="/"
@@ -87,10 +91,12 @@ const App = () => (
                 <Route path="/advisor/organisations" element={<RequireAdvisor><AdvisorOrganisationsPage /></RequireAdvisor>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </FirmAddressGate>
               </AuthRedirectGate>
             </Suspense>
           </ErrorBoundary>
         </BrowserRouter>
+        </FirmAddressProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

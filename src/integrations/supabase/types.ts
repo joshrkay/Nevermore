@@ -933,6 +933,14 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      firm_public_name: {
+        Args: { p_address: string }
+        Returns: string | null
+      }
+      is_member_of_firm_address: {
+        Args: { p_address: string }
+        Returns: boolean
+      }
       advisor_needs_second_factor: {
         Args: Record<PropertyKey, never>
         Returns: boolean
