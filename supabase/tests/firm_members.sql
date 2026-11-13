@@ -507,6 +507,23 @@ BEGIN
   RAISE NOTICE 'firm_members: no back door passed';
 END $$;
 
+-- Lifting one person's suspension opens the door for that person only, for that moment: a second suspended person still can't be given a
+-- membership afterwards in the same transaction.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  PERFORM pg_temp.new_user('door_one'); PERFORM pg_temp.new_user('door_two');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, pg_temp.id('door_one'), 'agent'), (acme, pg_temp.id('door_two'), 'agent');
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.suspend_member(acme, pg_temp.id('door_one'));
+  PERFORM public.suspend_member(acme, pg_temp.id('door_two'));
+  PERFORM public.lift_member_suspension(acme, pg_temp.id('door_one'));
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (%L, %L, 'agent')$q$, acme, pg_temp.id('door_two'))),
+    '42501: This person is suspended at this firm. An owner lifts the suspension.', 'lifting one suspension leaves the others shut');
+  RAISE NOTICE 'firm_members: lifting opens one door only passed';
+END $$;
+
 -- ---------- the firm's record ----------
 -- Break caught: a removal, suspension or lifting that leaves no entry, names the wrong person, is written twice (a generic "ended a
 -- membership" beside the specific one), or shows the owners a platform admin's name (D-33).

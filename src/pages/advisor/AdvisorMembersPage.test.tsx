@@ -207,6 +207,13 @@ describe("the members page", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
+  it("does not ask the database for the list when the person is no owner of the current firm, whatever put them on the page", async () => {
+    db.firms = [{ firm_id: "f1", name: "Acme Brokers", address: "acme", role: "agent" }];
+    render(<MemoryRouter><AdvisorMembersPage /></MemoryRouter>);
+    expect(await screen.findByText("Only a firm's owners can see and change its members.")).toBeInTheDocument();
+    expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
+  });
+
   describe("who reaches it, through the route guard", () => {
     it("keeps out a member who is not an owner: they are told it is for owners, and nothing is asked of the members list", async () => {
       db.firms = [{ firm_id: "f1", name: "Acme Brokers", address: "acme", role: "agent" }];
