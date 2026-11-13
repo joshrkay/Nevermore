@@ -148,6 +148,7 @@
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
+\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -438,6 +439,9 @@ BEGIN
   -- request with a note, and a stored Manuscript.
   PERFORM pg_temp.become('agent_b');
   PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
+  -- The second firm's own referral partner, under the same code the first firm's has (a code is a firm's own).
+  PERFORM public.advisor_add_referral_partner('acme-cfo', 'Beta CFO Partners', 'accounting');
+  PERFORM public.advisor_add_referral_partner('beta-cfo', 'Beta Second Partners', 'other');
   PERFORM public.set_submission_status(pb_cert, 'under_review', 'Picked up');
   INSERT INTO public.advisor_notes (session_id, body) VALUES (pb_cert, 'Payroll looks complete');
   PERFORM public.review_submission_field(pb_cert, 'company_name', 'verified');
@@ -619,10 +623,9 @@ INSERT INTO matrix VALUES
   ('public.advisor_role_events',                        '{"admin":"all","platform_admin":"all"}', NULL),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}', NULL),
-  -- Who refers employers, by the code in their link (20261106100000): read by Edgar Allan Advisory's members, which is
-  -- whose partners they are until CRM-P2.1c gives them a firm, and written only through advisor_add_referral_partner()
-  -- and advisor_update_referral_partner().
-  ('public.referral_partners',                          '{"advisor":"all","admin":"all","agent_2":"all","lead_1":"all"}', NULL),
+  -- Who refers employers, by the code in their link (20261106100000): each firm's own (CRM-P2.1c), read by its members and
+  -- written only through advisor_add_referral_partner() and advisor_update_referral_partner(). The first firm has one, the second two.
+  ('public.referral_partners',                          '{}', '{"A":1,"B":2}'),
   -- PEOs and their requirement profiles (20261115090000) are the platform's, the same for every firm: advisors read the PEOs,
   -- the published version (one here) and its contacts; drafts are the admin's. Prospects, guests included, read none of
   -- these tables (a version names people at the PEO and admins): peo_catalog() is their only way in, checked in part 4.
@@ -1008,9 +1011,9 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
   ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now())', 'the funnel by source'),
-  ('advisor_add_referral_partner(p_code text, p_name text, p_kind text)', 'advisor',
+  ('advisor_add_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_add_referral_partner(''probe-partner'', ''Probe'', ''other'')', 'adding a referral partner'),
-  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text)', 'advisor',
+  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('admin_add_allowed_organisation(p_provider text, p_org_id text, p_label text)', 'admin', 'SELECT public.admin_add_allowed_organisation(''probe'', ''probe'', ''probe'')', 'adding an organisation whose members get the advisor role'),
@@ -1462,7 +1465,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('session_verified_fields', 'advisor', 'by_id', $$SELECT public.session_verified_fields({sid})::text$$),
   ('request_intake_deletion', 'admin', 'by_id', $$SELECT public.request_intake_deletion({draft}, 'probe reason')::text$$),
   ('revoke_chamber_session', 'admin', 'by_id', $$SELECT public.revoke_chamber_session({draft}, 'probe reason')::text$$),
-  ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$);
+  ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$),
+  -- A referral partner is its firm's own: adding one to a firm, or changing one by its code, is that firm's members' alone.
+  ('advisor_add_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_add_referral_partner('probe-added', 'Probe', 'other', {firm})::text$$),
+  ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm})::text$$);
 INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
   ('advisor_list_submissions', 'advisor', 'list',
    $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)$$, ARRAY['advisor', 'agent_b']),
@@ -1509,6 +1515,8 @@ BEGIN
       (f, 'sid', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)::text),
       (f, 'draft', pg_temp.id(CASE f WHEN 'a' THEN 'pa_open' ELSE 'pb_open' END)::text),
       (f, 'qr', qr),
+      (f, 'firm', pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)::text),
+      (f, 'partner', CASE f WHEN 'a' THEN 'acme-cfo' ELSE 'beta-cfo' END),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
@@ -1775,6 +1783,85 @@ BEGIN
   RAISE NOTICE 'data_isolation: failure report cases passed';
 END $$;
 
+-- ---------- 4i. what has no submission behind it (CRM-P2.1c) ----------
+-- Referral partners, the advisor alert's recipients, held mail and mailboxes: reached through no intake, so each carries its own firm
+-- and every function over it asks the caller's membership of that firm.
+
+-- 4i-1. Referral partners: a code is a firm's own, and a call that names no firm acts for the caller's only firm.
+DO $$
+DECLARE
+  r text;
+  who text;
+  fa constant uuid := pg_temp.id('firm_a');
+  fb constant uuid := pg_temp.id('firm_b');
+BEGIN
+  -- The two firms hold the same code under their own partner, each its own: neither was told the other had it.
+  IF (SELECT count(*) FROM public.referral_partners WHERE code = 'acme-cfo') <> 2
+     OR (SELECT name FROM public.referral_partners WHERE code = 'acme-cfo' AND firm_id = fa) <> 'Acme CFO Partners'
+     OR (SELECT name FROM public.referral_partners WHERE code = 'acme-cfo' AND firm_id = fb) <> 'Beta CFO Partners' THEN
+    RAISE EXCEPTION 'FAIL: the two firms do not each hold their own partner under the same code';
+  END IF;
+
+  -- A call that names no firm adds to the caller's own: never to the other firm.
+  r := pg_temp.call_as('advisor', $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('own-firm-test', 'Own', 'other')$q$);
+  IF r <> 'ok:' || fa THEN RAISE EXCEPTION 'FAIL: the first firm''s advisor added a partner to %', r; END IF;
+  r := pg_temp.call_as('agent_b', $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('own-firm-test', 'Own', 'other')$q$);
+  IF r <> 'ok:' || fb THEN RAISE EXCEPTION 'FAIL: the second firm''s agent added a partner to %', r; END IF;
+
+  -- No firm, no partner: a platform admin who belongs to none (D-16), a former member, a prospect, a guest, signed out.
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'prospect_a', 'guest_a', 'signed_out', 'advisor_as_guest'] LOOP
+    r := pg_temp.call_as(who, $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('nobody-test', 'Nobody', 'other')$q$);
+    IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % adding a partner with no firm named gave %, expected a refusal', who, r; END IF;
+    r := pg_temp.call_as(who, $q$SELECT code FROM public.advisor_update_referral_partner('acme-cfo', 'Nobody', 'other')$q$);
+    IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % renaming a partner with no firm named gave %, expected a refusal', who, r; END IF;
+  END LOOP;
+
+  -- A change by code reaches the caller's own firm's partner only, though the other firm holds the same code.
+  r := pg_temp.call_as('agent_b', $q$SELECT name FROM public.advisor_update_referral_partner('acme-cfo', 'Renamed by B', 'other')$q$);
+  IF r <> 'ok:Renamed by B' THEN RAISE EXCEPTION 'FAIL: the second firm''s agent could not rename their own partner (%)', r; END IF;
+  RESET ROLE;
+  IF (SELECT name FROM public.referral_partners WHERE code = 'acme-cfo' AND firm_id = fa) <> 'Acme CFO Partners' THEN
+    RAISE EXCEPTION 'FAIL: the second firm''s rename reached the first firm''s partner';
+  END IF;
+
+  -- A person who belongs to two firms must say which: the database does not guess.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fa, pg_temp.id('agent_b'), 'agent');
+  r := pg_temp.call_as('agent_b', $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('two-firms-test', 'Two', 'other')$q$);
+  IF r <> '22023' THEN RAISE EXCEPTION 'FAIL: a member of two firms adding a partner without naming one gave %, expected 22023', r; END IF;
+  r := pg_temp.call_as('agent_b', format($q$SELECT firm_id::text FROM public.advisor_add_referral_partner('two-firms-test', 'Two', 'other', %L)$q$, fa));
+  IF r <> 'ok:' || fa THEN RAISE EXCEPTION 'FAIL: a member of two firms naming the first gave %', r; END IF;
+  RESET ROLE;
+  DELETE FROM public.firm_memberships WHERE firm_id = fa AND user_id = pg_temp.id('agent_b');
+
+  -- One partner per code per firm is the database's rule, not a function's (D-29): a second insert is refused in one session.
+  BEGIN
+    INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (fa, 'acme-cfo', 'Twin', 'other');
+    RAISE EXCEPTION 'FAIL: a firm holds two partners under one code';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  -- A partner belongs to a firm.
+  BEGIN
+    INSERT INTO public.referral_partners (code, name, kind) VALUES ('no-firm-test', 'Orphan', 'other');
+    RAISE EXCEPTION 'FAIL: a partner with no firm was accepted';
+  EXCEPTION WHEN not_null_violation THEN NULL;
+  END;
+
+  -- The funnel by source names each firm's own partner behind a shared code, never the other firm's.
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = 'acme-cfo' WHERE milestone = 'started' AND firm_id IN (fa, fb) AND session_id IS NOT NULL;
+  RESET session_replication_role;
+  r := pg_temp.call_as('advisor', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  IF r <> 'ok:Acme CFO Partners' THEN RAISE EXCEPTION 'FAIL: the first firm''s funnel named partner(s) %', r; END IF;
+  r := pg_temp.call_as('agent_b', $q$SELECT string_agg(DISTINCT partner_name, ',') FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day') WHERE referral_code = 'acme-cfo'$q$);
+  IF r <> 'ok:Beta CFO Partners' THEN RAISE EXCEPTION 'FAIL: the second firm''s funnel named partner(s) %', r; END IF;
+  RESET ROLE;
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.intake_milestones SET referral_code = NULL WHERE referral_code = 'acme-cfo';
+  RESET session_replication_role;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: referral partner cases passed';
+END $$;
+
 -- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
 -- The check that a table "has a firm rule" is by behaviour, never by reading a policy's text: a policy can mention a firm
 -- helper without tying it to the row being read, and a text check passes on a table that is open across firms.
@@ -1869,21 +1956,20 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
 INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
-INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
-  ('public.referral_partners', 'firm', 'Edgar Allan Advisory''s until CRM-P2.1c gives them a firm',
-   $m$INSERT INTO public.referral_partners (code, name, kind) VALUES ('probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$, true);
+INSERT INTO registry (src, scope, why, make_row) VALUES
+  ('public.referral_partners', 'firm', 'its own firm_id',
+   $m$INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES ({firm}, 'probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$);
 -- How a caller who is not a member writes into a firm's records (foreign_insert, when make_row is not itself an INSERT), and the
 -- SET clause that moves a row to another firm (move_to). Both are tried as callers who must be refused (5b).
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
-UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
 UPDATE registry SET move_to = 'message_id = {msg}' WHERE src = 'public.quote_request_message_attachments';
 UPDATE registry SET move_to = 'id = {firm}' WHERE src = 'public.firms';
-UPDATE registry SET move_to = 'code = ''moved-{tag}''' WHERE src = 'public.referral_partners';
 UPDATE registry SET move_to = 'name = {u} || ''/'' || {intake} || ''/moved-{tag}.csv''' WHERE src = 'storage.objects WHERE bucket_id = ''documents''';
 UPDATE registry SET move_to = 'name = {intake} || ''/v99-moved-{tag}.pdf''' WHERE src = 'storage.objects WHERE bucket_id = ''manuscripts''';
 UPDATE registry SET move_to = 'name = {intake} || ''/'' || {msg} || ''/moved-{tag}.pdf''' WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
@@ -2370,6 +2456,7 @@ INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'advisor_add_quote_request_note', 'advisor_correct_quote_request_note', 'advisor_email_problems', 'advisor_intake_funnel',
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
+  'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
   'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
@@ -2421,8 +2508,6 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
-  ('advisor_add_referral_partner', 'deferred', 'a referral partner has no firm column yet'),
-  ('advisor_update_referral_partner', 'deferred', 'a referral partner has no firm column yet'),
   ('can_read_peo_mail', 'deferred', 'held mail belongs to no firm yet: a platform admin''s until it is assigned'),
   ('apply_mail_move', 'deferred', 'held mail: assigning it to a firm''s quote request'),
   ('plan_mail_move', 'deferred', 'held mail'),
