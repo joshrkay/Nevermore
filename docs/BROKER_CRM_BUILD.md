@@ -21,7 +21,8 @@ rules every story's build follows. Where this page and a story disagree, this pa
 | D-11 | A second sign-in factor is required for password accounts only |
 | D-12 | Sending to PEOs and the employer's PEO authorization are built switched on, with draft wording. All legal wording lives in one module so counsel's text is one change, and every pull request that shows it says so |
 | D-13 | Tests are written at four seams and nowhere else: (1) database rules and functions, through SQL tests in `supabase/tests`; (2) pages and forms, through component tests of what a person sees and does; (3) a few end-to-end browser flows in `e2e/`; (4) server functions, through their request and response with the mail provider and the model faked |
-| D-14 | Opus builds database, security and server-function stories and does every review. Sonnet builds page and form stories |
+| D-14 | Sonnet builds every story. Opus does every review |
+| D-25 | Stories in an epic are built at the same time wherever one does not need another. Up to three run side by side, each in its own working copy with its own test database; a story starts as soon as the stories it needs have merged |
 
 ## Epics, in order
 
@@ -62,25 +63,25 @@ These came from reading Epic 1's stories against the code.
 P-1.1 says roles are owner and member; D-5 wins: owner, lead, agent. P-1.2 and P-1.3 are replaced by CRM-P1.2,
 CRM-P1.5 and CRM-P1.1.
 
-| # | Story | What it covers | Built by |
+| # | Story | What it covers | Needs |
 |---|---|---|---|
-| 1 | P-1.1 | Firms, teams, dated memberships, the parent column, a firm on every intake; Edgar Allan Advisory seeded with its members and every existing submission | Opus |
-| 2 | CRM-P2.1a (with CRM-S5.1) | The visibility helper; every table policy and storage policy scoped to the firm; two firms, two agents and a lead in the SQL tests; the check that fails on a table with no firm rule | Opus |
-| 3 | CRM-P2.1b | Every advisor and admin function that reads or changes firm data filters by the caller's firm | Opus |
-| 4 | CRM-P2.1c | What has no submission behind it: referral partners, the advisor alert's recipients, the new-mail mark, mailboxes, held mail (D-16) | Opus |
-| 5 | P-1.4 | The existing console pages show only the firm's records; the front end asks "is a member", not "is an advisor" | Opus |
-| 6 | CRM-P1.3a | The firm address: the host chooses the firm shown; "You aren't a member of this firm"; a session per address | Opus |
-| 7 | CRM-P1.3b | A second factor for password sign-ins, including the test gateway's password sign-in | Opus |
-| 8 | CRM-P2.3 with Q-3.1 | The record of who did what, read by owners; export alerts when exports exist | Opus |
-| 9 | CRM-P1.2 | Invite a member | Sonnet |
-| 10 | CRM-P1.5 | Remove or suspend a member | Opus |
-| 11 | CRM-P1.6 | Leave a firm | Sonnet |
-| 12 | CRM-P1.4 | Join by organisation (D-23) | Opus |
-| 13 | CRM-P1.1 with Q-1.2 | Sign up a firm; an admin approves it | Opus |
-| 14 | CRM-P1.8 | Suspend a firm | Opus |
-| 15 | CRM-P1.7 | Close a firm | Opus |
-| 16 | CRM-P2.2 | Files, tokens and reply addresses | Opus |
-| 17 | CRM-P2.4 | Help from Nevermore, logged | Opus |
+| 1 | P-1.1 | Firms, teams, dated memberships, the parent column, a firm on every intake; Edgar Allan Advisory seeded with its members and every existing submission | nothing |
+| 2 | CRM-P2.1a (with CRM-S5.1) | The visibility helper; every table policy and storage policy scoped to the firm; two firms, two agents and a lead in the SQL tests; the check that fails on a table with no firm rule | 1 |
+| 3 | CRM-P2.1b | Every advisor and admin function that reads or changes firm data filters by the caller's firm | 2 |
+| 4 | CRM-P2.1c | What has no submission behind it: referral partners, the advisor alert's recipients, the new-mail mark, mailboxes, held mail (D-16) | 2 |
+| 5 | P-1.4 | The existing console pages show only the firm's records; the front end asks "is a member", not "is an advisor" | 3 |
+| 6 | CRM-P1.3a | The firm address: the host chooses the firm shown; "You aren't a member of this firm"; a session per address | 2 |
+| 7 | CRM-P1.3b | A second factor for password sign-ins, including the test gateway's password sign-in | 2 |
+| 8 | CRM-P2.3 with Q-3.1 | The record of who did what, read by owners; export alerts when exports exist | 2 |
+| 9 | CRM-P1.2 | Invite a member | 2 |
+| 10 | CRM-P1.5 | Remove or suspend a member | 4, 8, 9 |
+| 11 | CRM-P1.6 | Leave a firm | 10 |
+| 12 | CRM-P1.4 | Join by organisation (D-23) | 9 |
+| 13 | CRM-P1.1 with Q-1.2 | Sign up a firm; an admin approves it | 6 |
+| 14 | CRM-P1.8 | Suspend a firm | 13 |
+| 15 | CRM-P1.7 | Close a firm | 8, 14 |
+| 16 | CRM-P2.2 | Files, tokens and reply addresses | 3, 4 |
+| 17 | CRM-P2.4 | Help from Nevermore, logged | 3, 8 |
 
 New migration files are named to sort after `20261115140000`.
 
@@ -102,7 +103,8 @@ New migration files are named to sort after `20261115140000`.
    reverses an earlier one as an ADR in `docs/adr/`.
 7. **What can't be built as written.** Stop and say so in the pull request, naming the story line and what is
    missing. Never invent a fact about a PEO, and never present draft legal wording as counsel's.
-8. **The pull request says:** what a person can now do; the acceptance criteria met, each with its test; any
+8. **Working beside other stories.** Each story is built in its own lane. Its migration file takes the timestamp it was given, so two stories never pick the same name. Before a story merges, the epic's branch is merged into it, conflicts are settled, and the gate is run again.
+9. **The pull request says:** what a person can now do; the acceptance criteria met, each with its test; any
    criterion not met and why; what was not asked for and was left alone.
 
 ## Review of one story
