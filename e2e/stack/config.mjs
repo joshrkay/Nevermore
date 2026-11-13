@@ -12,6 +12,14 @@ export const GATEWAY_URL = `http://127.0.0.1:${GATEWAY_PORT}`;
 export const APP_PORT = num("E2E_APP_PORT", 4180);
 export const APP_URL = `http://localhost:${APP_PORT}`;
 
+/**
+ * A firm's address (story CRM-P1.3a): the same app, served at `<address>.localhost`. A browser sends every `*.localhost`
+ * name to the machine it runs on, so the app, which reads the firm from the host, needs no hosts-file entry, and each
+ * address is its own origin with its own storage, as at `<address>.<the site's domain>` in production. The gateway
+ * answers any origin (CORS `*`), so the same gateway serves them all.
+ */
+export const firmUrl = (address) => `http://${address}.localhost:${APP_PORT}`;
+
 /** Postgres: standard libpq variables, defaulting to the same server the CI `sql-tests` job uses. */
 export const PG = {
   host: process.env.PGHOST || "localhost",

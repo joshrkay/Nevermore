@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
+import FirmName from "@/components/FirmName";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { authErrorMessage } from "@/data/authRateLimit";
@@ -114,6 +115,7 @@ const AuthPage = () => {
         </Link>
 
         <div className="bg-card border border-border rounded-xl p-8">
+          {forAdvisor && <FirmName />}
           <h1 className="font-display text-2xl font-bold text-center mb-2">
             {linkSentTo ? "Check your email" : forAdvisor ? "Advisor Sign In" : isSignUp ? "Start your intake" : "Welcome Back"}
           </h1>

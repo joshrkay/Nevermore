@@ -24,6 +24,31 @@ describe("where a broker goes after signing in", () => {
   });
 });
 
+describe("a session belongs to one firm address", () => {
+  it("returns the provider to the address the broker started from, never to another firm's or the bare domain's", () => {
+    expect(brokerCallbackUrl("https://acme-brokers.nevermorepeo.com", "/advisor/held")).toBe(
+      "https://acme-brokers.nevermorepeo.com/broker/callback?next=%2Fadvisor%2Fheld",
+    );
+    expect(brokerCallbackUrl("https://birch-benefits.nevermorepeo.com")).toBe("https://birch-benefits.nevermorepeo.com/broker/callback");
+    // A page to return to is a path of this address; a link naming another firm's address is no page to return to.
+    expect(brokerCallbackUrl("https://acme-brokers.nevermorepeo.com", "https://birch-benefits.nevermorepeo.com/advisor")).toBe(
+      "https://acme-brokers.nevermorepeo.com/broker/callback",
+    );
+  });
+
+  it("starts the sign-in from the address the page is served on", async () => {
+    signInWithOAuth.mockReset().mockResolvedValue({ error: null });
+    const here = window.location;
+    vi.stubGlobal("location", { ...here, origin: "https://acme-brokers.nevermorepeo.com" });
+    try {
+      await startBrokerSignIn("google");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(signInWithOAuth.mock.calls[0][0].options.redirectTo).toBe("https://acme-brokers.nevermorepeo.com/broker/callback");
+  });
+});
+
 describe("signing in with a provider", () => {
   beforeEach(() => {
     signInWithOAuth.mockReset().mockResolvedValue({ error: null });
