@@ -153,10 +153,10 @@
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
-\i supabase/migrations/20261116210000_console_per_firm.sql
-\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
-\i supabase/migrations/20261116190500_invitation_fixes.sql
+\i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116210000_console_per_firm.sql
+\i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -3006,7 +3006,13 @@ BEGIN
      'name no story: intake_accepts_files'),
     ('an overloaded name',
      'CREATE FUNCTION public.has_role(x int) RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$',
-     'overloaded: has_role')
+     'overloaded: has_role'),
+    ('the old three-argument referral-partner write path back beside the firm-scoped one (the console migration once did this)',
+     'CREATE FUNCTION public.advisor_add_referral_partner(a text, b text, c text) RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$',
+     'overloaded: advisor_add_referral_partner'),
+    ('the old three-argument referral-partner edit path back',
+     'CREATE FUNCTION public.advisor_update_referral_partner(a text, b text, c text) RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$',
+     'overloaded: advisor_update_referral_partner')
   LOOP
     BEGIN
       EXECUTE stmt;

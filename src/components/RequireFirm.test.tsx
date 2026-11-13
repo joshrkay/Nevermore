@@ -197,24 +197,57 @@ describe("RequireFirm (a current member of a firm)", () => {
   });
 });
 
-describe("RequireFirm as an owner (a firm's owners)", () => {
-  it("lets in a firm's owner who holds no platform role, from the database's answer on ownership", async () => {
-    fetchOwnedFirms.mockResolvedValue([{ firm_id: "f1", name: "Alpha" }]);
+describe("RequireFirm as an owner (the owner of the firm at this address)", () => {
+  const ownerOf = (f: typeof alpha) => ({ ...f, role: "owner" });
+
+  it("lets in a firm's owner who holds no platform role, from the database's answer on the person's own memberships", async () => {
+    fetchMyFirms.mockResolvedValue([ownerOf(alpha)]);
     renderGuarded("owner");
     expect(await screen.findByText("The record")).toBeInTheDocument();
-    expect(fetchMyFirms).not.toHaveBeenCalled();
+    expect(fetchOwnedFirms).not.toHaveBeenCalled();
   });
 
-  it("tells a member who owns no firm that the record is for owners", async () => {
-    fetchOwnedFirms.mockResolvedValue([]);
+  it("lets in the owner of the firm whose address it is", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+    fetchMyFirms.mockResolvedValue([ownerOf(alpha)]);
+    renderGuarded("owner");
+    expect(await screen.findByText("The record")).toBeInTheDocument();
+  });
+
+  it("tells a member who is not an owner that the record is for owners", async () => {
+    fetchMyFirms.mockResolvedValue([alpha]);
     renderGuarded("owner");
     expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
     expect(screen.queryByText("The record")).not.toBeInTheDocument();
     expect(reportOpsEvent).toHaveBeenCalledWith("auth_denied", { code: "firm_owner_route" });
   });
 
+  it("refuses an owner of one firm who is only an agent at another firm's address", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+    // Owner of Beta, agent at Alpha, and this is Alpha's address.
+    fetchMyFirms.mockResolvedValue([{ ...beta, role: "owner" }, alpha]);
+    renderGuarded("owner");
+    expect(await screen.findByRole("heading", { name: /more than one firm|For a firm's owners/ })).toBeInTheDocument();
+    expect(screen.queryByText("The record")).not.toBeInTheDocument();
+  });
+
+  it("refuses an owner of one firm at the address of a firm they do not belong to", async () => {
+    firmAddress = { status: "known", address: "gamma", name: "Gamma" };
+    fetchMyFirms.mockResolvedValue([ownerOf(alpha)]);
+    renderGuarded("owner");
+    expect(await screen.findByRole("heading", { name: "For a firm's owners" })).toBeInTheDocument();
+    expect(screen.queryByText("The record")).not.toBeInTheDocument();
+  });
+
+  it("treats an owner of two firms on the bare domain as it treats a member of two: kept out, told why", async () => {
+    fetchMyFirms.mockResolvedValue([ownerOf(alpha), ownerOf(beta)]);
+    renderGuarded("owner");
+    expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
+    expect(screen.queryByText("The record")).not.toBeInTheDocument();
+  });
+
   it("sends an owner held back for the second factor to add or enter one", async () => {
-    fetchOwnedFirms.mockResolvedValue([]);
+    fetchMyFirms.mockResolvedValue([]);
     fetchNeedsSecondFactor.mockResolvedValue(true);
     renderGuarded("owner");
     expect(await screen.findByText("Second factor page returning to /advisor/submissions/s1")).toBeInTheDocument();
