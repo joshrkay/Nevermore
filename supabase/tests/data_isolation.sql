@@ -1822,8 +1822,9 @@ BEGIN
           END IF;
           cases := cases + 1;
         END LOOP;
-        -- The positive control: the firm's member at its own address, and (for what any member may do) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
+        -- firm's member's own, such as their private saved view) the member of both firms.
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{view\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
