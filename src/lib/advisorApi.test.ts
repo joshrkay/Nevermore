@@ -91,6 +91,8 @@ const {
   recordActivity,
   fetchOwnedFirms,
   listMyFirms,
+  loadIntakeSources,
+  loadIntakeSourcesOfMyFirms,
   listReferralPartners,
   addReferralPartner,
   updateReferralPartner,
@@ -850,5 +852,21 @@ describe("referral partners belong to a firm", () => {
   it("lists the firms the caller belongs to, by name", async () => {
     tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }];
     await expect(listMyFirms()).resolves.toEqual([{ id: "firm-a", name: "Alpha", address: "alpha" }]);
+  });
+
+  it("asks for one firm's funnel by source, so another membership's volume cannot push its rows out", async () => {
+    rpc.mockResolvedValue({ data: [{ referral_code: "x", firm_id: "firm-b" }], error: null });
+    const from = new Date("2026-10-01T00:00:00Z");
+    const to = new Date("2026-11-01T00:00:00Z");
+    await expect(loadIntakeSources(from, to, "firm-b")).resolves.toEqual([{ referral_code: "x", firm_id: "firm-b" }]);
+    expect(rpc).toHaveBeenCalledWith("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString(), p_firm_id: "firm-b" });
+  });
+
+  it("asks once for each of the caller's firms when no single firm is the page's, and joins the answers", async () => {
+    tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }, { id: "firm-b", name: "Beta", address: "beta" }];
+    rpc.mockImplementation(async (_fn: string, args: { p_firm_id: string }) => ({ data: [{ referral_code: "x", firm_id: args.p_firm_id }], error: null }));
+    const rows = await loadIntakeSourcesOfMyFirms(new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z"));
+    expect(rows.map((r) => r.firm_id)).toEqual(["firm-a", "firm-b"]);
+    expect(rpc.mock.calls.map((c) => (c[1] as { p_firm_id: string }).p_firm_id)).toEqual(["firm-a", "firm-b"]);
   });
 });

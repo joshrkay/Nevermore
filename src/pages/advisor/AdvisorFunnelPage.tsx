@@ -16,7 +16,7 @@ import {
   type FunnelStep,
 } from "@/data/funnel";
 import { sourceRows, sourceTitle, type SourceRow } from "@/data/referralPartners";
-import { loadFunnel, loadIntakeSources } from "@/lib/advisorApi";
+import { loadFunnel, loadIntakeSourcesOfMyFirms } from "@/lib/advisorApi";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[] };
 
@@ -35,7 +35,7 @@ const AdvisorFunnelPage = () => {
     let cancelled = false;
     setLoad({ kind: "loading" });
     const { from, to } = funnelRange(period);
-    Promise.all([loadFunnel(from, to), loadIntakeSources(from, to)])
+    Promise.all([loadFunnel(from, to), loadIntakeSourcesOfMyFirms(from, to)])
       .then(([raw, sources]) => !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw), sources: sourceRows(sources) }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {

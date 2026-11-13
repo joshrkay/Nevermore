@@ -151,11 +151,21 @@ export async function loadFunnel(from: Date, to: Date): Promise<FunnelResult[]> 
 
 export type IntakeSourceResult = Database["public"]["Functions"]["advisor_intake_sources"]["Returns"][number];
 
-/** For intakes started between `from` and `to`: each source, and how many of its intakes reached each step. */
-export async function loadIntakeSources(from: Date, to: Date): Promise<IntakeSourceResult[]> {
-  const { data, error } = await supabase.rpc("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString() });
+/**
+ * For one firm's intakes started between `from` and `to`: each source, and how many of its intakes reached each step. The firm is named
+ * so that its rows are chosen before the database groups and limits them: another firm's volume cannot push them out.
+ */
+export async function loadIntakeSources(from: Date, to: Date, firmId: string): Promise<IntakeSourceResult[]> {
+  const { data, error } = await supabase.rpc("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString(), p_firm_id: firmId });
   if (error) fail(error, "Couldn't load the intakes by source.");
   return data ?? [];
+}
+
+/** The same for every firm the caller belongs to, one firm at a time (each row names its firm), for a page that is no single firm's. */
+export async function loadIntakeSourcesOfMyFirms(from: Date, to: Date): Promise<IntakeSourceResult[]> {
+  const firms = await listMyFirms();
+  const perFirm = await Promise.all(firms.map((f) => loadIntakeSources(from, to, f.id)));
+  return perFirm.flat();
 }
 
 // ---------- Referral partners (J-2.3) ----------

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import {
   partnerKindLabel,
   partnerKey,
   partnerLink,
+  referralLinksWork,
   REFERRAL_PARTNER_KIND_LABELS,
   REFERRAL_PARTNER_KINDS,
   sourceRows,
@@ -66,28 +67,48 @@ const AdvisorPartnersPage = () => {
   const address = useFirmAddress();
   const atAddress = address.status === "known" ? address.address : null;
 
+  // The firms the person belongs to, kept apart from what is loaded for one of them so that the chooser stays put while a firm loads.
+  const [firmList, setFirmList] = useState<MemberFirm[]>([]);
+  // Which firm the page was last asked for: a reload of the same one (after an edit) keeps the table on screen, but another firm
+  // never shows the previous one's table or controls while it loads, since a click there would change the wrong firm.
+  const loadedScope = useRef<string | null>(null);
+  const scope = `${atAddress ?? ""}|${firmParam ?? ""}`;
+
   useEffect(() => {
     let cancelled = false;
-    setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
-    (async (): Promise<Load> => {
+    const sameFirm = loadedScope.current === scope;
+    loadedScope.current = scope;
+    setLoad((prev) => (prev.kind === "ready" && sameFirm ? prev : { kind: "loading" }));
+    (async (): Promise<Load | null> => {
       const firms = await listMyFirms();
-      const firm = atAddress !== null
-        ? firms.find((f) => f.address === atAddress)
-        : firmParam !== null ? firms.find((f) => f.id === firmParam) : firms.length === 1 ? firms[0] : undefined;
+      if (!cancelled) setFirmList(firms);
+      let firm: MemberFirm | undefined;
+      if (atAddress !== null) firm = firms.find((f) => f.address === atAddress);
+      else if (firmParam !== null) firm = firms.find((f) => f.id === firmParam);
+      // A person with exactly one firm needs to say nothing, so a ?firm= that is none of theirs counts as absent: their firm's id
+      // replaces it in the address (which loads the page again, now matched).
+      if (!firm && atAddress === null && firms.length === 1) {
+        if (firmParam !== null) {
+          if (!cancelled) setParams({ firm: firms[0].id }, { replace: true });
+          return null;
+        }
+        firm = firms[0];
+      }
       if (!firm) return atAddress === null && firms.length > 1 ? { kind: "choose", firms } : { kind: "no_firm" };
       const { from, to } = funnelRange("30d");
-      const [partners, sources] = await Promise.all([listReferralPartners(firm.id), loadIntakeSources(from, to)]);
+      const [partners, sources] = await Promise.all([listReferralPartners(firm.id), loadIntakeSources(from, to, firm.id)]);
       return { kind: "ready", firms, firmId: firm.id, partners, counts: countsByPartner(sourceRows(sources)) };
     })()
-      .then((next) => !cancelled && setLoad(next))
+      .then((next) => next && !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scope` is atAddress and firmParam; setParams is stable enough and must not reload
   }, [attempt, atAddress, firmParam]);
 
   const reload = () => setAttempt((n) => n + 1);
-  const firms = load.kind === "choose" || load.kind === "ready" ? load.firms : [];
+  const firms = firmList;
 
   return (
     <div className="min-h-screen bg-background">
@@ -105,7 +126,7 @@ const AdvisorPartnersPage = () => {
             <label htmlFor="partners-firm" className="block text-xs text-muted-foreground">Firm</label>
             <select
               id="partners-firm"
-              value={firmParam ?? ""}
+              value={firms.some((f) => f.id === firmParam) ? firmParam ?? "" : ""}
               onChange={(e) => setParams(e.target.value ? { firm: e.target.value } : {}, { replace: true })}
               className="min-h-11 bg-muted border border-border rounded-md px-3 text-sm"
             >
@@ -115,7 +136,7 @@ const AdvisorPartnersPage = () => {
           </div>
         )}
 
-        {load.kind === "ready" && <AddPartnerForm firmId={load.firmId} onAdded={reload} />}
+        {load.kind === "ready" && <AddPartnerForm key={load.firmId} firmId={load.firmId} onAdded={reload} />}
 
         {load.kind === "loading" && (
           <div className="flex items-center justify-center py-16 text-muted-foreground" role="status">
@@ -124,13 +145,20 @@ const AdvisorPartnersPage = () => {
         )}
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="the referral partners" onRetry={reload} />}
         {load.kind === "no_firm" && <p role="status" className="text-sm">You aren't a member of a firm, so there are no referral partners to show.</p>}
+        {load.kind === "ready" && !referralLinksWork(load.firmId) && (
+          <p role="note" className="text-sm text-muted-foreground mt-6">
+            Referral links come when the firm can take intakes of its own. Until then partners and their codes are kept here, and no link is shown.
+          </p>
+        )}
         {load.kind === "ready" && (load.partners.length === 0 ? (
           <div className="border border-dashed border-border rounded-xl p-10 text-center mt-8">
             <p className="font-medium">No referral partners yet.</p>
-            <p className="text-sm text-muted-foreground">Add the first one above, then send them their link.</p>
+            <p className="text-sm text-muted-foreground">
+              {referralLinksWork(load.firmId) ? "Add the first one above, then send them their link." : "Add the first one above."}
+            </p>
           </div>
         ) : (
-          <PartnerTable partners={load.partners} counts={load.counts} onChanged={reload} />
+          <PartnerTable partners={load.partners} counts={load.counts} links={referralLinksWork(load.firmId)} onChanged={reload} />
         ))}
       </main>
     </div>
@@ -138,6 +166,7 @@ const AdvisorPartnersPage = () => {
 };
 
 const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => void }) => {
+  const links = referralLinksWork(firmId);
   const [name, setName] = useState("");
   const [kind, setKind] = useState("");
   const [code, setCode] = useState("");
@@ -156,7 +185,7 @@ const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => vo
     setError(null);
     try {
       const added = await addReferralPartner(firmId, code, name, kind);
-      toast.success(`Added ${added.name}. Send them ${partnerLink(added.code)}`);
+      toast.success(links ? `Added ${added.name}. Send them ${partnerLink(added.code)}` : `Added ${added.name}.`);
       setName("");
       setKind("");
       setCode("");
@@ -212,7 +241,7 @@ const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => vo
         />
         <p id="partner-code-help" className="text-xs text-muted-foreground">
           {code === "" || codeOk
-            ? code === ""
+            ? code === "" || !links
               ? "Lowercase letters, digits, dots, hyphens or underscores. It can't be changed once the partner is added."
               : `Their link: ${partnerLink(code)}. It can't be changed once the partner is added.`
             : "Use only lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit."}
@@ -226,14 +255,14 @@ const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => vo
   );
 };
 
-const PartnerTable = ({ partners, counts, onChanged }: { partners: ReferralPartner[]; counts: Counts; onChanged: () => void }) => (
+const PartnerTable = ({ partners, counts, links, onChanged }: { partners: ReferralPartner[]; counts: Counts; links: boolean; onChanged: () => void }) => (
   <div className="overflow-x-auto mt-8">
     <table className="w-full text-sm border-collapse">
-      <caption className="sr-only">Referral partners, their links and their intakes in the last 30 days</caption>
+      <caption className="sr-only">{links ? "Referral partners, their links and their intakes in the last 30 days" : "Referral partners, their codes and their intakes in the last 30 days"}</caption>
       <thead>
         <tr className="text-left text-xs text-muted-foreground border-b border-border">
           <th scope="col" className="py-2 pr-4 font-normal">Partner</th>
-          <th scope="col" className="py-2 pr-4 font-normal">Their link</th>
+          <th scope="col" className="py-2 pr-4 font-normal">{links ? "Their link" : "Their code"}</th>
           <th scope="col" className="py-2 pr-4 font-normal text-right whitespace-nowrap">Started, 30 days</th>
           <th scope="col" className="py-2 pr-4 font-normal text-right whitespace-nowrap">Certified, 30 days</th>
           <th scope="col" className="py-2 font-normal"><span className="sr-only">Actions</span></th>
@@ -241,14 +270,14 @@ const PartnerTable = ({ partners, counts, onChanged }: { partners: ReferralPartn
       </thead>
       <tbody>
         {partners.map((p) => (
-          <PartnerRow key={partnerKey(p.firm_id, p.code)} partner={p} counts={counts.get(partnerKey(p.firm_id, p.code))} onChanged={onChanged} />
+          <PartnerRow key={partnerKey(p.firm_id, p.code)} partner={p} counts={counts.get(partnerKey(p.firm_id, p.code))} links={links} onChanged={onChanged} />
         ))}
       </tbody>
     </table>
   </div>
 );
 
-const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; onChanged: () => void }) => {
+const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(partner.name);
   const [kind, setKind] = useState(partner.kind);
@@ -294,17 +323,21 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
         )}
       </th>
       <td className="py-3 pr-4">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs break-all">{link}</span>
-          <button
-            type="button"
-            onClick={() => void copyLink(link)}
-            aria-label={`Copy ${partner.name}'s link`}
-            className="shrink-0 p-1.5 rounded-md border border-border hover:bg-muted"
-          >
-            <Copy className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </div>
+        {links ? (
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs break-all">{link}</span>
+            <button
+              type="button"
+              onClick={() => void copyLink(link)}
+              aria-label={`Copy ${partner.name}'s link`}
+              className="shrink-0 p-1.5 rounded-md border border-border hover:bg-muted"
+            >
+              <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
+          <span className="font-mono text-xs break-all">{partner.code}</span>
+        )}
       </td>
       <td className="py-3 pr-4 text-right tabular-nums">{(counts?.started ?? 0).toLocaleString("en-US")}</td>
       <td className="py-3 pr-4 text-right tabular-nums">{(counts?.certified ?? 0).toLocaleString("en-US")}</td>

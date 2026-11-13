@@ -807,10 +807,10 @@ export type Database = {
         Args: { p_from: string; p_to: string }
         Returns: { step: number; milestone: string; intakes: number; median_minutes: number | null }[]
       }
-      // The funnel by source (20261106100000): for intakes started in the period, each source and how many of its
-      // intakes reached each step. Intakes with no source are one row whose codes are all null.
+      // The funnel by source (20261106100000), asked for one firm the caller belongs to (20261116200500): for that firm's intakes
+      // started in the period, each source and how many of its intakes reached each step. Intakes with no source are one row whose codes are all null.
       advisor_intake_sources: {
-        Args: { p_from: string; p_to: string }
+        Args: { p_from: string; p_to: string; p_firm_id: string }
         Returns: {
           referral_code: string | null
           partner_name: string | null

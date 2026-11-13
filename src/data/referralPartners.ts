@@ -40,6 +40,15 @@ export const PARTNER_NAME_MAX = 120;
 /** The link a partner shares: the site's front page with their code. */
 export const partnerLink = (code: string) => `${SITE_ORIGIN}/?ref=${encodeURIComponent(code)}`;
 
+/**
+ * The firm every intake a browser starts belongs to (D-101): the one `default_firm_id()` returns (migration 20261116090000_firms.sql).
+ * Starting an intake for another firm arrives with New quote (Epic 5).
+ */
+export const DEFAULT_FIRM_ID = "00000000-0000-4000-8000-00000000eaa1";
+
+/** Whether a link carrying this firm's partner code reaches the firm: until intakes can start for other firms, only the default firm's does (D-101). */
+export const referralLinksWork = (firmId: string) => firmId === DEFAULT_FIRM_ID;
+
 /** A code to offer for a new partner, from its name: "Acme CFO Partners" gives "acme-cfo-partners". */
 export const suggestPartnerCode = (name: string) => cleanSourceCode(name) ?? "";
 

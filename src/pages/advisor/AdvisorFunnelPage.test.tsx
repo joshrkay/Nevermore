@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
 const loadFunnel = vi.fn();
-const loadIntakeSources = vi.fn();
+const loadIntakeSourcesOfMyFirms = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({
   loadFunnel: (...a: unknown[]) => loadFunnel(...a),
-  loadIntakeSources: (...a: unknown[]) => loadIntakeSources(...a),
+  loadIntakeSourcesOfMyFirms: (...a: unknown[]) => loadIntakeSourcesOfMyFirms(...a),
 }));
 
 const { default: AdvisorFunnelPage } = await import("./AdvisorFunnelPage");
@@ -19,8 +19,8 @@ const DAY = 24 * 60 * 60 * 1000;
 describe("AdvisorFunnelPage", () => {
   beforeEach(() => {
     loadFunnel.mockReset();
-    loadIntakeSources.mockReset();
-    loadIntakeSources.mockResolvedValue([]);
+    loadIntakeSourcesOfMyFirms.mockReset();
+    loadIntakeSourcesOfMyFirms.mockResolvedValue([]);
   });
 
   it("shows each step's count, share of starts and median time, for the last 30 days by default", async () => {
@@ -43,7 +43,7 @@ describe("AdvisorFunnelPage", () => {
 
   it("shows the same intakes by source, the partner's name first and its codes under it", async () => {
     loadFunnel.mockResolvedValue([{ step: 1, milestone: "started", intakes: 7, median_minutes: null }]);
-    loadIntakeSources.mockResolvedValue([
+    loadIntakeSourcesOfMyFirms.mockResolvedValue([
       { referral_code: "acme-cfo", partner_name: "Acme CFO Partners", utm_source: null, utm_medium: null, utm_campaign: "spring", started: 4, answered: 3, census_provided: 2, ready_to_certify: 2, certified: 1 },
       { referral_code: null, partner_name: null, utm_source: null, utm_medium: null, utm_campaign: null, started: 3, answered: 1, certified: 0 },
     ]);
@@ -54,7 +54,7 @@ describe("AdvisorFunnelPage", () => {
     expect(within(acme).getByText("25%")).toBeInTheDocument();
     const direct = within(table).getByRole("row", { name: /No tagged link/ });
     expect(within(direct).getByText("0%")).toBeInTheDocument();
-    const [from, to] = loadIntakeSources.mock.calls[0] as [Date, Date];
+    const [from, to] = loadIntakeSourcesOfMyFirms.mock.calls[0] as [Date, Date];
     expect(Math.round((to.getTime() - from.getTime()) / DAY)).toBe(30);
     expect(screen.getByRole("link", { name: "Referral partners" })).toHaveAttribute("href", "/advisor/partners");
   });
