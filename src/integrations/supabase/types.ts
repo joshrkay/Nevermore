@@ -1021,6 +1021,31 @@ export type Database = {
         Args: { p_name: string; p_address: string }
         Returns: string
       }
+      admin_firm_states: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          firm_id: string
+          name: string
+          address: string
+          state: string
+          signed_up_at: string
+          suspended: boolean
+          suspended_at: string | null
+          suspension_reason: string | null
+        }[]
+      }
+      admin_suspend_firm: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: undefined
+      }
+      admin_lift_firm_suspension: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      my_suspended_firm_at_address: {
+        Args: { p_address: string }
+        Returns: boolean
+      }
       admin_waiting_firms: {
         Args: Record<PropertyKey, never>
         Returns: {

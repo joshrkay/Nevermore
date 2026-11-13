@@ -343,6 +343,11 @@ BEGIN
     (firm_a, 'invitee_a@example.test', 'agent', encode(extensions.digest('invitation-a', 'sha256'), 'hex'), adm, now() + interval '7 days'),
     (firm_b, 'invitee_b@example.test', 'agent', encode(extensions.digest('invitation-b', 'sha256'), 'hex'), owb, now() + interval '7 days');
 
+  -- A suspension of each firm that has been lifted (20261116230000): the history is kept, and neither firm is suspended now.
+  INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, suspended_by, lifted_at, lifted_by) VALUES
+    (firm_a, 'fixture', now() - interval '2 days', adm, now() - interval '1 day', adm),
+    (firm_b, 'fixture', now() - interval '2 days', adm, now() - interval '1 day', adm);
+
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
     PERFORM pg_temp.become(who);
@@ -707,6 +712,9 @@ INSERT INTO matrix VALUES
   -- Invitations to join a firm (20261116190000): nobody reads them through the API, owners included; an owner reaches
   -- the pending ones through firm_pending_invitations(), and the token's hash is never returned (supabase/tests/firm_invitations.sql).
   ('public.firm_invitations',                           '{}', NULL),
+  -- The platform's record of each suspension and its reason (20261116230000): nobody reads it through the API, firm owners and
+  -- platform admins included; admins reach it through admin_firm_states().
+  ('public.firm_suspensions',                           '{}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
   ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
   -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
@@ -998,6 +1006,10 @@ INSERT INTO callable VALUES
   ('accept_invitation(p_token_hash text, p_firm_address text)', 'own', NULL, 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
+  ('admin_suspend_firm(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_suspend_firm(%2$L, ''probe'')', 'a platform admin who is no member of the firm suspends it with a reason (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
+  ('admin_lift_firm_suspension(p_firm_id uuid)', 'admin', 'SELECT public.admin_lift_firm_suspension(%2$L)', 'a platform admin who is no member of the firm lifts its suspension (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
+  ('admin_firm_states()', 'admin', 'SELECT * FROM public.admin_firm_states()', 'every firm with its approval state and whether it is suspended, with the reason, for platform admins only (D-16)'),
+  ('my_suspended_firm_at_address(p_address text)', 'own', NULL, 'whether the firm at an address is suspended, true only for a current member of it, so the screen can say so; false for anyone else (supabase/tests/firm_suspension.sql)'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
@@ -2491,6 +2503,10 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
       VALUES ({firm}, 'probe-{tag}@example.test', 'agent', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '7 days') RETURNING ctid::text$m$, false),
   ('public.firm_activity', 'firm', 'its own firm_id; only its owners read it (not every member), and nobody changes or deletes an entry',
    $m$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES ({firm}, 'invitation_sent', 'firm', {firm}::text) RETURNING ctid::text$m$, false),
+  -- The platform's record of suspensions (20261116230000): its own firm_id, read by no member (the reason is Nevermore's); the probe's
+  -- row is a lifted one, so making it suspends neither firm.
+  ('public.firm_suspensions', 'firm', 'its own firm_id; closed to the API, platform admins reach it through functions',
+   $m$INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, lifted_at) VALUES ({firm}, 'probe-{tag}', now() - interval '1 hour', now()) RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
@@ -2515,7 +2531,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -3082,6 +3098,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('is_clean_census_template_file', 'platform_wide', 'the storage policy on the template bucket; names no one'),
   ('peo_catalog', 'platform_wide', 'the PEOs and their published profiles: the same for every firm'),
   ('admin_waiting_firms', 'platform_wide', 'the firms waiting for a platform admin''s decision: no firm''s member sees them by row security, so only platform admins read this list'),
+  ('admin_suspend_firm', 'platform_wide', 'a platform admin suspends a firm: no firm''s member can, and the firm''s data is touched by nothing (supabase/tests/firm_suspension.sql)'),
+  ('admin_lift_firm_suspension', 'platform_wide', 'a platform admin lifts a firm''s suspension'),
+  ('admin_firm_states', 'platform_wide', 'every firm''s state and suspension for the platform admin''s page: no firm''s member reads it'),
+  ('my_suspended_firm_at_address', 'own', 'whether the caller''s own firm at an address is suspended'),
+  ('firm_is_suspended', 'service_only', 'whether a firm is suspended now: the helper every policy and function asks, as the database''s own question; no API role can call it'),
+  ('admin_belongs_to_firm', 'service_only', 'whether the caller is a current member of a firm, suspended or not: the helper the platform admin''s rule asks'),
+  ('person_is_member_of_a_firm_in_good_standing', 'service_only', 'whether a person is a current member of a firm that is not suspended: the mailbox functions ask it'),
   ('admin_decide_firm', 'platform_wide', 'a platform admin approves or refuses a waiting firm'),
   ('accept_invitation', 'own', 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),

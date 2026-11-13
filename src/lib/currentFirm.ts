@@ -15,7 +15,10 @@ export type Refusal = "none" | "not_this_firm" | "several";
  * has that firm and a member of several has none until they choose one, at its address. Every guard, link and page that asks
  * "is this person a member / an owner here" asks this and nothing else.
  */
-export function currentFirm(firms: MyFirm[], address: string | null): { firm: MyFirm } | { refusal: Refusal } {
+export function currentFirm(
+  firms: MyFirm[],
+  address: string | null,
+): { firm: MyFirm; several: boolean } | { refusal: Refusal } {
   if (firms.length === 0) return { refusal: "none" };
   if (address !== null) {
     const here = firms.find((f) => f.address === address);

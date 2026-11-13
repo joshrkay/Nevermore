@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { fetchFirmName, fetchIsMemberOfFirmAddress, recordFirmSignIn, signUpFirm, fetchWaitingFirms, decideFirm } = await import("./firmApi");
+const { fetchFirmName, fetchIsMemberOfFirmAddress, recordFirmSignIn, signUpFirm, fetchWaitingFirms, decideFirm, fetchFirmStates, suspendFirm, liftFirmSuspension, fetchIsMySuspendedFirmAtAddress } = await import("./firmApi");
 
 describe("asking the database about a firm address", () => {
   beforeEach(() => rpc.mockReset());
@@ -165,5 +165,81 @@ describe("the platform admin's firm approvals", () => {
   it("says plainly when the caller may not decide", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Admin access required" } });
     await expect(decideFirm("f1", true)).rejects.toThrow("Only a platform admin who isn't a member of the firm can decide on it.");
+  });
+});
+
+// Suspending a firm and lifting it (story CRM-P1.8): the database applies every rule; these only put its answers into words.
+describe("a platform admin suspends a firm and lifts the suspension", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("lists every firm with its approval state and, for a suspended one, why and since when", async () => {
+    rpc.mockResolvedValue({
+      data: [
+        { firm_id: "f1", name: "Fresh", address: "fresh", state: "approved", signed_up_at: "2026-11-16T10:00:00Z", suspended: true, suspended_at: "2026-11-17T09:00:00Z", suspension_reason: "Unpaid" },
+        { firm_id: "f2", name: "Waiting", address: "waiting", state: "waiting", signed_up_at: "2026-11-16T11:00:00Z", suspended: false, suspended_at: null, suspension_reason: null },
+      ],
+      error: null,
+    });
+    expect(await fetchFirmStates()).toEqual([
+      { id: "f1", name: "Fresh", address: "fresh", state: "approved", signedUpAt: "2026-11-16T10:00:00Z", suspended: true, suspendedAt: "2026-11-17T09:00:00Z", suspensionReason: "Unpaid" },
+      { id: "f2", name: "Waiting", address: "waiting", state: "waiting", signedUpAt: "2026-11-16T11:00:00Z", suspended: false, suspendedAt: null, suspensionReason: null },
+    ]);
+    expect(rpc).toHaveBeenCalledWith("admin_firm_states");
+  });
+
+  it("keeps an ended session and a lost admin role apart from any other failure, on all three calls", async () => {
+    for (const call of [() => fetchFirmStates(), () => suspendFirm("f1", "why"), () => liftFirmSuspension("f1")]) {
+      rpc.mockResolvedValue({ data: null, error: { code: "PGRST301", message: "JWT expired" } });
+      await expect(call()).rejects.toMatchObject({ unauthenticated: true, forbidden: false });
+      rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Admin access required" } });
+      await expect(call()).rejects.toMatchObject({ forbidden: true, unauthenticated: false });
+      rpc.mockResolvedValue({ data: null, error: { code: "XX000", message: "boom" } });
+      await expect(call()).rejects.toMatchObject({ forbidden: false, unauthenticated: false });
+    }
+  });
+
+  it("suspends with the reason and lifts by the firm's id", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    await suspendFirm("f1", "Unpaid invoice");
+    expect(rpc).toHaveBeenLastCalledWith("admin_suspend_firm", { p_firm_id: "f1", p_reason: "Unpaid invoice" });
+    await liftFirmSuspension("f1");
+    expect(rpc).toHaveBeenLastCalledWith("admin_lift_firm_suspension", { p_firm_id: "f1" });
+  });
+
+  it("says in words that a firm is suspended already, is not suspended, no longer exists, or needs a reason", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT409", message: "That firm is suspended already" } });
+    await expect(suspendFirm("f1", "why")).rejects.toThrow("That firm is suspended already.");
+    rpc.mockResolvedValue({ data: null, error: { code: "PT409", message: "That firm is not suspended" } });
+    await expect(liftFirmSuspension("f1")).rejects.toThrow("That firm is not suspended.");
+    rpc.mockResolvedValue({ data: null, error: { code: "PT404", message: "x" } });
+    await expect(suspendFirm("f1", "why")).rejects.toThrow("That firm no longer exists.");
+    await expect(liftFirmSuspension("f1")).rejects.toThrow("That firm no longer exists.");
+    rpc.mockResolvedValue({ data: null, error: { code: "22023", message: "Give a reason of 1 to 500 characters" } });
+    await expect(suspendFirm("f1", "")).rejects.toThrow("Give a reason of 1 to 500 characters.");
+  });
+
+  it("says plainly when the caller may not suspend or lift", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Admin access required" } });
+    await expect(suspendFirm("f1", "why")).rejects.toThrow("Only a platform admin who isn't a member of the firm can suspend it.");
+    await expect(liftFirmSuspension("f1")).rejects.toThrow("Only a platform admin who isn't a member of the firm can lift its suspension.");
+  });
+});
+
+describe("asking whether the caller's firm at an address is suspended", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("asks for the address and answers true only for true", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await fetchIsMySuspendedFirmAtAddress("acme")).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("my_suspended_firm_at_address", { p_address: "acme" });
+    for (const data of [false, null, "true", 1]) {
+      rpc.mockResolvedValue({ data, error: null });
+      expect(await fetchIsMySuspendedFirmAtAddress("acme"), String(data)).toBe(false);
+    }
+  });
+
+  it("fails rather than guessing when the database can't be reached", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await expect(fetchIsMySuspendedFirmAtAddress("acme")).rejects.toThrow("Couldn't check whether this firm is suspended.");
   });
 });
