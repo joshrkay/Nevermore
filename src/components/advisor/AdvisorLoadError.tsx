@@ -47,7 +47,7 @@ const AdvisorLoadError = ({ error, what, onRetry }: Props) => {
     return (
       <div role="alert" className="border border-border rounded-xl p-6 text-center">
         <ShieldAlert className="w-6 h-6 text-primary mx-auto mb-2" aria-hidden="true" />
-        <p className="font-medium mb-1">You no longer have advisor access.</p>
+        <p className="font-medium mb-1">You no longer have access to this firm's records.</p>
         <p className="text-sm text-muted-foreground mb-4">
           If you should still have it, ask an administrator to grant it again.
         </p>

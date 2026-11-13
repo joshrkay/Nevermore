@@ -156,6 +156,7 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116200500_firm_scope_fixes.sql
+\i supabase/migrations/20261116210000_console_per_firm.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -971,6 +972,7 @@ INSERT INTO callable VALUES
   ('can_read_firm_activity(p_firm_id uuid)', 'own', NULL, 'whether the caller is a current owner of that firm and past the second factor; about the caller only; the firm record''s policy and its two reading functions call it'),
   ('my_firm_at_address(p_address text)', 'own', NULL, 'the id of the firm at an address, only for a current member of it, so the screen can report a sign-in; null for anyone else (supabase/tests/firm_activity.sql)'),
   ('my_owner_firms()', 'own', NULL, 'the firms the caller currently owns, by name; about the caller only; signed-out callers can''t call it'),
+  ('my_firms()', 'own', NULL, 'the firms the caller currently belongs to with their role in each, past the second factor; about the caller only; signed-out callers can''t call it (supabase/tests/console_per_firm.sql)'),
   ('firm_activity_people(p_firm_id uuid)', 'own', NULL, 'who appears in a firm''s record, for that firm''s owners only, platform admins as one Nevermore entry with no id or email; 42501 for everyone else (supabase/tests/firm_activity.sql)'),
   ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
   ('advisor_needs_second_factor()',            'own',     NULL, 'whether the caller''s own password sign-in is all that holds back their role; false for anyone else'),
@@ -1520,6 +1522,13 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   -- A referral partner is its firm's own: adding one to a firm, or changing one by its code, is that firm's members' alone.
   ('advisor_add_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_add_referral_partner('probe-added', 'Probe', 'other', {firm})::text$$),
   ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm})::text$$);
+-- Invitations (CRM-P1.2): only a current owner of the firm invites, resends, withdraws and lists. The matrix's admin and second
+-- firm owner are those owners; every other caller, the other firm's owner and a platform admin included, is refused (D-16, D-18).
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('invite_member', 'admin', 'by_id', $$SELECT public.invite_member({firm}, 'probe@example.test', 'agent', NULL, repeat('a', 64))::text$$),
+  ('resend_invitation', 'admin', 'by_id', $$SELECT public.resend_invitation({inv}, repeat('b', 64))::text$$),
+  ('cancel_invitation', 'admin', 'by_id', $$SELECT public.cancel_invitation({inv})::text$$),
+  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$);
 INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
   ('advisor_list_submissions', 'advisor', 'list',
    $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)$$, ARRAY['advisor', 'agent_b']),
@@ -2309,8 +2318,8 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
-UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.firm_invitations', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -2862,6 +2871,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('firm_activity_people', 'own', 'the people named in a firm''s record, for that firm''s owners only (firm_activity.sql)'),
   ('my_firm_at_address', 'own', 'the firm the caller belongs to at an address; about the caller only'),
   ('my_owner_firms', 'own', 'the firms the caller currently owns, by name; about the caller only'),
+  ('my_firms', 'own', 'the firms the caller currently belongs to, with their role in each; about the caller only; signed-out callers can''t call it (console_per_firm.sql)'),
   ('open_submission', 'own', 'hands a submission to a current member of its firm and writes the opening in the firm''s record as the caller (firm_activity.sql)'),
   ('record_member_activity', 'own', 'writes an entry in the caller''s own firm''s record as the caller, from a fixed list of kinds'),
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
@@ -2897,7 +2907,7 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
-  'current_owner_firm_ids', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
+  'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
   'complete_outbox_event', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',

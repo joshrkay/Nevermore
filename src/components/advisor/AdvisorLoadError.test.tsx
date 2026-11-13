@@ -38,9 +38,9 @@ describe("AdvisorLoadError", () => {
     expect(signOut).toHaveBeenCalledWith("expired");
   });
 
-  it("tells someone whose advisor access has gone, without offering a pointless retry", () => {
-    renderError(new AdvisorApiError("You don't have advisor access.", "42501"));
-    expect(screen.getByRole("alert")).toHaveTextContent("You no longer have advisor access");
+  it("tells someone whose access to the firm has gone, without offering a pointless retry", () => {
+    renderError(new AdvisorApiError("You don't have access to this firm's records.", "42501"));
+    expect(screen.getByRole("alert")).toHaveTextContent("You no longer have access to this firm's records");
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
     expect(signOut).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Sign in with another account" }));

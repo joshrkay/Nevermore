@@ -72,15 +72,9 @@ export const classifyApiError = (error: { message: string; code?: string }, mess
     : new AdvisorApiError(message, error.code);
 
 const fail = (error: { message: string; code?: string } | null, fallback: string): never => {
-  if (error?.code === "42501") throw new AdvisorApiError("You don't have advisor access.", error.code);
+  if (error?.code === "42501") throw new AdvisorApiError("You don't have access to this firm's records.", error.code);
   throw classifyApiError(error ?? { message: "" }, error?.message || fallback);
 };
-
-export async function fetchIsAdvisor(): Promise<boolean> {
-  const { data, error } = await supabase.rpc("is_advisor");
-  if (error) fail(error, "Couldn't check advisor access.");
-  return data === true;
-}
 
 /**
  * True when the caller's role is held back only by the second factor: they signed in with a password and
@@ -821,6 +815,18 @@ export type FirmActivityPerson = Database["public"]["Functions"]["firm_activity_
 export const NEVERMORE_FILTER = "nevermore";
 /** Entries on a page of the firm's record. */
 export const FIRM_ACTIVITY_PAGE_SIZE = 25;
+
+/**
+ * The firms the signed-in person currently belongs to, with their role in each (owner, lead or agent): what the console asks
+ * instead of whether they hold a platform role. Empty for a guest, a former member, a stranger and a password sign-in that still
+ * owes its second factor, so an empty answer is followed by the check for that factor.
+ */
+export type MyFirm = Database["public"]["Functions"]["my_firms"]["Returns"][number];
+export async function fetchMyFirms(): Promise<MyFirm[]> {
+  const { data, error } = await supabase.rpc("my_firms");
+  if (error) fail(error, "Couldn't check your membership.");
+  return data ?? [];
+}
 
 /** The firms the signed-in person currently owns, by name: only an owner reads a firm's record, and says which firm. */
 export async function fetchOwnedFirms(): Promise<OwnedFirm[]> {

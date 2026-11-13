@@ -12,6 +12,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
   loadPeoDirectory: vi.fn(),
   fetchIsAdmin: vi.fn(),
+  fetchMyFirms: vi.fn(),
   addPeo: vi.fn(),
   savePeoDraft: vi.fn(),
   publishPeoDraft: vi.fn(),
@@ -33,6 +34,7 @@ const templateWith = async (headers: string[]) => {
   return new Uint8Array(await wb.xlsx.writeBuffer());
 };
 
+const { clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorPeosPage } = await import("./AdvisorPeosPage");
 
 const guide: ProfileSource = { kind: "document", name: "Broker guide 2026", link: "https://trinet.example/guide.pdf", checkedOn: "2026-10-20" };
@@ -70,6 +72,8 @@ describe("AdvisorPeosPage", () => {
     vi.mocked(toast.error).mockReset();
     api.loadPeoDirectory.mockResolvedValue(directory());
     api.fetchIsAdmin.mockResolvedValue(false);
+    api.fetchMyFirms.mockResolvedValue([{ firm_id: "f1", name: "Alpha Advisory", address: "alpha", role: "agent" }]);
+    clearMyFirms();
     for (const fn of Object.values(templates)) fn.mockReset();
     templates.listTemplateWorkbooks.mockResolvedValue([]);
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -111,10 +115,10 @@ describe("AdvisorPeosPage", () => {
     expect(within(profile).getByRole("region", { name: "Contacts · advisors only" })).toHaveTextContent("dana@trinet.example");
   });
 
-  it("is in the advisor console's navigation", async () => {
+  it("is in the console's navigation", async () => {
     renderPage();
-    const nav = await screen.findByRole("navigation", { name: "Advisor" });
-    expect(within(nav).getByRole("link", { name: "PEOs" })).toHaveAttribute("href", "/advisor/peos");
+    const nav = await screen.findByRole("navigation", { name: "Console" });
+    expect(await within(nav).findByRole("link", { name: "PEOs" })).toHaveAttribute("href", "/advisor/peos");
   });
 
   it("shows an advisor who isn't an admin the version in use, whatever an admin is drafting", async () => {
