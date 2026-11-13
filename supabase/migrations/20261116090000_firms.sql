@@ -81,13 +81,15 @@ AS $$
 DECLARE peo text;
 BEGIN
   -- D-26: an address is refused as a PEO's only when, with everything but letters and digits removed and in lower
-  -- case, it is exactly a listed PEO's name treated the same way. Nothing partial: a name that merely contains or
+  -- case, it is exactly a listed PEO's name or short name treated the same way. The short name is the cleaned name
+  -- cut to 20 characters, as the quote reply addresses cut it. Nothing else is partial: a name that merely contains or
   -- starts or ends with a PEO's (petrinet, adpbenefits) is the firm's own. Platform admins approve each firm before
   -- it can send (Q-1.2), which is where a look-alike is caught.
   SELECT p.name INTO peo
   FROM public.peos p
   WHERE p.listed
-    AND regexp_replace(lower(NEW.address), '[^a-z0-9]', '', 'g') = regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g')
+    AND regexp_replace(lower(NEW.address), '[^a-z0-9]', '', 'g')
+      IN (regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g'), left(regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g'), 20))
   LIMIT 1;
   IF FOUND THEN
     RAISE EXCEPTION 'A firm address can''t read as a PEO (%)', peo USING ERRCODE = '23514';
