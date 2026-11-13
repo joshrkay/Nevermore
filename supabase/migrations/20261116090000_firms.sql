@@ -147,3 +147,83 @@ REVOKE ALL ON FUNCTION public.keep_membership_history() FROM PUBLIC, anon, authe
 CREATE TRIGGER firm_memberships_history
   BEFORE UPDATE ON public.firm_memberships
   FOR EACH ROW EXECUTE FUNCTION public.keep_membership_history();
+
+-- A firm always keeps a current owner (PRD 8.2). Ending, deleting or cascading away a membership that was a current
+-- owner's is refused unless another current owner remains, so ownership is passed by adding the new owner first.
+CREATE FUNCTION public.keep_firm_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.role = 'owner' AND OLD.valid_from <= now() AND (OLD.valid_until IS NULL OR OLD.valid_until > now())
+     AND NOT EXISTS (
+       SELECT 1 FROM public.firm_memberships m
+       WHERE m.firm_id = OLD.firm_id AND m.role = 'owner' AND m.id <> OLD.id
+         AND m.valid_from <= now() AND (m.valid_until IS NULL OR m.valid_until > now())
+     ) THEN
+    RAISE EXCEPTION 'A firm keeps at least one current owner' USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.keep_firm_owner() FROM PUBLIC, anon, authenticated;
+
+CREATE TRIGGER firm_memberships_keep_owner
+  AFTER UPDATE OR DELETE ON public.firm_memberships
+  FOR EACH ROW EXECUTE FUNCTION public.keep_firm_owner();
+
+-- The caller's role in a firm today: from the dated memberships, a current one only (begun, not ended). NULL for
+-- anyone who isn't a member: a prospect, a guest, and an account presenting a guest token,
+-- as has_role() treats it. Signed-out callers can't call them (policies for them don't use them). Answers about the caller only; later stories' policies and functions call these.
+CREATE FUNCTION public.firm_role(p_firm_id uuid)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT m.role
+  FROM public.firm_memberships m
+  WHERE auth.uid() IS NOT NULL
+    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+    AND m.firm_id = p_firm_id
+    AND m.user_id = auth.uid()
+    AND m.valid_from <= now()
+    AND (m.valid_until IS NULL OR m.valid_until > now())
+$$;
+
+CREATE FUNCTION public.is_firm_member(p_firm_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.firm_role(p_firm_id) IS NOT NULL
+$$;
+
+REVOKE ALL ON FUNCTION public.firm_role(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.is_firm_member(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.firm_role(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_firm_member(uuid) TO authenticated;
+
+-- Row security: a current member reads their own firm, its teams and their own memberships; nobody writes through
+-- the API (a server function, as the service role, does). Existing tables' policies are not touched here.
+ALTER TABLE public.firms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.firm_teams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.firm_memberships ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.firms, public.firm_teams, public.firm_memberships FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.firms, public.firm_teams, public.firm_memberships TO authenticated;
+
+CREATE POLICY firms_members_read ON public.firms
+  FOR SELECT TO authenticated USING (public.is_firm_member(id));
+
+CREATE POLICY firm_teams_members_read ON public.firm_teams
+  FOR SELECT TO authenticated USING (public.is_firm_member(firm_id));
+
+CREATE POLICY firm_memberships_own_read ON public.firm_memberships
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid() AND public.is_firm_member(firm_id));

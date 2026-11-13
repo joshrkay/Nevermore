@@ -363,3 +363,138 @@ BEGIN
   PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() - interval '1 day' WHERE user_id = %L$q$, pg_temp.id('advisor_1')), '23514', 'ending a membership before it began');
   RAISE NOTICE 'firms: membership cases passed';
 END $$;
+
+-- ---------- a firm keeps a current owner ----------
+-- PRD 8.2: a firm always has at least one owner. Ending, deleting or cascading away the last current owner's
+-- membership is refused; with another owner in place it is allowed. Ownership is passed by adding the new
+-- owner first, then ending the old one.
+DO $$
+DECLARE
+  second_owner uuid := pg_temp.new_user('acme_owner_2');
+  a_lead uuid := pg_temp.new_user('acme_lead');
+BEGIN
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L$q$, pg_temp.id('acme_owner')),
+    '23514', 'ending a firm''s only owner');
+  PERFORM pg_temp.expect(format($q$DELETE FROM public.firm_memberships WHERE user_id = %L$q$, pg_temp.id('acme_owner')),
+    '23514', 'deleting a firm''s only owner membership');
+  PERFORM pg_temp.expect(format($q$DELETE FROM auth.users WHERE id = %L$q$, pg_temp.id('acme_owner')),
+    '23514', 'deleting the account of a firm''s only owner');
+  -- A lead is no owner: with only a lead and an agent besides, the owner still can't go.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), a_lead, 'lead');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L$q$, pg_temp.id('acme_owner')),
+    '23514', 'ending the only owner while a lead remains');
+  -- An owner whose membership already ended doesn't count as one.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+  VALUES (pg_temp.id('acme'), second_owner, 'owner', now() - interval '2 days', now() - interval '1 day');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L AND valid_until IS NULL$q$, pg_temp.id('acme_owner')),
+    '23514', 'ending the only current owner while a past owner exists');
+  -- Ending a lead is always fine.
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L$q$, a_lead), 'rows:1', 'ending a lead');
+  -- Passing ownership: a second current owner first, then the first can go.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), second_owner, 'owner');
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L AND valid_until IS NULL$q$, pg_temp.id('acme_owner')),
+    'rows:1', 'ending an owner when another is current');
+  UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('acme_owner') AND valid_until IS NULL;
+  PERFORM pg_temp.expect(format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L AND valid_until IS NULL$q$, second_owner),
+    '23514', 'ending the last owner after the first left');
+  RAISE NOTICE 'firms: owner cases passed';
+END $$;
+
+-- ---------- is the caller a member ----------
+-- The helpers later stories' policies and functions call (story P-1.1 does not use them anywhere yet). They answer
+-- about the caller only, from the dated memberships: a current one, not one that ended or hasn't begun. A platform
+-- admin is a member only of a firm they were put in (D-16); a prospect, a guest and a signed-out caller of none.
+DO $$
+DECLARE
+  future_member uuid := pg_temp.new_user('future_member');
+  lead_in_team uuid := pg_temp.new_user('lead_in_team');
+BEGIN
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from)
+  VALUES (pg_temp.id('acme'), future_member, 'agent', now() + interval '1 day');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id)
+  VALUES (pg_temp.id('eaa'), lead_in_team, 'lead', pg_temp.id('sales'));
+
+  PERFORM pg_temp.as_user('admin_1');
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('eaa')), true, 'an owner is a member');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('eaa')), 'owner', 'an owner''s role');
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('acme')), false, 'an owner of one firm in another');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('acme')), NULL::text, 'no role in another firm');
+  PERFORM pg_temp.as_user('advisor_1');
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('eaa')), true, 'an agent is a member');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('eaa')), 'agent', 'an agent''s role');
+  PERFORM pg_temp.as_user('lead_in_team');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('eaa')), 'lead', 'a lead''s role');
+  -- Ended (advisor_2 above), not begun yet, never a member.
+  PERFORM pg_temp.as_user('advisor_2');
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('eaa')), false, 'a member whose membership ended');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('eaa')), NULL::text, 'no role after leaving');
+  PERFORM pg_temp.as_user('future_member');
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('acme')), false, 'a membership that begins tomorrow');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('acme')), NULL::text, 'no role before it begins');
+  PERFORM pg_temp.as_user('prospect_a');
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('eaa')), false, 'a prospect');
+  PERFORM pg_temp.as_user('guest_a', true);
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('eaa')), false, 'a guest');
+  PERFORM pg_temp.is(public.firm_role(pg_temp.id('eaa')), NULL::text, 'a guest''s role');
+  -- A member whose token is a guest token is still a guest: a member's account presenting one must not read as the member.
+  PERFORM pg_temp.as_user('admin_1', true);
+  PERFORM pg_temp.is(public.is_firm_member(pg_temp.id('eaa')), false, 'a member''s account presenting a guest token');
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  SET LOCAL ROLE anon;
+  PERFORM pg_temp.expect(format('SELECT public.is_firm_member(%L)', pg_temp.id('eaa')), '42501', 'a signed-out caller asking is_firm_member');
+  PERFORM pg_temp.expect(format('SELECT public.firm_role(%L)', pg_temp.id('eaa')), '42501', 'a signed-out caller asking firm_role');
+  RESET ROLE;
+  PERFORM pg_temp.as_user('admin_1');
+  PERFORM pg_temp.is(public.is_firm_member(NULL), false, 'no firm at all');
+  RESET ROLE;
+  RAISE NOTICE 'firms: membership helper cases passed';
+END $$;
+
+-- ---------- who can read what ----------
+-- Every new table carries its row security (BROKER_CRM_BUILD rule 5). A member reads their own firm's row, teams and
+-- their own memberships, nobody else's; nobody writes through the API: a server function does (later stories). No
+-- existing policy changes here: that is the next story.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('advisor_1');
+  PERFORM pg_temp.is((SELECT string_agg(name, ',') FROM public.firms), 'Edgar Allan Advisory', 'the firms an agent reads');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_teams), 2::bigint, 'the teams an agent reads');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships), 1::bigint, 'the memberships an agent reads');
+  PERFORM pg_temp.as_user('admin_1');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE user_id <> pg_temp.id('admin_1')), 0::bigint, 'another person''s membership');
+  -- A member of Acme reads nothing of Edgar Allan Advisory's.
+  PERFORM pg_temp.as_user('acme_owner_2');
+  PERFORM pg_temp.is((SELECT string_agg(name, ',') FROM public.firms), 'Acme Brokers', 'the firms Acme''s owner reads');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_teams), 1::bigint, 'the teams Acme''s owner reads');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_teams WHERE firm_id = pg_temp.id('eaa')), 0::bigint, 'Edgar Allan Advisory''s teams, from Acme');
+  -- Not a member now: nothing. Prospects, guests and signed-out callers too.
+  PERFORM pg_temp.as_user('advisor_2');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firms), 0::bigint, 'the firms a former member reads');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships), 0::bigint, 'the memberships a former member reads');
+  PERFORM pg_temp.as_user('prospect_a');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firms) + (SELECT count(*) FROM public.firm_teams) + (SELECT count(*) FROM public.firm_memberships), 0::bigint, 'what a prospect reads');
+  PERFORM pg_temp.as_user('guest_a', true);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firms) + (SELECT count(*) FROM public.firm_teams) + (SELECT count(*) FROM public.firm_memberships), 0::bigint, 'what a guest reads');
+  PERFORM pg_temp.as_user('admin_1', true);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firms) + (SELECT count(*) FROM public.firm_teams) + (SELECT count(*) FROM public.firm_memberships), 0::bigint, 'what a member''s account presenting a guest token reads');
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  SET LOCAL ROLE anon;
+  PERFORM pg_temp.expect('SELECT count(*) FROM public.firms', '42501', 'a signed-out caller reading firms');
+  PERFORM pg_temp.expect('SELECT count(*) FROM public.firm_memberships', '42501', 'a signed-out caller reading memberships');
+  PERFORM pg_temp.expect('SELECT count(*) FROM public.firm_teams', '42501', 'a signed-out caller reading teams');
+  -- Nobody writes through the API, an owner included.
+  PERFORM pg_temp.as_user('admin_1');
+  PERFORM pg_temp.expect($q$UPDATE public.firms SET name = 'Mine' WHERE address = 'edgar-allan-advisory'$q$, '42501', 'an owner renaming a firm');
+  PERFORM pg_temp.expect($q$UPDATE public.firms SET visibility = 'by_level' WHERE address = 'edgar-allan-advisory'$q$, '42501', 'an owner changing visibility');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Mine', 'mine')$q$, '42501', 'an owner creating a firm');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firm_teams (firm_id, name) SELECT id, 'T' FROM public.firms$q$, '42501', 'an owner adding a team');
+  PERFORM pg_temp.expect(format($q$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (%L, %L, 'owner')$q$, pg_temp.id('eaa'), pg_temp.id('prospect_a')),
+    '42501', 'an owner adding a member');
+  PERFORM pg_temp.expect($q$UPDATE public.firm_memberships SET valid_until = now()$q$, '42501', 'a member ending a membership');
+  PERFORM pg_temp.expect($q$DELETE FROM public.firm_memberships$q$, '42501', 'a member deleting a membership');
+  PERFORM pg_temp.expect($q$DELETE FROM public.firms$q$, '42501', 'an owner deleting a firm');
+  RESET ROLE;
+  RAISE NOTICE 'firms: row security cases passed';
+END $$;
