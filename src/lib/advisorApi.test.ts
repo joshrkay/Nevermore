@@ -11,6 +11,8 @@ const createSignedUrl = vi.fn();
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
 const inFilters: { table: string; column: string; values: unknown[] }[] = [];
+/** Each `.eq(column, value)` filter a query asked for, by table. */
+const eqFilters: { table: string; column: string; value: unknown }[] = [];
 const query = (table: string) => {
   /** `.eq(column, value)` filters of a referral-partner lookup, applied as the database does (the other tables' rows are returned whole). */
   const eqs: [string, unknown][] = [];
@@ -20,6 +22,7 @@ const query = (table: string) => {
     select: () => chain,
     eq: (column: string, value: unknown) => {
       eqs.push([column, value]);
+      eqFilters.push({ table, column, value });
       return chain;
     },
     is: () => chain,
@@ -87,6 +90,10 @@ const {
   mailAttachmentUrl,
   recordActivity,
   fetchOwnedFirms,
+  listMyFirms,
+  listReferralPartners,
+  addReferralPartner,
+  updateReferralPartner,
   listFirmActivity,
   listFirmActivityPeople,
   NEVERMORE_FILTER,
@@ -811,5 +818,32 @@ describe("the firm's record of who did what", () => {
     rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test", is_nevermore: false }], error: null });
     await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test", is_nevermore: false }]);
     expect(rpc).toHaveBeenCalledWith("firm_activity_people", { p_firm_id: "firm-1" });
+  });
+});
+
+describe("referral partners belong to a firm", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    eqFilters.length = 0;
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+
+  it("reads one firm's partners", async () => {
+    tables.referral_partners = [{ firm_id: "firm-a", code: "x", name: "X" }];
+    await listReferralPartners("firm-a");
+    expect(eqFilters).toContainEqual({ table: "referral_partners", column: "firm_id", value: "firm-a" });
+  });
+
+  it("adds and renames a partner for the firm named", async () => {
+    rpc.mockResolvedValue({ data: { firm_id: "firm-b", code: "x" }, error: null });
+    await addReferralPartner("firm-b", "x", "X", "other");
+    expect(rpc).toHaveBeenCalledWith("advisor_add_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "X", p_kind: "other" });
+    await updateReferralPartner("firm-b", "x", "Y", "other");
+    expect(rpc).toHaveBeenCalledWith("advisor_update_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "Y", p_kind: "other" });
+  });
+
+  it("lists the firms the caller belongs to, by name", async () => {
+    tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }];
+    await expect(listMyFirms()).resolves.toEqual([{ id: "firm-a", name: "Alpha", address: "alpha" }]);
   });
 });

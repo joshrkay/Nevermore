@@ -167,23 +167,34 @@ export async function loadIntakeSources(from: Date, to: Date): Promise<IntakeSou
 
 export type ReferralPartner = Tables["referral_partners"]["Row"];
 
-/** Every referral partner, by name. */
-export async function listReferralPartners(): Promise<ReferralPartner[]> {
-  const { data, error } = await supabase.from("referral_partners").select("*").order("name");
+/** A firm the caller currently belongs to. */
+export type MemberFirm = { id: string; name: string; address: string };
+
+/** The firms the signed-in person currently belongs to, by name (row security shows a member their own firms and no others). */
+export async function listMyFirms(): Promise<MemberFirm[]> {
+  // `firms` isn't in the generated types (src/integrations/supabase/types.ts).
+  const { data, error } = await (supabase as unknown as SupabaseClient).from("firms").select("id, name, address").order("name");
+  if (error) fail(error, "Couldn't load your firms.");
+  return (data ?? []) as MemberFirm[];
+}
+
+/** One firm's referral partners, by name. A partner is its firm's own, and a code is unique within a firm. */
+export async function listReferralPartners(firmId: string): Promise<ReferralPartner[]> {
+  const { data, error } = await supabase.from("referral_partners").select("*").eq("firm_id", firmId).order("name");
   if (error) fail(error, "Couldn't load the referral partners.");
   return data ?? [];
 }
 
-/** Adds a partner under a new code. The database refuses a code that is taken or badly formed, with a message to show. */
-export async function addReferralPartner(code: string, name: string, kind: string): Promise<ReferralPartner> {
-  const { data, error } = await supabase.rpc("advisor_add_referral_partner", { p_code: code, p_name: name, p_kind: kind });
+/** Adds a partner to a firm under a new code. The database refuses a code that is taken in that firm or badly formed, with a message to show. */
+export async function addReferralPartner(firmId: string, code: string, name: string, kind: string): Promise<ReferralPartner> {
+  const { data, error } = await supabase.rpc("advisor_add_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind });
   if (error || !data) fail(error, "Couldn't add the partner.");
   return data as ReferralPartner;
 }
 
-/** Renames a partner or changes its kind. Its code never changes. */
-export async function updateReferralPartner(code: string, name: string, kind: string): Promise<ReferralPartner> {
-  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_code: code, p_name: name, p_kind: kind });
+/** Renames a firm's partner or changes its kind. Its code never changes. */
+export async function updateReferralPartner(firmId: string, code: string, name: string, kind: string): Promise<ReferralPartner> {
+  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind });
   if (error || !data) fail(error, "Couldn't save the partner.");
   return data as ReferralPartner;
 }

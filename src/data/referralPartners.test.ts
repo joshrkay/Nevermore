@@ -3,6 +3,7 @@ import { FUNNEL_STEPS } from "./funnel";
 import {
   campaignTags,
   countsByPartner,
+  partnerKey,
   describeSource,
   partnerKindLabel,
   partnerLink,
@@ -85,8 +86,19 @@ describe("sourceRows", () => {
       { referral_code: null, utm_source: "linkedin", started: 9, certified: 4 },
     ]);
     const totals = countsByPartner(rows);
-    expect(totals.get("acme-cfo")).toEqual({ started: 5, certified: 3 });
-    expect(totals.get("other")).toEqual({ started: 1, certified: 0 });
+    expect(totals.get(partnerKey(undefined, "acme-cfo"))).toEqual({ started: 5, certified: 3 });
+    expect(totals.get(partnerKey(undefined, "other"))).toEqual({ started: 1, certified: 0 });
+    expect(totals.size).toBe(2);
+  });
+
+  it("keeps two firms' partners apart when they use the same code", () => {
+    const totals = countsByPartner(sourceRows([
+      { firm_id: "f1", referral_code: "acme-cfo", started: 3, certified: 1 },
+      { firm_id: "f2", referral_code: "acme-cfo", started: 40, certified: 20 },
+      { firm_id: "f1", referral_code: "acme-cfo", utm_campaign: "x", started: 2, certified: 0 },
+    ]));
+    expect(totals.get(partnerKey("f1", "acme-cfo"))).toEqual({ started: 5, certified: 1 });
+    expect(totals.get(partnerKey("f2", "acme-cfo"))).toEqual({ started: 40, certified: 20 });
     expect(totals.size).toBe(2);
   });
 });

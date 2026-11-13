@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { funnelRange } from "@/data/funnel";
 import { SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import {
@@ -11,6 +12,7 @@ import {
   isReferralPartnerKind,
   PARTNER_NAME_MAX,
   partnerKindLabel,
+  partnerKey,
   partnerLink,
   REFERRAL_PARTNER_KIND_LABELS,
   REFERRAL_PARTNER_KINDS,
@@ -19,14 +21,23 @@ import {
 } from "@/data/referralPartners";
 import {
   addReferralPartner,
+  listMyFirms,
   listReferralPartners,
   loadIntakeSources,
   updateReferralPartner,
+  type MemberFirm,
   type ReferralPartner,
 } from "@/lib/advisorApi";
 
 type Counts = Map<string, { started: number; certified: number }>;
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; partners: ReferralPartner[]; counts: Counts };
+type Load =
+  | { kind: "loading" }
+  | { kind: "error"; error: Error }
+  /** The person belongs to no firm, or the firm at this address isn't one of theirs. */
+  | { kind: "no_firm" }
+  /** A member of several firms, on the bare domain, has not said which. */
+  | { kind: "choose"; firms: MemberFirm[] }
+  | { kind: "ready"; firms: MemberFirm[]; firmId: string; partners: ReferralPartner[]; counts: Counts };
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 const buttonClass = "flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50";
@@ -48,20 +59,35 @@ async function copyLink(link: string) {
 const AdvisorPartnersPage = () => {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const firmParam = params.get("firm");
+  // At a firm's address the page is that firm's. On the bare domain a member of one firm needs to say nothing and a member of
+  // several is asked (?firm=<id>, as the activity page does); the database never guesses a firm for them.
+  const address = useFirmAddress();
+  const atAddress = address.status === "known" ? address.address : null;
 
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading" });
-    const { from, to } = funnelRange("30d");
-    Promise.all([listReferralPartners(), loadIntakeSources(from, to)])
-      .then(([partners, sources]) => !cancelled && setLoad({ kind: "ready", partners, counts: countsByPartner(sourceRows(sources)) }))
+    setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
+    (async (): Promise<Load> => {
+      const firms = await listMyFirms();
+      const firm = atAddress !== null
+        ? firms.find((f) => f.address === atAddress)
+        : firmParam !== null ? firms.find((f) => f.id === firmParam) : firms.length === 1 ? firms[0] : undefined;
+      if (!firm) return atAddress === null && firms.length > 1 ? { kind: "choose", firms } : { kind: "no_firm" };
+      const { from, to } = funnelRange("30d");
+      const [partners, sources] = await Promise.all([listReferralPartners(firm.id), loadIntakeSources(from, to)]);
+      return { kind: "ready", firms, firmId: firm.id, partners, counts: countsByPartner(sourceRows(sources)) };
+    })()
+      .then((next) => !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
     };
-  }, [attempt]);
+  }, [attempt, atAddress, firmParam]);
 
   const reload = () => setAttempt((n) => n + 1);
+  const firms = load.kind === "choose" || load.kind === "ready" ? load.firms : [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -74,7 +100,22 @@ const AdvisorPartnersPage = () => {
           see only the counts you send them, never a prospect's answers.
         </p>
 
-        <AddPartnerForm onAdded={reload} />
+        {atAddress === null && firms.length > 1 && (
+          <div className="mb-6">
+            <label htmlFor="partners-firm" className="block text-xs text-muted-foreground">Firm</label>
+            <select
+              id="partners-firm"
+              value={firmParam ?? ""}
+              onChange={(e) => setParams(e.target.value ? { firm: e.target.value } : {}, { replace: true })}
+              className="min-h-11 bg-muted border border-border rounded-md px-3 text-sm"
+            >
+              {load.kind === "choose" && <option value="">Choose a firm</option>}
+              {firms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {load.kind === "ready" && <AddPartnerForm firmId={load.firmId} onAdded={reload} />}
 
         {load.kind === "loading" && (
           <div className="flex items-center justify-center py-16 text-muted-foreground" role="status">
@@ -82,6 +123,7 @@ const AdvisorPartnersPage = () => {
           </div>
         )}
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="the referral partners" onRetry={reload} />}
+        {load.kind === "no_firm" && <p role="status" className="text-sm">You aren't a member of a firm, so there are no referral partners to show.</p>}
         {load.kind === "ready" && (load.partners.length === 0 ? (
           <div className="border border-dashed border-border rounded-xl p-10 text-center mt-8">
             <p className="font-medium">No referral partners yet.</p>
@@ -95,7 +137,7 @@ const AdvisorPartnersPage = () => {
   );
 };
 
-const AddPartnerForm = ({ onAdded }: { onAdded: () => void }) => {
+const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => void }) => {
   const [name, setName] = useState("");
   const [kind, setKind] = useState("");
   const [code, setCode] = useState("");
@@ -113,7 +155,7 @@ const AddPartnerForm = ({ onAdded }: { onAdded: () => void }) => {
     setSaving(true);
     setError(null);
     try {
-      const added = await addReferralPartner(code, name, kind);
+      const added = await addReferralPartner(firmId, code, name, kind);
       toast.success(`Added ${added.name}. Send them ${partnerLink(added.code)}`);
       setName("");
       setKind("");
@@ -199,7 +241,7 @@ const PartnerTable = ({ partners, counts, onChanged }: { partners: ReferralPartn
       </thead>
       <tbody>
         {partners.map((p) => (
-          <PartnerRow key={p.code} partner={p} counts={counts.get(p.code)} onChanged={onChanged} />
+          <PartnerRow key={partnerKey(p.firm_id, p.code)} partner={p} counts={counts.get(partnerKey(p.firm_id, p.code))} onChanged={onChanged} />
         ))}
       </tbody>
     </table>
@@ -218,7 +260,7 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
     setSaving(true);
     setError(null);
     try {
-      await updateReferralPartner(partner.code, name, kind);
+      await updateReferralPartner(partner.firm_id, partner.code, name, kind);
       toast.success("Partner saved");
       setEditing(false);
       onChanged();
