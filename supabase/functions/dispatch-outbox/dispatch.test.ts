@@ -1322,13 +1322,14 @@ describe("who an advisor alert goes to", () => {
       expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
     });
 
-    it("sends a frozen alert whose every named person has left to the current members, since none of them can have had it (D-35)", async () => {
+    it("sends a frozen alert whose every named person has left to the current members, since none of them can have had it, once, under a new key (D-102, which amends D-35)", async () => {
       const stored = frozen(["gone@firm-a.example"]);
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       expect(sent).toHaveLength(1);
       expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
       expect(sent[0].key).not.toBe(stored.key);
+      expect(deps.freeze).toHaveBeenCalledTimes(1);
     });
 
     it("rebuilds an alert frozen to the shared inbox, as it was before alerts went to members, for the current members", async () => {
@@ -1354,7 +1355,15 @@ describe("who an advisor alert goes to", () => {
       expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
     });
 
-    it.each(kinds)("a frozen %s rebuilt because someone left is not widened to a member who joined since (D-35)", async (_name, makeRow) => {
+    it("recognises a stayer whose address differs only in case when it rebuilds for someone who left", async () => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@Firm-A.example", "joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["Stayer@Firm-A.example"]);
+    });
+
+    it.each(kinds)("a frozen %s rebuilt because someone left, while a stayer remains, goes to the stayers only: a joiner never gets it (D-35)", async (_name, makeRow) => {
       const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
       await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
@@ -1375,7 +1384,7 @@ describe("who an advisor alert goes to", () => {
       expect(sent[0].key).not.toBe(stored.key);
     });
 
-    it("sends an aged alert whose every named person has left to the current members", async () => {
+    it("sends an aged alert whose every named person has left to the current members (D-102)", async () => {
       const stored = frozen(["gone@firm-a.example"]);
       stored.frozen_at = new Date(NOW - 168 * HOUR).toISOString();
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });

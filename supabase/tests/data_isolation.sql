@@ -3006,7 +3006,7 @@ SELECT unnest(ARRAY[
 
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
-  'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role', 'drop_mailbox_without_membership',
+  'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
   'record_membership_change', 'record_send_activity',
   'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',

@@ -7,7 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { id: "u1", email: "pat@example.com" }, session: { access_token: "t" }, loading: false, isAnonymous: false, sessionEnded: null, signOut: vi.fn() }),
 }));
-vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
+let firmAddress: { status: "none" } | { status: "known"; address: string } = { status: "none" };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 vi.mock("@/lib/monitoring", () => ({ reportOpsEvent: vi.fn() }));
 const api = {
   fetchMyFirms: vi.fn(),
@@ -46,12 +47,22 @@ describe("the funnel and partners routes for a member of two firms", () => {
   beforeEach(() => {
     clearMyFirms();
     clearOwnedFirms();
+    firmAddress = { status: "none" };
     for (const fn of Object.values(api)) fn.mockReset();
     api.fetchNeedsSecondFactor.mockResolvedValue(false);
     api.fetchMyFirms.mockResolvedValue([alpha, beta]);
   });
 
   it.each(["/advisor/funnel", "/advisor/partners"])("%s keeps them out of the console and loads no firm's records (ADR 0014)", async (path) => {
+    renderRoute(path);
+    expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
+    expect(api.loadFunnel).not.toHaveBeenCalled();
+    expect(api.loadIntakeSourcesOfMyFirms).not.toHaveBeenCalled();
+    expect(api.listReferralPartners).not.toHaveBeenCalled();
+  });
+
+  it.each(["/advisor/funnel", "/advisor/partners"])("%s keeps them out at one of their firms' own address too: member pages are not narrowed to it (ADR 0015)", async (path) => {
+    firmAddress = { status: "known", address: "alpha" };
     renderRoute(path);
     expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
     expect(api.loadFunnel).not.toHaveBeenCalled();
