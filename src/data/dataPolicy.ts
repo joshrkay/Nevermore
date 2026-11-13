@@ -414,6 +414,15 @@ export const DATA_CLASSES: DataClass[] = [
     retention: "For good: a membership is never changed, only ended, so who could see a record on a given day can always be answered.",
     deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. Closing a firm is built in a later story (docs/DATA_HANDLING.md).",
   },
+  {
+    id: "firm_invitations",
+    label: "Invitations to join a firm",
+    sensitivity: "confidential",
+    examples: "The email address an owner invited, the role offered, when it was made, resent, accepted or withdrawn and by whom, and whether the email went out. The link's token is never kept, only a hash of it. Nothing about an intake.",
+    stored: { tables: ["firm_invitations"], buckets: [], elsewhere: ["Resend, which sends the invitation email (the address and the link, once)"] },
+    retention: "Kept with the firm, as the record of how a person joined: an accepted or withdrawn invitation stays, and one never used stays until an owner withdraws it. A rule to clear old ones is not built yet (docs/DATA_HANDLING.md).",
+    deletion: "A member's account deleted at their request clears who invited or accepted from the invitations that name it; the invited email address stays until a later story clears expired invitations (docs/DATA_HANDLING.md).",
+  },
 ];
 
 /** The classes a table or bucket belongs to. */

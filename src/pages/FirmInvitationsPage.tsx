@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { formatDateTime } from "@/components/advisor/format";
+import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import {
@@ -180,6 +181,7 @@ const FirmInvitationsPage = () => {
           </>
         )}
       </main>
+      <div className="pb-8 flex justify-center"><LegalLinks compact /></div>
     </div>
   );
 };
