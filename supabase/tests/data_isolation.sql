@@ -134,6 +134,7 @@
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
 \i supabase/migrations/20261116110000_firm_scoped_policies.sql
+\i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 SET client_min_messages = notice;
 
@@ -895,6 +896,8 @@ INSERT INTO callable VALUES
   ('can_read_peo_mail(p_quote_request_id bigint)', 'own', NULL, 'the mail policies call it as the caller: a message on a quote request is its firm''s members''; held mail (none) is a platform admin''s'),
   ('intake_owner_in_my_firm(p_user_id uuid)', 'own',     NULL, 'the consent and profile policies call it as the caller: whether a person owns an intake of a firm the caller currently belongs to'),
   ('colleague_in_my_firm(p_user_id uuid)',    'own',     NULL, 'the profile policy calls it as the caller: whether a person is a current member of a firm the caller currently belongs to'),
+  ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
+  ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
@@ -1836,8 +1839,9 @@ BEGIN
   END LOOP;
   SELECT string_agg(c.fn, ', ' ORDER BY c.fn) INTO missing
   FROM callable c JOIN pg_proc p ON p.pronamespace = 'public'::regnamespace AND p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' = c.fn
+  -- firm_public_name is on the list on purpose (CRM-P1.3a): it is the one thing a firm address shows before sign-in: a firm's name, and nothing else (D-27).
   WHERE p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');
-  IF missing IS DISTINCT FROM 'has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
+  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
     RAISE EXCEPTION 'FAIL: SECURITY DEFINER functions signed-out callers can run changed: %', missing;
   END IF;
 

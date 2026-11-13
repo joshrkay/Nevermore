@@ -6,6 +6,8 @@ const auth = { user: null as { id: string } | null, loading: false, isAnonymous:
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const toast = { error: vi.fn(), success: vi.fn() };
 vi.mock("sonner", () => ({ toast }));
+const firm = { current: { status: "none" } as { status: string; address?: string; name?: string } };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current }));
 const startBrokerSignIn = vi.fn();
 vi.mock("@/lib/brokerAuth", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/brokerAuth")>()), startBrokerSignIn: (...a: unknown[]) => startBrokerSignIn(...a) }));
 
@@ -28,6 +30,7 @@ describe("BrokerSignInPage", () => {
     auth.user = null;
     auth.loading = false;
     auth.isAnonymous = false;
+    firm.current = { status: "none" };
     startBrokerSignIn.mockReset().mockResolvedValue(undefined);
     toast.error.mockReset();
   });
@@ -39,6 +42,26 @@ describe("BrokerSignInPage", () => {
     expect(screen.getByText(/send email as you/)).toBeInTheDocument();
     expect(screen.getByText(/never reads your mail/)).toBeInTheDocument();
     expect(screen.getByText(/untick the send permission/)).toBeInTheDocument();
+  });
+
+  it("names the firm at a firm's address, and no firm on the bare domain", () => {
+    firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
+    const { unmount } = renderPage();
+    expect(screen.getByText("Acme Brokers")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Advisor and broker sign in" })).toBeInTheDocument();
+    unmount();
+    firm.current = { status: "none" };
+    renderPage();
+    expect(screen.queryByTestId("firm-name")).not.toBeInTheDocument();
+  });
+
+  it("shows no firm name while it is not known which firm this is", () => {
+    for (const status of ["checking", "unknown", "error"]) {
+      firm.current = { status, address: "acme-brokers" };
+      const { unmount } = renderPage();
+      expect(screen.queryByTestId("firm-name"), status).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("starts the chosen provider's sign-in, and returns to the page the broker was sent from", async () => {
