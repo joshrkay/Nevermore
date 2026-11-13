@@ -514,7 +514,8 @@ $$;
 CREATE FUNCTION pg_temp.race(first_uid uuid, first_stmt text, second_uid uuid, second_stmt text,
                              OUT first_result text, OUT second_result text) LANGUAGE plpgsql AS $$
 DECLARE
-  dsn text := format('dbname=%s user=%s', current_database(), session_user);
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
   second_pid integer;
   tries integer := 0;
 BEGIN

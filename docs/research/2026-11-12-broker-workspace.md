@@ -96,7 +96,7 @@ Recommendation.
   firm address it came from. The list of addresses sign-in may return to has to allow any firm's subdomain. A
   session belongs to one address, so a person in two firms signs in to each.
 - **Reserved names.** `www`, `app`, `api`, `mail`, `admin`, `status`, the subdomain the quote requests' reply
-  addresses use, and any listed PEO's name. A firm can't take a name that reads as a PEO or as Nevermore.
+  addresses use, and any listed PEO's name. A firm can't take an address that is exactly a listed PEO's name (D-26) or that reads as Nevermore.
 - **The plain site stays.** `nevermorepeo.com` is still where an employer with no broker starts, and Edgar Allan
   Advisory is the firm those intakes belong to.
 - **Later:** a firm's own domain, such as `quotes.acmebenefits.com`.
