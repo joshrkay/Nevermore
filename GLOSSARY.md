@@ -367,6 +367,22 @@ _Avoid_: offset, page number (as the way a page is found)
 **Owned firm**:
 A firm the caller is a current owner of, as the database answers (`my_owner_firms()`). A page that reads a firm's record says which firm it wants, and the database checks the caller currently owns that one; there is no "the caller's firm" for someone who owns two.
 
+**Workspace table** (code: the domain `workspace_table`):
+A table of the workspace whose column choices and saved views are kept: today only the submissions queue (`submissions`); accounts, leads, quotes, the inbox and the lists inside a record join the list as their stories ship, one small migration each. A name not on the list is refused.
+_Avoid_: grid, list (as the name of the whole thing)
+
+**Saved view** (code: `saved_views`, `save_view`, `list_saved_views`):
+A named set of a table's filters, sort and columns that a person keeps, shown as a tab over the table. It belongs to the person who saved it, in one firm: only they rename, change or delete it, and nobody else reads it until a current owner **shares** it with the firm; then every current member reads it and only an owner can stop sharing it (it goes back to its saver, nothing is lost). An owner shares a view they saved. Names are unique per person per table and, among shared views, per firm per table, ignoring case; a person keeps at most thirty per table. A person who leaves the firm reaches none of theirs at once; what they shared stays with the firm until an owner unshares it. Reached only through its functions, never the table.
+_Avoid_: filter preset, saved search, report
+
+**Built-in view**:
+A view a table ships with (for the queue, today's status tabs), written in the page's code, not kept as a row, so it can't be deleted or shared. Its columns are the person's column choice for the table.
+_Avoid_: default view (the table's default sort and columns are something else)
+
+**Column choice** (code: `table_preferences`, `my_table_columns`, `set_my_table_columns`):
+Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults.
+_Avoid_: layout, column settings, preferences (on its own)
+
 **Entry kind** (code: `firm_activity.kind`):
 What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
 
@@ -375,6 +391,16 @@ What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_d
 **Advisor Console**:
 The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM. Since the firms stories it is **the firm's console**: it opens for a current member of a firm (never because of a platform role: **Firm guard**), and shows only that firm's records. The routes keep their `/advisor` paths until the screens that replace them ship (D-8).
 _Avoid_: CRM, admin queue
+
+**Table query** (code: `queue_list_submissions`, `queue_view_counts`; the shapes in `src/lib/tableQuery.ts`):
+How a workspace table asks the database for its rows (D-44): a list of **filters**, one **sort**, a page number and the search, answered with one page of 50 rows and how many match in all. The database holds each table's **fields**, a fixed list naming each field's kind (text, number, date, one choice, several choices, yes or no, person), and refuses a field, operator or value it doesn't take, with the reason; it never drops one, since a dropped filter shows more rows than were asked for. Built first for the submissions queue (CRM-S3.3b); the accounts, leads and quotes tables copy it.
+_Avoid_: dynamic query, search (a search is the words typed in the search box, which is one part of the query)
+
+**Filter** (code: `{field, op, value}`, checked by `workspace_filter_check`):
+One condition on one field of a table, by an operator its kind takes: text (contains, is, is empty), number (is, more than, less than, between), date (on, before, after, between, in the next or last N days, each a day in the person's time zone), one or several choices (any of, none of, is empty), yes or no (is), person (any of, me, my team: refused until records have an owner, CRM-A1.1). Text and choices ignore case; a between takes its ends in either order. A table's filters combine with "and".
+
+**View count** (code: `queue_view_counts`):
+The number on a view's tab: how many rows that view's filters match, under the same rules as the table, for several views in one call.
 
 **Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
 The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be one of theirs, and they are let in whatever other firms they belong to: the database answers for that address's firm alone (**Address narrowing**). On the bare domain a member of exactly one firm lands in it, and a member of several is sent to **Choose a firm**. A person who belongs to no firm is told so ("You aren't a member of any firm").
@@ -390,6 +416,9 @@ _Avoid_: layout, sidebar (in screen words)
 
 **Workspace look** (code: the `theme-workspace` class, `src/index.css`):
 The grey page, white cards, blue actions and dark navy menu of `docs/prd-screens/`. The shell puts the class on the document's root element while it is mounted, so a dialog or sheet drawn outside the shell takes the look; the employer's intake and the landing page never have it (D-41).
+
+**Workspace form** (code: `src/components/workspace/form/`):
+The one way a workspace form validates, reports and closes (CRM-S4.1, D-51). A required field says "Required" in words under its label; an error shows under its field when the person leaves it or presses save, and the first field in error takes the focus; Save is never disabled to point at an error, only while a save is in flight. A failed save keeps everything typed, says what failed beside the form's buttons and never closes the form; a refusal that belongs to one field shows under that field. Closing with unsaved changes asks first (Cancel, Escape, a dialog's close, moving to another page, the browser's leave-page prompt), and never after a save. "Edit" on a record turns its details into fields in place, with Save and Cancel.
 
 **Current firm** (code: `currentFirm()`, `src/lib/currentFirm.ts`):
 The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs, whatever other firms they belong to (it says so, so a member route can keep them out); on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several on the bare domain) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.

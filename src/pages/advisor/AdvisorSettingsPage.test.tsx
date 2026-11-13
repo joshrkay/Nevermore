@@ -6,20 +6,22 @@ const auth = { user: { id: "u1", email: "sam@example.com" }, session: { access_t
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchMyFirms: vi.fn(), fetchOwnedFirms: vi.fn(), fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
-vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
+let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
 const { clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorSettingsPage } = await import("./AdvisorSettingsPage");
+const { WorkspaceProvider } = await import("@/components/workspace/useWorkspace");
 
 const renderPage = async (role: string) => {
   clearMyFirms();
   api.fetchMyFirms.mockResolvedValue([{ firm_id: "f1", name: "Alpha", address: "alpha", role }]);
-  render(<MemoryRouter><AdvisorSettingsPage /></MemoryRouter>);
+  render(<MemoryRouter><WorkspaceProvider><AdvisorSettingsPage /></WorkspaceProvider></MemoryRouter>);
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   return within(screen.getByRole("list", { name: "Settings pages" }));
 };
 
-beforeEach(() => api.fetchIsAdmin.mockResolvedValue(false));
+beforeEach(() => { firmAddress = { status: "none" }; api.fetchIsAdmin.mockResolvedValue(false); });
 
 describe("the Settings page", () => {
   it("links an owner to Mailbox, Invitations, Activity, Referral partners, PEOs and Outbox", async () => {
@@ -28,7 +30,7 @@ describe("the Settings page", () => {
     const links = list.getAllByRole("link").map((l) => [l.querySelector("span span")?.textContent, l.getAttribute("href")]);
     expect(links).toEqual([
       ["Mailbox", "/advisor/mailbox"],
-      ["Invitations", "/firm/invitations"],
+      ["Invitations", "https://alpha.nevermorepeo.com/firm/invitations"],
       ["Activity", "/advisor/activity"],
       ["Referral partners", "/advisor/partners"],
       ["PEOs", "/advisor/peos"],
@@ -43,5 +45,18 @@ describe("the Settings page", () => {
       expect(list.getByRole("link", { name: /Outbox/ })).toBeInTheDocument();
       document.body.innerHTML = "";
     }
+  });
+
+  // On the bare domain the page behind Invitations needs the firm's own address, so the link goes there.
+  it("sends Invitations to the firm's own address from the bare domain, as a plain link", async () => {
+    const list = await renderPage("owner");
+    expect(list.getByRole("link", { name: /Invitations/ })).toHaveAttribute("href", "https://alpha.nevermorepeo.com/firm/invitations");
+    expect(list.getByRole("link", { name: /Outbox/ })).toHaveAttribute("href", "/advisor/outbox");
+  });
+
+  it("keeps Invitations inside the app at a firm's address", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha" };
+    const list = await renderPage("owner");
+    expect(list.getByRole("link", { name: /Invitations/ })).toHaveAttribute("href", "/firm/invitations");
   });
 });
