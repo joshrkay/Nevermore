@@ -80,7 +80,7 @@ is limited to service-role callers and runs ahead of the claim: `index.ts` is De
   the logs carry only `reason=provider_error:503`, delays are 60/300/1800/7200 s, and the fifth run marks both events `dead` and posts one alert each (ids, kind, attempts, reason; no address). `mode 403` gives `auth:403 (domain not verified)`.
 - Advisor functions over real PostgREST (`rpc() { curl -s -w ' [http %{http_code}]\n' -X POST $REST/rpc/$1 -H "Authorization: Bearer $2" -H 'Content-Type: application/json' -d "$3"; }`): a prospect or guest calling
   `advisor_list_outbox_events`, `advisor_outbox_summary` or `advisor_requeue_outbox_event` gets `42501` / HTTP 403; the anon key and no token get 401; `select` on `outbox_events` as a prospect is 403.
-  `insert into user_roles values ('$U_C','advisor')`, then with `$OTHER`: the list is a projection (no payload, no frozen email, no addresses), `p_status` `sending` is 400, a requeue of a dead event answers `true`
+  `insert into firm_memberships (firm_id, user_id, role) select id, '$U_C', 'agent' from firms` (a current membership of the default firm; the advisor functions answer only for intakes in a firm the caller is a current member of, `intake_in_my_firm`, so the platform role row alone lists nothing) and `insert into user_roles values ('$U_C','advisor')`, then with `$OTHER`: the list is a projection (no payload, no frozen email, no addresses), `p_status` `sending` is 400, a requeue of a dead event answers `true`
   (pending, attempts 0, `requeue_count` 1, `last_requeued_by` the advisor), a second answers `false`, and the next `invoke POST $SVC` sends it.
 - Config problems write on the events: `func.sh APP_BASE_URL=`, certify, `invoke POST $PROSPECT` (the nudge writes nothing), then `invoke POST $SVC`: the advisor event stays `pending`, attempts 0, `last_error`
   `not_configured: APP_BASE_URL is not set to an https URL`, the confirmation is sent; a second scheduled run does not rewrite the row (`xmin` is unchanged). `func.sh` with the default settings sends it and clears the note.
@@ -93,7 +93,7 @@ is limited to service-role callers and runs ahead of the claim: `index.ts` is De
   `provider_message_id` (`msg_<n>`), then send `email.bounced` with `data.email_id` of that id, `bounce.type` `Permanent`, and a `to` that also lists another address: expect 200 `outcome: suppressed`, one row in `email_suppressions`
   (only the address the queue sent to), the waiting confirmations to it `suppressed`. The same `svix-id` again is 200 `duplicate: true` and changes nothing. No signature (with or without the anon key), another secret, a changed body and a 10 minute old
   timestamp are all 401 and change nothing. Re-certify with a changed answer and run the worker: the advisor "Updated Intake" is delivered, the confirmation is `suppressed` and the provider's delivery count does not rise for it.
-  As an advisor (`insert into user_roles ...`, `$OTHER`) `advisor_email_problems` flags the session and `advisor_list_outbox_events` with `{"p_status":"suppressed"}` lists it; a prospect gets 403. A bounce for the advisor alert's message id answers
+  As an advisor (the membership and role rows above, `$OTHER`) `advisor_email_problems` flags the session and `advisor_list_outbox_events` with `{"p_status":"suppressed"}` lists it; a prospect gets 403. A bounce for the advisor alert's message id answers
   `outcome: protected`, suppresses nothing and logs `WEBHOOK_ADVISOR_BOUNCE`. `Transient` and `email.delivered` change nothing. Rename `record_email_delivery_event` in the database and deliver: 500 and `WEBHOOK_RECORD_FAILED`; rename it back and
   the same `svix-id` records normally. `webhook.sh RESEND_WEBHOOK_SECRET=` answers unsigned requests 401 and signed ones 503. Grep `$RUN/webhook.log` for the addresses and message text: it must find nothing.
 - Deleted events stay deleted: after a send, `delete from outbox_events where session_id='$SID'`, then a scheduled run: `reconciled.healed` 0, no rows return, no new delivery.
@@ -117,13 +117,14 @@ pointing at :54321 and the anon key from `lib.sh`), serve the bundle from anothe
 (`/opt/pw-browsers/chromium-*/chrome-linux/chrome`, `setSession` with `$PROSPECT`, then `window.dispatchOutbox()`). That exercises the CORS preflight a browser enforces.
 
 The advisor Outbox page can be driven the same way against the harness: build with `VITE_SUPABASE_URL=http://127.0.0.1:54321 VITE_SUPABASE_PUBLISHABLE_KEY=$ANON npx vite build --outDir <dir>`, serve it with
-`npx vite preview --outDir <dir> --port 4173`, and in Chromium put a session for an advisor (`$OTHER` after the `user_roles` insert above) in `localStorage` under `sb-127-auth-token` (an object with `access_token`, `refresh_token`,
+`npx vite preview --outDir <dir> --port 4173`, and in Chromium put a session for an advisor (`$OTHER` after the membership and `user_roles` inserts above) in `localStorage` under `sb-127-auth-token` (an object with `access_token`, `refresh_token`,
 `expires_at` and a `user` of `{id, email, aud, role, app_metadata, user_metadata}`; the gateway stand-in answers `GET /auth/v1/user`) before opening `/advisor/outbox`. Use the pre-installed browser directly
 (`chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--no-sandbox'] })` from a global `playwright`): the repo's pinned `playwright` wants a different Chromium build. Check it at 1280 and 390 px wide.
 
 ## Gotchas
 
 - `postgres` cannot read files in the scratchpad; feed SQL by stdin (`up.sh` does).
+- Servers started inside `flock /tmp/crm-e2e.lock <command>` inherit the lock's file descriptor, so the lock stays held until `down.sh` has stopped them: end the locked command with `down.sh`, or the next `flock` waits forever.
 - `pkill -f <name>` matches your own shell's command line and kills it; use the pid files in `$RUN`.
 - The service-role key is compared by exact equality, so tokens must be static (`jwt.mjs` uses a fixed `exp`); a freshly minted token is not the cron key.
 - Truncating `$RUN/func.log` with `: >` while Deno holds it open leaves NUL padding; count lines before instead.
