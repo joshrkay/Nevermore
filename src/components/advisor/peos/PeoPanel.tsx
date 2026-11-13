@@ -23,6 +23,8 @@ const EDITORS: Record<SectionKey, (props: EditorProps) => JSX.Element> = {
 interface PeoPanelProps {
   peo: PeoDirectoryEntry;
   isAdmin: boolean;
+  /** False for a reader of the prospect-safe catalogue, which withholds contacts: the section is left out, not shown empty. */
+  showContacts?: boolean;
   today: string;
   onChanged: () => void;
 }
@@ -32,7 +34,7 @@ interface PeoPanelProps {
  * admin edits a section into the PEO's draft (made on the first save) and sees the draft in place of the version in
  * use until it is published or discarded.
  */
-const PeoPanel = ({ peo, isAdmin, today, onChanged }: PeoPanelProps) => {
+const PeoPanel = ({ peo, isAdmin, showContacts = true, today, onChanged }: PeoPanelProps) => {
   const { inUse, draft, published } = versionsOf(peo.versions);
   const [editing, setEditing] = useState<SectionKey | null>(null);
   const [mode, setMode] = useState<"review" | "discard" | "recheck" | null>(null);
@@ -107,7 +109,7 @@ const PeoPanel = ({ peo, isAdmin, today, onChanged }: PeoPanelProps) => {
           Nothing is published for {peo.name} yet, so every eligibility check against it reads can't tell yet.
         </p>
       )}
-      {SECTIONS.map((section) => {
+      {SECTIONS.filter((section) => showContacts || section !== "contacts").map((section) => {
         const Editor = EDITORS[section];
         return (
           <Section

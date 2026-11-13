@@ -167,6 +167,23 @@ describe("AdvisorPeosPage", () => {
     });
   });
 
+  it("leaves the Contacts section out for a catalogue reader, who is never given contacts, rather than saying none are listed", async () => {
+    api.fetchHasPlatformRole.mockResolvedValue(false);
+    api.loadPeoCatalogDirectory.mockResolvedValue(directory().map((p) => ({ ...p, versions: p.versions.slice(0, 1) })));
+    renderPage("/advisor/peos?peo=5");
+    const profile = await screen.findByRole("region", { name: "TriNet" });
+    expect(within(profile).getByRole("heading", { name: "What it won't take on" })).toBeInTheDocument();
+    expect(within(profile).queryByRole("heading", { name: /^Contacts/ })).not.toBeInTheDocument();
+    expect(within(profile).queryByText("None listed")).not.toBeInTheDocument();
+  });
+
+  it("shows the Contacts section to a platform role holder, with a PEO that has none saying so", async () => {
+    renderPage("/advisor/peos?peo=3");
+    const profile = await screen.findByRole("region", { name: "Justworks" });
+    const contacts = within(profile).getByRole("region", { name: /^Contacts/ });
+    expect(within(contacts).getByText("None listed")).toBeInTheDocument();
+  });
+
   it("reads the platform's directory for a platform role holder, and not the catalogue", async () => {
     renderPage();
     await screen.findByRole("list", { name: "PEOs" });

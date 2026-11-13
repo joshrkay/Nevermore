@@ -113,7 +113,7 @@
 \i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
-\i supabase/migrations/20261116220000_mailbox_ends_with_membership.sql
+\i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -323,15 +323,17 @@ SELECT pg_temp.is(public.mailbox_secret(pg_temp.id('roleless_a')) ->> 'address',
 SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('platform_admin')), '42501', 'a platform admin who belongs to no firm connects none (D-16)');
 SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('nobody')), '42501', 'nor does a person with no membership');
 SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('former_a')), '42501', 'nor a former member');
--- ---------- 5. A mailbox goes when its owner's last membership ends, whether or not they ever held a platform role ----------
--- The only other cleanup is on user_roles, which a founder or an invited agent never had a row in.
+-- Removing a platform role no longer disconnects a person who is still a current member of a firm: the mailbox is a member's.
 SELECT pg_temp.as_owner();
-SELECT public.mailbox_store(pg_temp.id('both'), 'microsoft', 'both@alpha.example', 'Mail.Send', 'cipher', 'iv');
-UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('both') AND firm_id = pg_temp.id('firm_a');
-SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('both')), 1::bigint, 'ending one of two memberships keeps the mailbox');
-UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('both') AND firm_id = pg_temp.id('firm_b');
-SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('both')), 0::bigint, 'ending the last membership deletes the mailbox of a person with no platform role');
-SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('roleless_a')), 1::bigint, 'and another member''s mailbox stays');
-DELETE FROM public.firm_memberships WHERE user_id = pg_temp.id('roleless_a');
-SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('roleless_a')), 0::bigint, 'deleting the last membership deletes it too');
+SELECT pg_temp.is(public.mailbox_store(pg_temp.id('agent_a'), 'microsoft', 'agent@alpha.example', 'Mail.Send', 'cipher', 'iv')::text, '{"connected": true}', 'a member who holds the advisor role connects a mailbox');
+DELETE FROM public.user_roles WHERE user_id = pg_temp.id('agent_a');
+SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('agent_a')), 1::bigint, 'losing their last platform role leaves a current member''s mailbox connected');
+SELECT pg_temp.is(public.mailbox_secret(pg_temp.id('agent_a')) ->> 'address', 'agent@alpha.example', 'and it still sends');
+-- A person with no current membership keeps none once no platform role remains (their membership ending is CRM-P1.5's).
+INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('advisor_no_firm'), 'advisor'), (pg_temp.id('former_a'), 'advisor') ON CONFLICT DO NOTHING;
+INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv) VALUES
+  (pg_temp.id('advisor_no_firm'), 'microsoft', 'a@x.example', 'Mail.Send', 'c', 'i'), (pg_temp.id('former_a'), 'microsoft', 'f@x.example', 'Mail.Send', 'c', 'i');
+DELETE FROM public.user_roles WHERE user_id = pg_temp.id('advisor_no_firm') AND role = 'advisor';
+DELETE FROM public.user_roles WHERE user_id = pg_temp.id('former_a');
+SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id IN (pg_temp.id('advisor_no_firm'), pg_temp.id('former_a'))), 0::bigint, 'a person with no current membership and no platform role keeps no mailbox');
 \echo console_per_firm: ok

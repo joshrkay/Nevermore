@@ -1,7 +1,7 @@
 // The SQL tests build their database by loading migrations with psql `\i` lines. A list in the wrong order builds a
 // database no deployment has (a migration that replaces a function runs before the one that dropped it), so a test can
 // pass on a schema that is never real. This reads the test files' text and reports lists that are not in filename order,
-// and lists that reach the newest migration yet leave one out.
+// and lists that reach the newest migration (a whole-suite list) yet leave any one out, the first included.
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -24,7 +24,7 @@ export function loadListProblems(name: string, loaded: string[], allMigrations: 
   }
   const newest = [...allMigrations].sort().at(-1);
   if (newest && loaded.includes(newest)) {
-    for (const file of allMigrations.filter((f) => f >= loaded[0]).sort()) {
+    for (const file of [...allMigrations].sort()) {
       if (!loaded.includes(file)) problems.push(`${name} reaches ${newest} but does not load ${file}`);
     }
   }

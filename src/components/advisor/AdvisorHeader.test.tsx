@@ -52,6 +52,15 @@ describe("the advisor header's Activity link", () => {
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
   });
 
+  it("is offered to an owner of two firms at the address of one of them, as the real route lets them in there", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), owner(betaFirm)]);
+    renderHeader();
+    expect(await screen.findByRole("link", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Submissions" })).toBeInTheDocument();
+  });
+
   it("is not offered at the address of a firm the owner of another firm does not belong to", async () => {
     firmAddress = { status: "known", address: "beta", name: "Beta" };
     api.fetchMyFirms.mockResolvedValue([owner(alphaFirm)]);
