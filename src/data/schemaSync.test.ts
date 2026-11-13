@@ -37,7 +37,7 @@ import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
-import { ENTRY_KIND_VALUES } from "@/data/firmActivity";
+import { ENTRY_KIND_VALUES, RECORD_TYPE_VALUES } from "@/data/firmActivity";
 import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
 import { TEMPLATE_WORKBOOK_STATUSES } from "@/lib/templateWorkbooks";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
@@ -266,6 +266,10 @@ describe("server and client intake rules agree", () => {
   // The record of who did what (20261116160000): the kinds of entry the table accepts and the page names.
   it("holds the same kinds of entry in a firm's record as the page names", () => {
     expect(quoted(blocks("firm_activity_kinds").join("\n"))).toEqual(ENTRY_KIND_VALUES);
+  });
+
+  it("holds the same kinds of record in a firm's record as the page labels", () => {
+    expect(quoted(blocks("firm_activity_record_types").join("\n"))).toEqual(RECORD_TYPE_VALUES);
   });
 
   // Quote request notes (20261111090000): the kinds the note form offers, and how long a note can be.

@@ -14,7 +14,7 @@ import {
 } from "@/data/peoCompleteness";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import { formatDay } from "@/data/quoteRequests";
-import { documentFile, type QuoteRequestRow } from "@/lib/advisorApi";
+import { documentFile, recordActivity, type QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
 import type { ChamberSubmission } from "@/data/manuscript";
 import BundleDownload from "@/components/BundleDownload";
@@ -141,9 +141,9 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           data, and its own questions, which go to it alone. */}
       <div className="space-y-3 border-t border-border pt-3">
         {application.changedNotice && <p className="text-xs text-muted-foreground">{application.changedNotice}</p>}
-        {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} builtFrom={builtFrom} />}
-        {supplement && <SupplementDownload supplement={supplement} builtFrom={builtFrom} />}
-        <WorkersCompDownload application={application} builtFrom={builtFrom} />
+        {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} builtFrom={builtFrom} onDownloaded={() => void recordActivity("document_downloaded", "submission", bundle.sessionId)} />}
+        {supplement && <SupplementDownload supplement={supplement} builtFrom={builtFrom} onDownloaded={() => void recordActivity("document_downloaded", "submission", bundle.sessionId)} />}
+        <WorkersCompDownload application={application} builtFrom={builtFrom} onDownloaded={() => void recordActivity("document_downloaded", "submission", bundle.sessionId)} />
       </div>
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
@@ -170,7 +170,10 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
               label={c.complete ? "Download bundle" : "Download bundle anyway"}
               primary={c.complete}
               fetchDocument={documentFile}
-              onSaved={() => setAsking(true)}
+              onSaved={() => {
+                void recordActivity("document_downloaded", "submission", bundle.sessionId);
+                setAsking(true);
+              }}
             />
           </div>
         )}

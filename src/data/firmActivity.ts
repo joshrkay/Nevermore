@@ -16,7 +16,7 @@ export const ENTRY_KINDS = [
   { value: "export_made", label: "Exported records" },
   { value: "invitation_sent", label: "Sent an invitation" },
   { value: "member_removed", label: "Removed a member" },
-  { value: "support_access", label: "Nevermore support opened the workspace" },
+  { value: "support_access", label: "Nevermore support opened your firm's console" },
 ] as const;
 
 export const ENTRY_KIND_VALUES: string[] = ENTRY_KINDS.map((k) => k.value);
@@ -24,6 +24,7 @@ export const ENTRY_KIND_VALUES: string[] = ENTRY_KINDS.map((k) => k.value);
 /** What an entry's kind is called; a kind this version doesn't know is shown as the database wrote it. */
 export const kindLabel = (kind: string): string => ENTRY_KINDS.find((k) => k.value === kind)?.label ?? kind;
 
+// Kept equal to the database's list of record types by src/data/schemaSync.test.ts.
 const RECORD_LABELS: Record<string, string> = {
   submission: "Submission",
   document: "Document",
@@ -32,5 +33,7 @@ const RECORD_LABELS: Record<string, string> = {
   membership: "Membership",
   firm: "Firm",
 };
+
+export const RECORD_TYPE_VALUES: string[] = Object.keys(RECORD_LABELS);
 
 export const recordLabel = (recordType: string): string => RECORD_LABELS[recordType] ?? recordType;

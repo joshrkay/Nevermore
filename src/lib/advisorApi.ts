@@ -784,7 +784,7 @@ export async function reviewField(
  */
 export async function recordActivity(
   kind: "submission_viewed" | "document_downloaded" | "packet_downloaded",
-  recordType: "submission" | "document" | "manuscript",
+  recordType: "submission" | "document" | "manuscript" | "quote_request",
   recordId: string,
 ): Promise<void> {
   try {

@@ -69,7 +69,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },
       });
       const pdf = buildManuscriptPdf(manuscript, { revealSensitive });
-      await saveManuscriptVersion({
+      const saved = await saveManuscriptVersion({
         sessionId: detail.id,
         version,
         pdf: pdf.blob,
@@ -89,6 +89,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
           certified_signed_at: detail.submission?.signed_at ?? "",
         }),
       );
+      void recordActivity("packet_downloaded", "manuscript", saved.id);
       toast.success(`Packet v${version} saved.`);
       onChanged();
     } catch (err) {
@@ -108,8 +109,9 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
+      const url = await manuscriptUrl(v, versionFilename(detail.data.company_name, v));
       void recordActivity("packet_downloaded", "manuscript", v.id);
-      window.location.assign(await manuscriptUrl(v, versionFilename(detail.data.company_name, v)));
+      window.location.assign(url);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -183,7 +185,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
               corrections, the notes or a PEO's own answers. */}
           {answersJson && (
             <div className="border-t border-border pt-3">
-              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} />
+              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} onDownloaded={() => void recordActivity("document_downloaded", "submission", detail.id)} />
             </div>
           )}
         </div>

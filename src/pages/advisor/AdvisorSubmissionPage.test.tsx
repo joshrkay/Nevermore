@@ -227,6 +227,14 @@ describe("AdvisorSubmissionPage", () => {
     expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "document", "d1");
   });
 
+  it("records no document opened when its link can't be signed", async () => {
+    api.documentUrl.mockRejectedValue(new Error("Couldn't open that file."));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Open census.xlsx" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't open that file."));
+    expect(api.recordActivity).not.toHaveBeenCalledWith("document_downloaded", "document", "d1");
+  });
+
   it("shows every captured field with its source, the transcript and the documents", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
@@ -739,7 +747,7 @@ describe("AdvisorSubmissionPage", () => {
     );
     renderPage();
     expect(await screen.findByText(/The review has changed since v1/)).toBeInTheDocument();
-    api.saveManuscriptVersion.mockResolvedValue({});
+    api.saveManuscriptVersion.mockResolvedValue({ id: "v2" });
     fireEvent.click(screen.getByLabelText("Include full dates of birth"));
     fireEvent.click(screen.getByRole("button", { name: /Regenerate as new version/ }));
 
@@ -763,6 +771,8 @@ describe("AdvisorSubmissionPage", () => {
     });
     expect(manuscript.signer?.name).toBe("Jo Doe");
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
+    // The packet downloaded as it is generated is the new version, recorded against its own id.
+    expect(api.recordActivity).toHaveBeenCalledWith("packet_downloaded", "manuscript", "v2");
   });
 
   it("generates the packet with its eligibility checks against the chosen PEO's profile in the database", async () => {
@@ -892,6 +902,20 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));
     expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
     expect(api.recordActivity).toHaveBeenCalledWith("packet_downloaded", "manuscript", "v1");
+  });
+
+  it("records no packet download when its link can't be signed", async () => {
+    const v = {
+      id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
+      certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
+      sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
+    };
+    api.loadSubmission.mockResolvedValue(detail({ versions: [v] }));
+    api.manuscriptUrl.mockRejectedValue(new Error("Couldn't open that file."));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't open that file."));
+    expect(api.recordActivity).not.toHaveBeenCalledWith("packet_downloaded", "manuscript", "v1");
   });
 
   it("names a stored version from its own certification, never from the one on record now", async () => {
@@ -1064,6 +1088,7 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(packet).getByText(/From certified version 1\./)).toBeInTheDocument();
     fireEvent.click(within(packet).getByRole("button", { name: "Download the answers as JSON" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-answers-v1.json"));
+    expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
     const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-S1-answers-v1.json")![0] as Blob;
     const json = await blobText(blob);
     const doc = JSON.parse(json);
@@ -1177,6 +1202,8 @@ describe("AdvisorSubmissionPage", () => {
       expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([refused, refused, refused, refused]);
       expect(downloadBlob).not.toHaveBeenCalled();
       expect(buildWorkersCompPdf).not.toHaveBeenCalled();
+      // A refused download is not a download.
+      expect(api.recordActivity).not.toHaveBeenCalledWith("document_downloaded", "submission", "s1");
     });
 
     it("groups every listed PEO with a profile by whether the certified version is complete for it, alphabetical and never ranked", async () => {
@@ -1226,6 +1253,7 @@ describe("AdvisorSubmissionPage", () => {
         { question: "Do employees drive for work?", answer: "Yes" }, { question: "How many vans?", answer: null },
       ] })));
       expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-TriNet.pdf");
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
       // A PEO that asks no questions of its own has no supplement.
       const justworks = within(await panel()).getByRole("heading", { name: "Justworks" }).closest("article")!;
       expect(within(justworks).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
@@ -1423,6 +1451,7 @@ describe("AdvisorSubmissionPage", () => {
       const trinet = within(needs).getByRole("heading", { name: "TriNet" }).closest("article")!;
       fireEvent.click(within(trinet).getByRole("button", { name: "Download Workers' compensation application data" }));
       await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-workers-comp-application-v3.pdf"));
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
       // Built from the version certified, never the answers given since.
       const built = buildWorkersCompPdf.mock.calls.at(-1)![0];
       expect(built.sections.find((s) => s.title === "Prior carriers and loss history")!.entries[0]).toEqual({ label: "Current workers' comp carrier", value: "Sample Mutual" });
@@ -1446,6 +1475,7 @@ describe("AdvisorSubmissionPage", () => {
       expect(trinet).toHaveTextContent("TriNet's layout also asks for: Gender. Fill these in before sending.");
       fireEvent.click(within(trinet).getByRole("button", { name: "Download the census in TriNet's layout" }));
       await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-census-trinet-v3.csv"));
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
       // A PEO whose profile has no census layout gets ours.
       const justworks = within(needs).getByRole("heading", { name: "Justworks" }).closest("article")!;
       expect(justworks).toHaveTextContent("We don't have Justworks's census layout yet, so this is ours: every column is named.");

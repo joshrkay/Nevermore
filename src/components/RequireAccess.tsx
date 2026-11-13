@@ -39,9 +39,9 @@ const RequireAccess = ({ children, check, denied, deniedCode }: RequireAccessPro
     checkRef.current()
       .then(async (ok) => {
         if (ok) return "allowed" as const;
-        // An advisor who signed in with a password is held back until they add or enter a second factor.
+        // A person who signed in with a password is held back until they add or enter a second factor.
         if (await fetchNeedsSecondFactor()) return "second_factor" as const;
-        // A signed-in account that isn't an advisor reaching an advisor page.
+        // A signed-in account the check refuses.
         reportOpsEvent("auth_denied", { code: deniedCode });
         return "denied" as const;
       })

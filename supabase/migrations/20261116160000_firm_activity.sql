@@ -4,14 +4,18 @@
 --   thing, and which record it was about. Never content: no answer, name, email body or file contents, only the kind
 --   and the id of the record. A record id is a plain id (letters, digits, dashes), so free text can't be put in it.
 -- * Nobody updates or deletes a row, an admin included. The one exception is the retention job (90 days, as other
---   operational events: docs/DATA_HANDLING.md), which removes entries past the window and nothing else.
+--   operational events: docs/DATA_HANDLING.md), which removes entries past the window and nothing else. It runs as a
+--   role of its own (firm_activity_pruner) that has no login and can do nothing but read and delete this table.
 -- * record_firm_activity() is the one function other code calls to write an entry. It works out the firm from the
 --   record and the actor from the caller's own sign-in, so a caller can't name a different one. Database functions and
 --   triggers call it; a server function calls it as the service, which has no person behind it, and an entry from
 --   there has no actor (the system). Browsers can't call it: they call record_member_activity(), which accepts only the
---   kinds a browser sees happen (a submission opened, a file downloaded) and only for a firm the caller belongs to.
--- * A firm's owners (a current membership with the role owner) read their own firm's record; no one else does, and a
---   platform admin who is not an owner of the firm doesn't (D-16).
+--   pairs of kind and record a browser sees happen (a submission opened, a file of a submission, a document or a
+--   PEO's mail attachment downloaded, a packet downloaded), only for a firm the caller belongs to, and collapses a repeat within 30 seconds.
+--   No other function takes an actor as an argument: nothing can write an entry naming someone else.
+-- * A firm's owners (a current membership with the role owner) read their own firm's record, once they have completed
+--   the second factor (D-19), by the table or by firm_activity_list(); no one else does, and a platform admin who is not
+--   an owner of the firm doesn't (D-16). A firm owner with no platform role is held back for the second factor too.
 -- * Kinds that later stories write (export, invitation, removal, support access) are accepted now so they need no
 --   schema change. Sign-in to a firm's console is accepted too but nothing writes it yet: which firm a sign-in is to is
 --   decided by the firm address (story CRM-P1.3a), so that story calls record_firm_activity('sign_in', 'firm', <id>).
@@ -39,7 +43,11 @@ CREATE TABLE public.firm_activity (
     -- sync:end firm_activity_kinds
   )),
   CONSTRAINT firm_activity_record_check CHECK (
-    record_type IN ('submission', 'document', 'manuscript', 'quote_request', 'membership', 'firm')
+    record_type IN (
+      -- sync:begin firm_activity_record_types
+      'submission', 'document', 'manuscript', 'quote_request', 'membership', 'firm'
+      -- sync:end firm_activity_record_types
+    )
     AND record_id ~ '^[A-Za-z0-9_-]{1,64}$'),
   CONSTRAINT firm_activity_role_check CHECK (role IS NULL OR role IN ('owner', 'lead', 'agent'))
 );
@@ -62,16 +70,25 @@ $$;
 
 REVOKE ALL ON FUNCTION public.firm_activity_retention() FROM PUBLIC, anon, authenticated;
 
--- Nothing changes or deletes a row. Only the retention job's own function, which says so for the one statement it
--- runs, may delete, and only as the table's owner: the API roles never can, whatever they set.
+-- Nothing changes or deletes a row, except the retention role, which only the retention function runs as: it has no
+-- login, no one is a member of it but the migration's own role, and it can do nothing but read and delete this table.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'firm_activity_pruner') THEN
+    CREATE ROLE firm_activity_pruner NOLOGIN NOINHERIT;
+  END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA public TO firm_activity_pruner;
+GRANT EXECUTE ON FUNCTION public.firm_activity_retention() TO firm_activity_pruner;
+
 CREATE FUNCTION public.guard_firm_activity()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF TG_OP = 'DELETE' AND current_setting('eaa.pruning_firm_activity', true) = 'on'
-     AND current_user NOT IN ('anon', 'authenticated', 'service_role') THEN
+  IF TG_OP = 'DELETE' AND current_user = 'firm_activity_pruner' THEN
     RETURN OLD;
   END IF;
   RAISE EXCEPTION 'firm_activity records cannot be changed or deleted' USING ERRCODE = '42501';
@@ -92,9 +109,14 @@ ALTER TABLE public.firm_activity ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.firm_activity FROM PUBLIC, anon, authenticated, service_role;
 -- The service reads it (a later story's alert counts a member's exports) but writes only through record_firm_activity().
 GRANT SELECT ON public.firm_activity TO authenticated, service_role;
+GRANT SELECT, DELETE ON public.firm_activity TO firm_activity_pruner;
 
+-- An owner who signed in with a password and has not done the second factor reads nothing here, by the table or by
+-- the functions below (D-19).
 CREATE POLICY firm_activity_owners_read ON public.firm_activity
-  FOR SELECT TO authenticated USING (public.firm_role(firm_id) = 'owner');
+  FOR SELECT TO authenticated USING (public.firm_role(firm_id) = 'owner' AND public.second_factor_rule_met());
+CREATE POLICY firm_activity_pruner_select ON public.firm_activity FOR SELECT TO firm_activity_pruner USING (true);
+CREATE POLICY firm_activity_pruner_delete ON public.firm_activity FOR DELETE TO firm_activity_pruner USING (true);
 
 -- The firm a record belongs to (and, for a membership, who it is about and in what role). Internal: the writers below
 -- call it. A later story that records against a new kind of record adds it here.
@@ -127,8 +149,25 @@ $$;
 
 REVOKE ALL ON FUNCTION public.firm_activity_resolve(text, text) FROM PUBLIC, anon, authenticated, service_role;
 
--- The only statement that inserts a row: the actor is always the caller's own sign-in (null for the service and for
--- scheduled work). Internal; record_firm_activity and the triggers below call it.
+-- The only statement that inserts a row. Internal. The actor is whoever the caller says here, so only functions in this
+-- file call it, and only with the caller's own sign-in (firm_activity_append) or from a browser report.
+CREATE FUNCTION public.firm_activity_insert(
+  p_actor_id uuid, p_firm_id uuid, p_kind text, p_record_type text, p_record_id text,
+  p_subject_user_id uuid DEFAULT NULL, p_role text DEFAULT NULL)
+RETURNS bigint
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  INSERT INTO public.firm_activity (firm_id, actor_id, kind, record_type, record_id, subject_user_id, role)
+  VALUES (p_firm_id, p_actor_id, p_kind, p_record_type, p_record_id, p_subject_user_id, p_role)
+  RETURNING id
+$$;
+
+REVOKE ALL ON FUNCTION public.firm_activity_insert(uuid, uuid, text, text, text, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Inserts as the caller's own sign-in (null for the service and for scheduled work). Internal; record_firm_activity and
+-- the triggers below call it.
 CREATE FUNCTION public.firm_activity_append(
   p_firm_id uuid, p_kind text, p_record_type text, p_record_id text, p_subject_user_id uuid DEFAULT NULL, p_role text DEFAULT NULL)
 RETURNS bigint
@@ -136,9 +175,7 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  INSERT INTO public.firm_activity (firm_id, actor_id, kind, record_type, record_id, subject_user_id, role)
-  VALUES (p_firm_id, auth.uid(), p_kind, p_record_type, p_record_id, p_subject_user_id, p_role)
-  RETURNING id
+  SELECT public.firm_activity_insert(auth.uid(), p_firm_id, p_kind, p_record_type, p_record_id, p_subject_user_id, p_role)
 $$;
 
 REVOKE ALL ON FUNCTION public.firm_activity_append(uuid, text, text, text, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
@@ -165,9 +202,13 @@ $$;
 REVOKE ALL ON FUNCTION public.record_firm_activity(text, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_firm_activity(text, text, text) TO service_role;
 
--- What a browser may report: a submission opened or a file downloaded, about a record of a firm the caller belongs to.
+-- What a browser may report.
+-- A browser reports only what it alone sees happen, and only the pairs that can happen: a submission opened, a file of
+-- a submission, a document or a mail attachment (against its quote request) downloaded, a packet downloaded. Any other pair would be a false entry. It hands back
+-- nothing (ids are numbered across every firm, so one would let a caller count other firms' entries), and the same
+-- report from the same person within half a minute is one entry, so a loop can't flood the record.
 CREATE FUNCTION public.record_member_activity(p_kind text, p_record_type text, p_record_id text)
-RETURNS bigint
+RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -175,17 +216,25 @@ AS $$
 DECLARE
   r record;
 BEGIN
-  IF auth.uid() IS NULL OR COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) THEN
+  IF NOT public.is_signed_in_person() OR NOT public.second_factor_rule_met() THEN
     RAISE EXCEPTION 'Sign in to continue' USING ERRCODE = '42501';
   END IF;
-  IF p_kind NOT IN ('submission_viewed', 'document_downloaded', 'packet_downloaded') THEN
-    RAISE EXCEPTION 'A browser can''t record that kind of entry' USING ERRCODE = '42501';
+  IF (p_kind, p_record_type) NOT IN (
+       ('submission_viewed', 'submission'), ('document_downloaded', 'document'),
+       ('document_downloaded', 'submission'), ('document_downloaded', 'quote_request'), ('packet_downloaded', 'manuscript')) THEN
+    RAISE EXCEPTION 'A browser can''t record that' USING ERRCODE = '42501';
   END IF;
   SELECT * INTO r FROM public.firm_activity_resolve(p_record_type, p_record_id);
   IF NOT FOUND OR NOT public.is_firm_member(r.firm_id) THEN
     RAISE EXCEPTION 'You are not a member of that record''s firm' USING ERRCODE = '42501';
   END IF;
-  RETURN public.record_firm_activity(p_kind, p_record_type, p_record_id);
+  IF EXISTS (
+       SELECT 1 FROM public.firm_activity a
+       WHERE a.firm_id = r.firm_id AND a.actor_id = auth.uid() AND a.kind = p_kind
+         AND a.record_type = p_record_type AND a.record_id = p_record_id AND a.at > now() - interval '30 seconds') THEN
+    RETURN;
+  END IF;
+  PERFORM public.firm_activity_insert(auth.uid(), r.firm_id, p_kind, p_record_type, p_record_id);
 END;
 $$;
 
@@ -209,6 +258,11 @@ DECLARE
 BEGIN
   m := CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
   IF TG_OP = 'UPDATE' AND NEW.valid_until IS NOT DISTINCT FROM OLD.valid_until THEN
+    RETURN NULL;
+  END IF;
+  -- Removing an account removes its memberships, the ones that had already ended too. An ended membership was recorded
+  -- when it ended, so recording it again would make an old change look as if it just happened.
+  IF TG_OP = 'DELETE' AND NOT public.membership_is_current(OLD.valid_from, OLD.valid_until) THEN
     RETURN NULL;
   END IF;
   PERFORM public.firm_activity_append(
@@ -246,11 +300,11 @@ CREATE TRIGGER quote_requests_record_send
 
 -- ---------- Reading ----------
 
--- A page of a firm's record, newest first, for the firm's owners only. Filtered by the person who did it and by kind
--- (null keeps all); a page is at most 100 rows from p_offset. A platform admin who is not an owner of the firm is
--- refused like anyone else: the platform doesn't read a firm's record through this (D-16).
+-- A page of a firm's record, newest first, for the firm's owners only. Paging by offset repeats or skips a row when an entry arrives between two pages. A page now starts after the last
+-- entry the reader saw: the cursor is that entry's time and id, the same two the list is ordered by.
 CREATE FUNCTION public.firm_activity_list(
-  p_firm_id uuid, p_person uuid DEFAULT NULL, p_kind text DEFAULT NULL, p_limit integer DEFAULT 50, p_offset integer DEFAULT 0)
+  p_firm_id uuid, p_person uuid DEFAULT NULL, p_kind text DEFAULT NULL, p_limit integer DEFAULT 50,
+  p_before_at timestamptz DEFAULT NULL, p_before_id bigint DEFAULT NULL)
 RETURNS TABLE (
   id bigint, at timestamptz, actor_id uuid, actor_email text, kind text, record_type text, record_id text,
   subject_user_id uuid, subject_email text, role text)
@@ -260,11 +314,11 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' THEN
+  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' OR NOT public.second_factor_rule_met() THEN
     RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
   END IF;
-  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 OR p_offset IS NULL OR p_offset < 0 THEN
-    RAISE EXCEPTION 'A page is 1 to 100 entries from 0 or later' USING ERRCODE = '22023';
+  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 OR (p_before_at IS NULL) <> (p_before_id IS NULL) THEN
+    RAISE EXCEPTION 'A page is 1 to 100 entries, after an entry given by its time and id together' USING ERRCODE = '22023';
   END IF;
   RETURN QUERY
     SELECT a.id, a.at, a.actor_id, u.email::text, a.kind, a.record_type, a.record_id, a.subject_user_id, su.email::text, a.role
@@ -274,15 +328,39 @@ BEGIN
     WHERE a.firm_id = p_firm_id
       AND (p_person IS NULL OR a.actor_id = p_person)
       AND (p_kind IS NULL OR a.kind = p_kind)
+      AND (p_before_at IS NULL OR (a.at, a.id) < (p_before_at, p_before_id))
     ORDER BY a.at DESC, a.id DESC
-    LIMIT p_limit OFFSET p_offset;
+    LIMIT p_limit;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, bigint) TO authenticated;
 
--- The people who appear as the doer in a firm's record: what the person filter offers. For the firm's owners only.
+-- The firms the caller currently owns, to offer a choice when there is more than one. A page says which firm it wants
+-- (the firm address will say it once firms have addresses: story CRM-P1.3a) and firm_activity_list checks the caller
+-- currently owns that one. A platform admin who is not an owner is refused like anyone else (D-16).
+CREATE FUNCTION public.my_owner_firms()
+RETURNS TABLE (firm_id uuid, name text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT f.id, f.name
+  FROM public.firm_memberships m
+  JOIN public.firms f ON f.id = m.firm_id
+  WHERE public.is_signed_in_person()
+    AND public.second_factor_rule_met()
+    AND m.user_id = auth.uid() AND m.role = 'owner'
+    AND public.membership_is_current(m.valid_from, m.valid_until)
+  ORDER BY f.name, f.id
+$$;
+
+REVOKE ALL ON FUNCTION public.my_owner_firms() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.my_owner_firms() TO authenticated;
+
+-- The people who appear as the doer in a firm's record: what the person filter offers, read under the same rule as the list.
 CREATE FUNCTION public.firm_activity_people(p_firm_id uuid)
 RETURNS TABLE (user_id uuid, email text)
 LANGUAGE plpgsql
@@ -291,7 +369,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' THEN
+  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' OR NOT public.second_factor_rule_met() THEN
     RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
@@ -305,31 +383,11 @@ $$;
 REVOKE ALL ON FUNCTION public.firm_activity_people(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.firm_activity_people(uuid) TO authenticated;
 
--- The firm whose record the caller reads: one they currently own, or null. For the page that lists it.
-CREATE FUNCTION public.my_owner_firm()
-RETURNS uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-  SELECT m.firm_id
-  FROM public.firm_memberships m
-  WHERE auth.uid() IS NOT NULL
-    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
-    AND m.user_id = auth.uid() AND m.role = 'owner'
-    AND public.membership_is_current(m.valid_from, m.valid_until)
-  ORDER BY m.valid_from, m.id
-  LIMIT 1
-$$;
-
-REVOKE ALL ON FUNCTION public.my_owner_firm() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.my_owner_firm() TO authenticated;
 
 -- ---------- Retention ----------
 
--- Removes entries past the window and reports how many. The one statement that may delete a row: it says so for itself
--- and no one else can (guard_firm_activity also refuses the API roles whatever they say). Scheduled daily below.
+-- Removes entries past the window and reports how many. It runs as the retention role (SECURITY DEFINER runs as its
+-- owner), the only role guard_firm_activity lets delete. Scheduled daily below.
 CREATE FUNCTION public.prune_firm_activity()
 RETURNS integer
 LANGUAGE plpgsql
@@ -339,14 +397,23 @@ AS $$
 DECLARE
   removed integer;
 BEGIN
-  PERFORM set_config('eaa.pruning_firm_activity', 'on', true);
   DELETE FROM public.firm_activity WHERE at < now() - public.firm_activity_retention();
   GET DIAGNOSTICS removed = ROW_COUNT;
-  PERFORM set_config('eaa.pruning_firm_activity', '', true);
   RETURN removed;
 END;
 $$;
 
+-- Handing a function to a new owner needs the right to become that role, and, for a role that is not a superuser (as on
+-- hosted Supabase), CREATE on the function's schema for the new owner. Both are given only for this statement.
+DO $$
+BEGIN
+  IF NOT pg_has_role(current_user, 'firm_activity_pruner', 'USAGE') THEN
+    EXECUTE format('GRANT firm_activity_pruner TO %I', current_user);
+  END IF;
+END $$;
+GRANT CREATE ON SCHEMA public TO firm_activity_pruner;
+ALTER FUNCTION public.prune_firm_activity() OWNER TO firm_activity_pruner;
+REVOKE CREATE ON SCHEMA public FROM firm_activity_pruner;
 REVOKE ALL ON FUNCTION public.prune_firm_activity() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.prune_firm_activity() TO service_role;
 
@@ -371,3 +438,23 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
   RAISE WARNING 'firm activity: could not schedule prune-firm-activity (%); run public.prune_firm_activity() another way', SQLERRM;
 END $$;
+
+-- ---------- A firm's owner is held back for the second factor too ----------
+-- A password sign-in that has not completed a second factor is held back (D-19) for a platform role, and now for a
+-- current owner of a firm as well, who may have no platform role: the same sign-in screens then send them to set one up.
+-- Anyone who holds neither a role nor a current ownership is never asked.
+CREATE OR REPLACE FUNCTION public.advisor_needs_second_factor()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.is_signed_in_person()
+    AND NOT public.second_factor_rule_met()
+    AND (
+      EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid())
+      OR EXISTS (SELECT 1 FROM public.firm_memberships m
+                 WHERE m.user_id = auth.uid() AND m.role = 'owner' AND public.membership_is_current(m.valid_from, m.valid_until))
+    );
+$$;

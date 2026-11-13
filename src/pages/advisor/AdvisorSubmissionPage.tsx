@@ -345,7 +345,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
         own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
-        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} />
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} onDownloaded={() => void recordActivity("document_downloaded", "submission", detail.id)} />
       </div>
     )}
     {detail.data.census.length === 0 ? (

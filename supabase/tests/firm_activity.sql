@@ -99,9 +99,9 @@
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
+\i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_activity.sql
-\i supabase/migrations/20261116160001_firm_activity_hardening.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -340,6 +340,15 @@ SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)',
   '42501', 'a packet download of a document');
 SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'document', pg_temp.id('doc_a')),
   '42501', 'a view of a document');
+-- A file attached to a PEO's mail is a document download against the quote request it came in on.
+SELECT public.record_member_activity('document_downloaded', 'quote_request', current_setting('test.quote_request'));
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'packet_downloaded', 'quote_request', current_setting('test.quote_request')),
+  '42501', 'a packet download of a quote request');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'quote_request'
+  AND record_id = current_setting('test.quote_request') AND actor_id = pg_temp.id('agent_a') AND firm_id = pg_temp.id('firm_a')), 1::bigint,
+  'a mail attachment opened is recorded against its quote request, in its firm');
+SELECT pg_temp.as_user('agent_a');
 -- A download of the submission's own files (census, answers, applications, bundle) is a document download of the submission.
 SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
 SELECT pg_temp.as_owner();
@@ -352,6 +361,17 @@ SELECT public.record_member_activity('document_downloaded', 'submission', pg_tem
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'submission'
   AND actor_id = pg_temp.id('agent_a')), 1::bigint, 'reporting the same download again within moments adds nothing');
+-- Past the half minute the same report is a new entry: an owner must see a member open the same file a second time.
+SELECT pg_temp.as_owner();
+ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
+UPDATE public.firm_activity SET at = now() - interval '31 seconds' WHERE kind = 'document_downloaded' AND record_type = 'submission'
+  AND actor_id = pg_temp.id('agent_a');
+ALTER TABLE public.firm_activity ENABLE TRIGGER firm_activity_append_only;
+SELECT pg_temp.as_user('agent_a');
+SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'document_downloaded' AND record_type = 'submission'
+  AND actor_id = pg_temp.id('agent_a')), 2::bigint, 'reporting the same download again after the half minute is a second entry');
 SELECT pg_temp.as_user('lead_a');
 SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
 SELECT pg_temp.as_owner();
@@ -361,32 +381,10 @@ SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'docum
 SELECT pg_temp.is((SELECT prorettype::regtype::text FROM pg_proc WHERE proname = 'record_member_activity'), 'void',
   'the browser function hands back nothing, so ids cannot be used to count other firms'' entries');
 
--- A server function acting for a signed-in member records that member as the actor, never a person it names who isn't one.
-SELECT pg_temp.as_service();
-SELECT public.record_firm_activity_as(pg_temp.id('lead_a'), 'export_made', 'firm', pg_temp.id('firm_a')::text);
-SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('agent_b'), 'export_made', 'firm', pg_temp.id('firm_a')),
-  '42501', 'a server function naming someone who is not a member of the record''s firm');
-SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('prospect_b'), 'export_made', 'firm', pg_temp.id('firm_a')),
-  '42501', 'a server function naming a guest');
-SELECT pg_temp.as_owner();
-SELECT pg_temp.new_user('guest_member');
-UPDATE auth.users SET is_anonymous = true WHERE id = pg_temp.id('guest_member');
-INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_a'), pg_temp.id('guest_member'), 'agent');
-SELECT pg_temp.new_user('ended_a');
-INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
-VALUES (pg_temp.id('firm_a'), pg_temp.id('ended_a'), 'agent', now() - interval '2 days', now() - interval '1 day');
-SELECT pg_temp.as_service();
-SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('guest_member'), 'export_made', 'firm', pg_temp.id('firm_a')),
-  '42501', 'a server function naming a guest account that holds a membership');
-SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('ended_a'), 'export_made', 'firm', pg_temp.id('firm_a')),
-  '42501', 'a server function naming someone whose membership has ended');
-SELECT pg_temp.as_owner();
-SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = pg_temp.id('firm_a')
-  AND actor_id = pg_temp.id('lead_a')), 1::bigint, 'a server-path entry carries the member as the actor');
-SELECT pg_temp.as_user('owner_a');
-SELECT pg_temp.expect(format('SELECT public.record_firm_activity_as(%L, %L, %L, %L)', pg_temp.id('lead_a'), 'export_made', 'firm', pg_temp.id('firm_a')),
-  '42501', 'a browser naming an actor through the server function');
-SELECT pg_temp.as_owner();
+-- The only writer other code calls works out the actor itself: there is no second writer that is handed one.
+SELECT pg_temp.is(to_regprocedure('public.record_firm_activity_as(uuid, text, text, text)') IS NULL, true, 'no writer takes an actor from a server function');
+SELECT pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.proname LIKE 'record\_%activity%' AND p.pronamespace = 'public'::regnamespace), 3::bigint,
+  'the writers are record_firm_activity, record_member_activity and the send trigger function');
 
 -- The service writes any kind and is no one: its entry has no actor, and it can't name one.
 SELECT pg_temp.as_service();
@@ -556,10 +554,12 @@ SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_t
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_people(%L)', pg_temp.id('firm_a')), '42501', 'an owner holding only a password sign-in reading who is in it');
 SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_a')),
   '42501', 'an owner holding only a password sign-in reporting a view');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity), 0::bigint, 'an owner holding only a password sign-in reads no row of the table either');
 SELECT pg_temp.is(public.advisor_needs_second_factor(), true, 'an owner with no platform role is held back for the second factor');
 SELECT pg_temp.as_password_user('owner_ab', 'aal2');
 SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 2::bigint, 'with the second factor done the owner is told both firms');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_a'))) > 0, true, 'and reads the record');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity) > 0, true, 'and reads the table');
 SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'and is no longer held back');
 SELECT pg_temp.as_password_user('prospect_a', 'aal1');
 SELECT pg_temp.is(public.advisor_needs_second_factor(), false, 'someone who belongs to no firm and has no role is never asked');

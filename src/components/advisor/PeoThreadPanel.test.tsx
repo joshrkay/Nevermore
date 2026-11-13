@@ -6,7 +6,7 @@ import type {
 
 const toast = { success: vi.fn(), error: vi.fn() };
 vi.mock("sonner", () => ({ toast }));
-const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn() };
+const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
 
 const { default: PeoThreadPanel } = await import("./PeoThreadPanel");
@@ -250,6 +250,8 @@ describe("PeoThreadPanel", () => {
       fireEvent.click(within(items[0]).getByRole("button", { name: "Open" }));
       await waitFor(() => expect(assign).toHaveBeenCalledWith("https://files.example/signed"));
       expect(api.mailAttachmentUrl).toHaveBeenCalledWith(expect.objectContaining({ id: 1, storage_path: "s1/1/1-proposal.pdf" }));
+      // The firm's record names the quote request the file came in on, once the link is in hand.
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "quote_request", "7");
     });
 
     it("says so when a file can't be opened", async () => {
@@ -257,6 +259,7 @@ describe("PeoThreadPanel", () => {
       const thread = open({}, { attachments: [attachment()] });
       fireEvent.click(thread.getByRole("button", { name: "Open" }));
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't open that file."));
+      expect(api.recordActivity).not.toHaveBeenCalled();
     });
   });
 
