@@ -6,7 +6,7 @@ Two checks change, and one deliberately does not.
 
 - `require_advisor()`, the first line of every console function, now also passes a current member of a firm (past the second factor, D-19). Each of those functions already filters by the row's firm (CRM-P2.1b), so a member with no platform role is let in and sees only their own firm's rows.
 - `advisor_needs_second_factor()` is also owed by a current member with no platform role, so the redirect to the second factor reaches them as it reaches a role holder.
-- `is_advisor()` is **not** widened. It is what the PEO catalogue, its contacts and its census templates are read through, and what the two referral-partner functions ask until CRM-P2.1c scopes them. Widening it would give the owner of a firm that is still waiting for approval a read of every PEO's contacts. Those stay with the platform role, and the isolation matrix proves a member with no role reads none of them.
+- `is_advisor()` is **not** widened. It is what the PEO catalogue, its contacts and its census templates are read through, . Widening it would give the owner of a firm that is still waiting for approval a read of every PEO's contacts. Those stay with the platform role, and the isolation matrix proves a member with no role reads none of them.
 
 The screens ask `my_firms()` (the firms the caller currently belongs to and their role in each) and not a role, and a platform admin who is not a member reaches only the platform's pages.
 
@@ -18,6 +18,9 @@ The screens ask `my_firms()` (the firms the caller currently belongs to and thei
 
 ## Consequences
 
-- A member with no platform role cannot read the PEO catalogue, so the PEOs page and the PEO columns of a submission fall back to what a prospect sees until a later story decides whether a firm's members read the catalogue. That decision is the founder's, not this story's.
-- Referral partners stay with the platform role until CRM-P2.1c gives them a firm.
+- A member with no platform role cannot read the PEO tables, so the PEOs page loads the prospect-safe catalogue through `peo_catalog()` (ADR 0013 of the PEO catalogue): the version in use of each PEO, no draft, history or contact. The table-backed directory and the editor stay for the platform roles. The PEO columns of a submission still read what a prospect sees.
+- Referral partners are a firm's own since CRM-P2.1c (20261116200000): a member with no platform role lists, adds and edits their firm's partners through `require_advisor()` and nothing else. The partners page's choice of which firm it acts for is CRM-P2.1c's follow-up.
 - A person who belongs to several firms is kept out of the console for now: the database answers for every firm they belong to, so the console would show the firms together. The workspace shell (Epic 2) is where one firm at a time is chosen.
+
+- A broker's mailbox is a current member's: `mailbox_store()` asks for a current membership and no longer for a platform role, and the mailbox function asks `my_firms()` (membership and second factor) rather than `is_advisor()`. Deleting a stored mailbox when the person's last membership ends is CRM-P1.5.
+- Owner access is the caller's role at the console's current firm (`currentFirm()` in `src/lib/currentFirm.ts`, the same rule as the member guard), not ownership of any firm: the guard, the Activity link and the Activity page agree, and the Activity page offers no firm selector at a firm's address.

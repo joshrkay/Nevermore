@@ -370,8 +370,12 @@ The advisory team's operating workflow: every submission with its pipeline stage
 _Avoid_: CRM, admin queue
 
 **Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
-The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner, for the firm's record of who did what), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
+The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
 _Avoid_: advisor guard, role check
+
+**Current firm** (code: `currentFirm()`, `src/lib/currentFirm.ts`):
+The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs; on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
+_Avoid_: active firm, selected firm
 
 **Platform page** (code: `RequirePlatformAdmin`):
 A page that is platform-wide and not a firm's: the firms waiting for approval, who gets the advisor role by organisation, held mail. Opened by a platform admin and by no one else, a member of a firm included; and opening one is no way into a firm's console (D-16).
