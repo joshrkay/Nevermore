@@ -105,6 +105,7 @@
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116190001_invitation_review_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -334,7 +335,7 @@ BEGIN
   PERFORM pg_temp.new_user('newcomer2');
   PERFORM pg_temp.as_user('newcomer2');
   PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), false, 'before accepting, not a member');
-  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('join-token'));
+  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('join-token'), 'acme-brokers');
   PERFORM pg_temp.is(r.firm_address, 'acme-brokers', 'accepting answers the firm''s address');
   PERFORM pg_temp.is(r.role, 'lead', 'and the role');
   PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), true, 'the person is a member at the firm''s address at once');
@@ -377,12 +378,12 @@ DO $$
 DECLARE acme uuid := pg_temp.id('acme'); with_account text; without_account text; before_members bigint;
 BEGIN
   PERFORM pg_temp.as_user('newcomer2');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('join-token'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('join-token'), 'acme-brokers')),
     'PT410: This invitation has already been used', 'the same link used again by the same person says it was used');
   PERFORM pg_temp.as_user('other_person');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('join-token'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('join-token'), 'acme-brokers')),
     'PT410: This invitation has already been used', 'and by anyone else');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('never-made'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('never-made'), 'acme-brokers')),
     'PT404: This invitation link is not valid', 'a token nobody made is not valid');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE firm_id = acme AND user_id = pg_temp.id('other_person') AND valid_until IS NULL), 0::bigint, 'and no one else became a member');
@@ -396,8 +397,8 @@ BEGIN
     WHERE token_hash IN (pg_temp.hash_of('expiring-one'), pg_temp.hash_of('expiring-two'));
   before_members := (SELECT count(*) FROM public.firm_memberships);
   PERFORM pg_temp.as_user('other_person');
-  with_account := pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('expiring-one')));
-  without_account := pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('expiring-two')));
+  with_account := pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('expiring-one'), 'acme-brokers'));
+  without_account := pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('expiring-two'), 'acme-brokers'));
   PERFORM pg_temp.is(with_account, 'PT410: This invitation has expired', 'an expired link says so');
   PERFORM pg_temp.is(without_account, with_account, 'in the same words whether or not the invited email has an account');
   RESET ROLE;
@@ -420,28 +421,28 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.is((SELECT email FROM public.firm_invitations WHERE token_hash = pg_temp.hash_of('for-other')), 'other_person@example.test', 'the invited email is stored in lower case');
   PERFORM pg_temp.as_user('nobody');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('for-other'), 'acme-brokers')),
     'PT403: This invitation was sent to a different email address than the one you are signed in with', 'a different signed-in email is refused with a clear message');
   PERFORM pg_temp.as_user('zenith_owner');
-  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))), 'PT403', 'an owner of another firm is just a different email');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('for-other'), 'acme-brokers')), 'PT403', 'an owner of another firm is just a different email');
   PERFORM pg_temp.as_user('guest_visitor', true);
-  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))), '42501', 'a guest session may not accept');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('for-other'), 'acme-brokers')), '42501', 'a guest session may not accept');
   -- A verified account with the right email, presenting a guest token (as the advisor behind a guest token is treated elsewhere).
   PERFORM pg_temp.as_user('other_person', true);
-  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))), '42501', 'nor may a verified account presenting a guest token');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('for-other'), 'acme-brokers')), '42501', 'nor may a verified account presenting a guest token');
   PERFORM pg_temp.as_anon();
-  PERFORM pg_temp.is(has_function_privilege('anon', 'public.accept_invitation(text)', 'EXECUTE'), false, 'a signed-out caller holds no right to');
+  PERFORM pg_temp.is(has_function_privilege('anon', 'public.accept_invitation(text, text)', 'EXECUTE'), false, 'a signed-out caller holds no right to');
   RESET ROLE;
   -- An account that holds the invited email but never verified it.
   UPDATE auth.users SET email_confirmed_at = NULL WHERE id = pg_temp.id('other_person');
   PERFORM pg_temp.as_user('other_person');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('for-other'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('for-other'), 'acme-brokers')),
     '42501: Sign in with a verified email to accept an invitation', 'an account whose email is not verified may not, even with the invited email');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT status FROM public.firm_invitations WHERE token_hash = pg_temp.hash_of('for-other')), 'pending', 'none of the refused attempts used the link up');
   UPDATE auth.users SET email_confirmed_at = now() WHERE id = pg_temp.id('other_person');
   PERFORM pg_temp.as_user('other_person');
-  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('for-other'));
+  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('for-other'), 'acme-brokers');
   PERFORM pg_temp.is(r.firm_address, 'acme-brokers', 'the right person, verified, still can accept it afterwards, whatever the capitals of the email');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE user_id = pg_temp.id('other_person') AND firm_id = zenith), 0::bigint, 'and only the firm that invited them');
@@ -461,7 +462,7 @@ BEGIN
   PERFORM pg_temp.new_user('dual');
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, pg_temp.id('dual'), 'agent');
   PERFORM pg_temp.as_user('dual');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('dual-token'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('dual-token'), 'acme-brokers')),
     'PT409: You are already a member of this firm', 'an existing current member is told so');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE firm_id = acme AND user_id = pg_temp.id('dual')), 1::bigint, 'and gets no second membership');
@@ -531,7 +532,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT e.actor FROM public.test_firm_events e WHERE e.kind = 'member_invitation_cancelled' AND (e.detail ->> 'invitation_id')::uuid = inv), pg_temp.id('acme_owner'), 'the withdrawal is recorded with who');
   PERFORM pg_temp.is((SELECT e.detail ->> 'role' FROM public.test_firm_events e WHERE e.kind = 'member_invitation_cancelled' AND (e.detail ->> 'invitation_id')::uuid = inv), 'agent', 'and the role');
   PERFORM pg_temp.as_user('dual');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('dual-token'))), 'PT410: This invitation was withdrawn', 'a withdrawn link says so and opens nothing');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('dual-token'), 'acme-brokers')), 'PT410: This invitation was withdrawn', 'a withdrawn link says so and opens nothing');
   PERFORM pg_temp.as_user('acme_owner');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.cancel_invitation(%L)', inv)), 'PT410: This invitation has already been used or withdrawn', 'withdrawing twice is told it is done');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.cancel_invitation(%L)', used)), 'PT410: This invitation has already been used or withdrawn', 'and so is withdrawing one already used');
@@ -584,8 +585,8 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.new_user('no-account-yet');
   PERFORM pg_temp.as_user('no-account-yet');
-  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L)', pg_temp.hash_of('expiring-two'))), 'PT404: This invitation link is not valid', 'the old link no longer works');
-  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('resent-token'));
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('expiring-two'), 'acme-brokers')), 'PT404: This invitation link is not valid', 'the old link no longer works');
+  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('resent-token'), 'acme-brokers');
   PERFORM pg_temp.is(r.role, 'agent', 'the new link does');
   PERFORM pg_temp.as_user('acme_owner');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.resend_invitation(%L, %L)', inv, pg_temp.hash_of('after-use'))), 'PT410: This invitation has already been used or withdrawn', 'a used invitation is not resent');
@@ -599,37 +600,74 @@ END $$;
 
 -- ---------- the outcome of sending the email ----------
 -- Break caught: the outcome is recordable by a signed-in person (an owner could mark an invitation as sent, or write what they
--- like into the error); a failure is not shown to the owner; a successful send keeps the earlier error; a long error is kept.
+-- like into the error); a failure is not shown to the owner; a successful send keeps the earlier error; a long error is kept;
+-- a result that is not sent, failed or unknown is kept; an outcome of "unknown" (the mail provider may have accepted it) is
+-- shown as a plain failure or as a success; or a result is recorded against a link that is no longer the current one: two
+-- overlapping resends finishing out of order mark the current link delivered when its email failed, or the reverse.
 DO $$
-DECLARE acme uuid := pg_temp.id('acme'); inv uuid; who text;
+DECLARE acme uuid := pg_temp.id('acme'); inv uuid; who text; h text := pg_temp.hash_of('raw-secret-token'); h2 text := pg_temp.hash_of('second-generation');
+  p record;
 BEGIN
   RESET ROLE;
   SELECT id INTO inv FROM public.firm_invitations WHERE email = 'tokenless@example.test';
   FOREACH who IN ARRAY ARRAY['acme_owner', 'zenith_owner', 'nobody'] LOOP
     PERFORM pg_temp.as_user(who);
-    PERFORM pg_temp.is(has_function_privilege('authenticated', 'public.record_invitation_delivery(uuid, boolean, text)', 'EXECUTE'), false, 'signed-in people hold no right to record a delivery');
-    PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.record_invitation_delivery(%L, true, NULL)', inv)), '42501', who || ' may not record a delivery');
+    PERFORM pg_temp.is(has_function_privilege('authenticated', 'public.record_invitation_delivery(uuid, text, text, text)', 'EXECUTE'), false, 'signed-in people hold no right to record a delivery');
+    PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.record_invitation_delivery(%L, %L, %L, NULL)', inv, h, 'sent')), '42501', who || ' may not record a delivery');
   END LOOP;
   PERFORM pg_temp.as_anon();
-  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.record_invitation_delivery(%L, true, NULL)', inv)), '42501', 'nor may a signed-out caller');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.record_invitation_delivery(%L, %L, %L, NULL)', inv, h, 'sent')), '42501', 'nor may a signed-out caller');
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', false);
   SET LOCAL ROLE service_role;
-  PERFORM public.record_invitation_delivery(inv, false, 'provider_error');
+  PERFORM public.record_invitation_delivery(inv, h, 'failed', 'provider_error');
   PERFORM pg_temp.as_user('acme_owner');
-  PERFORM pg_temp.is((SELECT p.email_error FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), 'provider_error', 'a failed send shows the owner a short kind');
-  PERFORM pg_temp.is((SELECT p.email_sent_at IS NULL FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), true, 'and no time sent');
+  SELECT * INTO p FROM public.firm_pending_invitations(acme) x WHERE x.invitation_id = inv;
+  PERFORM pg_temp.is(p.email_error, 'provider_error', 'a failed send shows the owner a short kind');
+  PERFORM pg_temp.is(p.email_sent_at IS NULL, true, 'and no time sent');
+  PERFORM pg_temp.is(p.email_outcome, 'failed', 'and that it failed');
   RESET ROLE;
   SET LOCAL ROLE service_role;
-  PERFORM public.record_invitation_delivery(inv, true, 'ignored');
+  PERFORM public.record_invitation_delivery(inv, h, 'sent', 'ignored');
   PERFORM pg_temp.as_user('acme_owner');
-  PERFORM pg_temp.is((SELECT p.email_sent_at IS NOT NULL AND p.email_error IS NULL FROM public.firm_pending_invitations(acme) p WHERE p.invitation_id = inv), true, 'a good send shows the time and clears the error');
+  SELECT * INTO p FROM public.firm_pending_invitations(acme) x WHERE x.invitation_id = inv;
+  PERFORM pg_temp.is(p.email_sent_at IS NOT NULL AND p.email_error IS NULL AND p.email_outcome = 'sent', true, 'a good send shows the time and clears the error');
   RESET ROLE;
   SET LOCAL ROLE service_role;
-  PERFORM public.record_invitation_delivery(inv, false, repeat('x', 200));
+  PERFORM public.record_invitation_delivery(inv, h, 'failed', repeat('x', 200));
   RESET ROLE;
   PERFORM pg_temp.is((SELECT char_length(email_error) FROM public.firm_invitations WHERE id = inv), 40, 'an error longer than a short kind is cut');
   PERFORM pg_temp.is((SELECT email_sent_at IS NULL FROM public.firm_invitations WHERE id = inv), true, 'and a failure after a send takes the time back: the email is not known to have gone');
+  SET LOCAL ROLE service_role;
+  PERFORM public.record_invitation_delivery(inv, h, 'unknown', 'timeout');
+  PERFORM pg_temp.as_user('acme_owner');
+  SELECT * INTO p FROM public.firm_pending_invitations(acme) x WHERE x.invitation_id = inv;
+  PERFORM pg_temp.is(p.email_outcome, 'unknown', 'a send the provider may have accepted is shown as unknown, not as failed or sent');
+  PERFORM pg_temp.is(p.email_sent_at IS NULL, true, 'with no time sent');
+  PERFORM pg_temp.is(p.email_error, 'timeout', 'and the kind of trouble');
+  RESET ROLE;
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.record_invitation_delivery(%L, %L, %L, NULL)', inv, h, 'delivered')), '23514', 'any other outcome is refused');
+  -- Generations: a resend makes a new link; the result of the earlier send is then not the current link's.
+  RESET ROLE;
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.resend_invitation(inv, h2);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT email_outcome IS NULL AND email_sent_at IS NULL AND email_error IS NULL FROM public.firm_invitations WHERE id = inv), true, 'a resend starts with nothing recorded');
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(public.record_invitation_delivery(inv, h, 'sent', NULL), false, 'a result for the replaced link is not recorded');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT email_outcome IS NULL FROM public.firm_invitations WHERE id = inv), true, 'so a late success of the old link does not mark the new one delivered');
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(public.record_invitation_delivery(inv, h2, 'failed', 'network'), true, 'the current link''s result is recorded');
+  PERFORM pg_temp.is(public.record_invitation_delivery(inv, h, 'sent', NULL), false, 'and a late success of the old link no longer hides it');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT email_outcome FROM public.firm_invitations WHERE id = inv), 'failed', 'the new link stays failed');
+  SET LOCAL ROLE service_role;
+  PERFORM public.record_invitation_delivery(inv, h2, 'sent', NULL);
+  PERFORM pg_temp.is(public.record_invitation_delivery(inv, h, 'failed', 'network'), false, 'a late failure of the old link does not undo the new one''s success');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT email_outcome FROM public.firm_invitations WHERE id = inv), 'sent', 'it stays sent');
   RAISE NOTICE 'firm_invitations: delivery record cases passed';
 END $$;
 
@@ -645,7 +683,7 @@ BEGIN
   PERFORM pg_temp.as_user('acme_owner');
   PERFORM public.invite_member(acme, 'pw_owner@example.test', 'owner', NULL, pg_temp.hash_of('pw-token'));
   PERFORM pg_temp.as_user('pw_owner', false, 'password');
-  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('pw-token'));
+  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('pw-token'), 'acme-brokers');
   PERFORM pg_temp.is(r.role, 'owner', 'a password sign-in without the factor can accept: the person must join before setting one up');
   PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), true, 'and is a member at the address, to be sent to set the factor up');
   PERFORM pg_temp.is(public.firm_role(acme), NULL::text, 'but, as for any member, holds no role in the firm until the second factor is done');
@@ -678,4 +716,201 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt('SELECT * FROM public.firm_invitations'), '42501', 'a signed-out caller cannot read it');
   RESET ROLE;
   RAISE NOTICE 'firm_invitations: table closed cases passed';
+END $$;
+
+-- ---------- accepted only at the firm's own address (D-34) ----------
+-- Break caught: the token alone authorises the acceptance, so an Acme link opened at Zenith's address (or at an address no
+-- firm holds, or with no address) joins Acme and confirms the wrong firm; or the refusal still joins, or spends the link; or
+-- a used link opened at the wrong address says anything about its state; or the right address in other capitals is refused.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); r record; wrong text;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.new_user('addr_person');
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.invite_member(acme, 'addr_person@example.test', 'agent', NULL, pg_temp.hash_of('addr-token'));
+  PERFORM pg_temp.as_user('addr_person');
+  FOREACH wrong IN ARRAY ARRAY['zenith-benefits', 'no-such-firm', ''] LOOP
+    PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('addr-token'), wrong)),
+      'PT422: This invitation belongs to another firm''s address', 'the link opened at ''' || wrong || ''' is refused with its own message');
+  END LOOP;
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L, NULL)', pg_temp.hash_of('addr-token'))), 'PT422', 'and so is a call with no address');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE user_id = pg_temp.id('addr_person')), 0::bigint, 'none of them joined any firm');
+  PERFORM pg_temp.is((SELECT status FROM public.firm_invitations WHERE token_hash = pg_temp.hash_of('addr-token')), 'pending', 'and none spent the link');
+  PERFORM pg_temp.as_user('addr_person');
+  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('addr-token'), '  Acme-Brokers ');
+  PERFORM pg_temp.is(r.firm_address, 'acme-brokers', 'at the firm''s own address (capitals and spaces aside) it joins');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('addr-token'), 'zenith-benefits')), 'PT422',
+    'a used link opened at the wrong address still says only that it is not for that address');
+  RESET ROLE;
+  RAISE NOTICE 'firm_invitations: only at the firm''s address cases passed';
+END $$;
+
+-- ---------- what the firm's approval decision lets it do (D-34) ----------
+-- Break caught: a firm waiting for approval cannot invite or be joined (its people must work before approval, D-27); or it can
+-- hold more than five pending invitations, so an unapproved sign-up sends Nevermore's mail in bulk; or the cap counts used or
+-- withdrawn invitations, or other firms' ones, or still binds once the firm is approved; or a refused firm can invite or
+-- resend, or a pending invitation to a refused firm can be accepted (D-31); or a refused firm's owner is stopped from
+-- withdrawing an invitation.
+DO $$
+DECLARE wf uuid; rf uuid; n integer; inv uuid; r record;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address) VALUES ('Waiting Firm', 'waiting-firm') RETURNING id INTO wf;
+  INSERT INTO public.firms (name, address, decision, decided_at) VALUES ('Refused Firm', 'refused-firm', 'refused', now()) RETURNING id INTO rf;
+  INSERT INTO fx VALUES ('waiting', wf), ('refused', rf);
+  PERFORM pg_temp.new_user('waiting_owner'); PERFORM pg_temp.new_user('refused_owner'); 
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (wf, pg_temp.id('waiting_owner'), 'owner'), (rf, pg_temp.id('refused_owner'), 'owner');
+
+  PERFORM pg_temp.as_user('waiting_owner');
+  FOR n IN 1..5 LOOP
+    PERFORM public.invite_member(wf, 'wait' || n || '@example.test', 'agent', NULL, pg_temp.hash_of('wait-' || n));
+  END LOOP;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.invite_member(%L, 'wait6@example.test', 'agent', NULL, %L)$q$, wf, pg_temp.hash_of('wait-6'))),
+    'PT409: A firm waiting for approval can hold at most five pending invitations', 'a firm waiting for approval cannot hold a sixth pending invitation');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_invitations WHERE firm_id = wf), 5::bigint, 'and the refused one left nothing');
+
+  -- It still resends the ones it holds, withdraws one, and then has room for one more.
+  RESET ROLE;
+  SELECT id INTO inv FROM public.firm_invitations WHERE token_hash = pg_temp.hash_of('wait-1');
+  PERFORM pg_temp.as_user('waiting_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT * FROM public.resend_invitation(%L, %L)', inv, pg_temp.hash_of('wait-1b'))), 'rows:1', 'a waiting firm resends an invitation it holds');
+  PERFORM public.cancel_invitation(inv);
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, 'wait6@example.test', 'agent', NULL, %L)$q$, wf, pg_temp.hash_of('wait-6'))), 'rows:1',
+    'a withdrawn invitation no longer counts towards the five');
+  -- Its invitations can be accepted, so its people can join before approval.
+  RESET ROLE;
+  PERFORM pg_temp.new_user('wait2');
+  PERFORM pg_temp.as_user('wait2');
+  SELECT * INTO r FROM public.accept_invitation(pg_temp.hash_of('wait-2'), 'waiting-firm');
+  PERFORM pg_temp.is(r.role, 'agent', 'a person invited to a firm waiting for approval can join it');
+  RESET ROLE;
+  -- The other firms' pending invitations do not count against it, and its own do not count against theirs.
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, 'cap-free@example.test', 'agent', NULL, %L)$q$, pg_temp.id('acme'), pg_temp.hash_of('cap-free'))), 'rows:1', 'an approved firm has no cap');
+  RESET ROLE;
+  -- Once approved, the cap is gone.
+  UPDATE public.firms SET approved_at = now(), decision = 'approved', decided_at = now() WHERE id = wf;
+  PERFORM pg_temp.as_user('waiting_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, 'after-approval@example.test', 'agent', NULL, %L)$q$, wf, pg_temp.hash_of('after-approval'))), 'rows:1', 'once approved the firm can hold more');
+  RESET ROLE;
+  UPDATE public.firms SET approved_at = NULL, decision = NULL, decided_at = NULL WHERE id = wf;
+  RAISE NOTICE 'firm_invitations: waiting firm cap cases passed';
+END $$;
+
+DO $$
+DECLARE rf uuid := pg_temp.id('refused'); inv uuid;
+BEGIN
+  RESET ROLE;
+  -- An invitation the firm made while it was waiting, before it was refused.
+  INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at)
+  VALUES (rf, 'refused_hire@example.test', 'agent', pg_temp.hash_of('refused-token'), now() + interval '7 days') RETURNING id INTO inv;
+  PERFORM pg_temp.new_user('refused_hire');
+  PERFORM pg_temp.as_user('refused_owner');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.invite_member(%L, 'new@example.test', 'agent', NULL, %L)$q$, rf, pg_temp.hash_of('refused-new'))),
+    'PT403: This firm can''t invite people', 'a refused firm cannot invite');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', inv, pg_temp.hash_of('refused-resend'))),
+    'PT403: This firm can''t invite people', 'or resend');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.cancel_invitation(%L)', inv)), 'rows:1', 'but its owner can still withdraw what is pending');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT token_hash FROM public.firm_invitations WHERE id = inv), pg_temp.hash_of('refused-token'), 'a refused resend changed nothing');
+  PERFORM pg_temp.as_user('refused_hire');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.accept_invitation(%L, %L)', pg_temp.hash_of('refused-token'), 'refused-firm')),
+    'PT404: This invitation link is not valid', 'a pending invitation to a refused firm cannot be accepted, and the link reads as no link');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE user_id = pg_temp.id('refused_hire')), 0::bigint, 'and joins nothing');
+  RAISE NOTICE 'firm_invitations: refused firm cases passed';
+END $$;
+
+-- ---------- two owners of a waiting firm invite at the same moment (D-32) ----------
+-- The cap of five cannot be a constraint, so inviting takes the firm's row lock before it counts. Each transaction alone sees
+-- four pending invitations, so without the lock both would pass and the firm would hold six. Two real connections (dblink) race:
+-- the first makes the fifth invitation and holds its transaction open until the second, making the sixth, is seen waiting on
+-- it; once the first commits the second must count five and be refused.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+DO $$
+DECLARE f uuid; n integer;
+BEGIN
+  INSERT INTO public.firms (name, address) VALUES ('Race Firm', 'race-firm') RETURNING id INTO f;
+  INSERT INTO fx VALUES ('race_firm', f);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role)
+  VALUES (f, pg_temp.new_user('race_owner_1'), 'owner'), (f, pg_temp.new_user('race_owner_2'), 'owner');
+  PERFORM pg_temp.as_user('race_owner_1');
+  FOR n IN 1..4 LOOP
+    PERFORM public.invite_member(f, 'race' || n || '@example.test', 'agent', NULL, pg_temp.hash_of('race-' || n));
+  END LOOP;
+  RESET ROLE;
+END $$;
+
+DO $$
+DECLARE
+  f uuid := pg_temp.id('race_firm');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  as_owner text := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('race_owner_2'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'race_owner_2@example.test')::text);
+  as_first text := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('race_owner_1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'race_owner_1@example.test')::text);
+  second_pid integer;
+  tries integer := 0;
+  s text;
+  pending bigint;
+BEGIN
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  PERFORM race.dblink_exec('race_first', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_first', as_first) AS t(c text);
+  PERFORM * FROM race.dblink('race_first', format($q$SELECT public.invite_member(%L, 'race5@example.test', 'agent', NULL, %L)::text$q$, f, pg_temp.hash_of('race-5'))) AS t(r text);
+  PERFORM race.dblink_exec('race_second', 'BEGIN');
+  PERFORM race.dblink_exec('race_second', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_second', as_owner) AS t(c text);
+  PERFORM race.dblink_send_query('race_second', format($q$SELECT public.invite_member(%L, 'race6@example.test', 'agent', NULL, %L)::text$q$, f, pg_temp.hash_of('race-6')));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the second invitation never waited for the first'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_second') AS t(r text);
+    RAISE EXCEPTION 'FAIL: the sixth pending invitation was made too';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    IF s <> 'PT409' THEN RAISE EXCEPTION 'FAIL: the second invitation gave %, expected PT409', s; END IF;
+  END;
+  PERFORM race.dblink_disconnect('race_first');
+  BEGIN
+    PERFORM race.dblink_exec('race_second', 'ROLLBACK');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('race_second');
+  SELECT count(*) INTO pending FROM public.firm_invitations WHERE firm_id = f AND status = 'pending';
+  PERFORM pg_temp.is(pending, 5::bigint, 'pending invitations of the waiting firm after two were made at once');
+  RAISE NOTICE 'firm_invitations: two-session cap race passed';
+END $$;
+
+-- ---------- an address that could never be emailed is not kept ----------
+-- Break caught: the table accepts an address the mail sender refuses (quotes, commas, angle brackets, brackets, semicolons,
+-- parentheses, a backslash), so a direct caller leaves a pending invitation that can never be sent and that blocks the corrected
+-- one for the same firm and email; or the rule that applies is looser than the sender's.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); bad text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner');
+  FOREACH bad IN ARRAY ARRAY['a"b@example.test', 'a,b@example.test', 'a<b@example.test', 'a>b@example.test', 'a;b@example.test',
+                             'a(b@example.test', 'a)b@example.test', 'a[b@example.test', 'a]b@example.test', E'a\\b@example.test'] LOOP
+    PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, %L, 'agent', NULL, %L)$q$, acme, bad, pg_temp.hash_of('bad-' || bad))), '23514',
+      'the address ' || bad || ' is refused');
+  END LOOP;
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.invite_member(%L, 'fine.name+tag@example.test', 'agent', NULL, %L)$q$, acme, pg_temp.hash_of('good-addr'))), 'rows:1', 'an ordinary address with a plus sign is fine');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at) VALUES (%L, 'a"b@example.test', 'agent', %L, now() + interval '1 day')$q$, acme, pg_temp.hash_of('bad-direct'))), '23514',
+    'and the table itself refuses one, whoever writes to it');
+  RAISE NOTICE 'firm_invitations: mailable address cases passed';
 END $$;

@@ -149,6 +149,7 @@
 \i supabase/migrations/20261116170000_firm_signup.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
 \i supabase/migrations/20261116190000_firm_invitations.sql
+\i supabase/migrations/20261116190001_invitation_review_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -928,7 +929,7 @@ INSERT INTO callable VALUES
   ('firm_pending_invitations(p_firm_id uuid)', 'own',   NULL, 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (supabase/tests/firm_invitations.sql)'),
   ('cancel_invitation(p_invitation_id uuid)', 'own',    NULL, 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist'),
   ('resend_invitation(p_invitation_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the invitation''s firm sends it again with a new token; the same refusal for another firm''s invitation as for one that does not exist'),
-  ('accept_invitation(p_token_hash text)',   'own',     NULL, 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm; acts only for the caller and the one invitation its token opens'),
+  ('accept_invitation(p_token_hash text, p_firm_address text)', 'own', NULL, 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
@@ -1476,6 +1477,13 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('request_intake_deletion', 'admin', 'by_id', $$SELECT public.request_intake_deletion({draft}, 'probe reason')::text$$),
   ('revoke_chamber_session', 'admin', 'by_id', $$SELECT public.revoke_chamber_session({draft}, 'probe reason')::text$$),
   ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$);
+-- Invitations (CRM-P1.2): only a current owner of the firm invites, resends, withdraws and lists. The matrix's admin and second
+-- firm owner are those owners; every other caller, the other firm's owner and a platform admin included, is refused (D-16, D-18).
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('invite_member', 'admin', 'by_id', $$SELECT public.invite_member({firm}, 'probe@example.test', 'agent', NULL, repeat('a', 64))::text$$),
+  ('resend_invitation', 'admin', 'by_id', $$SELECT public.resend_invitation({inv}, repeat('b', 64))::text$$),
+  ('cancel_invitation', 'admin', 'by_id', $$SELECT public.cancel_invitation({inv})::text$$),
+  ('firm_pending_invitations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_pending_invitations({firm})$$);
 INSERT INTO fprobe (fn, who, shape, call, positive) VALUES
   ('advisor_list_submissions', 'advisor', 'list',
    $$SELECT COALESCE(string_agg(session_id::text, ','), '') FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)$$, ARRAY['advisor', 'agent_b']),
@@ -1522,6 +1530,8 @@ BEGIN
       (f, 'sid', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)::text),
       (f, 'draft', pg_temp.id(CASE f WHEN 'a' THEN 'pa_open' ELSE 'pb_open' END)::text),
       (f, 'qr', qr),
+      (f, 'firm', pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)::text),
+      (f, 'inv', (SELECT i.id::text FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY i.created_at LIMIT 1)),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
@@ -2394,6 +2404,11 @@ SELECT unnest(ARRAY[
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('invite_member', 'firm_scoped', 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_invitations.sql)'),
+  ('resend_invitation', 'firm_scoped', 'a current owner of the invitation''s firm sends it again with a new link; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
+  ('cancel_invitation', 'firm_scoped', 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
+  ('firm_pending_invitations', 'firm_scoped', 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (4e)');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_allowed_organisation', 'platform_wide', 'the organisations whose members get the advisor role: the platform''s, kept by platform admins'),
@@ -2411,6 +2426,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('peo_catalog', 'platform_wide', 'the PEOs and their published profiles: the same for every firm'),
   ('admin_waiting_firms', 'platform_wide', 'the firms waiting for a platform admin''s decision: no firm''s member sees them by row security, so only platform admins read this list'),
   ('admin_decide_firm', 'platform_wide', 'a platform admin approves or refuses a waiting firm'),
+  ('accept_invitation', 'own', 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
   ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller owns or is a firm member of (4h)'),
@@ -2475,7 +2491,7 @@ SELECT unnest(ARRAY[
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',
   'queue_draft_expiry_reminders', 'queue_retention_deletions', 'reap_outbox_events', 'reconcile_outbox_events', 'record_census_template_scan',
-  'record_document_scan', 'record_document_uploaded', 'record_email_delivery_event', 'record_inbound_attachment', 'record_inbound_mail',
+  'record_document_scan', 'record_document_uploaded', 'record_invitation_delivery', 'record_email_delivery_event', 'record_inbound_attachment', 'record_inbound_mail',
   'record_ops_event', 'requeue_document_scan', 'requeue_outbox_event', 'run_retention'
 ]), 'service_only', 'not executable through the API: the service role''s work (the scheduled jobs and edge functions), or a helper the firm-scoped functions call after their own check';
 
