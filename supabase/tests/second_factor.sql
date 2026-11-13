@@ -122,6 +122,10 @@ BEGIN
   PERFORM pg_temp.claims(uid, pg_temp.signed_in_with('oauth', 'aal1'));
   IF NOT public.second_factor_rule_met() THEN RAISE EXCEPTION 'FAIL: a Google or Microsoft sign-in was asked for a second factor'; END IF;
 
+  -- No token at all (a signed-out caller) is no password sign-in, so the rule has nothing to ask of it.
+  PERFORM set_config('request.jwt.claims', '', false);
+  IF public.second_factor_rule_met() IS DISTINCT FROM true THEN RAISE EXCEPTION 'FAIL: a signed-out caller did not meet the rule'; END IF;
+
   RAISE NOTICE 'second_factor: all checks passed';
 END $$;
 

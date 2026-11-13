@@ -87,3 +87,30 @@ test("an advisor signs in with a password, sets up a second factor, reaches the 
     await context.close();
   });
 });
+
+test("a second factor completed in a session stays completed when the session is refreshed", async ({ request }) => {
+  const email = await newAdvisor(request);
+  const auth = `${GATEWAY_URL}/auth/v1`;
+  const base = { apikey: ANON_KEY };
+  const signedIn = await request.post(`${auth}/token?grant_type=password`, { headers: base, data: { email, password: PASSWORD } });
+  const first = (await signedIn.json()) as { access_token: string };
+  const bearer = { ...base, Authorization: `Bearer ${first.access_token}` };
+
+  const enrolled = await request.post(`${auth}/factors`, { headers: bearer, data: { factor_type: "totp", friendly_name: "Authenticator app" } });
+  const { id: factorId, totp } = (await enrolled.json()) as { id: string; totp: { secret: string } };
+  const challenge = await request.post(`${auth}/factors/${factorId}/challenge`, { headers: bearer, data: {} });
+  const { id: challengeId } = (await challenge.json()) as { id: string };
+  const verified = await request.post(`${auth}/factors/${factorId}/verify`, { headers: bearer, data: { challenge_id: challengeId, code: totpCode(totp.secret) } });
+  expect(verified.status()).toBe(200);
+  const second = (await verified.json()) as { access_token: string; refresh_token: string };
+  expect(await isAdvisorOverApi(request, second.access_token)).toBe(true);
+
+  const refreshed = await request.post(`${auth}/token?grant_type=refresh_token`, { headers: base, data: { refresh_token: second.refresh_token } });
+  expect(refreshed.status()).toBe(200);
+  const { access_token } = (await refreshed.json()) as { access_token: string };
+  expect(await isAdvisorOverApi(request, access_token)).toBe(true);
+  // Still a password sign-in that completed a second factor, not a sign-in that no longer says how it began.
+  const claims = JSON.parse(Buffer.from(access_token.split(".")[1], "base64url").toString("utf8")) as { aal: string; amr: { method: string }[] };
+  expect(claims.aal).toBe("aal2");
+  expect(claims.amr.map((entry) => entry.method).sort()).toEqual(["password", "totp"]);
+});

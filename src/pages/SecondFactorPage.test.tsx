@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 const auth = { user: { id: "u1", email: "pat@example.com" } as { id: string; email?: string } | null, loading: false, isAnonymous: false };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -12,14 +12,21 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: { mfa }, rp
 
 const { default: SecondFactorPage } = await import("./SecondFactorPage");
 
+const HeldStub = () => <p>Held mail{useLocation().search}</p>;
+
+const LoginStub = () => {
+  const state = useLocation().state as { audience?: string; from?: { pathname: string } } | null;
+  return <p>Sign in page for {state?.audience} returning to {state?.from?.pathname ?? "nowhere"}</p>;
+};
+
 const renderPage = (state?: Record<string, unknown>) =>
   render(
     <MemoryRouter initialEntries={[{ pathname: "/advisor/second-factor", state }]}>
       <Routes>
         <Route path="/advisor/second-factor" element={<SecondFactorPage />} />
         <Route path="/advisor" element={<p>Advisor queue</p>} />
-        <Route path="/advisor/held" element={<p>Held mail</p>} />
-        <Route path="/login" element={<p>Sign in page</p>} />
+        <Route path="/advisor/held" element={<HeldStub />} />
+        <Route path="/login" element={<LoginStub />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -75,6 +82,29 @@ describe("SecondFactorPage", () => {
     expect(screen.queryByText("Held mail")).not.toBeInTheDocument();
   });
 
+  it("goes back to exactly the page they asked for, including its query", async () => {
+    mfa.listFactors.mockResolvedValue(factors(factor()));
+    renderPage({ from: { pathname: "/advisor/held", search: "?page=2" } });
+    fireEvent.change(await screen.findByLabelText(/6-digit code/), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Held mail?page=2")).toBeInTheDocument();
+  });
+
+  it("takes the old error away while the next try is being checked", async () => {
+    mfa.listFactors.mockResolvedValue(factors(factor()));
+    mfa.challengeAndVerify
+      .mockResolvedValueOnce({ data: null, error: { code: "mfa_verification_failed", message: "Invalid TOTP code entered" } })
+      .mockReturnValueOnce(new Promise(() => {}));
+    renderPage();
+    const field = await screen.findByLabelText(/6-digit code/);
+    fireEvent.change(field, { target: { value: "000000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("alert");
+    fireEvent.change(field, { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
   it("says when the code couldn't be checked at all, so a person doesn't think theirs was wrong", async () => {
     mfa.listFactors.mockResolvedValue(factors(factor()));
     mfa.challengeAndVerify.mockResolvedValue({ data: null, error: { code: "unexpected_failure", message: "offline" } });
@@ -82,6 +112,14 @@ describe("SecondFactorPage", () => {
     fireEvent.change(await screen.findByLabelText(/6-digit code/), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't check your code just now. Try again in a minute.");
+  });
+
+  it("takes a code typed the way an app shows it, with a space in the middle", async () => {
+    mfa.listFactors.mockResolvedValue(factors(factor()));
+    renderPage();
+    fireEvent.change(await screen.findByLabelText(/6-digit code/), { target: { value: " 123 456 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(mfa.challengeAndVerify).toHaveBeenCalledWith({ factorId: "f1", code: "123456" }));
   });
 
   it("asks for the code before checking anything when the field is empty or short", async () => {
@@ -143,17 +181,17 @@ describe("SecondFactorPage", () => {
     expect(await screen.findByText("Advisor queue")).toBeInTheDocument();
   });
 
-  it("sends a signed-out visitor to sign in", () => {
+  it("sends a signed-out visitor to the advisor sign-in, returning to where they were going", () => {
     auth.user = null;
-    renderPage();
-    expect(screen.getByText("Sign in page")).toBeInTheDocument();
+    renderPage({ from: { pathname: "/advisor/held", search: "" } });
+    expect(screen.getByText("Sign in page for advisor returning to /advisor/held")).toBeInTheDocument();
     expect(rpc).not.toHaveBeenCalled();
   });
 
   it("does not offer setup to a guest session", () => {
     auth.isAnonymous = true;
     renderPage();
-    expect(screen.getByText("Sign in page")).toBeInTheDocument();
+    expect(screen.getByText(/Sign in page for advisor/)).toBeInTheDocument();
     expect(mfa.enroll).not.toHaveBeenCalled();
   });
 });
