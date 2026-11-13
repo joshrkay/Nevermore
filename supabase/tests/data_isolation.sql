@@ -162,6 +162,7 @@
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
 \i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
+\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1154,6 +1155,7 @@ BEGIN
     format('SELECT public.mailbox_store(%L, ''google'', ''advisor@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')', pg_temp.id('advisor')),
     format('SELECT public.mailbox_secret(%L)', nobody),
     format('SELECT public.mailbox_delete(%L)', nobody),
+    'SELECT public.drop_mailboxes_of_former_members()',
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',
@@ -3044,7 +3046,7 @@ SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
   'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'guard_invitation_mail_rate', 'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
-  'complete_outbox_event', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'enqueue_certification_notifications',
+  'complete_outbox_event', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',
