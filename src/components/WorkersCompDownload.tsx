@@ -12,7 +12,7 @@ import { downloadBlob } from "@/lib/downloadFile";
  * can't be built, it says so, as the packet's download does. A tab that outlived the certification gives no file
  * (`builtFrom`, checked at the click).
  */
-const WorkersCompDownload = ({ application: a, builtFrom }: { application: WorkersCompApplication; builtFrom: BuiltFrom }) => {
+const WorkersCompDownload = ({ application: a, builtFrom, onDownloaded }: { application: WorkersCompApplication; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
   const id = useId();
   const [busy, setBusy] = useState(false);
   // The blanks section by section: "Applicant: Doing business as (DBA), FEIN, ...".
@@ -26,6 +26,7 @@ const WorkersCompDownload = ({ application: a, builtFrom }: { application: Worke
       const { buildWorkersCompPdf } = await import("@/lib/workersCompPdf");
       const pdf = buildWorkersCompPdf(a);
       downloadBlob(pdf.blob, pdf.filename);
+      onDownloaded?.();
     } catch (err) {
       console.error("Failed to generate the workers' comp application PDF:", err);
       toast.error("We couldn't generate the PDF. Please try again.");

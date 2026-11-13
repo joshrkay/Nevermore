@@ -146,7 +146,9 @@
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 \i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
+\i supabase/migrations/20261116160001_firm_activity.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
+\i supabase/migrations/20261116170001_firm_events_recorded.sql
 \i supabase/migrations/20261116180000_function_firm_scope.sql
 SET client_min_messages = notice;
 
@@ -640,6 +642,9 @@ INSERT INTO matrix VALUES
   ('public.firms',                                      '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
   ('public.firm_teams',                                 '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
   ('public.firm_memberships',                           '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  -- The record of who did what (20261116160001): a firm's current owners read their own firm's entries, nobody else, platform
+  -- admins and agents included (the two-firm probe below and firm_activity.sql prove the firms apart).
+  ('public.firm_activity',                              '{"advisor":0,"admin":6,"agent_2":0,"lead_1":0,"agent_b":0,"owner_b":3,"advisor_pw_mfa":0}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
   ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
   -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
@@ -921,6 +926,13 @@ INSERT INTO callable VALUES
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
+  ('record_member_activity(p_kind text, p_record_type text, p_record_id text)', 'own', NULL, 'a browser reporting a file downloaded or built there, or a sign-in, as the caller, about a record of a firm they belong to and only the pairs of kind and record that can happen; refuses anyone else (supabase/tests/firm_activity.sql)'),
+  ('open_submission(p_session_id uuid)', 'own', NULL, 'hands a submission to a current member of its firm (the table policy''s own rule) and writes the opening in the firm''s record as the caller; no row and no entry for anyone else (supabase/tests/firm_activity.sql)'),
+  ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_before_at timestamp with time zone, p_before_key uuid, p_nevermore boolean)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included; a platform admin''s entry reads as Nevermore with no id or email, and neither the admin''s id nor anything else finds it but the Nevermore filter (supabase/tests/firm_activity.sql)'),
+  ('can_read_firm_activity(p_firm_id uuid)', 'own', NULL, 'whether the caller is a current owner of that firm and past the second factor; about the caller only; the firm record''s policy and its two reading functions call it'),
+  ('my_firm_at_address(p_address text)', 'own', NULL, 'the id of the firm at an address, only for a current member of it, so the screen can report a sign-in; null for anyone else (supabase/tests/firm_activity.sql)'),
+  ('my_owner_firms()', 'own', NULL, 'the firms the caller currently owns, by name; about the caller only; signed-out callers can''t call it'),
+  ('firm_activity_people(p_firm_id uuid)', 'own', NULL, 'who appears in a firm''s record, for that firm''s owners only, platform admins as one Nevermore entry with no id or email; 42501 for everyone else (supabase/tests/firm_activity.sql)'),
   ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
   ('advisor_needs_second_factor()',            'own',     NULL, 'whether the caller''s own password sign-in is all that holds back their role; false for anyone else'),
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
@@ -1867,6 +1879,8 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
   ('storage.objects WHERE bucket_id = ''peo-mail''', 'firm', 'by the quote request of the attachment recorded as stored',
    $m$SELECT pg_temp.store_peo_mail({msg}, {intake}, '{tag}')$m$);
 INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
+  ('public.firm_activity', 'firm', 'its own firm_id; only its owners read it (not every member), and nobody changes or deletes an entry',
+   $m$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES ({firm}, 'invitation_sent', 'firm', {firm}::text) RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
@@ -1877,7 +1891,7 @@ INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
-UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -2418,6 +2432,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('is_own_final_manuscript', 'own', 'storage policy helper: the file of the caller''s own final Manuscript'),
   ('is_certified_evidence', 'own', 'storage policy helper: a file of the caller''s own certified intake'),
   ('is_withheld_document_file', 'own', 'storage policy helper: whether the document at a path has a scan that hasn''t passed'),
+  ('can_read_firm_activity', 'own', 'whether the caller currently owns a firm: the visibility helper for the firm''s record (firm_activity.sql)'),
+  ('firm_activity_list', 'own', 'a firm''s record of who did what, read by that firm''s owners only; 42501 for everyone else (firm_activity.sql)'),
+  ('firm_activity_people', 'own', 'the people named in a firm''s record, for that firm''s owners only (firm_activity.sql)'),
+  ('my_firm_at_address', 'own', 'the firm the caller belongs to at an address; about the caller only'),
+  ('my_owner_firms', 'own', 'the firms the caller currently owns, by name; about the caller only'),
+  ('open_submission', 'own', 'hands a submission to a current member of its firm and writes the opening in the firm''s record as the caller (firm_activity.sql)'),
+  ('record_member_activity', 'own', 'writes an entry in the caller''s own firm''s record as the caller, from a fixed list of kinds'),
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
@@ -2451,6 +2472,8 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
+  'current_owner_firm_ids', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
+  'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
   'complete_outbox_event', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
@@ -2463,6 +2486,7 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
+  'record_membership_change', 'record_send_activity',
   'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',
