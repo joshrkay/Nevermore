@@ -1019,7 +1019,7 @@ export async function fetchHasPlatformRole(): Promise<boolean> {
 }
 
 /**
- * The PEOs as a member of a firm who holds no platform role may read them (ADR 0013, peo_catalog()): each with the version
+ * The PEOs as a member of a firm who holds no platform role may read them (ADR 0010, peo_catalog()): each with the version
  * in use and nothing else. No draft, no history, no contact, and no name of a person at a PEO: the tables behind the
  * directory above are the platform's and refuse this reader, so this never reads them. Alphabetical, as peo_catalog() gives them.
  */

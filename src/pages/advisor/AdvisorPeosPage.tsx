@@ -29,7 +29,7 @@ const AdvisorPeosPage = () => {
     // A reload after a save keeps the page as it is until the new data is in, so nothing jumps.
     setLoad((current) => (current.kind === "ready" ? current : { kind: "loading" }));
     // A platform role reads the platform's directory (versions, drafts, contacts) and an admin edits it. A member of a firm
-    // without one reads the prospect-safe catalogue, the version in use of each PEO, which the tables refuse them (ADR 0013).
+    // without one reads the prospect-safe catalogue, the version in use of each PEO, which the tables refuse them (ADR 0010).
     (async () => {
       const [hasRole, isAdmin] = await Promise.all([fetchHasPlatformRole(), fetchIsAdmin()]);
       return [hasRole ? await loadPeoDirectory() : await loadPeoCatalogDirectory(), isAdmin] as const;

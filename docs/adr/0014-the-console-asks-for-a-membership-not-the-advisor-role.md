@@ -18,7 +18,7 @@ The screens ask `my_firms()` (the firms the caller currently belongs to and thei
 
 ## Consequences
 
-- A member with no platform role cannot read the PEO tables, so the PEOs page loads the prospect-safe catalogue through `peo_catalog()` (ADR 0013 of the PEO catalogue): the version in use of each PEO, no draft, history or contact. The table-backed directory and the editor stay for the platform roles. The PEO columns of a submission still read what a prospect sees.
+- A member with no platform role cannot read the PEO tables, so the PEOs page loads the prospect-safe catalogue through `peo_catalog()` (ADR 0010): the version in use of each PEO, no draft, history or contact. The table-backed directory and the editor stay for the platform roles. The PEO columns of a submission still read what a prospect sees.
 - Referral partners are a firm's own since CRM-P2.1c (20261116200000): a member with no platform role lists, adds and edits their firm's partners through `require_advisor()` and nothing else. The partners page's choice of which firm it acts for is CRM-P2.1c's follow-up.
 - A person who belongs to several firms is kept out of the console for now: the database answers for every firm they belong to, so the console would show the firms together. The workspace shell (Epic 2) is where one firm at a time is chosen.
 
