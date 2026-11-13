@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firmAddressFromHost, firmHostname, firmUrl } from "./firmHost";
+import { firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom } from "./firmHost";
 
 // A firm address is <address>.<the site's domain> (story CRM-P1.3a, D-17). The app reads the firm from the host it
 // is served on; the database, never this, decides who gets in (D-18).
@@ -48,5 +48,18 @@ describe("the web address of a firm", () => {
     expect(firmUrl("acme-brokers")).toBe("https://acme-brokers.nevermorepeo.com");
     expect(firmUrl("  Acme-Brokers ")).toBe("https://acme-brokers.nevermorepeo.com");
     expect(firmUrl("acme", "example.org")).toBe("https://acme.example.org");
+  });
+});
+
+describe("a firm's web address, reached from the page the person is on (the \"Choose a firm\" links)", () => {
+  it("is the firm's address on the site's domain from the bare domain, www or a preview", () => {
+    for (const hostname of ["nevermorepeo.com", "www.nevermorepeo.com", "preview-123.vercel.app"]) {
+      expect(firmUrlFrom("acme-brokers", { protocol: "https:", hostname, port: "" })).toBe("https://acme-brokers.nevermorepeo.com");
+    }
+  });
+
+  it("stays on this machine, with this page's scheme and port, from localhost", () => {
+    expect(firmUrlFrom("Acme-Brokers", { protocol: "http:", hostname: "localhost", port: "4180" })).toBe("http://acme-brokers.localhost:4180");
+    expect(firmUrlFrom("acme", { protocol: "http:", hostname: "other.localhost", port: "" })).toBe("http://acme.localhost");
   });
 });

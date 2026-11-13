@@ -1,6 +1,6 @@
-import { Link } from "react-router-dom";
-import { useRef, type ReactNode } from "react";
-import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
+import { Link, Navigate } from "react-router-dom";
+import { useRef, type MutableRefObject, type ReactNode } from "react";
+import { fetchIsAdmin } from "@/lib/advisorApi";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms } from "@/hooks/useOwnedFirms";
@@ -23,15 +23,12 @@ const SignOutLinks = () => {
   );
 };
 
-const SeveralFirms = ({ firms, email }: { firms: MyFirm[]; email?: string | null }) => (
-  <AccessMessage title="You're a member of more than one firm">
-    <p className="text-muted-foreground mb-4">
-      Your account{email ? ` (${email})` : ""} belongs to {firms.map((f) => f.name).join(" and ")}. The console shows one firm's
-      records at a time and can't yet keep two firms' records apart, so it stays closed to you until it can.
-    </p>
-    <SignOutLinks />
-  </AccessMessage>
-);
+/**
+ * On the bare domain a member of several firms has no current firm until they choose one (D-40): they are let past the check,
+ * since choosing is not a refusal, and sent to "Choose a firm". Read when the page mounts, after the check has run.
+ */
+const EnterOrChoose = ({ seen, children }: { seen: MutableRefObject<{ refusal: Refusal | null }>; children: ReactNode }) =>
+  seen.current.refusal === "several" ? <Navigate to="/choose-firm" replace /> : <>{children}</>;
 
 /**
  * A page of the firm's console. By default the person must be a current member of the firm, at a firm's address that
@@ -45,7 +42,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
   const userId = user?.id ?? "";
   const sessionKey = session?.access_token ?? "";
   // What the check last learned, so the refusal can say which of the reasons it was.
-  const seen = useRef<{ firms: MyFirm[]; refusal: Refusal | null }>({ firms: [], refusal: "none" });
+  const seen = useRef<{ refusal: Refusal | null }>({ refusal: "none" });
 
   if (as === "owner") {
     return (
@@ -53,13 +50,11 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
         check={async () => {
           const firms = await loadMyFirms(userId, sessionKey);
           const here = currentFirm(firms, address);
-          seen.current = { firms, refusal: "firm" in here ? null : here.refusal };
-          return "firm" in here && here.firm.role === "owner";
+          seen.current = { refusal: "firm" in here ? null : here.refusal };
+          return ("firm" in here && here.firm.role === "owner") || seen.current.refusal === "several";
         }}
         deniedCode="firm_owner_route"
-        denied={(email) => {
-          const { firms, refusal: why } = seen.current;
-          if (why === "several") return <SeveralFirms firms={firms} email={email} />;
+        denied={() => {
           return (
             <AccessMessage title="For a firm's owners">
               <p className="text-muted-foreground mb-4">Only a firm's owners can read its record of who did what.</p>
@@ -68,7 +63,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
           );
         }}
       >
-        {children}
+        <EnterOrChoose seen={seen}>{children}</EnterOrChoose>
       </RequireAccess>
     );
   }
@@ -78,14 +73,12 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
       check={async () => {
         const firms = await loadMyFirms(userId, sessionKey);
         const here = currentFirm(firms, address);
-        // Member pages are not narrowed to the address's firm, so a member of several firms stays out of them (ADR 0015).
-        seen.current = { firms, refusal: "firm" in here ? (here.several ? "several" : null) : here.refusal };
-        return seen.current.refusal === null;
+        seen.current = { refusal: "firm" in here ? null : here.refusal };
+        return seen.current.refusal === null || seen.current.refusal === "several";
       }}
       deniedCode="firm_member_route"
       denied={(email) => {
-        const { firms, refusal: why } = seen.current;
-        if (why === "several") return <SeveralFirms firms={firms} email={email} />;
+        const { refusal: why } = seen.current;
         if (why === "not_this_firm") {
           return (
             <AccessMessage title="You aren't a member of this firm">
@@ -104,7 +97,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
         );
       }}
     >
-      {children}
+      <EnterOrChoose seen={seen}>{children}</EnterOrChoose>
     </RequireAccess>
   );
 };
