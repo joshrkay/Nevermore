@@ -288,7 +288,7 @@ BEGIN
     ARRAY['capital-brokers', 'fresh-benefits'], 'but sees the two firms waiting, and neither Acme nor Edgar Allan Advisory');
   SELECT * INTO r FROM public.admin_waiting_firms() w WHERE w.address = 'fresh-benefits';
   PERFORM pg_temp.is(r.name, 'Fresh Benefits', 'with the firm''s name');
-  PERFORM pg_temp.is(r.owner_email, 'founder@example.test', 'and the email of the person who signed it up');
+  PERFORM pg_temp.is(r.signed_up_by_email, 'founder@example.test', 'and the email of the person who signed it up');
   PERFORM pg_temp.is(r.firm_id, fresh, 'and its id');
   PERFORM pg_temp.is(r.signed_up_at IS NOT NULL AND r.signed_up_at <= now(), true, 'and when it signed up');
   RESET ROLE;
@@ -314,7 +314,7 @@ BEGIN
   PERFORM pg_temp.as_user('platform_admin');
   PERFORM pg_temp.is((SELECT array_agg(w.address) FROM public.admin_waiting_firms() w),
     ARRAY['capital-brokers', 'fresh-benefits'], 'the oldest waiting firm is first');
-  PERFORM pg_temp.is((SELECT w.owner_email FROM public.admin_waiting_firms() w WHERE w.firm_id = fresh), 'founder@example.test',
+  PERFORM pg_temp.is((SELECT w.signed_up_by_email FROM public.admin_waiting_firms() w WHERE w.firm_id = fresh), 'founder@example.test',
     'the person named is the owner, not an agent who joined earlier');
   RESET ROLE;
   DELETE FROM public.firm_memberships WHERE firm_id = fresh AND user_id = pg_temp.id('earlier_agent');
@@ -338,7 +338,7 @@ BEGIN
   UPDATE public.firm_memberships SET valid_until = now()
     WHERE firm_id = transfer_firm AND user_id = pg_temp.id('first_founder');
   PERFORM pg_temp.as_user('platform_admin');
-  PERFORM pg_temp.is((SELECT w.owner_email FROM public.admin_waiting_firms() w WHERE w.firm_id = transfer_firm),
+  PERFORM pg_temp.is((SELECT w.signed_up_by_email FROM public.admin_waiting_firms() w WHERE w.firm_id = transfer_firm),
     founder_email, 'the person who signed the firm up is still named after ownership has passed to another');
   RESET ROLE;
   -- Clean up: the owner guard would keep the last owner, so it is switched off for this one deletion.
@@ -411,9 +411,9 @@ BEGIN
   PERFORM pg_temp.as_user('platform_admin');
   PERFORM pg_temp.is((SELECT count(*) FROM public.admin_waiting_firms()), 0::bigint, 'it is no longer waiting');
   PERFORM pg_temp.as_anon();
-  PERFORM pg_temp.is(public.firm_public_name('capital-brokers'), 'Capital Brokers', 'a refused firm still shows its name at its address; only a suspended or closed one will not (D-27)');
+  PERFORM pg_temp.is(public.firm_public_name('capital-brokers'), NULL::text, 'a refused firm shows no name at its address, so a look-alike is not shown to visitors');
   PERFORM pg_temp.as_user('founder2');
-  PERFORM pg_temp.is(public.is_member_of_firm_address('capital-brokers'), true, 'and its owner is still a member there');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('capital-brokers'), false, 'and its founder is not taken for a member there');
   RESET ROLE;
   RAISE NOTICE 'firm_signup: refusal cases passed';
 END $$;
@@ -495,4 +495,39 @@ BEGIN
   PERFORM pg_temp.is(ev.detail ->> 'note', 'no', 'with the note');
   PERFORM pg_temp.is((SELECT count(*) FROM seen_events), 4::bigint, 'and nothing else was recorded: two sign-ups, an approval and a refusal');
   RAISE NOTICE 'firm_signup: event hook cases passed';
+END $$;
+
+-- ---------- what a refusal changes, and what a firm may read ----------
+-- Break caught: a refused firm still shows its name to visitors and still lets its founder in at its address; the
+-- firm's own members read the admin's note and who decided; or one person signs up firm after firm.
+DO $$
+DECLARE fid uuid; fid2 uuid;
+BEGIN
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(public.firm_public_name('fresh-benefits'), 'Fresh Benefits', 'an approved firm still shows its name');
+  PERFORM pg_temp.is(public.firm_public_name('admin-own-firm'), 'Admin Own Firm', 'so does a waiting one');
+  -- The firm's members read the firm, not the admin's side of the decision (D-16).
+  PERFORM pg_temp.as_user('founder');
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT decision_note FROM public.firms'), '42501', 'a member can not read the decision note');
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT decided_by FROM public.firms'), '42501', 'nor who decided');
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT signed_up_by FROM public.firms'), '42501', 'nor who signed the firm up');
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT id, name, address, visibility, approved_at, parent_firm_id, created_at, decision FROM public.firms'), 'rows:2', 'but reads the firm and whether it was decided');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), true, 'and is a member of an approved firm');
+  -- One firm waiting per person.
+  RESET ROLE;
+  PERFORM pg_temp.new_user('squatter');
+  PERFORM pg_temp.as_user('squatter');
+  fid := public.sign_up_firm('Squat One', 'squat-one');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Squat Two', 'squat-two')$q$), '42501', 'a person with a firm still waiting can not sign up another');
+  RESET ROLE;
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_decide_firm(fid, false, 'squatting');
+  PERFORM pg_temp.as_user('squatter');
+  fid2 := public.sign_up_firm('Squat Two', 'squat-two');
+  PERFORM pg_temp.is(fid2 IS NOT NULL, true, 'once the first is decided they may sign up another');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('squat-one'), false, 'a refused firm lets its founder in no longer');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(public.firm_public_name('squat-one'), NULL::text, 'and shows visitors no name');
+  RESET ROLE;
+  RAISE NOTICE 'firm_signup: refusal visibility, column reads and one-waiting-firm cases passed';
 END $$;

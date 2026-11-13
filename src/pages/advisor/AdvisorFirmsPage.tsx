@@ -6,7 +6,7 @@ import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { fetchIsAdmin } from "@/lib/advisorApi";
 import { decideFirm, fetchWaitingFirms, type WaitingFirm } from "@/lib/firmApi";
-import { firmUrl } from "@/lib/firmHost";
+import { firmHostname } from "@/lib/firmHost";
 
 type Load =
   | { kind: "loading" }
@@ -82,8 +82,8 @@ const AdvisorFirmsPage = () => {
                 <li key={f.id} className="border border-border rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
                     <span className="font-semibold">{f.name}</span>
-                    <span className="font-mono text-xs text-muted-foreground break-all">{firmUrl(f.address).replace("https://", "")}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{`Signed up ${formatDateTime(f.signedUpAt)}${f.ownerEmail ? ` by ${f.ownerEmail}` : ""}`}</span>
+                    <span className="font-mono text-xs text-muted-foreground break-all">{firmHostname(f.address)}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">{`Signed up ${formatDateTime(f.signedUpAt)}${f.signedUpByEmail ? ` by ${f.signedUpByEmail}` : ""}`}</span>
                   </div>
                   <div>
                     <label htmlFor={`note-${f.id}`} className="text-xs text-muted-foreground">{`Note for ${f.name}`}</label>

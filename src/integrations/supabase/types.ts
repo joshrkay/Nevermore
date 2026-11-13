@@ -948,7 +948,7 @@ export type Database = {
           firm_id: string
           name: string
           address: string
-          owner_email: string | null
+          signed_up_by_email: string | null
           signed_up_at: string
         }[]
       }

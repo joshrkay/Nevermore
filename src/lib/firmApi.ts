@@ -52,7 +52,7 @@ export interface WaitingFirm {
   id: string;
   name: string;
   address: string;
-  ownerEmail: string | null;
+  signedUpByEmail: string | null;
   signedUpAt: string;
 }
 
@@ -60,7 +60,7 @@ export interface WaitingFirm {
 export async function fetchWaitingFirms(): Promise<WaitingFirm[]> {
   const { data, error } = await supabase.rpc("admin_waiting_firms");
   if (error) throw classifyApiError(error, error.code === "42501" ? "You don't have admin access." : "Couldn't load the waiting firms.");
-  return (data ?? []).map((f) => ({ id: f.firm_id, name: f.name, address: f.address, ownerEmail: f.owner_email, signedUpAt: f.signed_up_at }));
+  return (data ?? []).map((f) => ({ id: f.firm_id, name: f.name, address: f.address, signedUpByEmail: f.signed_up_by_email, signedUpAt: f.signed_up_at }));
 }
 
 /** Approves or refuses a waiting firm, with an optional note. A firm is decided once. */

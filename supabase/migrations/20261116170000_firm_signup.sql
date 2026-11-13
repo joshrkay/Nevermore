@@ -1,6 +1,6 @@
 -- Sign up a firm; a platform admin approves it (story CRM-P1.1 with Q-1.2; docs/BROKER_CRM_BUILD.md D-5, D-16, D-18, D-21).
 
--- The one place a firm event is recorded. Today it records nothing beyond the decision columns above; the story that
+-- The one place a firm event is recorded. Today it records nothing beyond the decision columns added below; the story that
 -- builds the record of who did what (CRM-P2.3) replaces this body, and every caller stays as it is. p_kind is one of
 -- firm_signed_up, firm_approved, firm_refused; p_detail carries what the event needs (the address, the note).
 CREATE FUNCTION public.record_firm_event(p_firm_id uuid, p_kind text, p_actor uuid, p_detail jsonb)
@@ -35,6 +35,10 @@ BEGIN
   IF char_length(clean_name) NOT BETWEEN 1 AND 80 THEN
     RAISE EXCEPTION 'A firm''s name is 1 to 80 characters' USING ERRCODE = '23514';
   END IF;
+  -- One firm waiting at a time per person: nobody can hold addresses they have no use for, or fill the admin's list.
+  IF EXISTS (SELECT 1 FROM public.firms f WHERE f.signed_up_by = auth.uid() AND f.decision IS NULL) THEN
+    RAISE EXCEPTION 'You already have a firm waiting for approval' USING ERRCODE = '42501';
+  END IF;
   INSERT INTO public.firms (name, address, signed_up_by) VALUES (clean_name, lower(btrim(p_address)), auth.uid()) RETURNING id INTO fid;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fid, auth.uid(), 'owner');
   PERFORM public.record_firm_event(fid, 'firm_signed_up', auth.uid(), jsonb_build_object('address', lower(btrim(p_address))));
@@ -57,7 +61,7 @@ ALTER TABLE public.firms ADD COLUMN signed_up_by uuid REFERENCES auth.users (id)
 -- A platform admin is no member of any firm (D-16), so row security shows them no firm: this function is how they
 -- see these, and only these fields.
 CREATE FUNCTION public.admin_waiting_firms()
-RETURNS TABLE (firm_id uuid, name text, address text, owner_email text, signed_up_at timestamptz)
+RETURNS TABLE (firm_id uuid, name text, address text, signed_up_by_email text, signed_up_at timestamptz)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
@@ -90,6 +94,38 @@ ALTER TABLE public.firms
   ADD COLUMN decision_note text CHECK (char_length(decision_note) <= 500),
   ADD CONSTRAINT firms_decision_is_whole CHECK ((decision IS NULL) = (decided_at IS NULL)),
   ADD CONSTRAINT firms_refused_is_not_approved CHECK (decision IS DISTINCT FROM 'refused' OR approved_at IS NULL);
+
+-- A firm's own members read the firm, not the admin's side of the decision: the note and who decided stay behind the
+-- admin functions (D-16). Column by column, so a column added later is not readable until it is granted here.
+REVOKE SELECT ON public.firms FROM authenticated;
+GRANT SELECT (id, name, address, visibility, approved_at, parent_firm_id, created_at, decision) ON public.firms TO authenticated;
+
+-- A refused firm is not shown at its address and does not let its founder in there; the address stays taken.
+CREATE OR REPLACE FUNCTION public.firm_public_name(p_address text)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT f.name
+  FROM public.firms f
+  WHERE f.address = lower(btrim(p_address)) AND f.decision IS DISTINCT FROM 'refused'
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_member_of_firm_address(p_address text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE((
+    SELECT public.is_firm_member(f.id)
+    FROM public.firms f
+    WHERE f.address = lower(btrim(p_address)) AND f.decision IS DISTINCT FROM 'refused'
+  ), false)
+$$;
 
 CREATE FUNCTION public.admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text DEFAULT NULL)
 RETURNS void

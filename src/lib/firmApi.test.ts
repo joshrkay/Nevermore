@@ -85,11 +85,11 @@ describe("the platform admin's firm approvals", () => {
 
   it("lists the waiting firms in the shape the page shows", async () => {
     rpc.mockResolvedValue({
-      data: [{ firm_id: "f1", name: "Fresh", address: "fresh", owner_email: "o@example.test", signed_up_at: "2026-11-16T10:00:00Z" }],
+      data: [{ firm_id: "f1", name: "Fresh", address: "fresh", signed_up_by_email: "o@example.test", signed_up_at: "2026-11-16T10:00:00Z" }],
       error: null,
     });
     expect(await fetchWaitingFirms()).toEqual([
-      { id: "f1", name: "Fresh", address: "fresh", ownerEmail: "o@example.test", signedUpAt: "2026-11-16T10:00:00Z" },
+      { id: "f1", name: "Fresh", address: "fresh", signedUpByEmail: "o@example.test", signedUpAt: "2026-11-16T10:00:00Z" },
     ]);
     expect(rpc).toHaveBeenCalledWith("admin_waiting_firms");
   });
@@ -126,6 +126,11 @@ describe("the platform admin's firm approvals", () => {
   it("says a firm has been decided already, in words", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "55000", message: "That firm has been decided already" } });
     await expect(decideFirm("f1", true)).rejects.toThrow("That firm has been decided already.");
+  });
+
+  it("says a firm that no longer exists, in words", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT404", message: "That firm does not exist" } });
+    await expect(decideFirm("f1", true)).rejects.toThrow("That firm no longer exists.");
   });
 
   it("says plainly when the caller may not decide", async () => {

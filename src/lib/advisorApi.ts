@@ -71,10 +71,7 @@ export const classifyApiError = (error: { message: string; code?: string }, mess
 
 const fail = (error: { message: string; code?: string } | null, fallback: string): never => {
   if (error?.code === "42501") throw new AdvisorApiError("You don't have advisor access.", error.code);
-  if (error && isEndedSession(error)) {
-    throw new AdvisorApiError("Your session has expired. Sign in again to continue.", error.code, true);
-  }
-  throw new AdvisorApiError(error?.message || fallback, error?.code);
+  throw classifyApiError(error ?? { message: "" }, error?.message || fallback);
 };
 
 export async function fetchIsAdvisor(): Promise<boolean> {

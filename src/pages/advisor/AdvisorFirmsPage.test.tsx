@@ -14,14 +14,14 @@ const { default: AdvisorFirmsPage } = await import("./AdvisorFirmsPage");
 
 const renderPage = () => render(<MemoryRouter><AdvisorFirmsPage /></MemoryRouter>);
 const firm = (over: Record<string, unknown> = {}) => ({
-  id: "f1", name: "Fresh Benefits", address: "fresh-benefits", ownerEmail: "founder@example.test", signedUpAt: "2026-11-16T10:00:00Z", ...over,
+  id: "f1", name: "Fresh Benefits", address: "fresh-benefits", signedUpByEmail: "founder@example.test", signedUpAt: "2026-11-16T10:00:00Z", ...over,
 });
 
 // A platform admin sees the firms waiting for approval, and approves or refuses each (story CRM-P1.1 with Q-1.2).
 describe("AdvisorFirmsPage", () => {
   beforeEach(() => {
     advisor.fetchIsAdmin.mockReset().mockResolvedValue(true);
-    firms.fetchWaitingFirms.mockReset().mockResolvedValue([firm(), firm({ id: "f2", name: "Capital Brokers", address: "capital-brokers", ownerEmail: null })]);
+    firms.fetchWaitingFirms.mockReset().mockResolvedValue([firm(), firm({ id: "f2", name: "Capital Brokers", address: "capital-brokers", signedUpByEmail: null })]);
     firms.decideFirm.mockReset().mockResolvedValue(undefined);
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();

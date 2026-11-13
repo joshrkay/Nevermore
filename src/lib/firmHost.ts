@@ -21,7 +21,12 @@ export function firmAddressFromHost(hostname: string, siteDomain: string = SITE_
   return null;
 }
 
-/** Where a firm is reached: `https://<address>.<the site's domain>`. The address is read as the database reads one (lower case, no surrounding spaces). */
+/** The host a firm is reached at: `<address>.<the site's domain>`. The address is read as the database reads one (lower case, no surrounding spaces). */
+export function firmHostname(address: string, siteDomain: string = SITE_DOMAIN): string {
+  return `${address.trim().toLowerCase()}.${siteDomain}`;
+}
+
+/** Where a firm is reached: `https://<address>.<the site's domain>`. */
 export function firmUrl(address: string, siteDomain: string = SITE_DOMAIN): string {
-  return `https://${address.trim().toLowerCase()}.${siteDomain}`;
+  return `https://${firmHostname(address, siteDomain)}`;
 }
