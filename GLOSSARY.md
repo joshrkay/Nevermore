@@ -273,6 +273,13 @@ What a firm's address shows before anyone signs in: the firm's name, and nothing
 **Not a member screen**:
 What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only, and false for a refused firm's address. The database, not this screen, refuses them the data (D-18).
 
+**Address narrowing** (code: `x-firm-address`, `address_admits_firm`, `request_firm_address`):
+At a firm's address the browser names the address on every request to the database, and the membership helper (`firm_role`, so `is_firm_member` and every firm rule built on it) then answers only for the firm that holds that address (D-40, ADR 0016). It only narrows: membership is still the lock (D-18), so another firm's address, an address no firm holds or a refused firm's address shows nothing, and a header anyone can send grants nothing. A request with no address (the bare domain, the service role, a scheduled job) is answered as before. The list of a person's own firms (`my_firms`) is not narrowed.
+_Avoid_: firm switcher, firm context (no firm is put in the session or the token)
+
+**Choose a firm** (code: `ChooseFirmPage`, `/choose-firm`):
+What a member of several firms sees on the bare domain: their firms, each a link to that firm's address, where they sign in (a session belongs to one address). It only shows the way; it opens no firm's records.
+
 **Session per address**:
 A sign-in belongs to one firm address: the browser keeps its session per origin, so signing in at one firm's address does not sign the person in at another's, and the provider sends them back to the address they started from. A person in two firms signs in to each. Signing out on a firm's address ends only that address's session; on the bare domain and www it is a plain sign-out that ends every session of that person, as before (D-27). If a session exists at an address no firm holds, the not-found page carries a sign-out.
 
@@ -396,7 +403,7 @@ One condition on one field of a table, by an operator its kind takes: text (cont
 The number on a view's tab: how many rows that view's filters match, under the same rules as the table, for several views in one call.
 
 **Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
-The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so and kept out of the member pages for now, at a firm's address as on the bare domain: those pages do not filter by the address, and the database narrows each answer to the firms the person belongs to, not to one (D-18). Only the owner-only route, whose page checks the address's firm, lets them in (ADR 0015).
+The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be one of theirs, and they are let in whatever other firms they belong to: the database answers for that address's firm alone (**Address narrowing**). On the bare domain a member of exactly one firm lands in it, and a member of several is sent to **Choose a firm**. A person who belongs to no firm is told so ("You aren't a member of any firm").
 _Avoid_: advisor guard, role check
 
 **Workspace** (code: `src/components/workspace/`):

@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { useMyFirms } from "@/hooks/useOwnedFirms";
 import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
+import { currentFirm } from "@/lib/currentFirm";
 
 export type FirmRoleLabel = "Owner" | "Lead" | "Agent";
 const ROLE_LABELS: Record<string, FirmRoleLabel> = { owner: "Owner", lead: "Lead", agent: "Agent" };
@@ -18,11 +19,11 @@ export interface Workspace {
   person: string;
 }
 
-/** The firm a person works in: the address's firm at a firm's address, otherwise the one firm they belong to. */
+/** The firm a person works in: the console's current firm (currentFirm, the one rule), or none. */
 function firmShown(firms: MyFirm[] | null, address: string | null): MyFirm | null {
   if (!firms) return null;
-  if (address !== null) return firms.find((f) => f.address === address) ?? null;
-  return firms.length === 1 ? firms[0] : null;
+  const here = currentFirm(firms, address);
+  return "firm" in here ? here.firm : null;
 }
 
 /** Asks the database once; read through `WorkspaceProvider`, never called by the parts of the shell themselves. */
