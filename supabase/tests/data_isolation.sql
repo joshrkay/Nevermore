@@ -406,6 +406,10 @@ BEGIN
   -- Advisory's, keep_intake_firm); here the superuser places them, as the address a prospect arrives at will.
   RESET ROLE;
   UPDATE public.chamber_sessions SET firm_id = firm_b WHERE user_id = pb;
+  -- Their steps in the funnel follow (a step's firm is set when it is written and never moved: placing an intake is the fixture's).
+  ALTER TABLE public.intake_milestones DISABLE TRIGGER intake_milestones_firm;
+  UPDATE public.intake_milestones SET firm_id = firm_b WHERE session_id IN (SELECT id FROM public.chamber_sessions WHERE user_id = pb);
+  ALTER TABLE public.intake_milestones ENABLE TRIGGER intake_milestones_firm;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;
@@ -1528,6 +1532,9 @@ DECLARE
   member text;
   cases integer := 0;
 BEGIN
+  -- The second firm's owner is a platform admin for these calls only (the matrix above has them as none), so every admin
+  -- function must also succeed for an authorized member of the second firm, on that firm's own row.
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('owner_b'), 'admin');
   FOR e IN SELECT * FROM fprobe ORDER BY fn LOOP
     IF e.shape = 'by_id' THEN
       FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
@@ -1539,7 +1546,7 @@ BEGIN
           END IF;
           cases := cases + 1;
         END LOOP;
-        member := CASE WHEN e.who = 'admin' THEN CASE f WHEN 'a' THEN 'admin' END ELSE CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END END;
+        member := CASE WHEN e.who = 'admin' THEN CASE f WHEN 'a' THEN 'admin' ELSE 'owner_b' END ELSE CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END END;
         IF member IS NOT NULL THEN
           r := pg_temp.call_as(member, stmt);
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
@@ -1577,6 +1584,7 @@ BEGIN
     END IF;
   END LOOP;
   RESET ROLE;
+  DELETE FROM public.user_roles WHERE user_id = pg_temp.id('owner_b') AND role = 'admin';
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
 END $$;
@@ -1631,6 +1639,40 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: deletion record cases passed';
+END $$;
+
+-- ---------- 4f. the funnel keeps an intake's steps after the intake is deleted, in its firm ----------
+DO $$
+DECLARE
+  sid uuid;
+  before_b bigint;
+  before_a bigint;
+BEGIN
+  SELECT id INTO sid FROM public.chamber_sessions WHERE firm_id = pg_temp.id('firm_b') LIMIT 1;
+  IF sid IS NULL THEN RAISE EXCEPTION 'FAIL: setup: the second firm has no intake'; END IF;
+  PERFORM public.note_intake_milestone(sid, 'answered');
+  PERFORM pg_temp.become('agent_b');
+  SELECT COALESCE(sum(intakes), 0) INTO before_b FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
+  PERFORM pg_temp.become('advisor');
+  SELECT COALESCE(sum(intakes), 0) INTO before_a FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
+  RESET ROLE;
+  -- What deleting an intake does to its steps: the link goes, the rows stay.
+  UPDATE public.intake_milestones SET session_id = NULL WHERE session_id = sid;
+  PERFORM pg_temp.become('agent_b');
+  IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day')) <> before_b THEN
+    RAISE EXCEPTION 'FAIL: the funnel lost the steps of a deleted intake of its firm';
+  END IF;
+  IF (SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
+        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')) < 1 THEN
+    RAISE EXCEPTION 'FAIL: the source report lost the steps of a deleted intake of its firm';
+  END IF;
+  PERFORM pg_temp.become('advisor');
+  IF (SELECT COALESCE(sum(intakes), 0) FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day')) <> before_a THEN
+    RAISE EXCEPTION 'FAIL: the steps of a deleted intake of the second firm reached the first firm''s funnel';
+  END IF;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: deleted-intake funnel cases passed';
 END $$;
 
 -- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------

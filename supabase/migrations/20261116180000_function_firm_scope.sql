@@ -864,6 +864,29 @@ BEGIN
 END;
 $function$;
 
+-- ---------- The funnel's steps belong to a firm even after their intake is deleted ----------
+-- intake_milestones.session_id goes null when an intake is deleted (the steps are kept, without the link), so the
+-- firm can't be asked of the intake. Each step carries its firm, set from the intake when written, never moved.
+ALTER TABLE public.intake_milestones ADD COLUMN firm_id uuid REFERENCES public.firms(id) ON DELETE SET NULL;
+UPDATE public.intake_milestones m SET firm_id = s.firm_id FROM public.chamber_sessions s WHERE s.id = m.session_id;
+CREATE OR REPLACE FUNCTION public.intake_milestone_firm()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    NEW.firm_id := OLD.firm_id;
+  ELSE
+    NEW.firm_id := (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.intake_milestone_firm() FROM PUBLIC, anon, authenticated;
+CREATE TRIGGER intake_milestones_firm BEFORE INSERT OR UPDATE ON public.intake_milestones
+  FOR EACH ROW EXECUTE FUNCTION public.intake_milestone_firm();
+
 CREATE OR REPLACE FUNCTION public.advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)
  RETURNS TABLE(step integer, milestone text, intakes bigint, median_minutes numeric)
  LANGUAGE plpgsql
@@ -889,7 +912,7 @@ BEGIN
     ]) WITH ORDINALITY AS s(name, ord)
     LEFT JOIN public.intake_milestones m
       ON m.milestone = s.name AND m.started_at >= p_from AND m.started_at < p_to
-     AND public.intake_in_my_firm(m.session_id)
+     AND public.is_firm_member(m.firm_id)
     GROUP BY s.ord, s.name
     ORDER BY s.ord;
 END;
@@ -922,7 +945,7 @@ BEGIN
            count(*) FILTER (WHERE m.milestone = 'manuscript_downloaded')
     FROM public.intake_milestones m
     LEFT JOIN public.referral_partners p ON p.code = m.referral_code
-    WHERE m.started_at >= p_from AND m.started_at < p_to AND public.intake_in_my_firm(m.session_id)
+    WHERE m.started_at >= p_from AND m.started_at < p_to AND public.is_firm_member(m.firm_id)
     GROUP BY m.referral_code, p.name, m.utm_source, m.utm_medium, m.utm_campaign
     ORDER BY count(*) FILTER (WHERE m.milestone = 'started') DESC,
              m.referral_code NULLS LAST, m.utm_source NULLS LAST, m.utm_medium NULLS LAST, m.utm_campaign NULLS LAST
