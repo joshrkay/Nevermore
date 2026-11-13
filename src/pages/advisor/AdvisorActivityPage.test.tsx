@@ -8,6 +8,7 @@ const api = { fetchOwnedFirms: vi.fn(), listFirmActivityPeople: vi.fn(), listFir
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
+const { clearOwnedFirms } = await import("@/lib/ownedFirms");
 const { default: AdvisorActivityPage } = await import("./AdvisorActivityPage");
 const { AdvisorApiError } = await import("@/lib/advisorApi");
 
@@ -19,6 +20,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
 
 describe("AdvisorActivityPage", () => {
   beforeEach(() => {
+    clearOwnedFirms();
     for (const fn of Object.values(api)) fn.mockReset();
     api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
     api.listFirmActivityPeople.mockResolvedValue([{ user_id: "u1", email: "agent@example.com" }, { user_id: "u2", email: "lead@example.com" }]);
@@ -45,6 +47,12 @@ describe("AdvisorActivityPage", () => {
     expect(rows[1]).toHaveTextContent("Downloaded a document");
     expect(rows[1]).toHaveTextContent("Document doc-9");
     expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: null, kind: null, after: null });
+  });
+
+  it("asks which firms the person owns once for the page and its header together", async () => {
+    renderPage();
+    await screen.findByRole("table", { name: "Who did what" });
+    expect(api.fetchOwnedFirms).toHaveBeenCalledTimes(1);
   });
 
   it("says who may read it, and loads nothing, when the person owns no firm", async () => {

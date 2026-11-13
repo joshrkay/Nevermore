@@ -38,10 +38,10 @@ export const RECORD_TYPE_VALUES: string[] = Object.keys(RECORD_LABELS);
 
 export const recordLabel = (recordType: string): string => RECORD_LABELS[recordType] ?? recordType;
 
-// What a browser may report to record_member_activity: only these pairs of kind and record can happen there, and the
+// What a browser may report to record_member_activity (a submission opened is not here: the database writes it where it
+// hands the submission over): only these pairs of kind and record can happen there, and the
 // database refuses any other. Kept equal to the database's list by src/data/schemaSync.test.ts.
 export const BROWSER_ACTIVITY = [
-  ["submission_viewed", "submission"],
   ["document_downloaded", "document"],
   ["document_downloaded", "submission"],
   ["document_downloaded", "quote_request"],

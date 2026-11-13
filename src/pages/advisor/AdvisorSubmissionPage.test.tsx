@@ -175,39 +175,21 @@ describe("AdvisorSubmissionPage", () => {
     intakeNow = null;
   });
 
-  // CRM-P2.3: the firm's record of who did what. What is reported is the kind and the id of the record, never its content.
-  it("records that the submission was opened, once, and not when it is not found", async () => {
+  // CRM-P2.3: a submission opened is written by the database when it hands the submission over, so the page asks for it
+  // as an opening once per submission on screen and never reports a view itself.
+  it("opens the submission as an opening once, and never reports a view itself", async () => {
     renderPage();
     await screen.findByRole("heading", { name: "Signed Co" });
-    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledWith("submission_viewed", "submission", "s1"));
-    expect(api.recordActivity).toHaveBeenCalledTimes(1);
+    expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
+    expect(api.recordActivity).not.toHaveBeenCalledWith("submission_viewed", expect.anything(), expect.anything());
   });
 
-  it("records the opening of a second submission only once it has loaded, and never for one that is missing", async () => {
-    let arrive: (d: SubmissionDetail | null) => void = () => undefined;
+  it("opens a second submission as an opening too", async () => {
     renderWithNavigation();
     await screen.findByRole("heading", { name: "Signed Co" });
-    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledTimes(1));
-    // The router reuses the page for s2: s1's detail is still on screen while s2 loads.
-    api.loadSubmission.mockImplementation((id: string) => (id === "s2" ? new Promise((resolve) => { arrive = resolve; }) : Promise.resolve(detail())));
-    fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
-    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2"));
-    expect(api.recordActivity).not.toHaveBeenCalledWith("submission_viewed", "submission", "s2");
-    // s2 turns out not to exist: nothing is recorded for it.
-    await act(async () => arrive(null));
-    expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
-    expect(api.recordActivity).toHaveBeenCalledTimes(1);
-  });
-
-  it("records a second submission once when it loads", async () => {
-    renderWithNavigation();
-    await screen.findByRole("heading", { name: "Signed Co" });
-    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledTimes(1));
     api.loadSubmission.mockImplementation((id: string) => Promise.resolve(detail({ id })));
     fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
-    await waitFor(() => expect(api.recordActivity).toHaveBeenCalledWith("submission_viewed", "submission", "s2"));
-    expect(api.recordActivity.mock.calls.filter((c) => c[2] === "s2")).toHaveLength(1);
-    expect(api.recordActivity).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2", true));
   });
 
   it("records nothing for a submission it can't find", async () => {
@@ -238,7 +220,7 @@ describe("AdvisorSubmissionPage", () => {
   it("shows every captured field with its source, the transcript and the documents", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
-    expect(api.loadSubmission).toHaveBeenCalledWith("s1");
+    expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
     const count = screen.getByTestId("field-employee_count");
     expect(within(count).getByText("12")).toBeInTheDocument();
@@ -338,7 +320,7 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
     // Refreshing after a change is not another opening of the submission.
-    expect(api.recordActivity.mock.calls.filter((c) => c[0] === "submission_viewed")).toHaveLength(1);
+    expect(api.loadSubmission.mock.calls.filter((c) => c[1] === true)).toHaveLength(1);
   });
 
   it("asks the prospect for information about the answers marked Needs follow-up, and lists what was asked", async () => {

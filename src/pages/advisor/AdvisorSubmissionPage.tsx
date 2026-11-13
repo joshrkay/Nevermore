@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
@@ -27,7 +27,7 @@ import { lastCertifiedVersion } from "@/data/peoCompleteness";
 import type { FieldKey } from "@/data/provenance";
 import type { ExtraQuestionRef } from "@/data/extraAnswers";
 import { recordSubmissionFileDownload } from "@/lib/activityReports";
-import { listEmailProblems, loadSubmission, recordActivity, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
+import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
 
 type Load =
@@ -40,6 +40,8 @@ const AdvisorSubmissionPage = () => {
   const { id = "" } = useParams();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  // The submission whose opening the database has recorded, so a reload after a change is not another opening.
+  const openedRef = useRef<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
 
@@ -57,18 +59,17 @@ const AdvisorSubmissionPage = () => {
     let cancelled = false;
     // Keep showing the current detail while refreshing after a change.
     setLoad((prev) => (prev.kind === "ready" && prev.detail.id === id ? prev : { kind: "loading" }));
-    loadSubmission(id)
+    // The first load of a submission on screen is its opening, which the database records; a reload after a change is not.
+    const opening = openedRef.current !== id;
+    loadSubmission(id, opening)
+      .then((detail) => {
+        openedRef.current = id;
+        return detail;
+      })
       .then((detail) => !cancelled && setLoad(detail ? { kind: "ready", detail } : { kind: "not_found" }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
   }, [id, attempt]);
-
-  // Opening a submission is recorded once per load of it, and only for the one on screen: while the router reuses this
-  // page for another submission the old detail is still here, and refreshing after a change keeps the same detail's id.
-  const loadedId = load.kind === "ready" ? load.detail.id : null;
-  useEffect(() => {
-    if (loadedId !== null && loadedId === id) void recordActivity("submission_viewed", "submission", loadedId);
-  }, [loadedId, id]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
 

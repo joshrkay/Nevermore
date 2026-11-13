@@ -389,6 +389,26 @@ describe("loadSubmission", () => {
     tables.documents = [doc("d1"), doc("d3")];
   });
 
+  // CRM-P2.3: a submission opened is written by the database where it hands the submission over, never reported.
+  it("opens a submission through the database function that records the opening, and refreshing does not", async () => {
+    tables.chamber_sessions = [row()];
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [row()], error: null });
+    const d = (await loadSubmission("s1", true))!;
+    expect(rpc).toHaveBeenCalledWith("open_submission", { p_session_id: "s1" });
+    expect(d.certified).toBe(true);
+    rpc.mockClear();
+    await loadSubmission("s1");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("finds nothing when the database hands over no row on opening", async () => {
+    tables.chamber_sessions = [row()];
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [], error: null });
+    expect(await loadSubmission("s1", true)).toBeNull();
+  });
+
   it("shows a certified intake as certified: its answers, its stored answers, its conversation and its documents", async () => {
     tables.chamber_sessions = [row()];
     const d = (await loadSubmission("s1"))!;
@@ -701,10 +721,10 @@ describe("documentFile: an uploaded document's file, for a bundle", () => {
 describe("the firm's record of who did what", () => {
   beforeEach(() => rpc.mockReset());
 
-  it("reports a submission opened by the kind and the record's id alone", async () => {
+  it("reports a file downloaded by the kind and the record's id alone", async () => {
     rpc.mockResolvedValue({ data: null, error: null });
-    await recordActivity("submission_viewed", "submission", "s1");
-    expect(rpc).toHaveBeenCalledWith("record_member_activity", { p_kind: "submission_viewed", p_record_type: "submission", p_record_id: "s1" });
+    await recordActivity("document_downloaded", "document", "d1");
+    expect(rpc).toHaveBeenCalledWith("record_member_activity", { p_kind: "document_downloaded", p_record_type: "document", p_record_id: "d1" });
   });
 
   it("never fails the caller when the record can't be written", async () => {

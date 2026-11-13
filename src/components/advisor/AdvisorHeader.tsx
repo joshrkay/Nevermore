@@ -1,29 +1,16 @@
-import { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { useAuth } from "@/hooks/useAuth";
 import LegalLinks from "@/components/LegalLinks";
-import { fetchOwnedFirms } from "@/lib/advisorApi";
+import { useOwnedFirms } from "@/lib/ownedFirms";
 
 const AdvisorHeader = () => {
   const { user, signOut } = useAuth();
   // The record of who did what is for a firm's owners: the link is offered only once the database says the person owns a
   // firm. Until then, or if that can't be asked, it isn't shown (the page is refused to anyone else anyway).
-  const [ownsAFirm, setOwnsAFirm] = useState(false);
-  const userId = user?.id;
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const firms = await fetchOwnedFirms();
-        if (!cancelled) setOwnsAFirm(firms.length > 0);
-      } catch {
-        if (!cancelled) setOwnsAFirm(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [userId]);
+  const firms = useOwnedFirms();
+  const ownsAFirm = firms !== null && firms.length > 0;
   return (
     <header className="border-b border-border bg-card">
       <div className="container mx-auto px-6 min-h-14 py-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">

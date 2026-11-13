@@ -318,13 +318,15 @@ interface RecordedCertification {
   extra_answers?: Json | null;
 }
 
-export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
+export async function loadSubmission(id: string, opening = false): Promise<SubmissionDetail | null> {
+  // Opening a submission goes through the database function that hands it over and writes the entry in the firm's record
+  // (CRM-P2.3), so a browser never reports a view; a refresh after a change reads the table and is no opening.
+  const sessionColumns = "id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign";
+  const sessionRead = opening
+    ? supabase.rpc("open_submission", { p_session_id: id }).then(({ data, error }) => ({ data: data?.[0] ?? null, error }))
+    : supabase.from("chamber_sessions").select(sessionColumns).eq("id", id).maybeSingle();
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
-    supabase
-      .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
-      .eq("id", id)
-      .maybeSingle(),
+    sessionRead,
     supabase
       .from("submission_workflow")
       .select("status, needs_action, needs_action_note, needs_action_at, needs_action_by, needs_action_by_email, won_quote_request_id")
@@ -779,7 +781,8 @@ export async function reviewField(
 }
 
 /**
- * Tells the firm's record of who did what that the caller opened a submission or downloaded a file (CRM-P2.3). Only the
+ * Tells the firm's record of who did what that the caller downloaded a file or built one in the browser (CRM-P2.3); a
+ * submission opened is written by the database itself (loadSubmission). Only the
  * kind and the record's id are sent: the database works out the firm and the person, and refuses a record that isn't in
  * a firm the caller belongs to. Best effort: a failure is never shown and never stops what the advisor was doing.
  */

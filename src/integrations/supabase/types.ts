@@ -461,7 +461,7 @@ export type Database = {
         Update: never
         Relationships: []
       }
-      // A firm's record of who did what (20261116160000): kinds and ids, never content. Append-only; a firm's owners
+      // A firm's record of who did what (20261116160001): kinds and ids, never content. Append-only; a firm's owners
       // read their own firm's through firm_activity_list(); written only through record_firm_activity().
       firm_activity: {
         Row: {
@@ -816,7 +816,7 @@ export type Database = {
         Args: { p_code: string; p_name: string; p_kind: string }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
-      // A page of the caller's firm's record, newest first, for the firm's owners only (20261116160000).
+      // A page of one firm's record (p_firm_id), newest first, for that firm's current owners only (20261116160001).
       firm_activity_list: {
         Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_key?: string | null }
         Returns: {
@@ -846,7 +846,28 @@ export type Database = {
         Args: { p_address: string }
         Returns: string | null
       }
-      // A browser reporting a submission opened or a file downloaded; the firm and the person are worked out by the database.
+      // A submission handed to a current member of its firm; the database writes the opening in the firm's record (20261116160001). No row for anyone else.
+      open_submission: {
+        Args: { p_session_id: string }
+        Returns: {
+          chamber_data: Json
+          created_at: string
+          extra_answers: Json
+          field_provenance: Json
+          file_id: string | null
+          id: string
+          referral_code: string | null
+          status: string
+          submission: Json | null
+          transcript: Json
+          updated_at: string
+          user_id: string
+          utm_campaign: string | null
+          utm_medium: string | null
+          utm_source: string | null
+        }[]
+      }
+      // A browser reporting a file it downloaded or built, or a sign-in; the firm and the person are worked out by the database.
       record_member_activity: {
         Args: { p_kind: string; p_record_id: string; p_record_type: string }
         Returns: undefined

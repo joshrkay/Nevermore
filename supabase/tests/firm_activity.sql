@@ -99,8 +99,10 @@
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
+\i supabase/migrations/20261116110000_firm_scoped_policies.sql
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
+\i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116160001_firm_activity.sql
 SET client_min_messages = notice;
 
@@ -213,7 +215,7 @@ INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
 
 -- ---------- 1. A person opening a submission is recorded, in the submission's firm, as that person ----------
 SELECT pg_temp.as_user('agent_a');
-SELECT public.record_member_activity('submission_viewed', 'submission', pg_temp.id('intake_a')::text);
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 1::bigint, 'opening a submission hands it back');
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM pg_temp.entries(pg_temp.id('firm_a')) WHERE actor = 'agent_a' AND kind = 'submission_viewed'
   AND record_type = 'submission' AND record_id = pg_temp.id('intake_a')::text), 1::bigint, 'an opened submission is recorded in its firm as the person who opened it');
@@ -309,11 +311,9 @@ SELECT pg_temp.is((SELECT count(*) FROM pg_temp.entries(pg_temp.id('firm_a')) WH
 
 -- A member of the other firm, a platform admin who belongs to no firm, and a guest can't write an entry about firm A's records.
 SELECT pg_temp.as_user('agent_b');
-SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_a')),
-  '42501', 'another firm''s member reporting a view of this firm''s submission');
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 0::bigint, 'another firm''s member opening this firm''s submission is handed nothing');
 SELECT pg_temp.as_user('platform_admin');
-SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_a')),
-  '42501', 'a platform admin who is no member reporting a view');
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 0::bigint, 'a platform admin who is no member is handed nothing');
 -- A browser can't write the kinds the system writes, nor call the writer behind them directly.
 SELECT pg_temp.as_user('owner_a');
 SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'member_added', 'firm', pg_temp.id('firm_a')),
@@ -326,8 +326,8 @@ SELECT pg_temp.as_owner();
 UPDATE auth.users SET is_anonymous = true WHERE id = pg_temp.id('prospect_b');
 SELECT pg_temp.as_user('prospect_b');
 SELECT set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id('prospect_b'), 'role', 'authenticated', 'is_anonymous', true)::text, false);
-SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_b')),
-  '42501', 'a guest token reporting a view');
+SELECT pg_temp.expect(format('SELECT * FROM public.open_submission(%L)', pg_temp.id('intake_b')),
+  '42501', 'a guest token opening a submission');
 SELECT pg_temp.as_owner();
 
 -- A browser reports only the pairs of kind and record that can happen: a mismatched pair is a false entry.
@@ -558,8 +558,7 @@ SELECT pg_temp.as_password_user('owner_ab', 'aal1');
 SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 0::bigint, 'an owner holding only a password sign-in is told no firm');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_temp.id('firm_a')), '42501', 'an owner holding only a password sign-in reading the record');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_people(%L)', pg_temp.id('firm_a')), '42501', 'an owner holding only a password sign-in reading who is in it');
-SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_a')),
-  '42501', 'an owner holding only a password sign-in reporting a view');
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 0::bigint, 'an owner holding only a password sign-in is handed nothing');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity), 0::bigint, 'an owner holding only a password sign-in reads no row of the table either');
 SELECT pg_temp.is(public.advisor_needs_second_factor(), true, 'an owner with no platform role is held back for the second factor');
 SELECT pg_temp.as_password_user('owner_ab', 'aal2');
@@ -656,17 +655,31 @@ SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'sign_
 
 -- ---------- 11. The same record is one record, whatever way its id is written ----------
 SELECT pg_temp.as_user('owner_a');
-SELECT public.record_member_activity('submission_viewed', 'submission', pg_temp.id('intake_a')::text);
-SELECT public.record_member_activity('submission_viewed', 'submission', upper(pg_temp.id('intake_a')::text));
-SELECT public.record_member_activity('submission_viewed', 'submission', replace(pg_temp.id('intake_a')::text, '-', ''));
+SELECT public.record_member_activity('document_downloaded', 'submission', pg_temp.id('intake_a')::text);
+SELECT public.record_member_activity('document_downloaded', 'submission', upper(pg_temp.id('intake_a')::text));
+SELECT public.record_member_activity('document_downloaded', 'submission', replace(pg_temp.id('intake_a')::text, '-', ''));
 SELECT pg_temp.as_owner();
-SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = pg_temp.id('owner_a') AND kind = 'submission_viewed'), 1::bigint,
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = pg_temp.id('owner_a') AND kind = 'document_downloaded'), 1::bigint,
   'an id in capitals or without dashes is the same submission: one entry for a repeat within moments');
-SELECT pg_temp.is((SELECT record_id FROM public.firm_activity WHERE actor_id = pg_temp.id('owner_a') AND kind = 'submission_viewed'), pg_temp.id('intake_a')::text,
+SELECT pg_temp.is((SELECT record_id FROM public.firm_activity WHERE actor_id = pg_temp.id('owner_a') AND kind = 'document_downloaded'), pg_temp.id('intake_a')::text,
   'and it is stored as the record''s own id');
 SELECT pg_temp.as_service();
 SELECT public.record_firm_activity('support_access', 'firm', upper(pg_temp.id('firm_b')::text));
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'support_access' AND firm_id = pg_temp.id('firm_b') AND record_id = pg_temp.id('firm_b')::text), 1::bigint,
   'the server writer stores the record''s own id too');
+
+-- ---------- 12. A browser can't say a submission was opened: the database writes it where the submission is handed over ----------
+SELECT pg_temp.as_owner();
+SELECT pg_temp.as_user('lead_a');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'submission_viewed', 'submission', pg_temp.id('intake_a')),
+  '42501', 'a member reporting a view they did not make');
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 1::bigint, 'a member opening a submission of their firm is handed it');
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(pg_temp.id('intake_a'))), 1::bigint, 'and again within moments');
+SELECT pg_temp.is((SELECT count(*) FROM public.open_submission(NULL)), 0::bigint, 'no submission named, nothing handed over');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = pg_temp.id('lead_a') AND kind = 'submission_viewed'
+  AND record_id = pg_temp.id('intake_a')::text), 1::bigint, 'one entry for opening it twice within 30 seconds');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'submission_viewed' AND record_id = pg_temp.id('intake_a')::text
+  AND actor_id IN (pg_temp.id('agent_b'), pg_temp.id('platform_admin'))), 0::bigint, 'nobody outside the firm left an entry');
 \echo firm_activity: ok

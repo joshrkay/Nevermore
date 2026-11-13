@@ -4,9 +4,11 @@ import { Loader2 } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
+import { useAuth } from "@/hooks/useAuth";
+import { loadOwnedFirms } from "@/lib/ownedFirms";
 import { ENTRY_KINDS, kindLabel, recordLabel } from "@/data/firmActivity";
 import {
-  fetchOwnedFirms, listFirmActivity, listFirmActivityPeople,
+  listFirmActivity, listFirmActivityPeople,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
 } from "@/lib/advisorApi";
 
@@ -38,6 +40,7 @@ function recordText(e: FirmActivityEntry): string {
  */
 const AdvisorActivityPage = () => {
   const [params, setParams] = useSearchParams();
+  const userId = useAuth().user?.id ?? "";
   const firmParam = params.get("firm");
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -52,7 +55,7 @@ const AdvisorActivityPage = () => {
     let cancelled = false;
     setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
     (async (): Promise<Load> => {
-      const firms = await fetchOwnedFirms();
+      const firms = await loadOwnedFirms(userId);
       const firmId = firmParam ?? (firms.length === 1 ? firms[0].firm_id : null);
       if (firmId === null) return firms.length > 1 ? { kind: "choose", firms } : { kind: "not_allowed" };
       if (!firms.some((f) => f.firm_id === firmId)) return { kind: "not_allowed" };
@@ -64,7 +67,7 @@ const AdvisorActivityPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [attempt, person, kind, after, firmParam]);
+  }, [attempt, person, kind, after, firmParam, userId]);
 
   const chooseFirm = (firmId: string) => {
     setPerson(null);

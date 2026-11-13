@@ -263,7 +263,7 @@ describe("server and client intake rules agree", () => {
     expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
   });
 
-  // The record of who did what (20261116160000): the kinds of entry the table accepts and the page names.
+  // The record of who did what (20261116160001): the kinds of entry the table accepts and the page names.
   it("holds the same kinds of entry in a firm's record as the page names", () => {
     expect(quoted(blocks("firm_activity_kinds").join("\n"))).toEqual(ENTRY_KIND_VALUES);
   });

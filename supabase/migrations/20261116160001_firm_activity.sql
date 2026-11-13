@@ -12,7 +12,10 @@
 --   there has no actor (the system). Browsers can't call it: they call record_member_activity(), which accepts only the
 --   pairs of kind and record a browser sees happen (a submission opened, a file of a submission, a document or a
 --   PEO's mail attachment downloaded, a packet downloaded, a sign-in to a firm's console), only for a firm the caller
---   belongs to, and collapses a repeat within 30 seconds.
+--   belongs to, and collapses a repeat within 30 seconds. A submission opened is not one of them: the database writes
+--   it itself, in open_submission(), the function that hands the submission over, so a browser can't report a view it
+--   didn't make. What stays with the browser is what only the browser sees happen (a file built there, the storage link
+--   it saved, a sign-in): a member can still report one of those that did not happen, which the glossary names.
 --   No other function takes an actor as an argument: nothing can write an entry naming someone else.
 -- * A firm's owners (a current membership with the role owner) read their own firm's record, once they have completed
 --   the second factor (D-19), by the table or by firm_activity_list(); no one else does, and a platform admin who is not
@@ -229,7 +232,7 @@ REVOKE ALL ON FUNCTION public.record_firm_activity(text, text, text) FROM PUBLIC
 GRANT EXECUTE ON FUNCTION public.record_firm_activity(text, text, text) TO service_role;
 
 -- What a browser may report.
--- A browser reports only what it alone sees happen, and only the pairs that can happen: a submission opened, a file of
+-- A browser reports only what it alone sees happen, and only the pairs that can happen: a file of
 -- a submission, a document or a mail attachment (against its quote request) downloaded, a packet downloaded, a sign-in to
 -- a firm's console. Any other pair would be a false entry. It hands back
 -- nothing (ids are numbered across every firm, so one would let a caller count other firms' entries), and the same
@@ -248,7 +251,7 @@ BEGIN
   END IF;
   IF (p_kind, p_record_type) NOT IN (
        -- sync:begin firm_activity_browser_pairs
-       ('submission_viewed', 'submission'), ('document_downloaded', 'document'),
+       ('document_downloaded', 'document'),
        ('document_downloaded', 'submission'), ('document_downloaded', 'quote_request'), ('packet_downloaded', 'manuscript'),
        ('sign_in', 'firm')
        -- sync:end firm_activity_browser_pairs
@@ -272,7 +275,51 @@ $$;
 REVOKE ALL ON FUNCTION public.record_member_activity(text, text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.record_member_activity(text, text, text) TO authenticated;
 
+-- A submission handed to a member: the one place a view is written, because it is the place the data leaves the
+-- database. It returns the intake row the advisor's page opens on, only to a current member of the submission's firm
+-- (the same rule as the table's policy: is_firm_member), writes 'submission_viewed' as the caller in that firm, and
+-- collapses a repeat within 30 seconds. Anyone else gets no row and leaves no entry. Nothing here takes an actor or a
+-- firm.
+CREATE FUNCTION public.open_submission(p_session_id uuid)
+RETURNS TABLE (
+  id uuid, user_id uuid, chamber_data jsonb, field_provenance jsonb, extra_answers jsonb, transcript jsonb, status text,
+  submission jsonb, created_at timestamptz, updated_at timestamptz, file_id text, referral_code text,
+  utm_source text, utm_medium text, utm_campaign text)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_firm uuid;
+BEGIN
+  IF NOT public.is_signed_in_person() THEN
+    RAISE EXCEPTION 'Sign in to continue' USING ERRCODE = '42501';
+  END IF;
+  SELECT s.firm_id INTO v_firm FROM public.chamber_sessions s WHERE s.id = p_session_id;
+  IF v_firm IS NULL OR NOT public.is_firm_member(v_firm) THEN
+    RETURN;
+  END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM public.firm_activity a
+       WHERE a.firm_id = v_firm AND a.actor_id = auth.uid() AND a.kind = 'submission_viewed'
+         AND a.record_type = 'submission' AND a.record_id = p_session_id::text AND a.at > now() - interval '30 seconds') THEN
+    PERFORM public.firm_activity_insert(auth.uid(), v_firm, 'submission_viewed', 'submission', p_session_id::text);
+  END IF;
+  RETURN QUERY
+    SELECT s.id, s.user_id, s.chamber_data, s.field_provenance, s.extra_answers, s.transcript, s.status, s.submission,
+           s.created_at, s.updated_at, s.file_id, s.referral_code, s.utm_source, s.utm_medium, s.utm_campaign
+    FROM public.chamber_sessions s WHERE s.id = p_session_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.open_submission(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.open_submission(uuid) TO authenticated;
+
 -- ---------- Wired to what exists today ----------
+
+-- A membership entry is written when the change is made, not when it takes effect: an end given a date in the future is
+-- recorded now, while the person is still a member, and nothing is written when the date arrives (glossary: Firm activity).
 
 -- Every membership, role and ownership change. A membership is never changed, only ended and another added, so a role
 -- change reads as an end and an add. An owner's change is its own kind. Written from the row itself, since a deleted row
@@ -371,6 +418,24 @@ GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, t
 
 -- The firms the caller currently owns, to offer a choice when there is more than one. A page says which firm it wants
 -- (today by ?firm=<id>, or the only firm the caller owns) and firm_activity_list checks the caller currently owns that one. A platform admin who is not an owner is refused like anyone else (D-16).
+-- The one place 'the caller currently owns this firm' is written for a membership (a current membership with the role
+-- owner), whatever sign-in the caller holds: the reader (my_owner_firms) adds the second-factor rule, and the check that
+-- holds an owner back for the second factor (advisor_needs_second_factor) must not. Internal.
+CREATE FUNCTION public.current_owner_firm_ids()
+RETURNS TABLE (firm_id uuid)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT m.firm_id
+  FROM public.firm_memberships m
+  WHERE m.user_id = auth.uid() AND m.role = 'owner'
+    AND public.membership_is_current(m.valid_from, m.valid_until)
+$$;
+
+REVOKE ALL ON FUNCTION public.current_owner_firm_ids() FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE FUNCTION public.my_owner_firms()
 RETURNS TABLE (firm_id uuid, name text)
 LANGUAGE sql
@@ -379,12 +444,10 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
   SELECT f.id, f.name
-  FROM public.firm_memberships m
-  JOIN public.firms f ON f.id = m.firm_id
+  FROM public.current_owner_firm_ids() o
+  JOIN public.firms f ON f.id = o.firm_id
   WHERE public.is_signed_in_person()
     AND public.second_factor_rule_met()
-    AND m.user_id = auth.uid() AND m.role = 'owner'
-    AND public.membership_is_current(m.valid_from, m.valid_until)
   ORDER BY f.name, f.id
 $$;
 
@@ -501,7 +564,6 @@ AS $$
     AND NOT public.second_factor_rule_met()
     AND (
       EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid())
-      OR EXISTS (SELECT 1 FROM public.firm_memberships m
-                 WHERE m.user_id = auth.uid() AND m.role = 'owner' AND public.membership_is_current(m.valid_from, m.valid_until))
+      OR EXISTS (SELECT 1 FROM public.current_owner_firm_ids())
     );
 $$;

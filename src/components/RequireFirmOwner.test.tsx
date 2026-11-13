@@ -17,6 +17,7 @@ const fetchNeedsSecondFactor = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({ fetchOwnedFirms: () => fetchOwnedFirms(), fetchNeedsSecondFactor: () => fetchNeedsSecondFactor() }));
 vi.mock("@/lib/monitoring", () => ({ reportOpsEvent: vi.fn() }));
 
+const { clearOwnedFirms } = await import("@/lib/ownedFirms");
 const { default: RequireFirmOwner } = await import("./RequireFirmOwner");
 
 const Login = () => <p>Login page returning to {(useLocation().state as { from?: { pathname: string } }).from?.pathname ?? "nowhere"}</p>;
@@ -39,6 +40,7 @@ describe("RequireFirmOwner", () => {
     auth.loading = false;
     auth.isAnonymous = false;
     auth.sessionEnded = null;
+    clearOwnedFirms();
     fetchOwnedFirms.mockReset();
     fetchNeedsSecondFactor.mockReset().mockResolvedValue(false);
   });
@@ -91,6 +93,7 @@ describe("RequireFirmOwner", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     expect(await screen.findByText("The record")).toBeInTheDocument();
     auth.signOut.mockReset().mockResolvedValue(undefined);
+    clearOwnedFirms();
     fetchOwnedFirms.mockRejectedValue(Object.assign(new Error("expired"), { unauthenticated: true }));
     renderGuarded();
     expect(await screen.findByText("Your session has expired.")).toBeInTheDocument();
