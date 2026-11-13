@@ -80,19 +80,29 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE peo text;
 BEGIN
-  -- An address reads as a listed PEO when one of its hyphen-separated words is the PEO's name or its first word
-  -- (adp, adp-benefits), or the address without hyphens is the whole name (adp-total-source). Matched as whole
-  -- words, never as a piece of one (petrinetwork is not TriNet). A name with fewer than 3 letters or digits
-  -- once cleaned ('&', 'A1') has nothing to compare and holds no address back.
+  -- An address reads as a listed PEO when, with its hyphens taken out, it starts or ends with the PEO's whole
+  -- name (trinetpartners, trinethr, trinet-partners), or when one of its hyphen-separated words is the whole name
+  -- (my-trinet-benefits). For a PEO of several words the first word counts too, as a hyphen-separated word
+  -- (adp, adp-benefits) or as the start of the address (adpbenefits), unless it is a common word ('the', 'first')
+  -- that says nothing about which PEO is meant. A name buried inside another word (petrinetwork) is not TriNet.
+  -- A name with fewer than 3 letters or digits once cleaned ('&', 'A1') has nothing to compare and holds back nothing.
   SELECT p.name INTO peo
   FROM public.peos p
   CROSS JOIN LATERAL (
     SELECT regexp_replace(lower(p.name), '[^a-z0-9]', '', 'g') AS whole,
-           regexp_replace(lower(split_part(p.name, ' ', 1)), '[^a-z0-9]', '', 'g') AS first_word
+           regexp_replace(lower(split_part(btrim(p.name), ' ', 1)), '[^a-z0-9]', '', 'g') AS first_word,
+           btrim(p.name) LIKE '% %' AS several_words,
+           replace(NEW.address, '-', '') AS flat,
+           string_to_array(NEW.address, '-') AS words
   ) c
   WHERE p.listed
-    AND ((char_length(c.whole) >= 3 AND (c.whole = replace(NEW.address, '-', '') OR c.whole = ANY (string_to_array(NEW.address, '-'))))
-      OR (char_length(c.first_word) >= 3 AND c.first_word = ANY (string_to_array(NEW.address, '-'))))
+    AND ((char_length(c.whole) >= 3
+          AND (left(c.flat, char_length(c.whole)) = c.whole OR right(c.flat, char_length(c.whole)) = c.whole
+               OR c.whole = ANY (c.words)))
+      OR (c.several_words AND char_length(c.first_word) >= 3
+          AND c.first_word <> ALL (ARRAY['the', 'and', 'first', 'new', 'national', 'american', 'united', 'global', 'general'])
+          AND (c.first_word = ANY (c.words)
+               OR (char_length(c.first_word) >= 4 AND left(c.flat, char_length(c.first_word)) = c.first_word))))
   LIMIT 1;
   IF FOUND THEN
     RAISE EXCEPTION 'A firm address can''t read as a PEO (%)', peo USING ERRCODE = '23514';
@@ -175,7 +185,8 @@ CREATE TRIGGER firm_memberships_history
 -- A firm always keeps a current owner (PRD 8.2). An owner with an end date is going to lapse, so only an owner
 -- with no end date lets another current owner go: ending, deleting or cascading away a current owner's membership
 -- is refused unless an open-ended current owner remains, and an owner is not added with an end date unless one
--- already exists. Ownership is passed by adding the new owner first. The firm row is locked first, so two
+-- already exists. Ownership is passed by adding the new owner first. The firm row is locked first (FOR NO KEY UPDATE,
+-- which waits for another owner change but not for the foreign-key inserts that only share-lock the firm), so two
 -- transactions ending different owners queue instead of each seeing the other still there.
 CREATE FUNCTION public.keep_firm_owner()
 RETURNS trigger
@@ -189,13 +200,14 @@ BEGIN
   IF r.role <> 'owner' THEN
     RETURN NULL;
   END IF;
-  IF TG_OP = 'INSERT' AND (r.valid_until IS NULL OR r.valid_until <= now()) THEN
+  -- A new owner counts only with an end date still ahead (the start date is not in question: least() puts it in the past).
+  IF TG_OP = 'INSERT' AND (r.valid_until IS NULL OR NOT public.membership_is_current(least(r.valid_from, now()), r.valid_until)) THEN
     RETURN NULL;
   END IF;
   IF TG_OP <> 'INSERT' AND NOT public.membership_is_current(r.valid_from, r.valid_until) THEN
     RETURN NULL;
   END IF;
-  PERFORM 1 FROM public.firms WHERE id = r.firm_id FOR UPDATE;
+  PERFORM 1 FROM public.firms WHERE id = r.firm_id FOR NO KEY UPDATE;
   IF NOT EXISTS (
        SELECT 1 FROM public.firm_memberships m
        WHERE m.firm_id = r.firm_id AND m.role = 'owner' AND m.id <> r.id
