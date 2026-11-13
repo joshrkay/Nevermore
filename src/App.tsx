@@ -10,8 +10,7 @@ import AuthRedirectGate from "./components/AuthRedirectGate";
 import Navbar from "./components/Navbar";
 import PageMeta from "./components/PageMeta";
 import RequireAuth from "./components/RequireAuth";
-import RequireAdvisor from "./components/RequireAdvisor";
-import RequireFirmOwner from "./components/RequireFirmOwner";
+import RequireFirm, { RequirePlatformAdmin } from "./components/RequireFirm";
 import FirmAddressGate from "./components/FirmAddressGate";
 import { FirmAddressProvider } from "@/hooks/useFirmAddress";
 import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
@@ -24,7 +23,7 @@ import NotFound from "./pages/NotFound";
 
 // jsPDF and html2canvas are only needed here, so keep them out of the main bundle.
 const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
-// Advisor tools are only for advisors; keep them out of the prospect's bundle.
+// The firm's console is only for its members; keep it out of the prospect's bundle.
 const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
 const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
 const SecondFactorPage = lazy(() => import("./pages/SecondFactorPage"));
@@ -85,17 +84,17 @@ const App = () => (
                 {/* A submission by its File ID; row security decides who may read it. */}
                 <Route path="/manuscript/:reference" element={<ManuscriptPage />} />
                 <Route path="/advisor/second-factor" element={<SecondFactorPage />} />
-                <Route path="/advisor" element={<RequireAdvisor><AdvisorDashboardPage /></RequireAdvisor>} />
-                <Route path="/advisor/submissions/:id" element={<RequireAdvisor><AdvisorSubmissionPage /></RequireAdvisor>} />
-                <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />
-                <Route path="/advisor/funnel" element={<RequireAdvisor><AdvisorFunnelPage /></RequireAdvisor>} />
-                <Route path="/advisor/partners" element={<RequireAdvisor><AdvisorPartnersPage /></RequireAdvisor>} />
-                <Route path="/advisor/peos" element={<RequireAdvisor><AdvisorPeosPage /></RequireAdvisor>} />
-                <Route path="/advisor/held" element={<RequireAdvisor><AdvisorHeldMailPage /></RequireAdvisor>} />
-                <Route path="/advisor/mailbox" element={<RequireAdvisor><AdvisorMailboxPage /></RequireAdvisor>} />
-                <Route path="/advisor/firms" element={<RequireAdvisor><AdvisorFirmsPage /></RequireAdvisor>} />
-                <Route path="/advisor/organisations" element={<RequireAdvisor><AdvisorOrganisationsPage /></RequireAdvisor>} />
-                <Route path="/advisor/activity" element={<RequireFirmOwner><AdvisorActivityPage /></RequireFirmOwner>} />
+                <Route path="/advisor" element={<RequireFirm><AdvisorDashboardPage /></RequireFirm>} />
+                <Route path="/advisor/submissions/:id" element={<RequireFirm><AdvisorSubmissionPage /></RequireFirm>} />
+                <Route path="/advisor/outbox" element={<RequireFirm><AdvisorOutboxPage /></RequireFirm>} />
+                <Route path="/advisor/funnel" element={<RequireFirm><AdvisorFunnelPage /></RequireFirm>} />
+                <Route path="/advisor/partners" element={<RequireFirm><AdvisorPartnersPage /></RequireFirm>} />
+                <Route path="/advisor/peos" element={<RequireFirm><AdvisorPeosPage /></RequireFirm>} />
+                <Route path="/advisor/held" element={<RequirePlatformAdmin><AdvisorHeldMailPage /></RequirePlatformAdmin>} />
+                <Route path="/advisor/mailbox" element={<RequireFirm><AdvisorMailboxPage /></RequireFirm>} />
+                <Route path="/advisor/firms" element={<RequirePlatformAdmin><AdvisorFirmsPage /></RequirePlatformAdmin>} />
+                <Route path="/advisor/organisations" element={<RequirePlatformAdmin><AdvisorOrganisationsPage /></RequirePlatformAdmin>} />
+                <Route path="/advisor/activity" element={<RequireFirm as="owner"><AdvisorActivityPage /></RequireFirm>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
               </FirmAddressGate>

@@ -5,7 +5,8 @@ import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { useAuth } from "@/hooks/useAuth";
-import { loadOwnedFirms } from "@/hooks/useOwnedFirms";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
+import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
 import { ENTRY_KINDS, kindLabel, recordLabel } from "@/data/firmActivity";
 import {
   listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
@@ -47,7 +48,10 @@ const AdvisorActivityPage = () => {
   const { user, session } = useAuth();
   const userId = user?.id ?? "";
   const sessionKey = session?.access_token ?? "";
-  const firmParam = params.get("firm");
+  // At a firm's own address the firm is that address's: the link's ?firm= and the choice of firm are for the bare domain.
+  const firmAddress = useFirmAddress();
+  const address = firmAddress.status === "known" ? firmAddress.address : null;
+  const firmParam = address === null ? params.get("firm") : null;
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [person, setPerson] = useState<string | null>(null);
@@ -62,7 +66,9 @@ const AdvisorActivityPage = () => {
     setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
     (async (): Promise<Load> => {
       const firms = await loadOwnedFirms(userId, sessionKey);
-      const firmId = firmParam ?? (firms.length === 1 ? firms[0].firm_id : null);
+      // The address's firm, as the person's own memberships name it; a firm they aren't in at all is no firm here.
+      const atAddress = address === null ? null : (await loadMyFirms(userId, sessionKey)).find((f) => f.address === address)?.firm_id ?? "none";
+      const firmId = atAddress ?? firmParam ?? (firms.length === 1 ? firms[0].firm_id : null);
       if (firmId === null) return firms.length > 1 ? { kind: "choose", firms } : { kind: "not_allowed" };
       if (!firms.some((f) => f.firm_id === firmId)) return { kind: "not_allowed" };
       const [people, result] = await Promise.all([listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, after })]);
@@ -73,7 +79,7 @@ const AdvisorActivityPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [attempt, person, kind, after, firmParam, userId, sessionKey]);
+  }, [attempt, person, kind, after, firmParam, address, userId, sessionKey]);
 
   const chooseFirm = (firmId: string) => {
     setPerson(null);

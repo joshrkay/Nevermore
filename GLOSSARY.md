@@ -339,8 +339,15 @@ What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_d
 ### Advisors
 
 **Advisor Console**:
-The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM.
+The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM. Since the firms stories it is **the firm's console**: it opens for a current member of a firm (never because of a platform role: **Firm guard**), and shows only that firm's records. The routes keep their `/advisor` paths until the screens that replace them ship (D-8).
 _Avoid_: CRM, admin queue
+
+**Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
+The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner, for the firm's record of who did what), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
+_Avoid_: advisor guard, role check
+
+**Platform page** (code: `RequirePlatformAdmin`):
+A page that is platform-wide and not a firm's: the firms waiting for approval, who gets the advisor role by organisation, held mail. Opened by a platform admin and by no one else, a member of a firm included; and opening one is no way into a firm's console (D-16).
 
 **Milestone**:
 A step an intake reached, recorded the first time it does: started, answered, a document uploaded, a census provided, ready to certify, an email verified, certified, The Manuscript downloaded. A milestone holds the step and its times, never an answer, name or address, and stays (unlinked) when its intake is deleted.
