@@ -20,4 +20,4 @@ The screens ask `my_firms()` (the firms the caller currently belongs to and thei
 
 - A member with no platform role cannot read the PEO catalogue, so the PEOs page and the PEO columns of a submission fall back to what a prospect sees until a later story decides whether a firm's members read the catalogue. That decision is the founder's, not this story's.
 - Referral partners stay with the platform role until CRM-P2.1c gives them a firm.
-- A person who belongs to several firms is kept out of the console for now: the database answers for every firm they belong to, so the console would show the firms together. The workspace shell (Epic 2) is where one firm at a time is chosen.
+- A person who belongs to several firms is kept out of the console for now: the database answers for every firm they belong to, so the console would show the firms together. The workspace shell (Epic 2) is where one firm at a time is chosen. (Reversed by ADR 0014: at a firm's address the database answers for that firm alone, so such a person is let in there.)
