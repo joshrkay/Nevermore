@@ -39,9 +39,9 @@ function recordText(e: FirmActivityEntry): string {
 
 /**
  * The firm's record of who did what (story CRM-P2.3), for its owners: when, who, what kind of thing and which record,
- * never content. Filtered by person and kind, newest first, a page at a time. The firm is named by the address
- * (?firm=<id>, which the firm's own address will supply); an owner of one firm needn't name it, an owner of several is
- * asked. Anyone else is told it is for owners; the database refuses them anyway.
+ * never content. Filtered by person and kind, newest first, a page at a time. At a firm's address that
+ * address's firm is read and named, and no choice of firm is offered; on the bare domain an owner of one firm needn't name
+ * it (?firm=<id> or the choice does) and an owner of several is asked. Anyone else is told it is for owners; the database refuses them anyway.
  */
 const AdvisorActivityPage = () => {
   const [params, setParams] = useSearchParams();
@@ -118,7 +118,14 @@ const AdvisorActivityPage = () => {
           <p role="status" className="text-sm">Only a firm's owners can read its record of who did what.</p>
         )}
 
-        {(load.kind === "choose" || (load.kind === "ready" && load.firms.length > 1)) && (
+        {address !== null && load.kind === "ready" && (
+          <p className="text-sm text-muted-foreground">
+            Firm: <span className="font-medium text-foreground">{load.firms.find((f) => f.firm_id === load.firmId)?.name}</span>
+          </p>
+        )}
+
+        {/* The choice of firm is for the bare domain: at a firm's address that address's firm is the one shown, whatever a link names. */}
+        {address === null && (load.kind === "choose" || (load.kind === "ready" && load.firms.length > 1)) && (
           <div>
             <label htmlFor="activity-firm" className="block text-xs text-muted-foreground">Firm</label>
             <select id="activity-firm" value={firmParam ?? ""} onChange={(e) => chooseFirm(e.target.value)} className={select}>

@@ -279,6 +279,14 @@ describe("AdvisorActivityPage", () => {
         expect(api.listFirmActivity).not.toHaveBeenCalledWith("firm-1", expect.anything());
       });
 
+      it("shows no firm selector, so no choice can name a firm other than the one whose records are shown, and names the address's firm", async () => {
+        renderPage("/advisor/activity?firm=firm-1");
+        await screen.findByRole("table");
+        expect(screen.queryByLabelText("Firm")).not.toBeInTheDocument();
+        expect(screen.getByText("Beta Brokers")).toBeInTheDocument();
+        expect(screen.queryByText("Alpha Advisory")).not.toBeInTheDocument();
+      });
+
       it("reads nothing at an address of a firm the person doesn't belong to at all, whatever other firm they own", async () => {
         api.fetchOwnedFirms.mockResolvedValue([firms[0]]);
         api.fetchMyFirms.mockResolvedValue([mine[0]]);
