@@ -38,6 +38,7 @@ import {
   STORED_CONTENT_TYPE,
 } from "../_shared/fileSignature.ts";
 import { isReleased, malwareAlert, postScanAlert, selectScanner, type ScannerDeps, type ScanResult } from "../_shared/malwareScan.ts";
+import { UUID } from "../_shared/uuid.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,7 +46,6 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "X-Request-Id",
 };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** documents_category_check, as of 20261029090000_document_ingestion.sql (src/data/documentCategories.ts). */
 export const DOCUMENT_CATEGORIES = [
