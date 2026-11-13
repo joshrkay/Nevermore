@@ -722,27 +722,27 @@ describe("the firm's record of who did what", () => {
     await expect(fetchOwnedFirms()).resolves.toEqual([]);
   });
 
-  const row = (id: number) => ({ id, at: `2026-11-12T10:00:${String(id % 60).padStart(2, "0")}Z`, actor_id: "u1", actor_email: "a@x.test", kind: "submission_viewed", record_type: "submission", record_id: `s${id}`, subject_user_id: null, subject_email: null, role: null });
+  const row = (id: number) => ({ entry_key: `k${id}`, at: `2026-11-12T10:00:${String(id % 60).padStart(2, "0")}Z`, actor_id: "u1", actor_email: "a@x.test", kind: "submission_viewed", record_type: "submission", record_id: `s${id}`, subject_user_id: null, subject_email: null, role: null });
 
   it("asks for the first page with the filters it was given, and one more row to know whether another page follows", async () => {
     rpc.mockResolvedValue({ data: [row(3), row(2), row(1)], error: null });
     const page = await listFirmActivity("firm-1", { person: "u1", kind: "send_recorded", after: null });
     expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
-      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: null, p_before_id: null,
+      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: null, p_before_key: null,
     });
-    expect(page.entries.map((e) => e.id)).toEqual([3, 2, 1]);
+    expect(page.entries.map((e) => e.entry_key)).toEqual(["k3", "k2", "k1"]);
     expect(page.hasMore).toBe(false);
   });
 
-  it("asks for the page after the last entry the reader saw, by its time and id, never by a count of rows", async () => {
+  it("asks for the page after the last entry the reader saw, by its time and key, never by a count of rows", async () => {
     rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE + 1 }, (_, i) => row(100 - i)), error: null });
-    const page = await listFirmActivity("firm-1", { person: null, kind: null, after: { at: "2026-11-12T09:00:00Z", id: 77 } });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, after: { at: "2026-11-12T09:00:00Z", key: "k77" } });
     expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
-      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: "2026-11-12T09:00:00Z", p_before_id: 77,
+      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: "2026-11-12T09:00:00Z", p_before_key: "k77",
     });
     expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
     expect(page.hasMore).toBe(true);
-    expect(page.entries.at(-1)?.id).toBe(100 - (FIRM_ACTIVITY_PAGE_SIZE - 1));
+    expect(page.entries.at(-1)?.entry_key).toBe(`k${100 - (FIRM_ACTIVITY_PAGE_SIZE - 1)}`);
   });
 
   it("says no page follows when the record ends exactly at the end of a page", async () => {

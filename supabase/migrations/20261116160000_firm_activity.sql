@@ -11,19 +11,27 @@
 --   triggers call it; a server function calls it as the service, which has no person behind it, and an entry from
 --   there has no actor (the system). Browsers can't call it: they call record_member_activity(), which accepts only the
 --   pairs of kind and record a browser sees happen (a submission opened, a file of a submission, a document or a
---   PEO's mail attachment downloaded, a packet downloaded), only for a firm the caller belongs to, and collapses a repeat within 30 seconds.
+--   PEO's mail attachment downloaded, a packet downloaded, a sign-in to a firm's console), only for a firm the caller
+--   belongs to, and collapses a repeat within 30 seconds.
 --   No other function takes an actor as an argument: nothing can write an entry naming someone else.
 -- * A firm's owners (a current membership with the role owner) read their own firm's record, once they have completed
 --   the second factor (D-19), by the table or by firm_activity_list(); no one else does, and a platform admin who is not
 --   an owner of the firm doesn't (D-16). A firm owner with no platform role is held back for the second factor too.
 -- * Kinds that later stories write (export, invitation, removal, support access) are accepted now so they need no
---   schema change. Sign-in to a firm's console is accepted too but nothing writes it yet: which firm a sign-in is to is
---   decided by the firm address (story CRM-P1.3a), so that story calls record_firm_activity('sign_in', 'firm', <id>).
--- * Not built here, deferred under D-24 to the story that builds exports: the alert that emails owners about a large
---   or repeated export. This migration only makes 'export' a kind.
+--   schema change. A sign-in to a firm's console is written by the screen at the firm's address, once after each
+--   sign-in, through record_member_activity('sign_in', 'firm', <the firm the address names>): it is the caller's own
+--   sign-in, so the entry names the person, and the caller must be a current member of that firm.
+-- * Not built here, deferred under D-24 to CRM-S3.8 (Export, epic 2), the story that builds exports: the alert that
+--   emails owners about a large or repeated export (CRM-P2.3's export-alert criterion). This migration only makes
+--   'export_made' a kind.
+-- * Entries are numbered across every firm, so no id leaves the database for a reader: a reader's pages are told apart by
+--   a random key (entry_key), never by the number, whose gaps would count what other firms did.
 
 CREATE TABLE public.firm_activity (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  -- What a reader pages by, with `at`. Random, so it says nothing about how much happened in other firms. `id` is never
+  -- granted to a reader or returned by a function.
+  entry_key uuid NOT NULL DEFAULT gen_random_uuid(),
   firm_id uuid NOT NULL REFERENCES public.firms (id),
   at timestamptz NOT NULL DEFAULT now(),
   -- The signed-in person who did it; null when the system did (a scheduled job, a server function as the service).
@@ -52,7 +60,7 @@ CREATE TABLE public.firm_activity (
   CONSTRAINT firm_activity_role_check CHECK (role IS NULL OR role IN ('owner', 'lead', 'agent'))
 );
 
-CREATE INDEX firm_activity_firm_at_idx ON public.firm_activity (firm_id, at DESC, id DESC);
+CREATE INDEX firm_activity_firm_at_idx ON public.firm_activity (firm_id, at DESC, entry_key DESC);
 CREATE INDEX firm_activity_actor_idx ON public.firm_activity (firm_id, actor_id, at DESC) WHERE actor_id IS NOT NULL;
 
 -- How long an entry is kept: the window for operational events (D4). One place to change it.
@@ -108,20 +116,38 @@ CREATE TRIGGER firm_activity_no_truncate
 ALTER TABLE public.firm_activity ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.firm_activity FROM PUBLIC, anon, authenticated, service_role;
 -- The service reads it (a later story's alert counts a member's exports) but writes only through record_firm_activity().
-GRANT SELECT ON public.firm_activity TO authenticated, service_role;
+-- A reader gets every column but the global number (id): its gaps would count what other firms did.
+GRANT SELECT ON public.firm_activity TO service_role;
+GRANT SELECT (entry_key, firm_id, at, actor_id, kind, record_type, record_id, subject_user_id, role) ON public.firm_activity TO authenticated;
 GRANT SELECT, DELETE ON public.firm_activity TO firm_activity_pruner;
+
+-- Who may read a firm's record: its current owners, once they have done the second factor if their sign-in owes one
+-- (D-19). The one place the rule is written: the policy below and the two reading functions call it.
+CREATE FUNCTION public.can_read_firm_activity(p_firm_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(public.firm_role(p_firm_id) = 'owner', false) AND public.second_factor_rule_met()
+$$;
+
+REVOKE ALL ON FUNCTION public.can_read_firm_activity(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_read_firm_activity(uuid) TO authenticated;
 
 -- An owner who signed in with a password and has not done the second factor reads nothing here, by the table or by
 -- the functions below (D-19).
 CREATE POLICY firm_activity_owners_read ON public.firm_activity
-  FOR SELECT TO authenticated USING (public.firm_role(firm_id) = 'owner' AND public.second_factor_rule_met());
+  FOR SELECT TO authenticated USING (public.can_read_firm_activity(firm_id));
 CREATE POLICY firm_activity_pruner_select ON public.firm_activity FOR SELECT TO firm_activity_pruner USING (true);
 CREATE POLICY firm_activity_pruner_delete ON public.firm_activity FOR DELETE TO firm_activity_pruner USING (true);
 
--- The firm a record belongs to (and, for a membership, who it is about and in what role). Internal: the writers below
--- call it. A later story that records against a new kind of record adds it here.
+-- The firm a record belongs to (and, for a membership, who it is about and in what role), and the record's id in its
+-- own canonical form, read from the record itself: an id in capitals or without dashes names the same record and is
+-- stored, and compared for a repeat, as one id. Internal: the writers below call it. A later story that records against
+-- a new kind of record adds it here.
 CREATE FUNCTION public.firm_activity_resolve(p_record_type text, p_record_id text)
-RETURNS TABLE (firm_id uuid, subject_user_id uuid, role text)
+RETURNS TABLE (firm_id uuid, subject_user_id uuid, role text, canonical_id text)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
@@ -129,20 +155,20 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF p_record_type = 'submission' THEN
-    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text FROM public.chamber_sessions s WHERE s.id = p_record_id::uuid;
+    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text, s.id::text FROM public.chamber_sessions s WHERE s.id = p_record_id::uuid;
   ELSIF p_record_type = 'document' THEN
-    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text FROM public.documents d
+    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text, d.id::text FROM public.documents d
       JOIN public.chamber_sessions s ON s.id = d.session_id WHERE d.id = p_record_id::uuid;
   ELSIF p_record_type = 'manuscript' THEN
-    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text FROM public.manuscript_versions v
+    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text, v.id::text FROM public.manuscript_versions v
       JOIN public.chamber_sessions s ON s.id = v.session_id WHERE v.id = p_record_id::uuid;
   ELSIF p_record_type = 'quote_request' THEN
-    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text FROM public.quote_requests q
+    RETURN QUERY SELECT s.firm_id, NULL::uuid, NULL::text, q.id::text FROM public.quote_requests q
       JOIN public.chamber_sessions s ON s.id = q.session_id WHERE q.id = p_record_id::bigint;
   ELSIF p_record_type = 'membership' THEN
-    RETURN QUERY SELECT m.firm_id, m.user_id, m.role FROM public.firm_memberships m WHERE m.id = p_record_id::bigint;
+    RETURN QUERY SELECT m.firm_id, m.user_id, m.role, m.id::text FROM public.firm_memberships m WHERE m.id = p_record_id::bigint;
   ELSIF p_record_type = 'firm' THEN
-    RETURN QUERY SELECT f.id, NULL::uuid, NULL::text FROM public.firms f WHERE f.id = p_record_id::uuid;
+    RETURN QUERY SELECT f.id, NULL::uuid, NULL::text, f.id::text FROM public.firms f WHERE f.id = p_record_id::uuid;
   END IF;
 END;
 $$;
@@ -195,7 +221,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'That record doesn''t belong to a firm' USING ERRCODE = 'P0002';
   END IF;
-  RETURN public.firm_activity_append(r.firm_id, p_kind, p_record_type, p_record_id, r.subject_user_id, r.role);
+  RETURN public.firm_activity_append(r.firm_id, p_kind, p_record_type, r.canonical_id, r.subject_user_id, r.role);
 END;
 $$;
 
@@ -204,7 +230,8 @@ GRANT EXECUTE ON FUNCTION public.record_firm_activity(text, text, text) TO servi
 
 -- What a browser may report.
 -- A browser reports only what it alone sees happen, and only the pairs that can happen: a submission opened, a file of
--- a submission, a document or a mail attachment (against its quote request) downloaded, a packet downloaded. Any other pair would be a false entry. It hands back
+-- a submission, a document or a mail attachment (against its quote request) downloaded, a packet downloaded, a sign-in to
+-- a firm's console. Any other pair would be a false entry. It hands back
 -- nothing (ids are numbered across every firm, so one would let a caller count other firms' entries), and the same
 -- report from the same person within half a minute is one entry, so a loop can't flood the record.
 CREATE FUNCTION public.record_member_activity(p_kind text, p_record_type text, p_record_id text)
@@ -220,8 +247,12 @@ BEGIN
     RAISE EXCEPTION 'Sign in to continue' USING ERRCODE = '42501';
   END IF;
   IF (p_kind, p_record_type) NOT IN (
+       -- sync:begin firm_activity_browser_pairs
        ('submission_viewed', 'submission'), ('document_downloaded', 'document'),
-       ('document_downloaded', 'submission'), ('document_downloaded', 'quote_request'), ('packet_downloaded', 'manuscript')) THEN
+       ('document_downloaded', 'submission'), ('document_downloaded', 'quote_request'), ('packet_downloaded', 'manuscript'),
+       ('sign_in', 'firm')
+       -- sync:end firm_activity_browser_pairs
+       ) THEN
     RAISE EXCEPTION 'A browser can''t record that' USING ERRCODE = '42501';
   END IF;
   SELECT * INTO r FROM public.firm_activity_resolve(p_record_type, p_record_id);
@@ -231,10 +262,10 @@ BEGIN
   IF EXISTS (
        SELECT 1 FROM public.firm_activity a
        WHERE a.firm_id = r.firm_id AND a.actor_id = auth.uid() AND a.kind = p_kind
-         AND a.record_type = p_record_type AND a.record_id = p_record_id AND a.at > now() - interval '30 seconds') THEN
+         AND a.record_type = p_record_type AND a.record_id = r.canonical_id AND a.at > now() - interval '30 seconds') THEN
     RETURN;
   END IF;
-  PERFORM public.firm_activity_insert(auth.uid(), r.firm_id, p_kind, p_record_type, p_record_id);
+  PERFORM public.firm_activity_insert(auth.uid(), r.firm_id, p_kind, p_record_type, r.canonical_id);
 END;
 $$;
 
@@ -300,13 +331,14 @@ CREATE TRIGGER quote_requests_record_send
 
 -- ---------- Reading ----------
 
--- A page of a firm's record, newest first, for the firm's owners only. Paging by offset repeats or skips a row when an entry arrives between two pages. A page now starts after the last
--- entry the reader saw: the cursor is that entry's time and id, the same two the list is ordered by.
+-- A page of a firm's record, newest first, for the firm's owners only. Paging by offset repeats or skips a row when an
+-- entry arrives between two pages. A page starts after the last entry the reader saw: the cursor is that entry's time and
+-- key, the same two the list is ordered by. The key is random, not the table's number, which is shared by every firm.
 CREATE FUNCTION public.firm_activity_list(
   p_firm_id uuid, p_person uuid DEFAULT NULL, p_kind text DEFAULT NULL, p_limit integer DEFAULT 50,
-  p_before_at timestamptz DEFAULT NULL, p_before_id bigint DEFAULT NULL)
+  p_before_at timestamptz DEFAULT NULL, p_before_key uuid DEFAULT NULL)
 RETURNS TABLE (
-  id bigint, at timestamptz, actor_id uuid, actor_email text, kind text, record_type text, record_id text,
+  entry_key uuid, at timestamptz, actor_id uuid, actor_email text, kind text, record_type text, record_id text,
   subject_user_id uuid, subject_email text, role text)
 LANGUAGE plpgsql
 STABLE
@@ -314,32 +346,31 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' OR NOT public.second_factor_rule_met() THEN
+  IF NOT public.can_read_firm_activity(p_firm_id) THEN
     RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
   END IF;
-  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 OR (p_before_at IS NULL) <> (p_before_id IS NULL) THEN
-    RAISE EXCEPTION 'A page is 1 to 100 entries, after an entry given by its time and id together' USING ERRCODE = '22023';
+  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 OR (p_before_at IS NULL) <> (p_before_key IS NULL) THEN
+    RAISE EXCEPTION 'A page is 1 to 100 entries, after an entry given by its time and key together' USING ERRCODE = '22023';
   END IF;
   RETURN QUERY
-    SELECT a.id, a.at, a.actor_id, u.email::text, a.kind, a.record_type, a.record_id, a.subject_user_id, su.email::text, a.role
+    SELECT a.entry_key, a.at, a.actor_id, u.email::text, a.kind, a.record_type, a.record_id, a.subject_user_id, su.email::text, a.role
     FROM public.firm_activity a
     LEFT JOIN auth.users u ON u.id = a.actor_id
     LEFT JOIN auth.users su ON su.id = a.subject_user_id
     WHERE a.firm_id = p_firm_id
       AND (p_person IS NULL OR a.actor_id = p_person)
       AND (p_kind IS NULL OR a.kind = p_kind)
-      AND (p_before_at IS NULL OR (a.at, a.id) < (p_before_at, p_before_id))
-    ORDER BY a.at DESC, a.id DESC
+      AND (p_before_at IS NULL OR (a.at, a.entry_key) < (p_before_at, p_before_key))
+    ORDER BY a.at DESC, a.entry_key DESC
     LIMIT p_limit;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, bigint) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, bigint) TO authenticated;
+REVOKE ALL ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.firm_activity_list(uuid, uuid, text, integer, timestamptz, uuid) TO authenticated;
 
 -- The firms the caller currently owns, to offer a choice when there is more than one. A page says which firm it wants
--- (the firm address will say it once firms have addresses: story CRM-P1.3a) and firm_activity_list checks the caller
--- currently owns that one. A platform admin who is not an owner is refused like anyone else (D-16).
+-- (today by ?firm=<id>, or the only firm the caller owns) and firm_activity_list checks the caller currently owns that one. A platform admin who is not an owner is refused like anyone else (D-16).
 CREATE FUNCTION public.my_owner_firms()
 RETURNS TABLE (firm_id uuid, name text)
 LANGUAGE sql
@@ -360,6 +391,22 @@ $$;
 REVOKE ALL ON FUNCTION public.my_owner_firms() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.my_owner_firms() TO authenticated;
 
+-- The firm at an address, for a caller who is a current member of it, so the screen at that address can report a sign-in
+-- to it (record_member_activity('sign_in', 'firm', ...)). Null for anyone else, so it tells no one a firm's id.
+CREATE FUNCTION public.my_firm_at_address(p_address text)
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT f.id FROM public.firms f
+  WHERE f.address = lower(btrim(p_address)) AND public.is_signed_in_person() AND public.is_firm_member(f.id)
+$$;
+
+REVOKE ALL ON FUNCTION public.my_firm_at_address(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.my_firm_at_address(text) TO authenticated;
+
 -- The people who appear as the doer in a firm's record: what the person filter offers, read under the same rule as the list.
 CREATE FUNCTION public.firm_activity_people(p_firm_id uuid)
 RETURNS TABLE (user_id uuid, email text)
@@ -369,7 +416,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF public.firm_role(p_firm_id) IS DISTINCT FROM 'owner' OR NOT public.second_factor_rule_met() THEN
+  IF NOT public.can_read_firm_activity(p_firm_id) THEN
     RAISE EXCEPTION 'Only a firm''s owners can read its record' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY

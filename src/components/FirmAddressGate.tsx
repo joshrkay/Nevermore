@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
-import { fetchIsMemberOfFirmAddress } from "@/lib/firmApi";
+import { fetchIsMemberOfFirmAddress, recordFirmSignIn } from "@/lib/firmApi";
 import NotFound from "@/pages/NotFound";
 import { AUTH_CALLBACK_PATH } from "@/lib/authRedirect";
 import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
@@ -14,6 +14,28 @@ import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
 const SIGN_IN_LANDING_PATHS: readonly string[] = [AUTH_CALLBACK_PATH, BROKER_CALLBACK_PATH];
 
 type Membership = "checking" | "member" | "not_member" | "error";
+
+// Which sign-ins have been written to the firm's record (CRM-P2.3), so a person is recorded once for each sign-in and not
+// once for each page they open. A convenience only: where the browser keeps nothing, the answer lasts until the page is
+// reloaded, and the database collapses a repeat within half a minute either way.
+const reportedHere = new Set<string>();
+const SIGN_IN_REPORTED_PREFIX = "firm-sign-in-reported:";
+function signInReported(key: string): boolean {
+  if (reportedHere.has(key)) return true;
+  try {
+    return window.localStorage.getItem(SIGN_IN_REPORTED_PREFIX + key) !== null;
+  } catch {
+    return false;
+  }
+}
+function markSignInReported(key: string): void {
+  reportedHere.add(key);
+  try {
+    window.localStorage.setItem(SIGN_IN_REPORTED_PREFIX + key, "1");
+  } catch {
+    // Not remembered beyond this page.
+  }
+}
 
 /**
  * What a firm's address shows (story CRM-P1.3a, D-17, D-18, D-27). On the bare domain it changes nothing. At an address
@@ -49,6 +71,18 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     );
     return () => { cancelled = true; };
   }, [address, userId, signedIn, asked, attempt]);
+
+  // One sign-in is one entry: the key is the address, the person and the moment of their sign-in (it doesn't change when
+  // the session is refreshed or the page reloaded).
+  const signInKey = `${address}|${userId}|${user?.last_sign_in_at ?? ""}`;
+  useEffect(() => {
+    if (!address || !signedIn || membership !== "member" || signInReported(signInKey)) return;
+    // A write that fails is not marked, so the next page tries again (a password sign-in is held back until its second
+    // factor is done, for one).
+    void recordFirmSignIn(address).then((ok) => {
+      if (ok) markSignInReported(signInKey);
+    });
+  }, [address, signedIn, membership, signInKey, pathname]);
 
   if (firm.status === "none") return <>{children}</>;
   if (firm.status === "error") {

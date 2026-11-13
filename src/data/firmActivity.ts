@@ -37,3 +37,20 @@ const RECORD_LABELS: Record<string, string> = {
 export const RECORD_TYPE_VALUES: string[] = Object.keys(RECORD_LABELS);
 
 export const recordLabel = (recordType: string): string => RECORD_LABELS[recordType] ?? recordType;
+
+// What a browser may report to record_member_activity: only these pairs of kind and record can happen there, and the
+// database refuses any other. Kept equal to the database's list by src/data/schemaSync.test.ts.
+export const BROWSER_ACTIVITY = [
+  ["submission_viewed", "submission"],
+  ["document_downloaded", "document"],
+  ["document_downloaded", "submission"],
+  ["document_downloaded", "quote_request"],
+  ["packet_downloaded", "manuscript"],
+  ["sign_in", "firm"],
+] as const;
+
+export type BrowserActivity = (typeof BROWSER_ACTIVITY)[number];
+/** The kinds a browser reports. */
+export type BrowserActivityKind = BrowserActivity[0];
+/** The record types a browser may report for one kind: a pair the database would refuse doesn't type-check. */
+export type BrowserActivityRecord<K extends BrowserActivityKind> = Extract<BrowserActivity, readonly [K, string]>[1];

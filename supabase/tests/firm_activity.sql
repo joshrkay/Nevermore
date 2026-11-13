@@ -382,7 +382,6 @@ SELECT pg_temp.is((SELECT prorettype::regtype::text FROM pg_proc WHERE proname =
   'the browser function hands back nothing, so ids cannot be used to count other firms'' entries');
 
 -- The only writer other code calls works out the actor itself: there is no second writer that is handed one.
-SELECT pg_temp.is(to_regprocedure('public.record_firm_activity_as(uuid, text, text, text)') IS NULL, true, 'no writer takes an actor from a server function');
 SELECT pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.proname LIKE 'record\_%activity%' AND p.pronamespace = 'public'::regnamespace), 3::bigint,
   'the writers are record_firm_activity, record_member_activity and the send trigger function');
 
@@ -448,18 +447,18 @@ END $$;
 SELECT pg_temp.as_owner();
 
 -- ---------- 7. A firm's owners read their firm's record, filtered and paged, newest first ----------
-CREATE FUNCTION pg_temp.ids(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL, lim integer DEFAULT 50, after_id bigint DEFAULT NULL)
-RETURNS bigint[] LANGUAGE sql AS $$
-  SELECT COALESCE(array_agg(e.id ORDER BY ord), '{}') FROM public.firm_activity_list(pg_temp.id(p_firm),
+CREATE FUNCTION pg_temp.ids(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL, lim integer DEFAULT 50, after_key uuid DEFAULT NULL)
+RETURNS uuid[] LANGUAGE sql AS $$
+  SELECT COALESCE(array_agg(e.entry_key ORDER BY ord), '{}') FROM public.firm_activity_list(pg_temp.id(p_firm),
     CASE WHEN p_person IS NULL THEN NULL ELSE pg_temp.id(p_person) END, p_kind, lim,
-    (SELECT c.at FROM public.firm_activity c WHERE c.id = after_id), after_id) WITH ORDINALITY AS e(id, at, actor_id, actor_email, kind, record_type,
+    (SELECT c.at FROM public.firm_activity c WHERE c.entry_key = after_key), after_key) WITH ORDINALITY AS e(entry_key, at, actor_id, actor_email, kind, record_type,
     record_id, subject_user_id, subject_email, role, ord);
 $$;
-CREATE FUNCTION pg_temp.truth(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL) RETURNS bigint[] LANGUAGE sql AS $$
-  SELECT COALESCE(array_agg(a.id ORDER BY a.at DESC, a.id DESC), '{}') FROM public.firm_activity a
+CREATE FUNCTION pg_temp.truth(p_firm text, p_person text DEFAULT NULL, p_kind text DEFAULT NULL) RETURNS uuid[] LANGUAGE sql AS $$
+  SELECT COALESCE(array_agg(a.entry_key ORDER BY a.at DESC, a.entry_key DESC), '{}') FROM public.firm_activity a
   WHERE a.firm_id = pg_temp.id(p_firm) AND (p_person IS NULL OR a.actor_id = pg_temp.id(p_person)) AND (p_kind IS NULL OR a.kind = p_kind);
 $$;
-GRANT EXECUTE ON FUNCTION pg_temp.ids(text, text, text, integer, bigint), pg_temp.truth(text, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION pg_temp.ids(text, text, text, integer, uuid), pg_temp.truth(text, text, text) TO authenticated;
 -- Entries at known times, so "newest first" is not just the order they were inserted in.
 SELECT pg_temp.as_owner();
 ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
@@ -490,9 +489,9 @@ SELECT set_config('test.page_rest', (pg_temp.truth('firm_a'))[3:4]::text, false)
 SELECT pg_temp.as_owner();
 INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (pg_temp.id('firm_a'), 'invitation_sent', 'firm', pg_temp.id('firm_a')::text);
 SELECT pg_temp.as_user('owner_a');
-SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 2, (current_setting('test.page_one')::bigint[])[2])::text, current_setting('test.page_rest'),
+SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, NULL, 2, (current_setting('test.page_one')::uuid[])[2])::text, current_setting('test.page_rest'),
   'an entry arriving between two pages makes the next page neither repeat nor skip a row');
--- Two entries with the very same time are told apart by their ids: a page can end between them.
+-- Two entries with the very same time are told apart by their keys: a page can end between them.
 SELECT pg_temp.as_owner();
 INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, at) VALUES
   (pg_temp.id('firm_a'), 'support_access', 'firm', pg_temp.id('firm_a')::text, now() - interval '5 days'),
@@ -501,14 +500,22 @@ SELECT pg_temp.as_user('owner_a');
 SELECT pg_temp.is(pg_temp.ids('firm_a', NULL, 'support_access', 1, (pg_temp.ids('firm_a', NULL, 'support_access', 1))[1]),
   ARRAY[(pg_temp.truth('firm_a', NULL, 'support_access'))[2]], 'a page ending between two entries of the same time continues with the other');
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 101, NULL, NULL)', pg_temp.id('firm_a')), '22023', 'a page of more than 100');
-SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, now(), NULL)', pg_temp.id('firm_a')), '22023', 'a cursor with a time and no id');
-SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, NULL, 5)', pg_temp.id('firm_a')), '22023', 'a cursor with an id and no time');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, now(), NULL)', pg_temp.id('firm_a')), '22023', 'a cursor with a time and no key');
+SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L, NULL, NULL, 10, NULL, gen_random_uuid())', pg_temp.id('firm_a')), '22023', 'a cursor with a key and no time');
 SELECT pg_temp.is((SELECT actor_email FROM public.firm_activity_list(pg_temp.id('firm_a'), pg_temp.id('lead_a'), 'packet_downloaded')), 'lead_a@example.test',
   'an entry names its person');
 SELECT pg_temp.is((SELECT array_agg(email ORDER BY email) FROM public.firm_activity_people(pg_temp.id('firm_a'))),
   ARRAY['agent_a@example.test', 'lead_a@example.test', 'owner_a@example.test'], 'the people in the filter are those who appear in the firm''s record');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity), (SELECT count(*) FROM public.firm_activity WHERE firm_id = pg_temp.id('firm_a')),
   'reading the table directly shows only their own firm''s rows');
+-- Entries are numbered across every firm, so an owner is never handed the number: its gaps would count what other firms did.
+SELECT pg_temp.expect('SELECT id FROM public.firm_activity', '42501', 'an owner reading the global entry number from the table');
+SELECT pg_temp.expect('SELECT * FROM public.firm_activity', '42501', 'an owner reading every column of the table');
+SELECT pg_temp.is((SELECT count(*) FROM pg_proc p, unnest(p.proargnames, p.proargmodes) AS a(attname, mode)
+  WHERE p.proname = 'firm_activity_list' AND a.mode = 't' AND a.attname = 'id'), 0::bigint, 'the list function returns no column named id');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_a')) l WHERE l.entry_key IS NULL), 0::bigint, 'every entry carries a key to page by');
+SELECT pg_temp.is((SELECT count(DISTINCT entry_key) FROM public.firm_activity_list(pg_temp.id('firm_a'))), (SELECT count(*) FROM public.firm_activity_list(pg_temp.id('firm_a'))),
+  'and no two share one');
 
 -- Which firms a signed-in person may read the record of: those they currently own, none for anyone else. The firm to read is
 -- always named by the caller, and the read checks they own that one, so an owner of two firms reaches both.
@@ -531,7 +538,6 @@ SELECT pg_temp.as_user('platform_admin');
 SELECT pg_temp.is((SELECT count(*) FROM public.my_owner_firms()), 0::bigint, 'a platform admin who is no owner is told no firm');
 SELECT pg_temp.as_user('lead_a');
 SELECT pg_temp.is((SELECT array_agg(firm_id) FROM public.my_owner_firms()), ARRAY[pg_temp.id('firm_b')], 'a lead in one firm and owner of another is told the one they own');
-SELECT pg_temp.expect('SELECT public.my_owner_firm()', '42883', 'the old function that picked a firm for the caller is gone');
 SELECT pg_temp.as_owner();
 RESET ROLE;
 SELECT set_config('role', 'anon', false);
@@ -623,4 +629,44 @@ SELECT pg_temp.as_user('lead_a');
 SELECT pg_temp.is((SELECT array_agg(email) FROM public.firm_activity_people(pg_temp.id('firm_b'))), ARRAY['owner_a@example.test'],
   'the people offered are those in the firm''s own record, not another firm''s');
 SELECT pg_temp.as_owner();
+-- ---------- 10. A sign-in to a firm's console is recorded, as the person who signed in, for a firm they belong to ----------
+SELECT pg_temp.as_user('agent_a');
+SELECT pg_temp.is(public.my_firm_at_address(' ' || (SELECT address FROM public.firms WHERE id = pg_temp.id('firm_a')) || ' '), pg_temp.id('firm_a'),
+  'a member is told the firm at their firm''s address');
+SELECT pg_temp.is(public.my_firm_at_address('beta-brokers'), NULL::uuid, 'and none for another firm''s address');
+SELECT public.record_member_activity('sign_in', 'firm', pg_temp.id('firm_a')::text);
+SELECT public.record_member_activity('sign_in', 'firm', pg_temp.id('firm_a')::text);
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM pg_temp.entries(pg_temp.id('firm_a')) WHERE actor = 'agent_a' AND kind = 'sign_in' AND record_type = 'firm'
+  AND record_id = pg_temp.id('firm_a')::text), 1::bigint, 'a sign-in is recorded in the firm, as the person who signed in, once for a repeat within moments');
+SELECT pg_temp.as_user('agent_b');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'sign_in', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a member of another firm reporting a sign-in to this firm');
+SELECT pg_temp.is(public.my_firm_at_address('edgar-allan-advisory'), NULL::uuid, 'a member of another firm is told nothing of this firm''s id');
+SELECT pg_temp.as_user('platform_admin');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'sign_in', 'firm', pg_temp.id('firm_a')),
+  '42501', 'a platform admin who is no member reporting a sign-in');
+SELECT pg_temp.is(public.my_firm_at_address('edgar-allan-advisory'), NULL::uuid, 'a platform admin who is no member is told nothing of the firm''s id');
+SELECT pg_temp.as_user('agent_a');
+SELECT pg_temp.expect(format('SELECT public.record_member_activity(%L, %L, %L)', 'sign_in', 'submission', pg_temp.id('intake_a')),
+  '42501', 'a sign-in to a submission is no pair');
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'sign_in' AND actor_id IN (pg_temp.id('agent_b'), pg_temp.id('platform_admin'))), 0::bigint,
+  'no sign-in was written for anyone who is no member');
+
+-- ---------- 11. The same record is one record, whatever way its id is written ----------
+SELECT pg_temp.as_user('owner_a');
+SELECT public.record_member_activity('submission_viewed', 'submission', pg_temp.id('intake_a')::text);
+SELECT public.record_member_activity('submission_viewed', 'submission', upper(pg_temp.id('intake_a')::text));
+SELECT public.record_member_activity('submission_viewed', 'submission', replace(pg_temp.id('intake_a')::text, '-', ''));
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = pg_temp.id('owner_a') AND kind = 'submission_viewed'), 1::bigint,
+  'an id in capitals or without dashes is the same submission: one entry for a repeat within moments');
+SELECT pg_temp.is((SELECT record_id FROM public.firm_activity WHERE actor_id = pg_temp.id('owner_a') AND kind = 'submission_viewed'), pg_temp.id('intake_a')::text,
+  'and it is stored as the record''s own id');
+SELECT pg_temp.as_service();
+SELECT public.record_firm_activity('support_access', 'firm', upper(pg_temp.id('firm_b')::text));
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'support_access' AND firm_id = pg_temp.id('firm_b') AND record_id = pg_temp.id('firm_b')::text), 1::bigint,
+  'the server writer stores the record''s own id too');
 \echo firm_activity: ok

@@ -780,7 +780,9 @@ INSERT INTO callable VALUES
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
   ('record_member_activity(p_kind text, p_record_type text, p_record_id text)', 'own', NULL, 'a browser reporting a submission opened or a file downloaded, as the caller, about a record of a firm they belong to and only the pairs of kind and record that can happen; refuses anyone else (supabase/tests/firm_activity.sql)'),
-  ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_before_at timestamp with time zone, p_before_id bigint)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included (supabase/tests/firm_activity.sql)'),
+  ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_before_at timestamp with time zone, p_before_key uuid)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included (supabase/tests/firm_activity.sql)'),
+  ('can_read_firm_activity(p_firm_id uuid)', 'own', NULL, 'whether the caller is a current owner of that firm and past the second factor; about the caller only; the firm record''s policy and its two reading functions call it'),
+  ('my_firm_at_address(p_address text)', 'own', NULL, 'the id of the firm at an address, only for a current member of it, so the screen can report a sign-in; null for anyone else (supabase/tests/firm_activity.sql)'),
   ('my_owner_firms()', 'own', NULL, 'the firms the caller currently owns, by name; about the caller only; signed-out callers can''t call it'),
   ('firm_activity_people(p_firm_id uuid)', 'own', NULL, 'who appears in a firm''s record, for that firm''s owners only; 42501 for everyone else (supabase/tests/firm_activity.sql)'),
   ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
@@ -1207,6 +1209,49 @@ BEGIN
 
   SELECT count(*) INTO n FROM callable;
   RAISE NOTICE 'data_isolation: catalogue cases passed (% tables and buckets in the matrix, % callable functions allowlisted)', (SELECT count(*) FROM matrix), n;
+END $$;
+
+-- ---------- The two-firm probe for the record of who did what (docs/BROKER_CRM_BUILD.md D-28) ----------
+-- A row for each of two firms, each with an owner: a member of one firm reads, counts, changes and deletes nothing of the
+-- other's. firm_activity.sql holds the rest of this table's proof; the general mechanism for every firm table is a later
+-- story's (CRM-P2.1a, the check that fails on a firm table with no probe), which then takes this block over.
+DO $$
+DECLARE
+  fa uuid := public.default_firm_id();
+  fb uuid := gen_random_uuid();
+  owner_b uuid;
+  a_rows bigint;
+  b_rows bigint;
+BEGIN
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  owner_b := pg_temp.new_user('owner_b@example.test', false);
+  INSERT INTO fx VALUES ('owner_b', owner_b);
+  INSERT INTO public.firms (id, name, address, approved_at) VALUES (fb, 'Probe Brokers', 'probe-brokers', now());
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fb, owner_b, 'owner');
+  INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES
+    (fa, 'invitation_sent', 'firm', fa::text), (fb, 'invitation_sent', 'firm', fb::text);
+  SELECT count(*) INTO a_rows FROM public.firm_activity WHERE firm_id = fa;
+  SELECT count(*) INTO b_rows FROM public.firm_activity WHERE firm_id = fb;
+  IF a_rows < 1 OR b_rows < 1 THEN RAISE EXCEPTION 'FAIL: the two-firm probe set-up wrote no rows'; END IF;
+
+  -- The other firm's owner reads and counts none of firm A's rows.
+  PERFORM pg_temp.become('owner_b');
+  IF pg_temp.visible('public.firm_activity') <> b_rows THEN RAISE EXCEPTION 'FAIL: an owner of firm B reads other than firm B''s rows'; END IF;
+  IF pg_temp.visible(format('public.firm_activity WHERE firm_id = %L', fa)) <> 0 THEN RAISE EXCEPTION 'FAIL: an owner of firm B counts firm A''s rows'; END IF;
+  PERFORM pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', fa), '42501', 'an owner of firm B reading firm A''s record');
+  PERFORM pg_temp.expect(format('SELECT * FROM public.firm_activity_people(%L)', fa), '42501', 'an owner of firm B reading who is in firm A''s record');
+  PERFORM pg_temp.changes_nothing(format('UPDATE public.firm_activity SET kind = ''sign_in'' WHERE firm_id = %L', fa), 'an owner of firm B changing firm A''s rows');
+  PERFORM pg_temp.changes_nothing(format('DELETE FROM public.firm_activity WHERE firm_id = %L', fa), 'an owner of firm B deleting firm A''s rows');
+  PERFORM pg_temp.refused(format('INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (%L, ''sign_in'', ''firm'', ''x'')', fa),
+    'an owner of firm B writing a row into firm A''s record');
+
+  -- And the other way: firm A's owner (the admin, D-15) reads none of firm B's.
+  PERFORM pg_temp.become('admin');
+  IF pg_temp.visible(format('public.firm_activity WHERE firm_id = %L', fb)) <> 0 THEN RAISE EXCEPTION 'FAIL: an owner of firm A counts firm B''s rows'; END IF;
+  PERFORM pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', fb), '42501', 'an owner of firm A reading firm B''s record');
+  PERFORM pg_temp.changes_nothing(format('DELETE FROM public.firm_activity WHERE firm_id = %L', fb), 'an owner of firm A deleting firm B''s rows');
+  RESET ROLE;
 END $$;
 
 \echo 'data_isolation: all cases passed'

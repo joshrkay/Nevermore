@@ -467,8 +467,8 @@ export type Database = {
         Row: {
           actor_id: string | null
           at: string
+          entry_key: string
           firm_id: string
-          id: number
           kind: string
           record_id: string
           record_type: string
@@ -818,12 +818,12 @@ export type Database = {
       }
       // A page of the caller's firm's record, newest first, for the firm's owners only (20261116160000).
       firm_activity_list: {
-        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_id?: number | null }
+        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_key?: string | null }
         Returns: {
           actor_email: string | null
           actor_id: string | null
           at: string
-          id: number
+          entry_key: string
           kind: string
           record_id: string
           record_type: string
@@ -840,6 +840,11 @@ export type Database = {
       my_owner_firms: {
         Args: Record<PropertyKey, never>
         Returns: { firm_id: string; name: string }[]
+      }
+      // The firm at an address, for a current member of it; null for anyone else.
+      my_firm_at_address: {
+        Args: { p_address: string }
+        Returns: string | null
       }
       // A browser reporting a submission opened or a file downloaded; the firm and the person are worked out by the database.
       record_member_activity: {

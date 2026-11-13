@@ -13,7 +13,7 @@ const { AdvisorApiError } = await import("@/lib/advisorApi");
 
 const renderPage = (at = "/advisor/activity") => render(<MemoryRouter initialEntries={[at]}><AdvisorActivityPage /></MemoryRouter>);
 const entry = (over: Record<string, unknown> = {}) => ({
-  id: 1, at: "2026-11-12T15:30:00Z", actor_id: "u1", actor_email: "agent@example.com", kind: "submission_viewed",
+  entry_key: "k1", at: "2026-11-12T15:30:00Z", actor_id: "u1", actor_email: "agent@example.com", kind: "submission_viewed",
   record_type: "submission", record_id: "0b5c1f2e-1111-4222-8333-444455556666", subject_user_id: null, subject_email: null, role: null, ...over,
 });
 
@@ -28,8 +28,8 @@ describe("AdvisorActivityPage", () => {
   it("lists who did what and when, in the order the database gave it, with the record each was about", async () => {
     api.listFirmActivity.mockResolvedValue({
       entries: [
-        entry({ id: 3, at: "2026-11-12T16:00:00Z", actor_email: "lead@example.com", kind: "send_recorded", record_type: "quote_request", record_id: "42" }),
-        entry({ id: 2, actor_email: "agent@example.com", kind: "document_downloaded", record_type: "document", record_id: "doc-9" }),
+        entry({ entry_key: "k3", at: "2026-11-12T16:00:00Z", actor_email: "lead@example.com", kind: "send_recorded", record_type: "quote_request", record_id: "42" }),
+        entry({ entry_key: "k2", actor_email: "agent@example.com", kind: "document_downloaded", record_type: "document", record_id: "doc-9" }),
       ],
       hasMore: false,
     });
@@ -100,9 +100,9 @@ describe("AdvisorActivityPage", () => {
   it("names the person a membership change was about and their role, and never shows a missing person as blank", async () => {
     api.listFirmActivity.mockResolvedValue({
       entries: [
-        entry({ id: 5, kind: "member_added", record_type: "membership", record_id: "7", subject_user_id: "u2", subject_email: "lead@example.com", role: "lead" }),
-        entry({ id: 4, kind: "export_made", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null }),
-        entry({ id: 3, kind: "member_ended", record_type: "membership", record_id: "6", actor_id: "gone", actor_email: null, subject_user_id: "gone2", subject_email: null, role: "agent" }),
+        entry({ entry_key: "k5", kind: "member_added", record_type: "membership", record_id: "7", subject_user_id: "u2", subject_email: "lead@example.com", role: "lead" }),
+        entry({ entry_key: "k4", kind: "export_made", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null }),
+        entry({ entry_key: "k3", kind: "member_ended", record_type: "membership", record_id: "6", actor_id: "gone", actor_email: null, subject_user_id: "gone2", subject_email: null, role: "agent" }),
       ],
       hasMore: false,
     });
@@ -121,7 +121,7 @@ describe("AdvisorActivityPage", () => {
     renderPage();
     const person = await screen.findByLabelText("Person");
     expect(within(person).getAllByRole("option").map((o) => o.textContent)).toEqual(["Everyone", "agent@example.com", "lead@example.com"]);
-    api.listFirmActivity.mockResolvedValue({ entries: [entry({ id: 9, actor_email: "lead@example.com", kind: "send_recorded" })], hasMore: false });
+    api.listFirmActivity.mockResolvedValue({ entries: [entry({ entry_key: "k9", actor_email: "lead@example.com", kind: "send_recorded" })], hasMore: false });
     fireEvent.change(person, { target: { value: "u2" } });
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: null, after: null }));
     expect(await within(await screen.findByRole("table")).findByText("Recorded a send")).toBeInTheDocument();
@@ -149,16 +149,16 @@ describe("AdvisorActivityPage", () => {
 
   it("pages through the record by where the last entry seen was, and goes back to the first page when a filter changes", async () => {
     // Two pages: the first has another after it, the second has none.
-    const first = entry({ id: 30, at: "2026-11-12T12:00:00Z" });
-    api.listFirmActivity.mockImplementation(async (_firm: string, o: { after: { id: number } | null }) =>
-      o.after ? { entries: [entry({ id: 20, at: "2026-11-12T11:00:00Z" })], hasMore: false } : { entries: [first], hasMore: true });
+    const first = entry({ entry_key: "k30", at: "2026-11-12T12:00:00Z" });
+    api.listFirmActivity.mockImplementation(async (_firm: string, o: { after: { key: string } | null }) =>
+      o.after ? { entries: [entry({ entry_key: "k20", at: "2026-11-12T11:00:00Z" })], hasMore: false } : { entries: [first], hasMore: true });
     renderPage();
     await screen.findByRole("table");
     expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
     expect(screen.getByText("Page 1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Older" }));
     await screen.findByText("Page 2");
-    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: { at: "2026-11-12T12:00:00Z", id: 30 } });
+    expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: { at: "2026-11-12T12:00:00Z", key: "k30" } });
     expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Newer" }));
     await screen.findByText("Page 1");

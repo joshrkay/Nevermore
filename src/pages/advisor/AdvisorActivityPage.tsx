@@ -76,7 +76,7 @@ const AdvisorActivityPage = () => {
   const older = () => {
     if (load.kind !== "ready" || load.entries.length === 0) return;
     const last = load.entries[load.entries.length - 1];
-    setTrail((t) => [...t, { at: last.at, id: last.id }]);
+    setTrail((t) => [...t, { at: last.at, key: last.entry_key }]);
   };
 
   const filtered = person !== null || kind !== null;
@@ -159,7 +159,7 @@ const AdvisorActivityPage = () => {
                   </thead>
                   <tbody>
                     {load.entries.map((e) => (
-                      <tr key={e.id} className="border-t border-border align-top">
+                      <tr key={e.entry_key} className="border-t border-border align-top">
                         <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
                         <td className="px-4 py-2">{who(e.actor_id, e.actor_email)}</td>
                         <td className="px-4 py-2">{kindLabel(e.kind)}</td>

@@ -16,3 +16,19 @@ export async function fetchIsMemberOfFirmAddress(address: string): Promise<boole
   if (error) throw new Error("Couldn't check your membership.");
   return data === true;
 }
+
+/**
+ * Tells the firm's record of who did what (CRM-P2.3) that the caller signed in to the firm at this address. Only the
+ * firm's id is sent, and the database refuses a caller who isn't a current member of it. Resolves true once it is
+ * written (or already was, within moments); false when it wasn't, never throws: a sign-in is never held up by it.
+ */
+export async function recordFirmSignIn(address: string): Promise<boolean> {
+  try {
+    const { data: firmId, error } = await supabase.rpc("my_firm_at_address", { p_address: address });
+    if (error || typeof firmId !== "string") return false;
+    const { error: reportError } = await supabase.rpc("record_member_activity", { p_kind: "sign_in", p_record_type: "firm", p_record_id: firmId });
+    return !reportError;
+  } catch {
+    return false;
+  }
+}

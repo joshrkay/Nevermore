@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { fetchFirmName, fetchIsMemberOfFirmAddress } = await import("./firmApi");
+const { fetchFirmName, fetchIsMemberOfFirmAddress, recordFirmSignIn } = await import("./firmApi");
 
 describe("asking the database about a firm address", () => {
   beforeEach(() => rpc.mockReset());
@@ -40,5 +40,29 @@ describe("asking the database about a firm address", () => {
       rpc.mockResolvedValue({ data, error: null });
       expect(await fetchIsMemberOfFirmAddress("acme-brokers"), String(data)).toBe(false);
     }
+  });
+});
+
+describe("reporting a sign-in to the firm at an address", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("asks the database for the firm at the address, then reports a sign-in to that firm by its id alone", async () => {
+    rpc.mockResolvedValueOnce({ data: "firm-1", error: null }).mockResolvedValueOnce({ data: null, error: null });
+    await expect(recordFirmSignIn("acme-brokers")).resolves.toBe(true);
+    expect(rpc).toHaveBeenNthCalledWith(1, "my_firm_at_address", { p_address: "acme-brokers" });
+    expect(rpc).toHaveBeenNthCalledWith(2, "record_member_activity", { p_kind: "sign_in", p_record_type: "firm", p_record_id: "firm-1" });
+  });
+
+  it("reports nothing when the caller isn't a member (no firm comes back)", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    await expect(recordFirmSignIn("acme-brokers")).resolves.toBe(false);
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("says it wasn't written, and never throws, when the database refuses or can't be reached", async () => {
+    rpc.mockResolvedValueOnce({ data: "firm-1", error: null }).mockResolvedValueOnce({ data: null, error: { message: "Sign in to continue", code: "42501" } });
+    await expect(recordFirmSignIn("acme-brokers")).resolves.toBe(false);
+    rpc.mockRejectedValueOnce(new Error("offline"));
+    await expect(recordFirmSignIn("acme-brokers")).resolves.toBe(false);
   });
 });

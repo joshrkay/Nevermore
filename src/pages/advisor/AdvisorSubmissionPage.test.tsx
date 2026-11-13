@@ -1076,6 +1076,16 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(draft).queryByRole("button", { name: "Download the census" })).not.toBeInTheDocument();
   });
 
+  it("records the census downloaded from the Employee census section against the submission, in the firm's record", async () => {
+    const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+    api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census } }));
+    renderPage();
+    const section = await screen.findByRole("region", { name: "Employee census" });
+    fireEvent.click(within(section).getByRole("button", { name: "Download the census" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-census-v1.csv"));
+    expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
+  });
+
   it("offers the certified answers as JSON beside the packet, without a PEO's own answers or the advisor's reviews and notes", async () => {
     api.loadSubmission.mockResolvedValue(detail({
       submission: { ...detail().submission!, version: 1, data_version: 9, consent_version: "2026-04-01", extra_answers: { "3": { vehicles: { question: "Do employees drive for work?" } } } } as SubmissionDetail["submission"],
@@ -1602,6 +1612,9 @@ describe("AdvisorSubmissionPage", () => {
         expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
         fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
         await zipOf();
+        // The bundle is a download of the submission's files: it is in the firm's record, once.
+        expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
+        expect(api.recordActivity.mock.calls.filter((c) => c[0] === "document_downloaded")).toHaveLength(1);
         // A download is never a send by itself.
         expect(await within(justworks).findByText("Sent this to Justworks?")).toBeInTheDocument();
         expect(api.recordQuoteSend).not.toHaveBeenCalled();

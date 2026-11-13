@@ -9,6 +9,7 @@ import { localToday } from "@/data/peoProfiles";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
+import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import { manuscriptUrl, recordActivity, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
 import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
@@ -184,7 +185,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
               corrections, the notes or a PEO's own answers. */}
           {answersJson && (
             <div className="border-t border-border pt-3">
-              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} onDownloaded={() => void recordActivity("document_downloaded", "submission", detail.id)} />
+              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} onDownloaded={() => recordSubmissionFileDownload(detail.id)} />
             </div>
           )}
         </div>

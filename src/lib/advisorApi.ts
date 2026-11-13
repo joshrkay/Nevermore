@@ -7,6 +7,7 @@ import { parseTranscript, type ChatMessage } from "@/data/chat";
 import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
+import type { BrowserActivityKind, BrowserActivityRecord } from "@/data/firmActivity";
 import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
@@ -782,9 +783,9 @@ export async function reviewField(
  * kind and the record's id are sent: the database works out the firm and the person, and refuses a record that isn't in
  * a firm the caller belongs to. Best effort: a failure is never shown and never stops what the advisor was doing.
  */
-export async function recordActivity(
-  kind: "submission_viewed" | "document_downloaded" | "packet_downloaded",
-  recordType: "submission" | "document" | "manuscript" | "quote_request",
+export async function recordActivity<K extends Exclude<BrowserActivityKind, "sign_in">>(
+  kind: K,
+  recordType: BrowserActivityRecord<K>,
   recordId: string,
 ): Promise<void> {
   try {
@@ -817,7 +818,8 @@ export async function listFirmActivityPeople(firmId: string): Promise<FirmActivi
 /** Where a page of the record starts: after the last entry the reader saw, by the two things the record is ordered by. */
 export interface ActivityCursor {
   at: string;
-  id: number;
+  /** The entry's random key: never the table's number, which is shared by every firm. */
+  key: string;
 }
 
 /**
@@ -836,7 +838,7 @@ export async function listFirmActivity(
     p_kind: opts.kind,
     p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1,
     p_before_at: opts.after?.at ?? null,
-    p_before_id: opts.after?.id ?? null,
+    p_before_key: opts.after?.key ?? null,
   });
   if (error) fail(error, "Couldn't load the record.");
   const rows = data ?? [];
