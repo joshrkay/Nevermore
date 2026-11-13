@@ -264,4 +264,18 @@ describe("the firm address gate", () => {
     expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
     expect(seen).not.toContain("outsider");
   });
+
+  // An invitation's link is opened by someone who is not a member yet (story CRM-P1.2): the page must be reachable to accept it.
+  it("lets a signed-in person who is not a member open an invitation's link, and only that: any other page still refuses them", async () => {
+    auth.user = { id: "u1" };
+    fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    renderAt("acme-brokers.nevermorepeo.com", "/join/some-token");
+    expect(await screen.findByText("The console")).toBeInTheDocument();
+    expect(screen.queryByText("You aren't a member of this firm")).not.toBeInTheDocument();
+    for (const path of ["/joined", "/advisor/join/some-token", "/join"]) {
+      const view = renderAt("acme-brokers.nevermorepeo.com", path);
+      expect(await screen.findByText("You aren't a member of this firm"), path).toBeInTheDocument();
+      view.unmount();
+    }
+  });
 });

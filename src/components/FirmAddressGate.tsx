@@ -7,6 +7,7 @@ import { fetchIsMemberOfFirmAddress } from "@/lib/firmApi";
 import NotFound from "@/pages/NotFound";
 import { AUTH_CALLBACK_PATH } from "@/lib/authRedirect";
 import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
+import { JOIN_PATH_PREFIX } from "@/lib/invitationLink";
 
 // The pages a sign-in lands on hold no data and finish by redirecting. At an existing firm's address they are left
 // alone: hiding one while the new session is checked would unmount it half-way, and its one-time code would be spent
@@ -74,6 +75,9 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     );
   }
   if (SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
+  // An invitation's link is opened by someone who is not a member yet, to become one. The page holds no firm data and the
+  // database decides who may accept (CRM-P1.2); every other page still refuses a person who is not a member.
+  if (pathname.startsWith(JOIN_PATH_PREFIX) && pathname.length > JOIN_PATH_PREFIX.length) return <>{children}</>;
   if (loading) return <Checking />;
   if (!signedIn) return <>{children}</>;
   if (membership === "checking") return <Checking />;
