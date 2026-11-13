@@ -21,6 +21,8 @@ export const ENTRY_KINDS = [
   { value: "firm_approved", label: "Approved the firm" },
   { value: "firm_refused", label: "Refused the firm" },
   { value: "invitation_withdrawn", label: "Withdrew an invitation" },
+  { value: "firm_suspended", label: "Suspended the firm" },
+  { value: "firm_restored", label: "Lifted the firm's suspension" },
 ] as const;
 
 export const ENTRY_KIND_VALUES: string[] = ENTRY_KINDS.map((k) => k.value);
