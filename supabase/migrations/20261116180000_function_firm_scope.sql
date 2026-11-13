@@ -12,6 +12,23 @@
 -- allowed organisations, monitoring counts), a person's own (the prospect's, the mailbox), the service-role work, and what has
 -- no submission behind it (referral partners, held mail, mailboxes: CRM-P2.1c).
 
+-- The firm guard every function that takes an intake id runs first: one place, one answer (a row of another firm is a row
+-- that isn't there), the error code the function already answered with (PT404 or P0002). Called by functions that run as their
+-- owner, never through the API.
+CREATE OR REPLACE FUNCTION public.require_intake_in_my_firm(p_session_id uuid, p_errcode text)
+RETURNS void
+LANGUAGE plpgsql
+STABLE
+SET search_path TO 'public', 'pg_temp'
+AS $$
+BEGIN
+  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
+  IF NOT public.intake_in_my_firm(p_session_id) THEN
+    RAISE EXCEPTION 'Submission not found' USING ERRCODE = p_errcode;
+  END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.require_intake_in_my_firm(uuid, text) FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.advisor_add_quote_request_note(p_quote_request_id bigint, p_kind text, p_noted_on date, p_body text)
  RETURNS jsonb
@@ -178,10 +195,7 @@ DECLARE
   peo text := btrim(COALESCE(p_peo, ''));
 BEGIN
   PERFORM public.require_advisor();
-  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
-  IF NOT public.intake_in_my_firm(p_session_id) THEN
-    RAISE EXCEPTION 'Submission not found' USING ERRCODE = 'PT404';
-  END IF;
+  PERFORM public.require_intake_in_my_firm(p_session_id, 'PT404');
   IF peo = '' THEN
     RAISE EXCEPTION 'Name the PEO the packet went to' USING ERRCODE = '22023';
   END IF;
@@ -230,10 +244,7 @@ DECLARE
   clean_note text := NULLIF(btrim(COALESCE(p_note, '')), '');
 BEGIN
   PERFORM public.require_advisor();
-  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
-  IF NOT public.intake_in_my_firm(p_session_id) THEN
-    RAISE EXCEPTION 'Submission not found' USING ERRCODE = 'P0002';
-  END IF;
+  PERFORM public.require_intake_in_my_firm(p_session_id, 'P0002');
   IF p_status IS NULL OR p_status NOT IN (
     'submitted', 'under_review', 'information_requested', 'ready_for_market', 'sent_to_carrier', 'quoted', 'won', 'lost', 'archived'
   ) THEN
@@ -300,10 +311,7 @@ DECLARE
   clean_note text := NULLIF(btrim(COALESCE(p_note, '')), '');
 BEGIN
   PERFORM public.require_advisor();
-  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
-  IF NOT public.intake_in_my_firm(p_session_id) THEN
-    RAISE EXCEPTION 'Submission not found' USING ERRCODE = 'P0002';
-  END IF;
+  PERFORM public.require_intake_in_my_firm(p_session_id, 'P0002');
   IF p_needs_action IS NULL THEN
     RAISE EXCEPTION 'Say whether the submission needs advisor action' USING ERRCODE = '22023';
   END IF;
@@ -356,10 +364,7 @@ DECLARE
   next_value jsonb;
 BEGIN
   PERFORM public.require_advisor();
-  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
-  IF NOT public.intake_in_my_firm(p_session_id) THEN
-    RAISE EXCEPTION 'Submission not found' USING ERRCODE = 'P0002';
-  END IF;
+  PERFORM public.require_intake_in_my_firm(p_session_id, 'P0002');
   IF NOT public.is_reviewable_field(p_field) THEN
     RAISE EXCEPTION 'Unknown field: %', p_field USING ERRCODE = '22023';
   END IF;
@@ -445,10 +450,7 @@ DECLARE
   result public.manuscript_versions;
 BEGIN
   PERFORM public.require_advisor();
-  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
-  IF NOT public.intake_in_my_firm(p_session_id) THEN
-    RAISE EXCEPTION 'Submission not found' USING ERRCODE = 'P0002';
-  END IF;
+  PERFORM public.require_intake_in_my_firm(p_session_id, 'P0002');
 
   SELECT * INTO s FROM public.chamber_sessions WHERE id = p_session_id FOR SHARE;
   IF NOT FOUND THEN
@@ -519,10 +521,7 @@ DECLARE
   q jsonb;
 BEGIN
   PERFORM public.require_advisor();
-  -- A firm's data is the firm's members' alone, whatever the caller's role (D-16, D-18).
-  IF NOT public.intake_in_my_firm(p_session_id) THEN
-    RAISE EXCEPTION 'Submission not found' USING ERRCODE = 'PT404';
-  END IF;
+  PERFORM public.require_intake_in_my_firm(p_session_id, 'PT404');
 
   IF clean_message = '' THEN
     RAISE EXCEPTION 'Write what you need from the prospect' USING ERRCODE = '22023';
@@ -869,16 +868,22 @@ $function$;
 -- firm can't be asked of the intake. Each step carries its firm, set from the intake when written, never moved.
 ALTER TABLE public.intake_milestones ADD COLUMN firm_id uuid REFERENCES public.firms(id) ON DELETE SET NULL;
 UPDATE public.intake_milestones m SET firm_id = s.firm_id FROM public.chamber_sessions s WHERE s.id = m.session_id;
+-- Steps of intakes deleted before this migration have no link left. Every intake belonged to Edgar Allan Advisory until now
+-- (CRM P-1.1), so those steps are its own: nobody loses sight of a submission (D-15).
+UPDATE public.intake_milestones SET firm_id = public.default_firm_id() WHERE firm_id IS NULL;
 CREATE OR REPLACE FUNCTION public.intake_milestone_firm()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
 BEGIN
-  IF TG_OP = 'UPDATE' THEN
-    NEW.firm_id := OLD.firm_id;
-  ELSE
+  IF NEW.session_id IS NOT NULL THEN
+    -- A linked step is always in its intake's firm, so a moved intake's steps follow it.
     NEW.firm_id := (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id);
+  ELSIF TG_OP = 'UPDATE' AND NEW.firm_id IS NOT NULL THEN
+    -- The intake went (the link goes null) and the step stays in its firm. A null firm_id is let through: it is the
+    -- foreign key emptying it because the firm itself was deleted.
+    NEW.firm_id := OLD.firm_id;
   END IF;
   RETURN NEW;
 END;
@@ -886,6 +891,21 @@ $$;
 REVOKE ALL ON FUNCTION public.intake_milestone_firm() FROM PUBLIC, anon, authenticated;
 CREATE TRIGGER intake_milestones_firm BEFORE INSERT OR UPDATE ON public.intake_milestones
   FOR EACH ROW EXECUTE FUNCTION public.intake_milestone_firm();
+
+-- Placing an intake in another firm moves the steps linked to it.
+CREATE OR REPLACE FUNCTION public.intake_firm_to_milestones()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE public.intake_milestones SET firm_id = NEW.firm_id WHERE session_id = NEW.id AND firm_id IS DISTINCT FROM NEW.firm_id;
+  RETURN NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.intake_firm_to_milestones() FROM PUBLIC, anon, authenticated;
+CREATE TRIGGER chamber_sessions_milestone_firm AFTER UPDATE OF firm_id ON public.chamber_sessions
+  FOR EACH ROW WHEN (OLD.firm_id IS DISTINCT FROM NEW.firm_id) EXECUTE FUNCTION public.intake_firm_to_milestones();
 
 CREATE OR REPLACE FUNCTION public.advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)
  RETURNS TABLE(step integer, milestone text, intakes bigint, median_minutes numeric)
@@ -1167,3 +1187,68 @@ BEGIN
   LIMIT p_limit OFFSET p_offset;
 END;
 $function$;
+
+-- A failure report keeps an intake only if it is the reporter's own or of the reporter's firm: the role alone opens no firm's data.
+CREATE OR REPLACE FUNCTION public.report_client_event(
+  p_kind text,
+  p_code text DEFAULT NULL,
+  p_detail text DEFAULT NULL,
+  p_route text DEFAULT NULL,
+  p_session_id uuid DEFAULT NULL
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  uid constant uuid := auth.uid();
+  -- sync:begin ops_report_caps
+  per_account constant integer := 30;
+  signed_out constant integer := 200;
+  everyone constant integer := 2000;
+  -- sync:end ops_report_caps
+  recent integer;
+  keep_session uuid;
+BEGIN
+  IF p_kind IS NULL OR p_kind NOT IN ('app_error', 'upload_failed', 'ai_failed', 'auth_denied', 'voice_failed') THEN
+    RAISE EXCEPTION 'Unknown event kind' USING ERRCODE = '22023';
+  END IF;
+
+  IF uid IS NOT NULL THEN
+    SELECT count(*) INTO recent FROM public.ops_events
+    WHERE user_id = uid AND source = 'browser' AND created_at > now() - interval '1 hour';
+    IF recent >= per_account THEN RETURN false; END IF;
+  ELSE
+    SELECT count(*) INTO recent FROM public.ops_events
+    WHERE user_id IS NULL AND source = 'browser' AND created_at > now() - interval '1 hour';
+    IF recent >= signed_out THEN RETURN false; END IF;
+  END IF;
+  SELECT count(*) INTO recent FROM public.ops_events
+  WHERE source = 'browser' AND created_at > now() - interval '1 hour';
+  IF recent >= everyone THEN RETURN false; END IF;
+
+  -- Only an intake the caller may read: their own, or one of their own firm. Anything else is dropped, so
+  -- the table never links an account to an intake it has nothing to do with (D-16, D-18).
+  IF p_session_id IS NOT NULL AND uid IS NOT NULL
+     AND (public.intake_in_my_firm(p_session_id) OR EXISTS (SELECT 1 FROM public.chamber_sessions s WHERE s.id = p_session_id AND s.user_id = uid)) THEN
+    keep_session := p_session_id;
+  END IF;
+
+  INSERT INTO public.ops_events (kind, source, code, detail, route, user_id, session_id)
+  VALUES (
+    p_kind,
+    'browser',
+    public.ops_clean_code(p_code),
+    public.ops_redact(p_detail, 300),
+    -- The path only: a query string or fragment can carry a token.
+    public.ops_redact(split_part(split_part(COALESCE(p_route, ''), '?', 1), '#', 1), 120),
+    uid,
+    keep_session
+  );
+  RETURN true;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.report_client_event(text, text, text, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.report_client_event(text, text, text, text, uuid) TO anon, authenticated;

@@ -406,10 +406,6 @@ BEGIN
   -- Advisory's, keep_intake_firm); here the superuser places them, as the address a prospect arrives at will.
   RESET ROLE;
   UPDATE public.chamber_sessions SET firm_id = firm_b WHERE user_id = pb;
-  -- Their steps in the funnel follow (a step's firm is set when it is written and never moved: placing an intake is the fixture's).
-  ALTER TABLE public.intake_milestones DISABLE TRIGGER intake_milestones_firm;
-  UPDATE public.intake_milestones SET firm_id = firm_b WHERE session_id IN (SELECT id FROM public.chamber_sessions WHERE user_id = pb);
-  ALTER TABLE public.intake_milestones ENABLE TRIGGER intake_milestones_firm;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;
@@ -1647,12 +1643,15 @@ DECLARE
   sid uuid;
   before_b bigint;
   before_a bigint;
+  src_b bigint;
 BEGIN
   SELECT id INTO sid FROM public.chamber_sessions WHERE firm_id = pg_temp.id('firm_b') LIMIT 1;
   IF sid IS NULL THEN RAISE EXCEPTION 'FAIL: setup: the second firm has no intake'; END IF;
   PERFORM public.note_intake_milestone(sid, 'answered');
   PERFORM pg_temp.become('agent_b');
   SELECT COALESCE(sum(intakes), 0) INTO before_b FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
+  SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
+    INTO src_b FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day');
   PERFORM pg_temp.become('advisor');
   SELECT COALESCE(sum(intakes), 0) INTO before_a FROM public.advisor_intake_funnel(now() - interval '300 days', now() + interval '1 day');
   RESET ROLE;
@@ -1663,7 +1662,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL: the funnel lost the steps of a deleted intake of its firm';
   END IF;
   IF (SELECT COALESCE(sum(started + answered + document_uploaded + census_provided + ready_to_certify + email_verified + certified + manuscript_downloaded), 0)
-        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')) < 1 THEN
+        FROM public.advisor_intake_sources(now() - interval '300 days', now() + interval '1 day')) <> src_b THEN
     RAISE EXCEPTION 'FAIL: the source report lost the steps of a deleted intake of its firm';
   END IF;
   PERFORM pg_temp.become('advisor');
@@ -1673,6 +1672,65 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: deleted-intake funnel cases passed';
+END $$;
+
+-- ---------- 4g. a step follows its intake's firm; deleting a firm that has steps works ----------
+DO $$
+DECLARE
+  sid uuid;
+  fb uuid := pg_temp.id('firm_b');
+  tmp uuid := gen_random_uuid();
+BEGIN
+  -- An intake moved to another firm (the service role does this) takes its steps with it.
+  SELECT id INTO sid FROM public.chamber_sessions WHERE firm_id = public.default_firm_id() LIMIT 1;
+  PERFORM public.note_intake_milestone(sid, 'answered');
+  UPDATE public.chamber_sessions SET firm_id = fb WHERE id = sid;
+  IF EXISTS (SELECT 1 FROM public.intake_milestones WHERE session_id = sid AND firm_id IS DISTINCT FROM fb) THEN
+    RAISE EXCEPTION 'FAIL: the steps of a moved intake stayed in the old firm';
+  END IF;
+  UPDATE public.chamber_sessions SET firm_id = public.default_firm_id() WHERE id = sid;
+  IF EXISTS (SELECT 1 FROM public.intake_milestones WHERE session_id = sid AND firm_id IS DISTINCT FROM public.default_firm_id()) THEN
+    RAISE EXCEPTION 'FAIL: the steps of an intake moved back stayed in the other firm';
+  END IF;
+  -- A firm that has steps can be deleted: the steps keep their rows.
+  INSERT INTO public.firms (id, name, address) VALUES (tmp, 'Temp Firm', 'temp-firm-4g');
+  UPDATE public.chamber_sessions SET firm_id = tmp WHERE id = sid;
+  IF NOT EXISTS (SELECT 1 FROM public.intake_milestones WHERE session_id = sid AND firm_id = tmp) THEN
+    RAISE EXCEPTION 'FAIL: setup: the steps did not follow the intake to the new firm';
+  END IF;
+  -- Deleting an intake keeps its steps without the link (the intake goes first, then the firm).
+  UPDATE public.intake_milestones SET session_id = NULL WHERE session_id = sid;
+  UPDATE public.chamber_sessions SET firm_id = public.default_firm_id() WHERE id = sid;
+  DELETE FROM public.firms WHERE id = tmp;
+  IF NOT EXISTS (SELECT 1 FROM public.intake_milestones WHERE session_id IS NULL AND firm_id IS NULL AND milestone = 'answered') THEN
+    RAISE EXCEPTION 'FAIL: deleting a firm lost its steps';
+  END IF;
+  RAISE NOTICE 'data_isolation: step firm cases passed';
+END $$;
+
+-- ---------- 4h. a failure report keeps only an intake of the reporter's own firm ----------
+DO $$
+DECLARE
+  other uuid;
+  r text;
+BEGIN
+  SELECT id INTO other FROM public.chamber_sessions WHERE firm_id = pg_temp.id('firm_b') LIMIT 1;
+  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin'] LOOP
+    PERFORM pg_temp.become(r);
+    IF NOT public.report_client_event('app_error', 'xfirm_' || r, NULL, '/x', other) THEN RAISE EXCEPTION 'setup: report dropped'; END IF;
+  END LOOP;
+  PERFORM pg_temp.become('agent_b');
+  IF NOT public.report_client_event('app_error', 'xfirm_own', NULL, '/x', other) THEN RAISE EXCEPTION 'setup: report dropped'; END IF;
+  RESET ROLE;
+  IF EXISTS (SELECT 1 FROM public.ops_events WHERE code IN ('xfirm_advisor', 'xfirm_platform_admin') AND session_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'FAIL: a failure report was tied to another firm''s intake';
+  END IF;
+  IF (SELECT session_id FROM public.ops_events WHERE code = 'xfirm_own') IS DISTINCT FROM other THEN
+    RAISE EXCEPTION 'FAIL: a member''s failure report lost its own firm''s intake';
+  END IF;
+  DELETE FROM public.ops_events WHERE code LIKE 'xfirm_%';
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: failure report cases passed';
 END $$;
 
 -- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
@@ -2291,7 +2349,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('is_clean_census_template_file', 'platform_wide', 'the storage policy on the template bucket; names no one'),
   ('peo_catalog', 'platform_wide', 'the PEOs and their published profiles: the same for every firm'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
-  ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller can see'),
+  ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller owns or is a firm member of (4h)'),
   ('archive_chamber_session', 'own', 'the prospect''s Start over, on their own intake'),
   ('record_intake_consent', 'own', 'the caller''s own agreement'),
   ('prospect_final_manuscript', 'own', 'the prospect''s own final Manuscript'),
@@ -2315,9 +2373,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('is_own_final_manuscript', 'own', 'storage policy helper: the file of the caller''s own final Manuscript'),
   ('is_certified_evidence', 'own', 'storage policy helper: a file of the caller''s own certified intake'),
   ('is_withheld_document_file', 'own', 'storage policy helper: whether the document at a path has a scan that hasn''t passed'),
-  ('intake_accepts_files', 'own', 'upload policy helper: whether an intake exists with no deletion open'),
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
+  ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
   ('advisor_add_referral_partner', 'deferred', 'a referral partner has no firm column yet'),
   ('advisor_update_referral_partner', 'deferred', 'a referral partner has no firm column yet'),
   ('can_read_peo_mail', 'deferred', 'held mail belongs to no firm yet: a platform admin''s until it is assigned'),
@@ -2331,6 +2389,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('mailbox_secret', 'deferred', 'mailboxes'),
   ('mailbox_delete', 'deferred', 'mailboxes');
 UPDATE fn_class SET story = 'CRM-P2.1c' WHERE class = 'deferred';
+UPDATE fn_class SET story = 'CRM-P2.2' WHERE fn = 'intake_accepts_files';
 
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
