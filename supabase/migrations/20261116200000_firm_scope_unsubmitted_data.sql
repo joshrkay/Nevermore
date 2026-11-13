@@ -448,3 +448,46 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION public.outbox_alert_recipients(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.outbox_alert_recipients(uuid) TO service_role;
+
+-- ---------- 4. A broker's mailbox ----------
+-- A mailbox is the person's own credential: one per person (the table's primary key), never read through the API, and never
+-- shared. It belongs to no firm in particular, because a person may belong to several, but it works only while its owner is a
+-- current member of a firm: sending as a person who has left every firm, or a platform admin who belongs to none (D-16), is
+-- refused, and the broker is told their mailbox is not connected. The role alone is no longer enough.
+CREATE OR REPLACE FUNCTION public.my_mailbox()
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT COALESCE(
+    (SELECT jsonb_build_object('connected', true, 'provider', m.provider, 'address', m.address, 'connected_at', m.connected_at)
+     FROM public.broker_mailboxes m
+     WHERE m.user_id = auth.uid()
+       AND EXISTS (SELECT 1 FROM public.firm_memberships f WHERE f.user_id = m.user_id AND public.is_firm_member(f.firm_id))),
+    jsonb_build_object('connected', false));
+$$;
+
+CREATE OR REPLACE FUNCTION public.mailbox_store(
+  p_user_id uuid, p_provider text, p_address text, p_scope text, p_token_ciphertext text, p_token_iv text, p_rotated boolean DEFAULT false)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.user_roles r WHERE r.user_id = p_user_id AND r.role::text IN ('advisor', 'admin'))
+     OR NOT EXISTS (SELECT 1 FROM public.firm_memberships f WHERE f.user_id = p_user_id AND public.membership_is_current(f.valid_from, f.valid_until)) THEN
+    RAISE EXCEPTION 'Only a member of a firm can connect a mailbox' USING ERRCODE = '42501';
+  END IF;
+  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+  VALUES (p_user_id, p_provider, p_address, p_scope, p_token_ciphertext, p_token_iv)
+  ON CONFLICT (user_id) DO UPDATE
+  SET provider = EXCLUDED.provider, address = EXCLUDED.address, scope = EXCLUDED.scope,
+      token_ciphertext = EXCLUDED.token_ciphertext, token_iv = EXCLUDED.token_iv, token_updated_at = now(),
+      -- A token Microsoft handed back on a refresh replaces the old one; the broker has not connected again.
+      connected_at = CASE WHEN p_rotated THEN public.broker_mailboxes.connected_at ELSE now() END;
+  RETURN jsonb_build_object('connected', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.mailbox_secret(p_user_id uuid)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT jsonb_build_object('provider', m.provider, 'address', m.address, 'scope', m.scope,
+                            'token_ciphertext', m.token_ciphertext, 'token_iv', m.token_iv)
+  FROM public.broker_mailboxes m
+  WHERE m.user_id = p_user_id
+    AND EXISTS (SELECT 1 FROM public.firm_memberships f WHERE f.user_id = m.user_id AND public.membership_is_current(f.valid_from, f.valid_until));
+$$;

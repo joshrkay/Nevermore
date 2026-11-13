@@ -2067,6 +2067,58 @@ BEGIN
   RAISE NOTICE 'data_isolation: alert recipient cases passed';
 END $$;
 
+-- 4i-4. A broker's mailbox is the person's own, one per person (its primary key), and it works only while they are a current member
+-- of a firm: a platform admin who belongs to none (D-16), a former member, and a person with only a role can neither connect one nor
+-- have the sending function read one, and are told theirs is not connected.
+DO $$
+DECLARE
+  who text;
+  r text;
+  call text := 'SELECT public.mailbox_store(%L, ''google'', ''x@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')';
+BEGIN
+  PERFORM pg_temp.become('service');
+  IF pg_temp.attempt(format(call, pg_temp.id('advisor'))) <> 'rows:1' OR pg_temp.attempt(format(call, pg_temp.id('agent_b'))) <> 'rows:1' THEN
+    RAISE EXCEPTION 'FAIL: a current member of a firm can''t connect a mailbox';
+  END IF;
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'prospect_a'] LOOP
+    r := pg_temp.attempt(format(call, pg_temp.id(who)));
+    IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % connected a mailbox without being a member of a firm (%)', who, r; END IF;
+  END LOOP;
+
+  -- Mailboxes that exist: one for a member of each firm, and one each for people who are no member (their membership ended, or they never had one).
+  RESET ROLE;
+  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+  SELECT pg_temp.id(w), 'google', w || '@mailbox.test', 'gmail.send', 'ciphertext-' || w, 'iv'
+  FROM unnest(ARRAY['advisor', 'agent_b', 'platform_admin', 'former_agent']) w
+  ON CONFLICT (user_id) DO NOTHING;
+  PERFORM pg_temp.become('service');
+  FOREACH who IN ARRAY ARRAY['advisor', 'agent_b'] LOOP
+    IF public.mailbox_secret(pg_temp.id(who)) IS NULL THEN RAISE EXCEPTION 'FAIL: the sending function can''t read the mailbox of %, a member', who; END IF;
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent'] LOOP
+    IF public.mailbox_secret(pg_temp.id(who)) IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the sending function reads the mailbox of %, who belongs to no firm', who; END IF;
+  END LOOP;
+  -- Ending a membership closes the mailbox at once, and a person's mailbox is theirs: nobody's but their own is asked for.
+  RESET ROLE;
+  r := pg_temp.after(format('UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L AND firm_id = %L AND valid_until IS NULL', pg_temp.id('agent_b'), pg_temp.id('firm_b')),
+    format('SELECT COALESCE(public.mailbox_secret(%L)::text, ''none'')', pg_temp.id('agent_b')));
+  IF r <> 'none' THEN RAISE EXCEPTION 'FAIL: the sending function reads a mailbox after its owner''s membership ended (%)', r; END IF;
+
+  -- What the broker is told about their own: connected only while they are a member.
+  FOREACH who IN ARRAY ARRAY['advisor', 'agent_b'] LOOP
+    PERFORM pg_temp.become(who);
+    IF NOT COALESCE((public.my_mailbox() ->> 'connected')::boolean, false) THEN RAISE EXCEPTION 'FAIL: % is not told their mailbox is connected', who; END IF;
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent'] LOOP
+    PERFORM pg_temp.become(who);
+    IF (public.my_mailbox() ->> 'connected')::boolean IS DISTINCT FROM false THEN RAISE EXCEPTION 'FAIL: % who belongs to no firm is told their mailbox is connected', who; END IF;
+  END LOOP;
+  RESET ROLE;
+  DELETE FROM public.broker_mailboxes WHERE address LIKE '%@mailbox.test';
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: mailbox cases passed';
+END $$;
+
 -- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
 -- The check that a table "has a firm rule" is by behaviour, never by reading a policy's text: a policy can mention a firm
 -- helper without tying it to the row being read, and a text check passes on a table that is open across firms.
