@@ -35,7 +35,7 @@ BEGIN
   IF char_length(clean_name) NOT BETWEEN 1 AND 80 THEN
     RAISE EXCEPTION 'A firm''s name is 1 to 80 characters' USING ERRCODE = '23514';
   END IF;
-  INSERT INTO public.firms (name, address) VALUES (clean_name, lower(btrim(p_address))) RETURNING id INTO fid;
+  INSERT INTO public.firms (name, address, signed_up_by) VALUES (clean_name, lower(btrim(p_address)), auth.uid()) RETURNING id INTO fid;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fid, auth.uid(), 'owner');
   PERFORM public.record_firm_event(fid, 'firm_signed_up', auth.uid(), jsonb_build_object('address', lower(btrim(p_address))));
   RETURN fid;
@@ -47,6 +47,11 @@ GRANT EXECUTE ON FUNCTION public.sign_up_firm(text, text) TO authenticated;
 
 -- When a firm signed up. Firms that exist already (Edgar Allan Advisory) take the time this migration ran.
 ALTER TABLE public.firms ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
+
+-- Who signed the firm up, fixed when sign_up_firm creates it. Ownership can pass to someone else while approval is
+-- pending, so the admin's list reads this, never whoever owns the firm now. Empty for firms that were not signed up
+-- here, and when that account is deleted.
+ALTER TABLE public.firms ADD COLUMN signed_up_by uuid REFERENCES auth.users (id) ON DELETE SET NULL;
 
 -- The firms waiting for a platform admin's decision, oldest first, with the email of the person who signed each up.
 -- A platform admin is no member of any firm (D-16), so row security shows them no firm: this function is how they
@@ -64,9 +69,7 @@ BEGIN
   END IF;
   RETURN QUERY
   SELECT f.id, f.name, f.address,
-         (SELECT u.email::text FROM public.firm_memberships m JOIN auth.users u ON u.id = m.user_id
-          WHERE m.firm_id = f.id AND m.role = 'owner' AND public.membership_is_current(m.valid_from, m.valid_until)
-          ORDER BY m.valid_from, m.id LIMIT 1),
+         (SELECT u.email::text FROM auth.users u WHERE u.id = f.signed_up_by),
          f.created_at
   FROM public.firms f
   WHERE f.approved_at IS NULL AND f.decision IS NULL

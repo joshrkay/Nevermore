@@ -323,6 +323,32 @@ BEGIN
   RAISE NOTICE 'firm_signup: admin list order and owner cases passed';
 END $$;
 
+-- Break caught: ownership passes to someone else while approval is pending (the new owner added, the first owner's
+-- membership ended), and the list names the replacement as the person who signed the firm up.
+DO $$
+DECLARE transfer_firm uuid; founder_email text;
+BEGIN
+  PERFORM pg_temp.new_user('first_founder');
+  PERFORM pg_temp.new_user('replacement_owner');
+  SELECT email::text INTO founder_email FROM auth.users WHERE id = pg_temp.id('first_founder');
+  PERFORM pg_temp.as_user('first_founder');
+  transfer_firm := public.sign_up_firm('Handover Brokers', 'handover-brokers');
+  RESET ROLE;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (transfer_firm, pg_temp.id('replacement_owner'), 'owner');
+  UPDATE public.firm_memberships SET valid_until = now()
+    WHERE firm_id = transfer_firm AND user_id = pg_temp.id('first_founder');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is((SELECT w.owner_email FROM public.admin_waiting_firms() w WHERE w.firm_id = transfer_firm),
+    founder_email, 'the person who signed the firm up is still named after ownership has passed to another');
+  RESET ROLE;
+  -- Clean up: the owner guard would keep the last owner, so it is switched off for this one deletion.
+  ALTER TABLE public.firm_memberships DISABLE TRIGGER USER;
+  DELETE FROM public.firm_memberships WHERE firm_id = transfer_firm;
+  ALTER TABLE public.firm_memberships ENABLE TRIGGER USER;
+  DELETE FROM public.firms WHERE id = transfer_firm;
+  RAISE NOTICE 'firm_signup: ownership transfer cases passed';
+END $$;
+
 -- Break caught: the list, or a decision, is open to someone who isn't a platform admin: an advisor, a firm's owner
 -- (the waiting firm's own included), a guest, or a signed-out caller.
 DO $$
