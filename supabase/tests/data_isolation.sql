@@ -1427,13 +1427,80 @@ INSERT INTO table_scope (tbl, scope, why, names_intakes) VALUES
   ('email_suppressions', 'closed', 'do-not-send list', false), ('intake_milestones', 'closed', 'read as counts through a function', false),
   ('outbox_events', 'closed', 'queued email', false), ('submission_reference_counters', 'closed', 'File ID sequence', false);
 
+-- Splits an expression at a keyword (' OR ' or ' AND ') that sits outside brackets, quotes and CASE ... END.
+CREATE FUNCTION pg_temp.top_split(e text, kw text) RETURNS text[] LANGUAGE plpgsql AS $$
+DECLARE
+  parts text[] := '{}';
+  depth int := 0; cases int := 0; i int := 1; start int := 1; n int := length(e);
+  ch text; quoted boolean := false; prev text;
+BEGIN
+  WHILE i <= n LOOP
+    ch := substr(e, i, 1);
+    prev := CASE WHEN i = 1 THEN ' ' ELSE substr(e, i - 1, 1) END;
+    IF ch = '''' THEN quoted := NOT quoted;
+    ELSIF NOT quoted THEN
+      IF ch = '(' THEN depth := depth + 1;
+      ELSIF ch = ')' THEN depth := depth - 1;
+      ELSIF prev !~ '\w' AND substr(e, i, 5) = 'CASE ' THEN cases := cases + 1;
+      ELSIF prev !~ '\w' AND substr(e, i, 3) = 'END' AND substr(e, i + 3, 1) !~ '\w' THEN cases := cases - 1;
+      ELSIF depth = 0 AND cases = 0 AND substr(e, i, length(kw)) = kw THEN
+        parts := parts || substr(e, start, i - start);
+        i := i + length(kw) - 1; start := i + 1;
+      END IF;
+    END IF;
+    i := i + 1;
+  END LOOP;
+  RETURN parts || substr(e, start);
+END $$;
+
+-- Does the expression keep a row to the caller's firm or the caller's own row? An OR is limited only if every branch is; an AND
+-- if any conjunct is. A bare helper call, an own-row comparison made at the top level (not inside a sub-select, and never
+-- auth.uid() against itself), an EXISTS that calls a helper, or the held-mail CASE whose ELSE is itself limited, is an anchor.
+-- Anything else (true, IS NOT NULL, an inline role lookup) is not.
+CREATE FUNCTION pg_temp.limited_to_firm(expr text, fns text) RETURNS boolean LANGUAGE plpgsql AS $$
+DECLARE
+  e text := btrim(regexp_replace(expr, '\s+', ' ', 'g'));
+  parts text[]; part text; m text[]; depth int; i int; ok boolean;
+  uid constant text := '(\( ?SELECT )?\(?auth\.uid\(\)( AS uid)?\)?(::text)?\)?';
+  col constant text := '(\w+(\.\w+)?|\(storage\.foldername\(name\)\)\[\d\])';
+BEGIN
+  -- Strip brackets that wrap the whole expression.
+  LOOP
+    EXIT WHEN e = '' OR left(e, 1) <> '(' OR right(e, 1) <> ')';
+    depth := 0; ok := true;
+    FOR i IN 1 .. length(e) LOOP
+      IF substr(e, i, 1) = '(' THEN depth := depth + 1; ELSIF substr(e, i, 1) = ')' THEN depth := depth - 1; END IF;
+      IF depth = 0 AND i < length(e) THEN ok := false; EXIT; END IF;
+    END LOOP;
+    EXIT WHEN NOT ok;
+    e := btrim(substr(e, 2, length(e) - 2));
+  END LOOP;
+  IF e = '' THEN RETURN false; END IF;
+  parts := pg_temp.top_split(e, ' OR ');
+  IF array_length(parts, 1) > 1 THEN
+    FOREACH part IN ARRAY parts LOOP IF NOT pg_temp.limited_to_firm(part, fns) THEN RETURN false; END IF; END LOOP;
+    RETURN true;
+  END IF;
+  parts := pg_temp.top_split(e, ' AND ');
+  IF array_length(parts, 1) > 1 THEN
+    FOREACH part IN ARRAY parts LOOP IF pg_temp.limited_to_firm(part, fns) THEN RETURN true; END IF; END LOOP;
+    RETURN false;
+  END IF;
+  IF e ~ ('^(' || fns || ')\(') AND e ~ '\)$' THEN RETURN true; END IF;
+  IF e ~ ('^' || col || ' = ' || uid || '$') OR e ~ ('^\(?( ?SELECT )?auth\.uid\(\)( AS uid)?\)?(::text)? = ' || col || '$') THEN RETURN true; END IF;
+  IF e ~ '^EXISTS \(' AND e ~ ('(' || fns || ')\(') AND e !~ ' OR ' AND e !~ '\muser_roles\M' THEN RETURN true; END IF;
+  m := regexp_match(e, '^CASE WHEN \(?(session_id|quote_request_id) IS NULL\)? THEN (public\.)?has_role\(''admin''(::\w+)?\) ELSE (.*) END$');
+  IF m IS NOT NULL THEN RETURN pg_temp.limited_to_firm(m[4], fns); END IF;
+  RETURN false;
+END $$;
+
 -- The problems with a database's row security, one per line, or NULL.
 CREATE FUNCTION pg_temp.firm_rule_gaps() RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
-  firm_fn constant text := '(is_firm_member|firm_role|can_see_firm_record|intake_in_my_firm|intake_folder_in_my_firm|quote_request_in_my_firm|can_read_peo_mail|intake_owner_in_my_firm|colleague_in_my_firm)\(';
+  firm_fn constant text := 'is_firm_member|firm_role|can_see_firm_record|intake_in_my_firm|intake_folder_in_my_firm|quote_request_in_my_firm|can_read_peo_mail|intake_owner_in_my_firm|colleague_in_my_firm';
+  -- The prospect's own final Manuscript, and PEO template workbooks (they hold no firm's data), are the other readers of storage.
+  storage_fn constant text := firm_fn || '|is_own_final_manuscript|is_clean_census_template_file';
   by_role constant text := '(is_advisor|has_role)\(';
-  held_mail constant text := 'CASE\s+WHEN \(?\w+ IS NULL\)?\s+THEN (public\.)?has_role\(''admin''(::\w+)?\)';
-  own_row constant text := '(\w+ = \(?(SELECT )?auth\.uid\(\))|(auth\.uid\(\)( AS uid\))? = \w+)';
   c record;
   sc table_scope%ROWTYPE;
   pol record;
@@ -1450,17 +1517,15 @@ BEGIN
     holds_firm_data := EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
                                  AND a.attname IN ('firm_id', 'session_id', 'quote_request_id'));
     firm_rule := false;
-    FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expr FROM pg_policies p
+    FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') AS qual, COALESCE(p.with_check, '') AS with_check,
+                      COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expr FROM pg_policies p
                WHERE p.schemaname = 'public' AND p.tablename = c.relname LOOP
-      IF pol.expr ~ firm_fn THEN firm_rule := true; END IF;
-      -- A role check anywhere in a firm table's policy opens every firm's rows to that role, whatever else the policy says
-      -- (`is_advisor() OR intake_in_my_firm(...)`). The one allowance is held mail: `CASE WHEN <col> IS NULL THEN has_role('admin')`.
-      IF sc.scope = 'firm' AND regexp_replace(pol.expr, held_mail, '', 'g') ~ by_role THEN
-        gaps := gaps || format(E'\n  %s: policy "%s" opens a firm''s rows by role, not by membership', c.relname, pol.policyname);
-      END IF;
-      -- Permissive policies are ORed: one that names no membership helper and is not about the caller's own row opens the table.
-      IF sc.scope = 'firm' AND pol.expr !~ firm_fn AND pol.expr !~ own_row THEN
-        gaps := gaps || format(E'\n  %s: policy "%s" is not about a firm''s membership or the caller''s own row', c.relname, pol.policyname);
+      IF pol.expr ~ ('(' || firm_fn || ')\(') THEN firm_rule := true; END IF;
+      -- Permissive policies are ORed, so every policy on a firm table must itself be limited to the caller's firm or own row:
+      -- no OR branch that is not, no role check, no inline role lookup, no `true`.
+      IF sc.scope = 'firm' AND ((pol.qual <> '' AND NOT pg_temp.limited_to_firm(pol.qual, firm_fn))
+                                OR (pol.with_check <> '' AND NOT pg_temp.limited_to_firm(pol.with_check, firm_fn))) THEN
+        gaps := gaps || format(E'\n  %s: policy "%s" is not limited to a firm''s membership or the caller''s own row', c.relname, pol.policyname);
       END IF;
       IF sc.scope = 'own' AND (pol.expr ~ by_role OR pol.expr !~ 'auth\.uid\(\)') THEN
         gaps := gaps || format(E'\n  %s: policy "%s" is not about the caller''s own rows', c.relname, pol.policyname);
@@ -1474,12 +1539,13 @@ BEGIN
       gaps := gaps || format(E'\n  %s has a firm_id, session_id or quote_request_id column but is declared %s', c.relname, sc.scope);
     END IF;
   END LOOP;
-  -- Storage: no policy opens an advisor's or admin's access by role alone. The one other reader of a bucket a firm's files are in
-  -- is the prospect, by the folder of their own intake or their final Manuscript; PEO template workbooks hold no firm's data.
-  FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS expr FROM pg_policies p
+  -- Storage: the same rule as a firm table. Each policy is limited to the membership of the file's firm, the prospect's own
+  -- folder or their final Manuscript; none opens a bucket by role, by `true` or by being signed in.
+  FOR pol IN SELECT p.policyname, COALESCE(p.qual, '') AS qual, COALESCE(p.with_check, '') AS with_check FROM pg_policies p
              WHERE p.schemaname = 'storage' AND p.tablename = 'objects' LOOP
-    IF regexp_replace(pol.expr, held_mail, '', 'g') ~ by_role THEN
-      gaps := gaps || format(E'\n  storage.objects: policy "%s" opens files by role, not by membership of their firm', pol.policyname);
+    IF (pol.qual <> '' AND NOT pg_temp.limited_to_firm(pol.qual, storage_fn))
+       OR (pol.with_check <> '' AND NOT pg_temp.limited_to_firm(pol.with_check, storage_fn)) THEN
+      gaps := gaps || format(E'\n  storage.objects: policy "%s" is not limited to membership of the file''s firm or the caller''s own folder', pol.policyname);
     END IF;
   END LOOP;
   RETURN NULLIF(gaps, '');
@@ -1512,21 +1578,66 @@ BEGIN
   ALTER TABLE public.probe_no_rule ENABLE ROW LEVEL SECURITY;
   CREATE POLICY probe_no_rule_read ON public.probe_no_rule FOR SELECT TO authenticated USING (auth.uid() IS NOT NULL);
   CREATE POLICY probe_storage_by_role ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'documents' AND is_advisor());
-  INSERT INTO table_scope (tbl, scope, why) VALUES ('probe_platform', 'platform', 'probe'), ('probe_by_role', 'firm', 'probe'), ('probe_no_rule', 'firm', 'probe'), ('probe_mixed', 'firm', 'probe'), ('probe_open_extra', 'firm', 'probe');
+  -- Policies shaped to look right while opening every firm's rows: each must be flagged.
+  CREATE TABLE public.probe_or_true (id int, session_id uuid);
+  CREATE TABLE public.probe_or_notnull (id int, session_id uuid, user_id uuid);
+  CREATE TABLE public.probe_inline_role (id int, session_id uuid);
+  CREATE TABLE public.probe_own_or_true (id int, session_id uuid, user_id uuid);
+  CREATE TABLE public.probe_uid_self (id int, session_id uuid);
+  CREATE TABLE public.probe_case_else (id int, session_id uuid);
+  ALTER TABLE public.probe_or_true ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_or_notnull ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_inline_role ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_own_or_true ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_uid_self ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_case_else ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY p ON public.probe_or_true FOR SELECT TO authenticated USING (true OR intake_in_my_firm(session_id));
+  CREATE POLICY p ON public.probe_or_notnull FOR SELECT TO authenticated USING (session_id IS NOT NULL OR user_id = auth.uid());
+  CREATE POLICY p0 ON public.probe_inline_role FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p ON public.probe_inline_role FOR SELECT TO authenticated
+    USING (EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = auth.uid() AND r.role = 'advisor'));
+  CREATE POLICY p ON public.probe_own_or_true FOR SELECT TO authenticated USING (auth.uid() = user_id OR true);
+  CREATE POLICY p ON public.probe_uid_self FOR SELECT TO authenticated USING (auth.uid() = auth.uid() OR intake_in_my_firm(session_id));
+  CREATE POLICY p ON public.probe_case_else FOR SELECT TO authenticated
+    USING (CASE WHEN session_id IS NULL THEN has_role('admin') ELSE true END OR intake_in_my_firm(session_id));
+  CREATE POLICY probe_storage_open ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'documents' AND true);
+  CREATE POLICY probe_storage_signed_in ON storage.objects FOR SELECT TO authenticated USING (bucket_id = 'manuscripts' AND auth.uid() IS NOT NULL);
+  -- The shapes the real schema uses must still pass.
+  CREATE TABLE public.probe_fine (id int, session_id uuid, user_id uuid);
+  ALTER TABLE public.probe_fine ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY probe_fine_own ON public.probe_fine FOR SELECT TO authenticated USING ((user_id = (SELECT auth.uid())) AND (session_id IS NOT NULL));
+  CREATE POLICY probe_fine_firm ON public.probe_fine FOR SELECT TO authenticated
+    USING (CASE WHEN session_id IS NULL THEN has_role('admin') ELSE intake_in_my_firm(session_id) END);
+  INSERT INTO table_scope (tbl, scope, why) VALUES ('probe_platform', 'platform', 'probe'), ('probe_by_role', 'firm', 'probe'), ('probe_no_rule', 'firm', 'probe'), ('probe_mixed', 'firm', 'probe'), ('probe_open_extra', 'firm', 'probe'),
+    ('probe_or_true', 'firm', 'probe'), ('probe_or_notnull', 'firm', 'probe'), ('probe_inline_role', 'firm', 'probe'), ('probe_own_or_true', 'firm', 'probe'),
+    ('probe_uid_self', 'firm', 'probe'), ('probe_case_else', 'firm', 'probe'), ('probe_fine', 'firm', 'probe');
   probed := pg_temp.firm_rule_gaps();
   IF probed IS NULL
      OR probed NOT LIKE '%probe_undeclared is not declared%'
      OR probed NOT LIKE '%probe_platform has a firm_id%'
-     OR probed NOT LIKE '%probe_by_role: policy "probe_by_role_read" opens a firm%'
-     OR probed NOT LIKE '%probe_mixed: policy "probe_mixed_read" opens a firm%'
-     OR probed NOT LIKE '%probe_open_extra: policy "probe_open_extra_all" is not about a firm%'
+     OR probed NOT LIKE '%probe_by_role: policy "probe_by_role_read" is not limited%'
+     OR probed NOT LIKE '%probe_mixed: policy "probe_mixed_read" is not limited%'
+     OR probed NOT LIKE '%probe_open_extra: policy "probe_open_extra_all" is not limited%'
+     OR probed NOT LIKE '%probe_or_true: policy "p" is not limited%'
+     OR probed NOT LIKE '%probe_or_notnull: policy "p" is not limited%'
+     OR probed NOT LIKE '%probe_inline_role: policy "p" is not limited%'
+     OR probed LIKE '%probe_inline_role: policy "p0"%'
+     OR probed NOT LIKE '%probe_own_or_true: policy "p" is not limited%'
+     OR probed NOT LIKE '%probe_uid_self: policy "p" is not limited%'
+     OR probed NOT LIKE '%probe_case_else: policy "p" is not limited%'
+     OR probed LIKE '%probe_fine%'
+     OR probed NOT LIKE '%storage.objects: policy "probe_storage_open" is not limited%'
+     OR probed NOT LIKE '%storage.objects: policy "probe_storage_signed_in" is not limited%'
      OR probed LIKE '%probe_open_extra: policy "probe_open_extra_firm"%'
      OR probed NOT LIKE '%probe_no_rule holds firm data and has no firm rule%'
-     OR probed NOT LIKE '%storage.objects: policy "probe_storage_by_role" opens files by role%' THEN
+     OR probed NOT LIKE '%storage.objects: policy "probe_storage_by_role" is not limited%' THEN
     RAISE EXCEPTION E'FAIL: the firm rule check missed a table with no firm rule: %', probed;
   END IF;
   DROP POLICY probe_storage_by_role ON storage.objects;
-  DROP TABLE public.probe_undeclared, public.probe_platform, public.probe_by_role, public.probe_no_rule, public.probe_mixed, public.probe_open_extra;
+  DROP POLICY probe_storage_open ON storage.objects;
+  DROP POLICY probe_storage_signed_in ON storage.objects;
+  DROP TABLE public.probe_undeclared, public.probe_platform, public.probe_by_role, public.probe_no_rule, public.probe_mixed, public.probe_open_extra,
+    public.probe_or_true, public.probe_or_notnull, public.probe_inline_role, public.probe_own_or_true, public.probe_uid_self, public.probe_case_else, public.probe_fine;
   DELETE FROM table_scope WHERE tbl LIKE 'probe\_%';
   IF pg_temp.firm_rule_gaps() IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the firm rule probes were left behind'; END IF;
   RAISE NOTICE 'data_isolation: every table that holds firm data has a firm rule';
