@@ -156,6 +156,8 @@ describe("AdvisorPartnersPage", () => {
       expect(screen.queryByRole("button", { name: /Copy .*link/ })).not.toBeInTheDocument();
       expect(screen.queryByRole("columnheader", { name: "Their link" })).not.toBeInTheDocument();
       expect(screen.getByText(/links come when the firm can take intakes/i)).toBeInTheDocument();
+      // The funnel counts are asked for the page's own firm, not for another membership's.
+      expect(api.loadIntakeSources.mock.calls[0][2]).toBe("firm-b");
     });
 
     it("offers no link while adding a partner to another firm, and the toast carries none", async () => {

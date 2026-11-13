@@ -126,7 +126,7 @@ const AdvisorPartnersPage = () => {
             <label htmlFor="partners-firm" className="block text-xs text-muted-foreground">Firm</label>
             <select
               id="partners-firm"
-              value={firms.some((f) => f.id === firmParam) ? firmParam ?? "" : ""}
+              value={firmParam ?? ""}
               onChange={(e) => setParams(e.target.value ? { firm: e.target.value } : {}, { replace: true })}
               className="min-h-11 bg-muted border border-border rounded-md px-3 text-sm"
             >
