@@ -271,6 +271,18 @@ _Avoid_: partner on its own, affiliate, referrer
 The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
 _Avoid_: promo code, tracking code
 
+**Second factor**:
+The extra step, after a password, that proves it is the advisor signing in: the 6-digit code from an authenticator app. It is required when *this sign-in* used a password, not whenever the account has one; a sign-in through Google or Microsoft relies on that provider's and is never asked. Without it a password sign-in opens nothing of the Advisor Console, and the database refuses it, not only the screen. Prospects and guests are never asked: no employer is ever asked for a second factor.
+_Avoid_: two-factor, 2FA, MFA (in anything a person reads)
+
+**Authenticator app**:
+The phone app (Google Authenticator, Microsoft Authenticator, 1Password and the like) that shows the second factor's code. An advisor sets one up once, by scanning a code or typing its key, and enters its code at each later password sign-in.
+_Avoid_: token, OTP app
+
+**Assurance level** (aal):
+How far this sign-in has proved who it is, as Supabase Auth writes it in the sign-in token: `aal1` is one step, `aal2` is a second factor completed in this sign-in. A password sign-in at `aal1` is refused advisor access; at `aal2` it is let in. The token's `amr` lists how the sign-in began (a password, a provider, a code).
+_Avoid_: security level, trust level
+
 ### Where an answer came from
 
 **Extraction**:

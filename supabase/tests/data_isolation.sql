@@ -119,6 +119,7 @@
 \i supabase/migrations/20261115120000_extra_answers.sql
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
+\i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -755,6 +756,8 @@ GRANT SELECT ON callable TO anon, authenticated, service_role;
 INSERT INTO callable VALUES
   ('has_role(_role app_role)',                 'anyone',  NULL, 'row security policies call it as the caller; answers about the caller only'),
   ('is_advisor()',                             'anyone',  NULL, 'row security policies and RequireAdvisor call it; answers about the caller only'),
+  ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
+  ('advisor_needs_second_factor()',            'own',     NULL, 'whether the caller''s own password sign-in is all that holds back their role; false for anyone else'),
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),

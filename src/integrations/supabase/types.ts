@@ -933,6 +933,14 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      advisor_needs_second_factor: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      second_factor_rule_met: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
       archive_chamber_session: {
         Args: { p_session_id: string }
         Returns: string

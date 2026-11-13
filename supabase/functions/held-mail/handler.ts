@@ -187,6 +187,13 @@ export async function handleHeldMailRequest(req: Request, deps: HeldMailDeps): P
   const messageId = positiveInt(body.message_id);
   if (messageId === null) return json({ error: "message_id is required." }, 400);
 
+  // The role checks below read who the person is from their id; this one reads their own token, so a password
+  // sign-in that has not completed a second factor is refused here too (is_advisor and has_role hold that rule).
+  if (action === "move_off" || action === "assign" || action === "discard") {
+    const allowed = action === "move_off" ? await user.rpc("is_advisor", {}) : await user.rpc("has_role", { _role: "admin" });
+    if (allowed.error || allowed.data !== true) return json({ error: "You can't do that.", code: "forbidden" }, 403);
+  }
+
   let out: Outcome;
   if (action === "assign") {
     const target = positiveInt(body.quote_request_id);
