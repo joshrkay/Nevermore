@@ -245,6 +245,34 @@ _Avoid_: receipt, acknowledgement
 The email a week before an uncertified draft closes, saying when and linking back to it. Sent only to a prospect with a verified email who asked for it ("Email me before an unfinished intake closes", in "Save your progress" or on their profile), and each one says how to stop them.
 _Avoid_: nudge, expiry warning
 
+### Firms
+
+**Firm** (code: `firms`):
+A brokerage that works intakes on Nevermore, with its own people, its own records and its own address. Edgar Allan Advisory is the first firm: it has every intake that existed before firms did, is approved, and is set to "everyone sees everything". A firm's records are visible to its current members only; a platform `admin` is not a member of any firm (D-16). An intake started without a firm belongs to Edgar Allan Advisory.
+_Avoid_: organisation (the Google domain or Microsoft tenant that lets an advisor sign in), company (the employer), account (a CRM record of an employer)
+
+**Firm address** (code: `firms.address`):
+The firm's name in a web address (`name.nevermorepeo.com`): 3 to 40 lower-case letters, digits or hyphens, never starting or ending with a hyphen, unique, and refused when it is a system word (`www`, `app`, `api`, `mail`, `admin`, `status`, `quotes`) or reads as Nevermore or a listed PEO. It chooses what a screen shows; it is never the lock (D-18).
+_Avoid_: subdomain, slug, URL
+
+**Visibility** (code: `firms.visibility`):
+A firm's setting for who sees its records: `by_level` (an agent sees what they own, a lead their team's, an owner everything) or `everyone` ("everyone sees everything"). A new firm sees by level.
+
+**Parent firm** (code: `firms.parent_firm_id`):
+A firm's optional parent firm (D-6). Stored only: no rule, policy, function or screen reads it.
+
+**Team** (code: `firm_teams`):
+A named group inside one firm, with an optional parent team of the same firm and a lead. No screen shows teams until CRM-X1.1 (D-20).
+_Avoid_: department, office
+
+**Membership** (code: `firm_memberships`):
+A person's place in a firm, with a role, an optional team and the dates it began and ended. It is never changed: a change ends one row and adds another, so who could see a record on a given day can be answered. A person holds one membership of a firm at a time, and a firm always keeps at least one current owner. A **current member** is one whose membership has begun and not ended; `is_firm_member` and `firm_role` answer for the caller.
+_Avoid_: seat, user (for a member)
+
+**Owner**, **lead**, **agent** (code: `firm_memberships.role`):
+The three roles in a firm (D-5). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
+_Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)
+
 ### Advisors
 
 **Advisor Console**:
