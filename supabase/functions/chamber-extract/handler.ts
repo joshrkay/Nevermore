@@ -23,6 +23,7 @@ import { fitExtraQuestions, readExtraQuestions, shapeExtraAnswers } from "./extr
 import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn, workspaceForTurn } from "./prompt.ts";
 import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
+import { UUID } from "../_shared/uuid.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -94,7 +95,6 @@ function readRequested(raw: unknown): { ok: true; requested: string[] } | { ok: 
   return { ok: true, requested: raw as string[] };
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Result<T> = PromiseLike<{ data: T; error: { message?: string; code?: string } | null }>;
 

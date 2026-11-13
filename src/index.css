@@ -50,6 +50,51 @@
   }
 }
 
+/* The workspace's grey-and-blue look (D-41, docs/prd-screens/): grey page, white cards, blue actions, a dark navy menu.
+   The shell puts .theme-workspace on the document's root element while it is mounted, so a dialog or sheet drawn outside
+   the shell takes it too; the employer's intake and the landing page never see it. Text pairings meet WCAG AA (4.5:1). */
+@layer base {
+  .theme-workspace {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 221 83% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 38%;
+
+    --accent: 214 95% 93%;
+    --accent-foreground: 222 47% 11%;
+
+    --border: 220 13% 91%;
+    --input: 220 9% 46%;
+    --ring: 221 83% 48%;
+
+    --radius: 0.5rem;
+
+    --surface: 220 14% 96%;
+
+    --sidebar-background: 222 40% 15%;
+    --sidebar-foreground: 214 32% 91%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 30% 26%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 30% 24%;
+    --sidebar-ring: 217 91% 65%;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

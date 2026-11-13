@@ -5,10 +5,14 @@ import type { OutboxEvent, OutboxSummaryRow } from "@/lib/advisorApi";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
+// The header asks which firm the address names; these pages are tested at the bare domain.
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const listOutboxEvents = vi.fn();
 const outboxSummary = vi.fn();
 const requeueOutboxEvent = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({
+  fetchMyFirms: () => Promise.resolve([{ firm_id: "f1", name: "Alpha Advisory", address: "alpha", role: "agent" }]),
+  fetchIsAdmin: () => Promise.resolve(false),
   listOutboxEvents: (s: unknown) => listOutboxEvents(s),
   outboxSummary: () => outboxSummary(),
   requeueOutboxEvent: (id: string, rebuild: boolean) => requeueOutboxEvent(id, rebuild),
@@ -76,17 +80,6 @@ describe("AdvisorOutboxPage", () => {
     outboxSummary.mockReturnValue(new Promise(() => {}));
     renderAt();
     expect(screen.getByRole("status")).toHaveTextContent("Loading the outbox");
-  });
-
-  it("is reachable from the advisor header, which marks it as the current page", async () => {
-    ready([event()]);
-    renderAt();
-    await screen.findByText("Acme");
-    const nav = screen.getByRole("navigation", { name: "Advisor" });
-    expect(within(nav).getByRole("link", { name: "Outbox & Notifications" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("link", { name: "Submissions" })).not.toHaveAttribute("aria-current");
-    fireEvent.click(within(nav).getByRole("link", { name: "Submissions" }));
-    expect(await screen.findByText("Submissions page")).toBeInTheDocument();
   });
 
   it("lists each event's kind, company, reference, status, attempts and last error, with a plain reading of it", async () => {
@@ -224,10 +217,10 @@ describe("AdvisorOutboxPage", () => {
 
     it("shows the database's refusal and stays on the page, ready to try again", async () => {
       ready([event()]);
-      requeueOutboxEvent.mockRejectedValue(Object.assign(new Error("You don't have advisor access."), { forbidden: true }));
+      requeueOutboxEvent.mockRejectedValue(Object.assign(new Error("You don't have access to this firm's records."), { forbidden: true }));
       renderAt();
       fireEvent.click(await screen.findByRole("button", { name: /^Retry send/ }));
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("You don't have advisor access."));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("You don't have access to this firm's records."));
       expect(screen.getByRole("button", { name: /^Retry send/ })).toBeEnabled();
     });
 
@@ -309,11 +302,11 @@ describe("AdvisorOutboxPage", () => {
 
   describe("when it cannot load", () => {
     it("tells an account that lost the advisor role, with nothing to retry", async () => {
-      const denied = Object.assign(new Error("You don't have advisor access."), { forbidden: true });
+      const denied = Object.assign(new Error("You don't have access to this firm's records."), { forbidden: true });
       listOutboxEvents.mockRejectedValue(denied);
       outboxSummary.mockRejectedValue(denied);
       renderAt();
-      expect(await screen.findByText("You no longer have advisor access.")).toBeInTheDocument();
+      expect(await screen.findByText("You no longer have access to this firm's records.")).toBeInTheDocument();
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
     });
 

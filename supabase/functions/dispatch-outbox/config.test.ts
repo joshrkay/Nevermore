@@ -16,7 +16,7 @@ const read = (overrides: Record<string, string | undefined> = {}) => {
 describe("readDispatchConfig", () => {
   it("is ready for every kind when everything is set", () => {
     expect(read()).toEqual({
-      advisor: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", to: ["advisors@example.com", "ops@example.com"], appBaseUrl: "https://app.example.com" },
+      advisor: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", appBaseUrl: "https://app.example.com" },
       prospect: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", supportEmail: "support@example.com", responseTime: "2 business days" },
       prospectLink: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", supportEmail: "support@example.com", appBaseUrl: "https://app.example.com" },
     });
@@ -29,9 +29,14 @@ describe("readDispatchConfig", () => {
       ok: false,
       problems: ["SUPPORT_EMAIL is not set to a valid address", "PROSPECT_RESPONSE_TIME is not set"],
     });
-    const noNotify = read({ ADVISORY_NOTIFY_EMAIL: undefined });
-    expect(noNotify.prospect.ok).toBe(true);
-    expect(noNotify.advisor).toEqual({ ok: false, problems: ["ADVISORY_NOTIFY_EMAIL is not set to valid address(es)"] });
+  });
+
+  it("does not take the advisor alert's recipients from a platform-wide list: the intake's firm's members are asked for per event", () => {
+    const withList = read({ ADVISORY_NOTIFY_EMAIL: "everyone@platform.example" });
+    expect(JSON.stringify(withList)).not.toContain("platform.example");
+    // Without the list, or with a bad one, the advisor kinds are as ready as with it: nothing waits on it.
+    expect(read({ ADVISORY_NOTIFY_EMAIL: undefined }).advisor).toEqual(withList.advisor);
+    expect(read({ ADVISORY_NOTIFY_EMAIL: "ok@example.com, nope" }).advisor).toEqual(withList.advisor);
   });
 
   it("sends nothing without a sender", () => {
@@ -52,11 +57,6 @@ describe("readDispatchConfig", () => {
     "<a@example.com> <b@example.com>",
   ])("rejects the sender %j", (EMAIL_FROM) => {
     expect(read({ EMAIL_FROM }).advisor.ok).toBe(false);
-  });
-
-  it("rejects a bad recipient anywhere in the list", () => {
-    expect(read({ ADVISORY_NOTIFY_EMAIL: "ok@example.com, nope" }).advisor.ok).toBe(false);
-    expect(read({ ADVISORY_NOTIFY_EMAIL: " , " }).advisor.ok).toBe(false);
   });
 
   it("requires an https app URL (http only for localhost) and drops a trailing slash", () => {

@@ -44,7 +44,7 @@ _Avoid_: carrier (an insurance carrier is a different business), vendor, provide
 
 **Advisor**:
 A member of the advisory team who reviews certified intakes and works them through the pipeline.
-_Avoid_: agent, broker, reviewer
+_Avoid_: agent (except the firm role, see **Owner**, **lead**, **agent**), broker, reviewer
 
 **Lenore**:
 The AI intake assistant the prospect talks to, by text or by voice: "Lenore, the intake assistant at Nevermore". One persona, whichever mode is used: warm, quick, a little informal, in plain words and short sentences, never jokey about the prospect's data.
@@ -180,7 +180,7 @@ A dated entry an advisor adds to a quote request's timeline for something that h
 _Avoid_: activity, log entry, comment
 
 **Holding list**:
-Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Only an admin assigns a held message to a quote request or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
+Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Mail to a firm's own revoked address, or moved off its thread, is **held for that firm**: its current members read it. Mail to an address nobody held belongs to no firm. A platform admin, who belongs to no firm, sees only a File ID and a PEO for each (never a sender, subject or text). Only a platform admin assigns a held message to a quote request (of the same firm, if it has one) or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
 _Avoid_: unmatched inbox, spam folder, quarantine (quarantine holds files waiting for or failing a malware scan)
 
 **Market authorization**:
@@ -234,7 +234,7 @@ _Avoid_: checkout, submit page
 ### Communications
 
 **Advisor Alert**:
-The email telling the advisory team that a submission arrived or was updated.
+The email telling a firm that a submission arrived or was updated. It goes to the **alert recipients**: the current members of the firm the intake belongs to, looked up each time it is sent, so a member who leaves stops receiving at once. Never another firm's people, a platform admin who belongs to no firm, or a platform-wide list. The new-PEO-mail notice goes to the same people.
 _Avoid_: internal notification, new-submission notification
 
 **Confirmation**:
@@ -245,11 +245,151 @@ _Avoid_: receipt, acknowledgement
 The email a week before an uncertified draft closes, saying when and linking back to it. Sent only to a prospect with a verified email who asked for it ("Email me before an unfinished intake closes", in "Save your progress" or on their profile), and each one says how to stop them.
 _Avoid_: nudge, expiry warning
 
+### Firms
+
+**Firm** (code: `firms`):
+A brokerage that works intakes on Nevermore, with its own people, its own records and its own address. Edgar Allan Advisory is the first firm: it has every intake that existed before firms did, is approved, and is set to "everyone sees everything". A firm's records are visible to its current members only; the platform `admin` role by itself grants no firm access (D-16); an admin reads a firm only through a membership, as Edgar Allan Advisory's owners do (D-15). An intake started without a firm belongs to Edgar Allan Advisory.
+_Avoid_: organisation (the Google domain or Microsoft tenant that lets an advisor sign in), company (the employer), account (a CRM record of an employer)
+
+**Firm address** (code: `firms.address`):
+The firm's name in a web address (`name.nevermorepeo.com`): 3 to 40 lower-case letters, digits or hyphens, never starting or ending with a hyphen, unique, and refused when it is a system word (`www`, `app`, `api`, `mail`, `admin`, `status`, `quotes`) or reads as Nevermore or a listed PEO. It chooses what a screen shows; it is never the lock (D-18).
+_Avoid_: subdomain, slug, URL
+
+**Firm host** (code: `firmAddressFromHost`, `src/lib/firmHost.ts`):
+The firm address read out of the host the app is served on: `name.nevermorepeo.com`, or `name.localhost` for local development and the end-to-end tests. The bare domain, `www` and any other host name no firm and keep today's behaviour; a name with more than one label in front of the domain matches no firm and shows as not found. It only picks what the screen shows (D-17, D-18).
+
+**Firm sign-up** (code: `sign_up_firm`, `/firms/new`):
+A signed-in person with a verified email gives a firm name and a firm address and becomes the firm's first owner in one step. The firm exists at once and its members can work, but it is waiting for approval: it cannot send to a PEO until a platform admin approves it (Q-1.2). The address is read as every firm address is (lower case, no surrounding spaces) and the address rules of the table apply. A person has one firm waiting for approval at a time: signing up another is refused until the first is decided (D-30).
+
+**Waiting for approval** (code: `firms.approved_at` empty and `firms.decision` empty):
+A firm that has signed up and has no decision yet. A platform admin sees these through `admin_waiting_firms`, oldest first, and no other way (D-16). Each shows who signed the firm up, kept on the firm (`firms.signed_up_by`) when it was signed up: it stays that person if ownership later passes to someone else.
+
+**Firm decision** (code: `admin_decide_firm`, `firms.decision`, `decided_at`, `decided_by`, `decision_note`):
+A platform admin's approval or refusal of a waiting firm, with an optional note. Approving sets `approved_at`; refusing leaves it empty. A firm is decided once, and an admin does not decide on a firm they belong to. A refused firm is hidden at its address and its founder is not let in there, yet the address stays taken (D-31). The event is written through `record_firm_event`, the one small function the record of who did what (CRM-P2.3) takes over.
+
+**Public firm name** (code: `firm_public_name`):
+What a firm's address shows before anyone signs in: the firm's name, and nothing else, for any firm that exists and is not refused, approved or still waiting for approval (a waiting firm's members can work before approval; approval gates sending, not signing in). An address no firm holds, or one a refused firm holds (D-31), gives nothing, and it shows a plain not-found page to everyone, with no sign-in and no sign-in callback pages (D-27). Firms have no logo field yet.
+
+**Not a member screen**:
+What a signed-in person sees at a firm's address when they are not a current member of that firm: "You aren't a member of this firm", a way to sign out, and nothing else, whichever firm they do belong to. `is_member_of_firm_address` answers about the caller only, and false for a refused firm's address. The database, not this screen, refuses them the data (D-18).
+
+**Session per address**:
+A sign-in belongs to one firm address: the browser keeps its session per origin, so signing in at one firm's address does not sign the person in at another's, and the provider sends them back to the address they started from. A person in two firms signs in to each. Signing out on a firm's address ends only that address's session; on the bare domain and www it is a plain sign-out that ends every session of that person, as before (D-27). If a session exists at an address no firm holds, the not-found page carries a sign-out.
+
+**Visibility** (code: `firms.visibility`):
+A firm's setting for who sees its records: `by_level` (an agent sees what they own, a lead their team's, an owner everything) or `everyone` ("everyone sees everything"). A new firm sees by level.
+
+**Parent firm** (code: `firms.parent_firm_id`):
+A firm's optional parent firm (D-6). Stored only: no rule, policy, function or screen reads it.
+
+**Team** (code: `firm_teams`):
+A named group inside one firm, with an optional parent team of the same firm and a lead. No screen shows teams until CRM-X1.1 (D-20).
+_Avoid_: department, office
+
+**Membership** (code: `firm_memberships`):
+A person's place in a firm, with a role, an optional team and the dates it began and ended. It is never changed: a change ends one row and adds another, so who could see a record on a given day can be answered. A person holds one membership of a firm at a time, and a firm always keeps at least one current owner. A **current member** is one whose membership has begun and not ended; `is_firm_member` and `firm_role` answer for the caller.
+_Avoid_: seat, user (for a member)
+
+**Invitation** (code: `firm_invitations`, `invite_member`, `accept_invitation`):
+An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29). A firm still waiting for approval can invite and be joined, but holds at most five pending invitations until it is approved, and sends at most twenty invitation emails (first sends and resends together) in any twenty-four hours, the next being refused with the time it can send again (D-34, D-36; there is no lifetime limit, and both limits end on approval); a refused firm cannot invite or resend, and a pending invitation to it cannot be accepted (D-34).
+_Avoid_: invite (as the noun), request to join (that is joining by organisation, CRM-P1.4)
+
+**Invitation link** (code: `/join#token=...`, `JoinFirmPage`):
+The link in an invitation's email, opened at the firm's own address. The secret in it is made by the `invite-member` server function, sent once in that email and never stored, returned or logged. It is in the part after the `#`, which a browser never sends to a server, so no request log and no Referer holds it and no route contains it; the page reads it, removes it from the address bar at once, and keeps it only in that tab until the person has joined. The browser hashes it before asking the database to accept, and gives the database the address it was opened at: the link is accepted only at the address of the firm it belongs to (D-34). A link that is used, expired, withdrawn or replaced by a resend opens nothing and says so in plain words, in the same words whether or not the invited email has an account.
+_Avoid_: magic link, invite code, join URL (as if the secret were in the path)
+
+**Resend** (code: `resend_invitation`):
+Sending a pending invitation again: a new token replaces the old one, so the old link stops working, and seven days start from now. Used and withdrawn invitations are not resent.
+_Avoid_: reinvite
+
+**Send** (the invitation's link, one generation of it; code: the token hash that `record_invitation_delivery` is given):
+One link and the email that carries it. A resend makes a new send. How an email fared is recorded against the send it belongs to, and a result for a send that has since been replaced is dropped, so two resends finishing out of order cannot mark the current link delivered when its email failed, or the reverse.
+_Avoid_: attempt (that is one try at the mail provider inside a send)
+
+**Unknown delivery** (code: `email_outcome = 'unknown'`):
+What an invitation's email is when the mail provider may have accepted it though it did not say so (a network failure, a timeout, most server errors). It is tried once more with the same message and key, which the provider drops if the first was accepted; if the answer is still unclear it is kept as unknown, shown to the owner as "not sure the email was delivered", never as failed, and sending again is described as replacing the first link. The other outcomes are `sent` and `failed` (the provider certainly refused it).
+_Avoid_: pending email, soft failure
+
+**Platform admin** (code: the `admin` role in `user_roles`):
+A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files, through a table or through a function; held mail, which belongs to no firm until one is assigned, is theirs to read.
+_Avoid_: admin (on its own, where a firm's owner could be meant), super user
+
+**Record owner**:
+The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it.
+_Avoid_: assignee, creator
+
+**Visibility helper** (code: `can_see_firm_record(firm, owner)`):
+The one question every firm-owned table asks of the caller: may they see a record of this firm that this person owns? Yes for a current member of a firm set to "everyone sees everything"; otherwise by level: an owner sees the firm's, a lead the records of members of their own team (the one on their membership) and of every team under it, an agent their own. A record with no owner, or whose owner has left, is an owner's alone. Anyone who is not a current member of the firm, a platform admin and a guest token included, sees nothing.
+_Avoid_: permission check, ACL
+
+**Firm rule** (code: the policies that call `is_firm_member` or a helper built on it):
+A row-security or storage policy that requires current membership of the row's firm, reached through the intake or the quote request when the row has no firm of its own. A password sign-in that has not completed a second factor is not a member to it (D-19): `firm_role` asks the same rule as `has_role`, so no firm's data opens without it. Every table that holds a firm's data has one, and the isolation test fails a table that has none. A table of the PEO list, monitoring or the platform's own bookkeeping is declared platform-wide there instead.
+_Avoid_: tenant filter, RLS (on its own)
+
+**Alert recipients** (code: `outbox_alert_recipients()`):
+The current members of the firm an intake belongs to, whom the Advisor Alert and the new-PEO-mail notice go to. See **Advisor Alert**.
+_Avoid_: distribution list, advisory team list
+
+**Held for a firm** (code: `quote_request_messages.firm_id` on held mail):
+Held mail that carries the firm its address belonged to, or whose thread a member of that firm moved it off. A held message with no firm is read by nobody. See **Holding list**.
+
+**Firm-scoped function** (code: the `firm_scoped` class of `fn_class` in `supabase/tests/data_isolation.sql`):
+A database function that runs as its owner, so row security does not bind it, and reads or changes a firm's data for an advisor or platform admin: the queue, the outbox, the funnel, setting a status, reviewing a field, recording a quote send, a platform admin's deletion request. It asks the firm rule itself, taking the firm from the row it is given and never from the caller: a row of a firm the caller is not a current member of is answered as a row that isn't there (a list leaves it out, a call by id says not found). The role it also asks for, advisor or platform admin, is not what opens a firm's data.
+_Avoid_: scoped RPC, tenant-aware function
+
+**Function registry** (code: `fn_class`, `function_gate_problems()` in `supabase/tests/data_isolation.sql`):
+The list in the isolation test of every function in `public` that runs as its owner or that the API roles can execute, each classed: firm-scoped (and probed with two firms), platform-wide by design, a person's own, public, service-only, a trigger, or deferred to a named story. It is compared with the database catalogue, never with a function's text, so a new privileged function nobody classed fails the build, as a new table nobody listed does.
+_Avoid_: allowlist (the older list of what the API roles may call, which says who may call it, not what it does with a firm's data)
+
+**Owner**, **lead**, **agent** (code: `firm_memberships.role`):
+The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0011). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
+_Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)
+
+**Firm activity** (code: `firm_activity`):
+A firm's record of who did what: one row for each sign-in to the firm's console, submission opened, file downloaded, send recorded, export, invitation, removal, support access and membership, role or ownership change, with who did it, when, the kind and the id of the record it was about. Never content: no answer, name, email text or file. Nobody can change or delete a row, an admin included; the daily retention job removes entries after 90 days (D4). A firm's current owners read their own firm's and nobody else does, a platform admin included (D-16). Written only through `record_firm_activity` (server code; no actor argument), `open_submission` (the function that hands a submission to a member: the database writes the opening itself, so a browser cannot report a view it did not make), `record_member_activity` (a browser, for exact pairs of kind and record only, a repeat within 30 seconds being one entry) and, for membership changes, the triggers, which write through the internal `firm_activity_append`. The limit: a file saved from a storage link, or built in the browser (census, JSON, PDF, bundle), and a sign-in are seen only by the browser, so a member can still report one that did not happen; the entry says the person reported it, not that the database served it (the storage service signs the link, outside the database, and cannot write an entry). A membership entry records when the change was made, not when it takes effect: an end given a date in the future is written at once, and nothing is written when the date arrives. All of them take the firm from the record and the actor from the caller's own sign-in; nothing takes either from the caller. An owner reads only after the second factor (D-19), the rule written once in `can_read_firm_activity`. Read a page at a time by a cursor of time and a random key, never by an offset and never by the table's number, which is shared by every firm and so is never given to a reader.
+_Avoid_: audit log, access log, activity feed, history (a submission's status history is a different record)
+
+**Retention role** (code: `firm_activity_pruner`):
+The one database role allowed to delete a firm-record entry, and only past the window. It cannot sign in, no API role belongs to it, and only `prune_firm_activity()` runs as it; a delete is allowed by who is running it, never by a setting a caller can make (ADR 0012).
+_Avoid_: admin delete, purge flag
+
+**Record cursor**:
+Where a page of the firm's record starts: after the entry with a given time and id, the two things the record is ordered by, so an entry arriving between two pages never repeats or skips a row.
+_Avoid_: offset, page number (as the way a page is found)
+
+**Owned firm**:
+A firm the caller is a current owner of, as the database answers (`my_owner_firms()`). A page that reads a firm's record says which firm it wants, and the database checks the caller currently owns that one; there is no "the caller's firm" for someone who owns two.
+
+**Entry kind** (code: `firm_activity.kind`):
+What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
+
 ### Advisors
 
 **Advisor Console**:
-The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM.
+The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM. Since the firms stories it is **the firm's console**: it opens for a current member of a firm (never because of a platform role: **Firm guard**), and shows only that firm's records. The routes keep their `/advisor` paths until the screens that replace them ship (D-8).
 _Avoid_: CRM, admin queue
+
+**Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
+The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
+_Avoid_: advisor guard, role check
+
+**Workspace** (code: `src/components/workspace/`):
+The broker's side of the product: the pages a current member of a firm works in (quotes, inbox, reports, settings and the console pages that are still to be replaced), drawn inside the **Workspace shell** and in the **Workspace look**. Not the tabs inside The Chamber, which are the prospect's. The workspace's pages keep their `/advisor` paths until the screens that replace them ship (D-8, D-37); Settings is `/settings`. Platform pages are never part of it.
+_Avoid_: the console (for the whole of it), dashboard, CRM
+
+**Workspace shell** (code: `WorkspaceShell`):
+The frame around every workspace page: the **menu** down the left and the page beside it, one layout route inside the firm guard, so it draws only for a current member. The menu shows the firm's name and address at the top (linking to the queue), Quotes, Inbox and Reports, and at the foot Settings, the signed-in person (name, or email when there is none) with their role (Owner, Lead, Agent), and sign-out; a "Nevermore admin" link shows to a platform admin only (D-37). The current section is marked with `aria-current="page"` and a submission's page marks Quotes. New quote, Home, Leads and Accounts are not listed until the stories that build them (D-38). At phone width the menu is a button that opens it over the page. The menu's items are data (`menu.ts`), each with a place for the count CRM-S1.1c adds. Inbox opens the queue with the address parameter `mail=new`, which the queue's "has new PEO mail" filter (CRM-S3.3b) will honour; until then it opens the whole queue.
+_Avoid_: layout, sidebar (in screen words)
+
+**Workspace look** (code: the `theme-workspace` class, `src/index.css`):
+The grey page, white cards, blue actions and dark navy menu of `docs/prd-screens/`. The shell puts the class on the document's root element while it is mounted, so a dialog or sheet drawn outside the shell takes the look; the employer's intake and the landing page never have it (D-41).
+
+**Current firm** (code: `currentFirm()`, `src/lib/currentFirm.ts`):
+The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs; on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
+_Avoid_: active firm, selected firm
+
+**Platform page** (code: `RequirePlatformAdmin`):
+A page that is platform-wide and not a firm's: the firms waiting for approval, who gets the advisor role by organisation, held mail. Opened by a platform admin and by no one else, a member of a firm included; and opening one is no way into a firm's console (D-16).
 
 **Milestone**:
 A step an intake reached, recorded the first time it does: started, answered, a document uploaded, a census provided, ready to certify, an email verified, certified, The Manuscript downloaded. A milestone holds the step and its times, never an answer, name or address, and stays (unlinked) when its intake is deleted.
@@ -268,8 +408,20 @@ A person or firm outside the advisory team who sends employers to the site with 
 _Avoid_: partner on its own, affiliate, referrer
 
 **Referral code**:
-The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
+The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
 _Avoid_: promo code, tracking code
+
+**Second factor**:
+The extra step, after a password, that proves it is the advisor signing in: the 6-digit code from an authenticator app. It is required when *this sign-in* used a password, not whenever the account has one; a sign-in through Google or Microsoft relies on that provider's and is never asked. Without it a password sign-in opens nothing of the Advisor Console, and the database refuses it, not only the screen. Prospects and guests are never asked: no employer is ever asked for a second factor.
+_Avoid_: two-factor, 2FA, MFA (in anything a person reads)
+
+**Authenticator app**:
+The phone app (Google Authenticator, Microsoft Authenticator, 1Password and the like) that shows the second factor's code. An advisor sets one up once, by scanning a code or typing its key, and enters its code at each later password sign-in.
+_Avoid_: token, OTP app
+
+**Assurance level** (aal):
+How far this sign-in has proved who it is, as Supabase Auth writes it in the sign-in token: `aal1` is one step, `aal2` is a second factor completed in this sign-in. A password sign-in at `aal1` is refused advisor access; at `aal2` it is let in. The token's `amr` lists how the sign-in began (a password, a provider, a code).
+_Avoid_: security level, trust level
 
 ### Where an answer came from
 

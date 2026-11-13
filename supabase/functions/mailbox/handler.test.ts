@@ -15,6 +15,8 @@ interface Options {
   env?: Record<string, string | undefined>;
   user?: { id: string; email?: string | null } | null;
   rpc?: Record<string, { data?: unknown; error?: { code?: string } | null }>;
+  /** Whether the caller's own token belongs to a current member of a firm, as the database answers it (false: no membership, or a password sign-in with no second factor). */
+  member?: boolean;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
@@ -30,9 +32,19 @@ function setup(o: Options = {}) {
     },
     auth: { getUser: async () => ({ data: { user: o.user === undefined ? { id: "u1", email: "Marcus@Advisory.example" } : o.user } }) },
   };
-  const createClient = vi.fn((_u: string, _k: string, _opt?: unknown) => client);
+  // The caller's own client asks the database about their token; it does none of the work.
+  const asked: string[] = [];
+  const userClient: MailboxClient = {
+    ...client,
+    rpc: async (fn, args) => {
+      asked.push(`${fn}:${JSON.stringify(args)}`);
+      // my_firms() tells a current member their firms and a person with no membership, or still owing the second factor, none.
+      return { data: fn === "my_firms" && (o.member ?? true) ? [{ firm_id: "f1", name: "Alpha", address: "alpha", role: "agent" }] : [], error: null };
+    },
+  };
+  const createClient = vi.fn((_u: string, key: string, _opt?: unknown) => (key === "anon" ? userClient : client));
   const deps: MailboxDeps = { env: (n) => (o.env ?? ENV)[n], createClient, fetch: fetchFn as unknown as MailboxDeps["fetch"], log: (l) => logs.push(l) };
-  return { deps, logs, calls, fetchFn, createClient };
+  return { deps, logs, calls, fetchFn, createClient, asked };
 }
 
 const post = (body: unknown, token: string | null = "user-jwt", method = "POST") =>
@@ -119,6 +131,13 @@ describe("mailbox: connecting", () => {
     expect(s.calls.some(([fn]) => fn === "mailbox_store")).toBe(false);
   });
 
+  it("asks the database whether the caller is a current member of a firm, never whether they hold a platform role", async () => {
+    const s = setup({ rpc: { mailbox_secret: { data: null } } });
+    const res = await handleMailboxRequest(post({ action: "check" }), s.deps);
+    expect(res.status).toBe(200);
+    expect(s.asked).toEqual(["my_firms:{}"]);
+  });
+
   it("refuses a bad request: an unknown provider, no token, a huge token, an account with no address", async () => {
     const s = setup();
     for (const body of [{ provider: "yahoo", refresh_token: "1//the-refresh-token" }, { provider: "google" }, { provider: "google", refresh_token: "short" }, { provider: "google", refresh_token: "x".repeat(4001) }]) {
@@ -129,11 +148,21 @@ describe("mailbox: connecting", () => {
     expect(s.fetchFn).not.toHaveBeenCalled();
   });
 
-  it("tells a non-advisor to get access first, and stores nothing", async () => {
+  it("tells a person who is no member of a firm so, and stores nothing", async () => {
     const s = setup({ rpc: { mailbox_store: { error: { code: "42501" } } } });
     const res = await handleMailboxRequest(post({ action: "connect", provider: "google", refresh_token: "1//the-refresh-token" }), s.deps);
     expect(res.status).toBe(403);
-    expect((await res.json()).code).toBe("not_advisor");
+    expect((await res.json()).code).toBe("not_member");
+  });
+
+  it.each(["connect", "check", "disconnect"])("refuses %s with 403 and does nothing when the token is no current member's or has no second factor", async (action) => {
+    const s = setup({ member: false, rpc: { mailbox_secret: { data: null } } });
+    const res = await handleMailboxRequest(post({ action, provider: "google", refresh_token: "1//the-refresh-token" }), s.deps);
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("not_member");
+    expect(s.asked).toEqual(["my_firms:{}"]);
+    expect(s.calls).toEqual([]);
+    expect(s.fetchFn).not.toHaveBeenCalled();
   });
 
   it("says something went wrong, without detail, when the database fails", async () => {

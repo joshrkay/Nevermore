@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { EmailOtpType, User, Session } from "@supabase/supabase-js";
 import { clearAllBackups } from "@/data/intakeBackup";
 import { authCallbackUrl } from "@/lib/authRedirect";
+import { firmAddressFromHost } from "@/lib/firmHost";
 
 /** Why a signed-in session is gone: the person signed out, or it ended on its own (expiry, another tab). */
 export type SessionEnded = "signed_out" | "expired";
@@ -160,7 +161,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     requestedEnd.current = reason;
     // Unsaved answers kept in this browser go with the person who chose to leave it.
     if (reason === "signed_out") clearAllBackups();
-    await supabase.auth.signOut();
+    // On a firm's address (D-27) a session belongs to that address: sign-out ends it only, never the person's session
+    // at another firm's address (the default scope revokes every refresh token they hold). The bare domain and www
+    // keep the plain sign-out they always had, which ends every session of that person.
+    if (firmAddressFromHost(window.location.hostname)) await supabase.auth.signOut({ scope: "local" });
+    else await supabase.auth.signOut();
   };
 
   return (

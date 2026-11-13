@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchIsAdvisor } from "@/lib/advisorApi";
+import { fetchNeedsSecondFactor } from "@/lib/advisorApi";
 import { reportOpsEvent } from "@/lib/monitoring";
 
-type Access = "checking" | "allowed" | "denied" | "error" | "ended";
+type Access = "checking" | "allowed" | "denied" | "second_factor" | "error" | "ended";
 
-// Advisor pages need a signed-in (not guest) account that holds the advisor or admin role.
-// This only decides what to render: the database refuses advisor data to everyone else anyway.
-const RequireAdvisor = ({ children }: { children: ReactNode }) => {
+interface RequireAccessProps {
+  children: ReactNode;
+  /** Whether the signed-in person may see this page: asked of the database, never of what the browser holds. */
+  check: () => Promise<boolean>;
+  /** What the person is told when they may not, given their email. */
+  denied: (email: string | undefined) => ReactNode;
+  /** Reported with auth_denied when a signed-in account reaches the page without access. */
+  deniedCode: string;
+}
+
+// A page that needs a signed-in (not guest) account that the database says may see it, and the second factor a password
+// sign-in owes. This only decides what to render: the database refuses the data to everyone else anyway.
+const RequireAccess = ({ children, check, denied, deniedCode }: RequireAccessProps) => {
   const { user, loading, isAnonymous, signOut, sessionEnded } = useAuth();
   const location = useLocation();
   const userId = user?.id;
@@ -18,17 +28,25 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
   // signOut changes identity on every render; the effect below must not re-run (and re-check) for it.
   const signOutRef = useRef(signOut);
   signOutRef.current = signOut;
+  // The caller's functions change identity on every render; the check below runs again only for a new person or a retry.
+  const checkRef = useRef(check);
+  checkRef.current = check;
 
   useEffect(() => {
     if (!userId || isAnonymous) return;
     let cancelled = false;
     setAccess("checking");
-    fetchIsAdvisor()
-      .then((ok) => {
-        if (cancelled) return;
-        setAccess(ok ? "allowed" : "denied");
-        // A signed-in account that isn't an advisor reaching an advisor page.
-        if (!ok) reportOpsEvent("auth_denied", { code: "advisor_route" });
+    checkRef.current()
+      .then(async (ok) => {
+        if (ok) return "allowed" as const;
+        // A person who signed in with a password is held back until they add or enter a second factor.
+        if (await fetchNeedsSecondFactor()) return "second_factor" as const;
+        // A signed-in account the check refuses.
+        reportOpsEvent("auth_denied", { code: deniedCode });
+        return "denied" as const;
+      })
+      .then((next) => {
+        if (!cancelled) setAccess(next);
       })
       .catch((err: { unauthenticated?: boolean }) => {
         if (cancelled) return;
@@ -42,7 +60,7 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
         }
       });
     return () => { cancelled = true; };
-  }, [userId, isAnonymous, attempt]);
+  }, [userId, isAnonymous, attempt, deniedCode]);
 
   if (loading) return <Checking />;
   if (!user || isAnonymous) {
@@ -61,6 +79,9 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
       </Message>
     );
   }
+  if (access === "second_factor") {
+    return <Navigate to="/advisor/second-factor" replace state={{ from: location }} />;
+  }
   if (access === "error") {
     return (
       <Message title="We couldn't check your access">
@@ -70,22 +91,7 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
       </Message>
     );
   }
-  if (access === "denied") {
-    return (
-      <Message title="Waiting for access">
-        <p className="text-muted-foreground mb-4">
-          Your account{user.email ? ` (${user.email})` : ""} is created. An administrator has to give you access before you can see
-          submissions, and nothing is shared with you until then. If you should have access already, ask an administrator to grant it.
-        </p>
-        <div className="flex gap-4 justify-center">
-          <Link to="/" className="text-primary underline hover:text-primary/90">Home</Link>
-          <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">
-            Sign in with another account
-          </button>
-        </div>
-      </Message>
-    );
-  }
+  if (access === "denied") return <>{denied(user.email)}</>;
   return <>{children}</>;
 };
 
@@ -106,4 +112,6 @@ const Message = ({ title, children }: { title: string; children: ReactNode }) =>
   </div>
 );
 
-export default RequireAdvisor;
+export const AccessMessage = Message;
+
+export default RequireAccess;

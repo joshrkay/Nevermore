@@ -37,6 +37,7 @@ import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
+import { BROWSER_ACTIVITY, ENTRY_KIND_VALUES, RECORD_TYPE_VALUES } from "@/data/firmActivity";
 import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
 import { TEMPLATE_WORKBOOK_STATUSES } from "@/lib/templateWorkbooks";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
@@ -58,15 +59,15 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 // each owner's blocks are read from the latest migration that defines the owner: a migration replacing
 // one function that holds a `caps` block leaves another function's `caps` block to be read where it was.
 const migrationFiles = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
-const latest = new Map<string, { name: string; body: string }[]>();
+const latest = new Map<string, { name: string; body: string; file: string }[]>();
 for (const file of migrationFiles) {
   const sql = readFileSync(`supabase/migrations/${file}`, "utf8");
   const owners = [...sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w.]+)|ADD\s+CONSTRAINT\s+(\w+)/g)];
-  const here = new Map<string, { name: string; body: string }[]>();
+  const here = new Map<string, { name: string; body: string; file: string }[]>();
   for (const m of sql.matchAll(/--\s*sync:begin\s+(\w+)\s*\n([\s\S]*?)--\s*sync:end\s+\1\b/g)) {
     const owner = owners.filter((o) => o.index! < m.index!).at(-1);
     const key = owner ? owner[1] ?? owner[2] : file;
-    here.set(key, [...(here.get(key) ?? []), { name: m[1], body: m[2] }]);
+    here.set(key, [...(here.get(key) ?? []), { name: m[1], body: m[2], file }]);
   }
   for (const [owner, found] of here) latest.set(owner, found);
 }
@@ -77,6 +78,14 @@ const blocks = (name: string): string[] => {
   const found = [...latest.values()].flat().filter((b) => b.name === name).map((b) => b.body);
   expect(found.length, `sync block ${name} missing from the migrations`).toBeGreaterThan(0);
   return found;
+};
+
+// A list a later migration drops and adds again (a CHECK whose kinds grew) is the list of the latest migration that holds it.
+const latestBlock = (name: string): string => {
+  const found = [...latest.values()].flat().filter((b) => b.name === name);
+  expect(found.length, `sync block ${name} missing from the migrations`).toBeGreaterThan(0);
+  const newest = found.map((b) => b.file).sort().at(-1);
+  return found.filter((b) => b.file === newest).map((b) => b.body).join("\n");
 };
 
 describe("reading the migrations' sync blocks", () => {
@@ -260,6 +269,19 @@ describe("server and client intake rules agree", () => {
   it("holds the same quote request statuses, and records sends at the same stages", () => {
     expect(quoted(blocks("quote_request_statuses").join("\n"))).toEqual([...QUOTE_REQUEST_STATUSES]);
     expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
+  });
+
+  // The record of who did what (20261116160001): the kinds of entry the table accepts and the page names.
+  it("holds the same kinds of entry in a firm's record as the page names", () => {
+    expect(quoted(latestBlock("firm_activity_kinds"))).toEqual(ENTRY_KIND_VALUES);
+  });
+
+  it("lets a browser report exactly the pairs of kind and record the client sends", () => {
+    expect(quoted(blocks("firm_activity_browser_pairs").join("\n"))).toEqual(BROWSER_ACTIVITY.flat());
+  });
+
+  it("holds the same kinds of record in a firm's record as the page labels", () => {
+    expect(quoted(blocks("firm_activity_record_types").join("\n"))).toEqual(RECORD_TYPE_VALUES);
   });
 
   // Quote request notes (20261111090000): the kinds the note form offers, and how long a note can be.
@@ -556,6 +578,7 @@ describe("server and client intake rules agree", () => {
     ["closed_draft_retention", "days", RETENTION.closedDraftDays],
     ["submitted_record_retention", "years", RETENTION.submittedYears],
     ["ops_event_retention", "days", RETENTION.opsEventDays],
+    ["firm_activity_retention", "days", RETENTION.firmActivityDays],
     ["email_event_retention", "days", RETENTION.emailEventDays],
     ["ai_event_retention", "days", RETENTION.aiEventDays],
     ["funnel_retention", "days", RETENTION.funnelDays],

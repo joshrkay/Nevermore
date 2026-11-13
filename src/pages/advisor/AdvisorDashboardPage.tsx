@@ -18,7 +18,6 @@ import {
 import { emailProblemHelp, emailProblemLabel, emailProblemsBySession } from "@/data/outbox";
 import { formatDay, waitingLabel } from "@/data/quoteRequests";
 import { listEmailProblems, listSubmissions, QUEUE_PAGE_SIZE, type EmailProblem, type QueueSort, type SubmissionPage } from "@/lib/advisorApi";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 
@@ -158,8 +157,7 @@ const AdvisorDashboardPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8">
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
           <div>

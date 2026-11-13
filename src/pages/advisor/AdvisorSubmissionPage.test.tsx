@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { Supplement } from "@/data/peoSupplement";
@@ -33,6 +33,7 @@ const api = {
   mailAttachmentUrl: vi.fn(),
   correctQuoteRequestNote: vi.fn(),
   reissueQuoteRequestAddress: vi.fn(),
+  recordActivity: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
@@ -143,6 +144,26 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+const GoTo = ({ id }: { id: string }) => {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate(`/advisor/submissions/${id}`)}>go to {id}</button>;
+};
+const renderWithNavigation = () =>
+  render(
+    <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+      <GoTo id="s2" />
+      <GoTo id="s1" />
+      <Routes>
+        <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+// The request being drafted lives in Ask the prospect. Role queries over the whole page cost seconds each in a page this
+// large (every button and list is checked for being visible), and a full run under load crossed the 5 second limit on
+// them; asked of the one section, each takes milliseconds.
+const ask = () => screen.getByRole("heading", { name: "Ask the prospect", hidden: true }).closest("section")!;
+
 describe("AdvisorSubmissionPage", () => {
   // A test that fakes the clock gets the real one back even when it fails.
   afterEach(() => vi.useRealTimers());
@@ -159,10 +180,53 @@ describe("AdvisorSubmissionPage", () => {
     intakeNow = null;
   });
 
+  // CRM-P2.3: a submission opened is written by the database when it hands the submission over, so the page asks for it
+  // as an opening once per submission on screen and never reports a view itself.
+  it("opens the submission as an opening once, and never reports a view itself", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
+    expect(api.recordActivity).not.toHaveBeenCalledWith("submission_viewed", expect.anything(), expect.anything());
+  });
+
+  it("opens a second submission as an opening too", async () => {
+    renderWithNavigation();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    api.loadSubmission.mockImplementation((id: string) => Promise.resolve(detail({ id })));
+    fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2", true));
+  });
+
+  it("shows 'Submission not found.' for a submission it can't find, asking for it once as an opening", async () => {
+    api.loadSubmission.mockResolvedValue(null);
+    renderPage();
+    expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
+    expect(api.loadSubmission).toHaveBeenCalledTimes(1);
+    expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
+  });
+
+  it("records a document opened", async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", { value: { ...window.location, assign }, writable: true });
+    api.documentUrl.mockResolvedValue("https://storage.example/doc");
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Open census.xlsx" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/doc"));
+    expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "document", "d1");
+  });
+
+  it("records no document opened when its link can't be signed", async () => {
+    api.documentUrl.mockRejectedValue(new Error("Couldn't open that file."));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Open census.xlsx" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't open that file."));
+    expect(api.recordActivity).not.toHaveBeenCalledWith("document_downloaded", "document", "d1");
+  });
+
   it("shows every captured field with its source, the transcript and the documents", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
-    expect(api.loadSubmission).toHaveBeenCalledWith("s1");
+    expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
     const count = screen.getByTestId("field-employee_count");
     expect(within(count).getByText("12")).toBeInTheDocument();
@@ -261,6 +325,8 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent"));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
+    // Refreshing after a change is not another opening of the submission.
+    expect(api.loadSubmission.mock.calls.filter((c) => c[1] === true)).toHaveLength(1);
   });
 
   it("asks the prospect for information about the answers marked Needs follow-up, and lists what was asked", async () => {
@@ -669,7 +735,7 @@ describe("AdvisorSubmissionPage", () => {
     );
     renderPage();
     expect(await screen.findByText(/The review has changed since v1/)).toBeInTheDocument();
-    api.saveManuscriptVersion.mockResolvedValue({});
+    api.saveManuscriptVersion.mockResolvedValue({ id: "v2" });
     fireEvent.click(screen.getByLabelText("Include full dates of birth"));
     fireEvent.click(screen.getByRole("button", { name: /Regenerate as new version/ }));
 
@@ -693,6 +759,8 @@ describe("AdvisorSubmissionPage", () => {
     });
     expect(manuscript.signer?.name).toBe("Jo Doe");
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
+    // The packet downloaded as it is generated is the new version, recorded against its own id.
+    expect(api.recordActivity).toHaveBeenCalledWith("packet_downloaded", "manuscript", "v2");
   });
 
   it("generates the packet with its eligibility checks against the chosen PEO's profile in the database", async () => {
@@ -821,6 +889,21 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));
     expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
+    expect(api.recordActivity).toHaveBeenCalledWith("packet_downloaded", "manuscript", "v1");
+  });
+
+  it("records no packet download when its link can't be signed", async () => {
+    const v = {
+      id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
+      certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
+      sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
+    };
+    api.loadSubmission.mockResolvedValue(detail({ versions: [v] }));
+    api.manuscriptUrl.mockRejectedValue(new Error("Couldn't open that file."));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't open that file."));
+    expect(api.recordActivity).not.toHaveBeenCalledWith("packet_downloaded", "manuscript", "v1");
   });
 
   it("names a stored version from its own certification, never from the one on record now", async () => {
@@ -901,10 +984,10 @@ describe("AdvisorSubmissionPage", () => {
     expect(signOut).toHaveBeenCalledWith("expired");
   });
 
-  it("tells an account that has lost advisor access, and doesn't offer a retry", async () => {
-    api.loadSubmission.mockRejectedValueOnce(Object.assign(new Error("You don't have advisor access."), { forbidden: true }));
+  it("tells an account that has lost access to the firm, and doesn't offer a retry", async () => {
+    api.loadSubmission.mockRejectedValueOnce(Object.assign(new Error("You don't have access to this firm's records."), { forbidden: true }));
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have advisor access");
+    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have access to this firm's records");
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
   describe("when the prospect cannot be reached by email", () => {
@@ -981,6 +1064,16 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(draft).queryByRole("button", { name: "Download the census" })).not.toBeInTheDocument();
   });
 
+  it("records the census downloaded from the Employee census section against the submission, in the firm's record", async () => {
+    const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+    api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census } }));
+    renderPage();
+    const section = await screen.findByRole("region", { name: "Employee census" });
+    fireEvent.click(within(section).getByRole("button", { name: "Download the census" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-census-v1.csv"));
+    expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
+  });
+
   it("offers the certified answers as JSON beside the packet, without a PEO's own answers or the advisor's reviews and notes", async () => {
     api.loadSubmission.mockResolvedValue(detail({
       submission: { ...detail().submission!, version: 1, data_version: 9, consent_version: "2026-04-01", extra_answers: { "3": { vehicles: { question: "Do employees drive for work?" } } } } as SubmissionDetail["submission"],
@@ -993,6 +1086,7 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(packet).getByText(/From certified version 1\./)).toBeInTheDocument();
     fireEvent.click(within(packet).getByRole("button", { name: "Download the answers as JSON" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-answers-v1.json"));
+    expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
     const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-S1-answers-v1.json")![0] as Blob;
     const json = await blobText(blob);
     const doc = JSON.parse(json);
@@ -1049,7 +1143,7 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     const quotes = await screen.findByRole("region", { name: "Quote requests" });
     fireEvent.click(within(quotes).getByRole("button", { name: "Ask the prospect" }));
-    const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
     expect(message.value).toBe("Can they send last year's loss runs?");
     expect(message.value).not.toMatch(/TriNet/);
     expect(api.requestInformation).not.toHaveBeenCalled();
@@ -1058,9 +1152,9 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue({ ...(await api.loadSubmission.mock.results[0].value), informationRequests: [
       { id: 1, session_id: "s1", message: "Can they send last year's loss runs?", fields: [], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" },
     ] });
-    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
+    await waitFor(() => expect(within(ask()).getByLabelText(/What do you need from them/i)).toHaveValue(""));
   });
 
   describe("What each PEO still needs", () => {
@@ -1106,6 +1200,8 @@ describe("AdvisorSubmissionPage", () => {
       expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([refused, refused, refused, refused]);
       expect(downloadBlob).not.toHaveBeenCalled();
       expect(buildWorkersCompPdf).not.toHaveBeenCalled();
+      // A refused download is not a download.
+      expect(api.recordActivity).not.toHaveBeenCalledWith("document_downloaded", "submission", "s1");
     });
 
     it("groups every listed PEO with a profile by whether the certified version is complete for it, alphabetical and never ranked", async () => {
@@ -1155,6 +1251,7 @@ describe("AdvisorSubmissionPage", () => {
         { question: "Do employees drive for work?", answer: "Yes" }, { question: "How many vans?", answer: null },
       ] })));
       expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-TriNet.pdf");
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
       // A PEO that asks no questions of its own has no supplement.
       const justworks = within(await panel()).getByRole("heading", { name: "Justworks" }).closest("article")!;
       expect(within(justworks).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
@@ -1253,7 +1350,7 @@ describe("AdvisorSubmissionPage", () => {
       const needs = await panel();
       const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
       fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
-      const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+      const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
       expect(message.value).toBe([
         "We need a few more things from you to get a quote.",
         "",
@@ -1263,10 +1360,10 @@ describe("AdvisorSubmissionPage", () => {
         "Please also answer or confirm the answers this request is about.",
       ].join("\n"));
       expect(message.value).not.toMatch(/TriNet/);
-      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HRIS system", "Payroll vendor"]);
+      expect(within(within(ask()).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HRIS system", "Payroll vendor"]);
       expect(api.requestInformation).not.toHaveBeenCalled();
       fireEvent.change(message, { target: { value: `${message.value}\nThanks!` } });
-      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"], []));
     });
 
@@ -1278,11 +1375,11 @@ describe("AdvisorSubmissionPage", () => {
       renderPage();
       const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
       fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
-      const asked = () => within(screen.getByRole("list", { name: "Extra questions the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+      const asked = () => within(within(ask()).getByRole("list", { name: "Extra questions the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
       expect(asked()).toEqual(["Do employees drive for work?", "How many vans?"]);
-      expect((screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement).value).not.toMatch(/TriNet/);
-      fireEvent.click(screen.getByRole("button", { name: "Remove How many vans?" }));
-      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      expect((within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement).value).not.toMatch(/TriNet/);
+      fireEvent.click(within(ask()).getByRole("button", { name: "Remove How many vans?" }));
+      fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.any(String), ["hris_system", "payroll_vendor"],
         [{ peo_id: 5, key: "vehicles", question: "Do employees drive for work?" }]));
     });
@@ -1300,10 +1397,10 @@ describe("AdvisorSubmissionPage", () => {
         reviews,
         informationRequests: [{ id: 1, session_id: "s1", message: "We need a few more things", fields: ["hris_system", "payroll_vendor"], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-11T12:00:00Z" }],
       }));
-      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
-      await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
-      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HQ state"]);
+      await waitFor(() => expect(within(ask()).getByLabelText(/What do you need from them/i)).toHaveValue(""));
+      expect(within(within(ask()).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HQ state"]);
     });
 
     it("starts the draft from the PEO's missing answers alone, not the fields marked Needs follow-up", async () => {
@@ -1352,6 +1449,7 @@ describe("AdvisorSubmissionPage", () => {
       const trinet = within(needs).getByRole("heading", { name: "TriNet" }).closest("article")!;
       fireEvent.click(within(trinet).getByRole("button", { name: "Download Workers' compensation application data" }));
       await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-workers-comp-application-v3.pdf"));
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
       // Built from the version certified, never the answers given since.
       const built = buildWorkersCompPdf.mock.calls.at(-1)![0];
       expect(built.sections.find((s) => s.title === "Prior carriers and loss history")!.entries[0]).toEqual({ label: "Current workers' comp carrier", value: "Sample Mutual" });
@@ -1375,6 +1473,7 @@ describe("AdvisorSubmissionPage", () => {
       expect(trinet).toHaveTextContent("TriNet's layout also asks for: Gender. Fill these in before sending.");
       fireEvent.click(within(trinet).getByRole("button", { name: "Download the census in TriNet's layout" }));
       await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-census-trinet-v3.csv"));
+      expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
       // A PEO whose profile has no census layout gets ours.
       const justworks = within(needs).getByRole("heading", { name: "Justworks" }).closest("article")!;
       expect(justworks).toHaveTextContent("We don't have Justworks's census layout yet, so this is ours: every column is named.");
@@ -1501,6 +1600,9 @@ describe("AdvisorSubmissionPage", () => {
         expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
         fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
         await zipOf();
+        // The bundle is a download of the submission's files: it is in the firm's record, once.
+        expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "submission", "s1");
+        expect(api.recordActivity.mock.calls.filter((c) => c[0] === "document_downloaded")).toHaveLength(1);
         // A download is never a send by itself.
         expect(await within(justworks).findByText("Sent this to Justworks?")).toBeInTheDocument();
         expect(api.recordQuoteSend).not.toHaveBeenCalled();
