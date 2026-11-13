@@ -264,7 +264,7 @@ END $$;
 DO $$
 BEGIN
   PERFORM pg_temp.as_user('waiting_owner');
-  PERFORM pg_temp.is(public.is_member_of_firm_address('waiting-firm'), false, 'an owner of a firm not yet approved is not a member at its address');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('waiting-firm'), true, 'an owner of a firm not yet approved is a member at its address (approval blocks sending, not working)');
   PERFORM pg_temp.is(public.is_member_of_firm_address('no-such-firm'), false, 'an unknown address has no members');
   PERFORM pg_temp.is(public.is_member_of_firm_address(NULL), false, 'no address has no members');
   PERFORM pg_temp.is(public.is_member_of_firm_address('%'), false, 'a wildcard matches nothing');

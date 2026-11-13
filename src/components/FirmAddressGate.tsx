@@ -16,7 +16,8 @@ type Membership = "checking" | "member" | "not_member" | "error";
 
 /**
  * What a firm's address shows (story CRM-P1.3a, D-17, D-18). On the bare domain it changes nothing. At a firm's address:
- * an address no approved firm holds is a plain not-found page; a signed-out visitor reaches the sign-in screens; and
+ * an address no approved firm holds is a plain not-found page, except to a signed-in member of the firm waiting for
+ * approval there; a signed-out visitor reaches the sign-in screens; and
  * a signed-in person who is not a current member of that firm sees "You aren't a member of this firm" and nothing
  * else, whichever firm they do belong to. This decides only what to render: the database refuses the data to a
  * non-member anyway, and no firm is put in the token.
@@ -26,7 +27,9 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   const { user, loading, isAnonymous, signOut } = useAuth();
   const { pathname } = useLocation();
   const userId = user?.id;
-  const address = firm.status === "known" ? firm.address : null;
+  // At an address no approved firm holds, a member of the firm waiting for approval is still let in (PRD 8.2: approval
+  // blocks sending, not working), so the question is asked there too.
+  const address = firm.status === "known" || firm.status === "unknown" ? firm.address : null;
   // The answer belongs to one person at one address: another person's, or another address's, is no answer.
   const asked = `${address}|${userId}`;
   const [answer, setAnswer] = useState<{ asked: string; result: Exclude<Membership, "checking"> } | null>(null);
@@ -49,7 +52,11 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   if (firm.status === "none") return <>{children}</>;
   if (firm.status !== "unknown" && SIGN_IN_LANDING_PATHS.includes(pathname)) return <>{children}</>;
   if (firm.status === "checking" || loading) return <Checking />;
-  if (firm.status === "unknown") return <NotFound />;
+  if (firm.status === "unknown") {
+    if (!signedIn) return <NotFound />;
+    // Nothing tells a non-member (or a failed check) from a visitor at an address nobody holds.
+    return membership === "checking" ? <Checking /> : membership === "member" ? <>{children}</> : <NotFound />;
+  }
   if (firm.status === "error") {
     return (
       <Message title="We couldn't load this page">

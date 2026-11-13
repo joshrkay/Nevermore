@@ -171,6 +171,25 @@ describe("useAuth session ending", () => {
     localStorage.clear();
   });
 
+  it("ends only this address's session when signing out at a firm's address, so the person's session at another firm's address stays", async () => {
+    vi.stubGlobal("location", { ...window.location, hostname: "acme-brokers.nevermorepeo.com" });
+    try {
+      const { result } = await mountAuth();
+      authApi.signOut.mockClear();
+      await act(async () => { await result.current.signOut(); });
+      expect(authApi.signOut).toHaveBeenCalledWith({ scope: "local" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("ends every session of the person when signing out on the bare domain", async () => {
+    const { result } = await mountAuth();
+    authApi.signOut.mockClear();
+    await act(async () => { await result.current.signOut(); });
+    expect(authApi.signOut).toHaveBeenCalledWith({ scope: "global" });
+  });
+
   it("calls a deliberate sign-out a sign-out", async () => {
     const { result } = await mountAuth();
     await act(async () => { await result.current.signOut(); });

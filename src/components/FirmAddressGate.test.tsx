@@ -52,15 +52,32 @@ describe("the firm address gate", () => {
     expect(fetchIsMemberOfFirmAddress).not.toHaveBeenCalled();
   });
 
-  it("shows a plain not-found page at an address no approved firm holds, to anyone", async () => {
+  it("shows a plain not-found page at an address no approved firm holds, to a visitor who is not a member", async () => {
     fetchFirmName.mockResolvedValue(null);
-    auth.user = { id: "u1" };
     renderAt("no-such-firm.nevermorepeo.com");
     expect(await screen.findByText("Oops! Page not found")).toBeInTheDocument();
     expect(screen.queryByText("The console")).not.toBeInTheDocument();
     expect(fetchFirmName).toHaveBeenCalledWith("no-such-firm");
-    // It never asks whether the person is a member of a firm that is not there.
+    // A signed-out visitor is never asked about membership.
     expect(fetchIsMemberOfFirmAddress).not.toHaveBeenCalled();
+  });
+
+  it("shows the same not-found page to a signed-in person who is not a member of the firm waiting at that address", async () => {
+    fetchFirmName.mockResolvedValue(null);
+    fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    auth.user = { id: "u1" };
+    renderAt("waiting-firm.nevermorepeo.com");
+    expect(await screen.findByText("Oops! Page not found")).toBeInTheDocument();
+    expect(screen.queryByText("The console")).not.toBeInTheDocument();
+    expect(fetchIsMemberOfFirmAddress).toHaveBeenCalledWith("waiting-firm");
+  });
+
+  it("lets a signed-in member of a firm not yet approved work at its own address", async () => {
+    fetchFirmName.mockResolvedValue(null);
+    fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+    auth.user = { id: "u1" };
+    renderAt("waiting-firm.nevermorepeo.com");
+    expect(await screen.findByText("The console")).toBeInTheDocument();
   });
 
   it("lets a signed-out visitor through to the sign-in screens of a firm that exists", async () => {
@@ -145,6 +162,11 @@ describe("the firm address gate", () => {
     expect(await screen.findByText("We couldn't load this page")).toBeInTheDocument();
     expect(screen.queryByText("Oops! Page not found")).not.toBeInTheDocument();
     expect(screen.queryByText("The console")).not.toBeInTheDocument();
+    // The person tries again after the blip, and the lookup now answers.
+    fetchFirmName.mockResolvedValue("Acme Brokers");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("The console")).toBeInTheDocument();
+    expect(fetchFirmName).toHaveBeenCalledTimes(2);
   });
 
   it("holds the console back while the session is still being read", async () => {

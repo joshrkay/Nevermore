@@ -93,4 +93,16 @@ test("a member signs in at their firm's address and reaches the console; at anot
     await page.goto(`${firmUrl(HOME)}/advisor`);
     await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
   });
+
+  await test.step("and its session can still be renewed: the sign-out ended only the other address's session", async () => {
+    // The access token outlives a sign-out for about an hour, so the page alone proves nothing. A refresh is what a
+    // global sign-out would have revoked.
+    const refreshToken = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((k) => /^sb-.*-auth-token$/.test(k));
+      return key ? (JSON.parse(localStorage.getItem(key) ?? "{}") as { refresh_token?: string }).refresh_token : undefined;
+    });
+    expect(refreshToken).toBeTruthy();
+    const res = await request.post(`${GATEWAY_URL}/auth/v1/token?grant_type=refresh_token`, { headers: { apikey: ANON_KEY }, data: { refresh_token: refreshToken } });
+    expect(res.status()).toBe(200);
+  });
 });

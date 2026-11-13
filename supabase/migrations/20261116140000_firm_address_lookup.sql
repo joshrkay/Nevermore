@@ -10,7 +10,8 @@
 -- exists it is added here, as part of what may be shown, and nothing else is.
 --
 -- is_member_of_firm_address(address): AFTER sign-in, whether the caller is a current member of the firm at that
--- address. It answers about the caller only, and needs no id: the screen never learns a firm's id from it.
+-- address, approved or not: approval blocks sending, not a firm's own people working at its address (PRD 8.2). It
+-- answers about the caller only, and needs no id: the screen never learns a firm's id from it.
 CREATE FUNCTION public.firm_public_name(p_address text)
 RETURNS text
 LANGUAGE sql
@@ -35,7 +36,6 @@ AS $$
     SELECT public.is_firm_member(f.id)
     FROM public.firms f
     WHERE f.address = lower(btrim(p_address))
-      AND f.approved_at IS NOT NULL
   ), false)
 $$;
 
