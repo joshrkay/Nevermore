@@ -30,9 +30,11 @@ const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-m
 const who = (byNevermore: boolean, actorId: string | null, email: string | null) =>
   byNevermore ? "Nevermore" : (email ?? (actorId ? "A former member" : "System"));
 
-/** The record an entry was about: what it is and its id, and for a membership the person it was about and their role. */
+/** The record an entry was about: what it is and its id, for a membership the person it was about and their role, and for an invitation the role it offered. */
 function recordText(e: FirmActivityEntry): string {
   const base = `${recordLabel(e.record_type)} ${e.record_id}`;
+  // An invitation sent, sent again or withdrawn is about the firm and records the role it offered.
+  if ((e.kind === "invitation_sent" || e.kind === "invitation_withdrawn") && e.role) return `${base} · as ${e.role}`;
   if (e.record_type !== "membership") return base;
   return `${base} · ${e.subject_email ?? "A former member"}${e.role ? ` (${e.role})` : ""}`;
 }
