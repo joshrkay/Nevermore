@@ -10,9 +10,8 @@
 --     they hold a platform role. Each of those functions filters by the row's firm (20261116180000), so this lets a member
 --     in and shows them nothing outside their firm. is_advisor() is NOT widened: it still means the platform role, which is
 --     what keeps the PEO catalogue, its contacts and the other platform-wide reads to people who hold it (the isolation
---     matrix in data_isolation.sql proves a member with no role reads none of them). The referral-partner functions are
---     a firm's own since CRM-P2.1c (20261116200000): they ask require_advisor() and act for the caller's firm, so a member
---     with no platform role adds and edits their own firm's partners.
+--     matrix in data_isolation.sql proves a member with no role reads none of them). The two referral-partner functions
+--     are platform-wide until CRM-P2.1c scopes them, so they now ask for the role themselves rather than the membership.
 --   * advisor_needs_second_factor(): a current member is sent to the second factor as a role holder or an owner is.
 -- The address a person is at never enters here: no firm is taken from the caller (D-18).
 
@@ -83,6 +82,66 @@ BEGIN
 END;
 $$;
 
+-- Referral partners belong to the platform until CRM-P2.1c: they keep asking for the platform role, as before this file.
+CREATE OR REPLACE FUNCTION public.advisor_add_referral_partner(p_code text, p_name text, p_kind text)
+RETURNS public.referral_partners
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  code_in text := lower(btrim(COALESCE(p_code, '')));
+  problem text := public.referral_partner_input_error(p_name, p_kind);
+  added public.referral_partners;
+BEGIN
+  IF NOT public.is_advisor() THEN
+    RAISE EXCEPTION 'Advisor access required' USING ERRCODE = '42501';
+  END IF;
+  IF NOT COALESCE(public.is_source_code(code_in), false) THEN
+    RAISE EXCEPTION 'A referral code is 1 to 64 lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit.'
+      USING ERRCODE = '22023';
+  END IF;
+  IF problem IS NOT NULL THEN
+    RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO public.referral_partners (code, name, kind, created_by_email, updated_by_email)
+  VALUES (code_in, btrim(p_name), p_kind, auth.jwt() ->> 'email', auth.jwt() ->> 'email')
+  ON CONFLICT (code) DO NOTHING
+  RETURNING * INTO added;
+  IF added.code IS NULL THEN
+    RAISE EXCEPTION 'The code % is already a partner''s. Choose another.', code_in USING ERRCODE = '23505', DETAIL = code_in;
+  END IF;
+  RETURN added;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.advisor_update_referral_partner(p_code text, p_name text, p_kind text)
+RETURNS public.referral_partners
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  problem text := public.referral_partner_input_error(p_name, p_kind);
+  changed public.referral_partners;
+BEGIN
+  IF NOT public.is_advisor() THEN
+    RAISE EXCEPTION 'Advisor access required' USING ERRCODE = '42501';
+  END IF;
+  IF problem IS NOT NULL THEN
+    RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
+  END IF;
+  UPDATE public.referral_partners
+  SET name = btrim(p_name), kind = p_kind, updated_at = now(), updated_by_email = auth.jwt() ->> 'email'
+  WHERE code = lower(btrim(COALESCE(p_code, '')))
+  RETURNING * INTO changed;
+  IF changed.code IS NULL THEN
+    RAISE EXCEPTION 'No partner has that code' USING ERRCODE = 'PT404';
+  END IF;
+  RETURN changed;
+END;
+$$;
+
 -- A password sign-in that has not done its second factor is held back (D-19) for a platform role, for an owner and now for
 -- any current member, who may hold no platform role. Anyone who holds neither a role nor a current membership is never asked.
 CREATE OR REPLACE FUNCTION public.advisor_needs_second_factor()
@@ -98,28 +157,4 @@ AS $$
       EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid())
       OR EXISTS (SELECT 1 FROM public.current_member_firm_ids())
     );
-$$;
-
--- A broker's mailbox belongs to a current member of a firm, whether or not they hold a platform role. 20261116200000 asked for
--- the platform role AND a current membership, which turned away a firm's founder or an invited member who holds no platform
--- role: the console's Mailbox page is theirs too. The membership rule, and the rule that a platform admin who belongs to no
--- firm connects none (D-16), are that migration's and are kept as they were; only the role clause is dropped. The second
--- factor is asked by the mailbox function before it calls this, through my_firms(). Everything else about the mailbox
--- (my_mailbox(), mailbox_secret(), the table) is as 20261116200000 left it.
-CREATE OR REPLACE FUNCTION public.mailbox_store(
-  p_user_id uuid, p_provider text, p_address text, p_scope text, p_token_ciphertext text, p_token_iv text, p_rotated boolean DEFAULT false)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.firm_memberships f WHERE f.user_id = p_user_id AND public.membership_is_current(f.valid_from, f.valid_until)) THEN
-    RAISE EXCEPTION 'Only a member of a firm can connect a mailbox' USING ERRCODE = '42501';
-  END IF;
-  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
-  VALUES (p_user_id, p_provider, p_address, p_scope, p_token_ciphertext, p_token_iv)
-  ON CONFLICT (user_id) DO UPDATE
-  SET provider = EXCLUDED.provider, address = EXCLUDED.address, scope = EXCLUDED.scope,
-      token_ciphertext = EXCLUDED.token_ciphertext, token_iv = EXCLUDED.token_iv, token_updated_at = now(),
-      -- A token Microsoft handed back on a refresh replaces the old one; the broker has not connected again.
-      connected_at = CASE WHEN p_rotated THEN public.broker_mailboxes.connected_at ELSE now() END;
-  RETURN jsonb_build_object('connected', true);
-END;
 $$;
