@@ -781,6 +781,9 @@ SELECT pg_temp.is(pg_temp.total('[]'), 0::bigint, 'a former member lists nothing
 SELECT pg_temp.as_user('nobody');
 SELECT pg_temp.expect($$SELECT public.queue_list_submissions()$$, '42501', 'a person with no role and no firm is refused the list');
 SELECT pg_temp.expect($$SELECT * FROM public.queue_view_counts('[{"name":"All"}]')$$, '42501', 'and the counts');
+-- Refused before anything it sent is read: a caller who isn't let in learns nothing, not even whether a filter would be taken.
+SELECT pg_temp.expect($$SELECT public.queue_list_submissions('[{"field":"firm_id","op":"is","value":"x"}]')$$, '42501', 'the list refuses an outsider before reading the filters');
+SELECT pg_temp.expect($$SELECT * FROM public.queue_view_counts('[{"name":"Bad","filters":[{"field":"firm_id","op":"is","value":"x"}]}]')$$, '42501', 'so do the counts');
 SELECT pg_temp.as_user_with('agent_a2', 'password', 'aal1');
 SELECT pg_temp.expect($$SELECT public.queue_list_submissions()$$, '42501', 'a password sign-in that owes its second factor is refused (D-19)');
 SELECT pg_temp.expect($$SELECT * FROM public.queue_view_counts('[{"name":"All"}]')$$, '42501', 'and its counts');
