@@ -27,8 +27,10 @@ test("an invited person signs in with the invited email, joins the firm, and the
     );
 
     await test.step("the link names the firm and asks the visitor to sign in", async () => {
-      await page.goto(`${firmUrl(ADDRESS)}/join/${TOKEN}`);
+      await page.goto(`${firmUrl(ADDRESS)}/join#token=${TOKEN}`);
       await expect(page.getByRole("heading", { name: "Join Invited Brokers" })).toBeVisible();
+      // The secret is after the #: the page takes it out of the address bar at once.
+      await expect(page).toHaveURL(`${firmUrl(ADDRESS)}/join`);
       await page.getByRole("button", { name: "Sign in or create an account" }).click();
     });
 
@@ -45,13 +47,19 @@ test("an invited person signs in with the invited email, joins the firm, and the
       await expect(page.getByText("You're now a lead of Invited Brokers.")).toBeVisible();
     });
 
+    await test.step("leaving the join page does not tell the new member they are not a member", async () => {
+      await page.getByRole("link", { name: "Continue" }).click();
+      await expect(page).toHaveURL(/\/advisor/);
+      await expect(page.getByRole("heading", { name: "You aren't a member of this firm" })).toHaveCount(0);
+    });
+
     await test.step("they are a current lead of the firm, dated from now", async () => {
       const m = await client.query("SELECT role, valid_until FROM public.firm_memberships WHERE user_id = $1 AND firm_id = $2", [user.id, firm.rows[0].id]);
       expect(m.rows).toEqual([{ role: "lead", valid_until: null }]);
     });
 
     await test.step("the same link, opened again, says it was used", async () => {
-      await page.goto(`${firmUrl(ADDRESS)}/join/${TOKEN}`);
+      await page.goto(`${firmUrl(ADDRESS)}/join#token=${TOKEN}`);
       await page.getByRole("button", { name: "Join Invited Brokers" }).click();
       await expect(page.getByRole("alert")).toContainText("This invitation has already been used.");
     });

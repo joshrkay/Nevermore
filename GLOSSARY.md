@@ -291,16 +291,24 @@ A person's place in a firm, with a role, an optional team and the dates it began
 _Avoid_: seat, user (for a member)
 
 **Invitation** (code: `firm_invitations`, `invite_member`, `accept_invitation`):
-An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29).
+An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29). A firm still waiting for approval can invite and be joined, but holds at most five pending invitations until it is approved; a refused firm cannot invite or resend, and a pending invitation to it cannot be accepted (D-34).
 _Avoid_: invite (as the noun), request to join (that is joining by organisation, CRM-P1.4)
 
-**Invitation link** (code: `/join/<token>`, `JoinFirmPage`):
-The link in an invitation's email, opened at the firm's own address. The token in it is made by the `invite-member` server function, sent once in that email and never stored, returned or logged; the browser hashes it before asking the database to accept. A link that is used, expired, withdrawn or replaced by a resend opens nothing and says so in plain words, in the same words whether or not the invited email has an account.
-_Avoid_: magic link, invite code
+**Invitation link** (code: `/join#token=...`, `JoinFirmPage`):
+The link in an invitation's email, opened at the firm's own address. The secret in it is made by the `invite-member` server function, sent once in that email and never stored, returned or logged. It is in the part after the `#`, which a browser never sends to a server, so no request log and no Referer holds it and no route contains it; the page reads it, removes it from the address bar at once, and keeps it only in that tab until the person has joined. The browser hashes it before asking the database to accept, and gives the database the address it was opened at: the link is accepted only at the address of the firm it belongs to (D-34). A link that is used, expired, withdrawn or replaced by a resend opens nothing and says so in plain words, in the same words whether or not the invited email has an account.
+_Avoid_: magic link, invite code, join URL (as if the secret were in the path)
 
 **Resend** (code: `resend_invitation`):
 Sending a pending invitation again: a new token replaces the old one, so the old link stops working, and seven days start from now. Used and withdrawn invitations are not resent.
 _Avoid_: reinvite
+
+**Send** (the invitation's link, one generation of it; code: the token hash that `record_invitation_delivery` is given):
+One link and the email that carries it. A resend makes a new send. How an email fared is recorded against the send it belongs to, and a result for a send that has since been replaced is dropped, so two resends finishing out of order cannot mark the current link delivered when its email failed, or the reverse.
+_Avoid_: attempt (that is one try at the mail provider inside a send)
+
+**Unknown delivery** (code: `email_outcome = 'unknown'`):
+What an invitation's email is when the mail provider may have accepted it though it did not say so (a network failure, a timeout, most server errors). It is tried once more with the same message and key, which the provider drops if the first was accepted; if the answer is still unclear it is kept as unknown, shown to the owner as "not sure the email was delivered", never as failed, and sending again is described as replacing the first link. The other outcomes are `sent` and `failed` (the provider certainly refused it).
+_Avoid_: pending email, soft failure
 
 **Platform admin** (code: the `admin` role in `user_roles`):
 A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files, through a table or through a function; held mail, which belongs to no firm until one is assigned, is theirs to read.

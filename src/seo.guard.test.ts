@@ -118,6 +118,22 @@ describe("what the build writes", () => {
   });
 });
 
+// An invitation's secret travels after the # of its link (D-34): a browser never sends that to a server, so it reaches no request
+// log and no Referer. That holds only while no route, rewrite or redirect has a place for a secret in the path.
+describe("an invitation's link (D-34)", () => {
+  it("has a route with no parameter, so nothing under /join is a route and no path holds a secret", () => {
+    const routes = [...readFileSync("src/App.tsx", "utf8").matchAll(/<Route\s+path="([^"]+)"/g)].map(([, path]) => path);
+    expect(routes).toContain("/join");
+    expect(routes.filter((r) => r.startsWith("/join") && r !== "/join")).toEqual([]);
+    expect(pageMetaFor("/join/a-secret-in-a-path").title).toBe("Page not found | Nevermore");
+  });
+
+  it("is not sent anywhere by a rewrite or redirect that names a token", () => {
+    const config = JSON.parse(readFileSync("vercel.json", "utf8")) as { rewrites?: { source: string; destination: string }[]; redirects?: unknown[] };
+    expect(JSON.stringify([config.rewrites, config.redirects])).not.toMatch(/token|join/i);
+  });
+});
+
 describe("X-Robots-Tag (vercel.json)", () => {
   const config = JSON.parse(readFileSync("vercel.json", "utf8")) as { headers: { source: string; headers: { key: string; value: string }[] }[] };
   const rules = config.headers.filter((rule) => rule.headers.some((h) => h.key === "X-Robots-Tag" && h.value === "noindex"));

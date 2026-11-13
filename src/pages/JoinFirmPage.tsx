@@ -1,22 +1,27 @@
 import { useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { acceptInvitation, type FirmRole } from "@/lib/invitationApi";
+import { forgetInvitationToken, takeInvitationToken } from "@/lib/invitationLink";
+import { notifyMembershipChanged } from "@/lib/membershipChanged";
 
 const button = "min-h-11 px-4 rounded-md border border-primary bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50";
 
 /**
- * Where an invitation's link opens, at the firm's address (story CRM-P1.2): `/join/<token>`. A signed-out visitor is sent to
- * sign in or create their account, then comes back here; the signed-in person presses one button to join. The database
- * decides everything: it accepts only the invited email, verified, and says plainly why a link can't be used (used, expired,
- * withdrawn, or another email). The token is read from the address, handed to the call, and never shown or kept.
+ * Where an invitation's link opens, at the firm's address (story CRM-P1.2): `/join#token=...`. The secret is after the #, which a
+ * browser never sends to a server; the page reads it and takes it out of the address bar at once (D-34), and keeps it in this tab
+ * only until the person has signed in and joined. A signed-out visitor is sent to sign in or create their account, then comes back
+ * here; the signed-in person presses one button to join. The database decides everything: it accepts only the invited email,
+ * verified, only at the address of the invitation's firm, and says plainly why a link can't be used (used, expired, withdrawn, or
+ * another email). The secret is handed to the call as its hash, and never shown.
  */
 const JoinFirmPage = () => {
-  const { token = "" } = useParams();
+  // Read once, on the first render: this is what takes it out of the address bar.
+  const [token] = useState(takeInvitationToken);
   const firm = useFirmAddress();
   const { user, loading, isAnonymous, signOut } = useAuth();
   const location = useLocation();
@@ -28,11 +33,15 @@ const JoinFirmPage = () => {
   const signedIn = Boolean(user) && !isAnonymous;
 
   const join = async () => {
+    if (firm.status !== "known") return;
     setBusy(true);
     setError(null);
     try {
-      const result = await acceptInvitation(token);
+      const result = await acceptInvitation(token, firm.address);
+      forgetInvitationToken();
       setJoined(result.role);
+      // The firm address gate asked whether this person was a member before they joined; it must ask again.
+      notifyMembershipChanged();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -46,6 +55,14 @@ const JoinFirmPage = () => {
         <>
           <h1 className="font-display text-2xl font-bold">Open your invitation at your firm's address</h1>
           <p className="text-sm text-muted-foreground">This invitation opens at your firm's own address. Use the link from the email you were sent.</p>
+        </>
+      );
+    }
+    if (!token && !joined) {
+      return (
+        <>
+          <h1 className="font-display text-2xl font-bold">This invitation link is incomplete</h1>
+          <p className="text-sm text-muted-foreground">Use the link from the email you were sent, exactly as it came.</p>
         </>
       );
     }
@@ -65,7 +82,7 @@ const JoinFirmPage = () => {
           <p className="text-sm text-muted-foreground">
             You've been invited to join {firmName}. Sign in or create your account with the email address this invitation was sent to.
           </p>
-          <button className={button} onClick={() => navigate("/login", { state: { from: location, reason: "account_needed" } })}>
+          <button className={button} onClick={() => navigate("/login", { state: { from: { pathname: location.pathname, search: location.search }, reason: "account_needed" } })}>
             Sign in or create an account
           </button>
         </>

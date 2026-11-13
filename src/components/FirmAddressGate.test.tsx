@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter } from "react-router-dom";
 
 const auth = {
   user: null as { id: string; email?: string } | null,
@@ -19,6 +19,7 @@ vi.mock("@/lib/firmApi", () => ({
 
 const { FirmAddressProvider } = await import("@/hooks/useFirmAddress");
 const { default: FirmAddressGate } = await import("./FirmAddressGate");
+const { notifyMembershipChanged } = await import("@/lib/membershipChanged");
 
 // The firm address (story CRM-P1.3a): the host picks the firm; after sign-in only a member gets past this gate. A
 // person who isn't a member sees one sentence and a way to sign out, whichever firm they belong to.
@@ -266,16 +267,43 @@ describe("the firm address gate", () => {
   });
 
   // An invitation's link is opened by someone who is not a member yet (story CRM-P1.2): the page must be reachable to accept it.
+  // The link is `/join` with its secret after the #, so the path names no token (D-34).
   it("lets a signed-in person who is not a member open an invitation's link, and only that: any other page still refuses them", async () => {
     auth.user = { id: "u1" };
     fetchIsMemberOfFirmAddress.mockResolvedValue(false);
-    renderAt("acme-brokers.nevermorepeo.com", "/join/some-token");
+    renderAt("acme-brokers.nevermorepeo.com", "/join");
     expect(await screen.findByText("The console")).toBeInTheDocument();
     expect(screen.queryByText("You aren't a member of this firm")).not.toBeInTheDocument();
-    for (const path of ["/joined", "/advisor/join/some-token", "/join"]) {
+    for (const path of ["/joined", "/advisor/join", "/join/some-token", "/join/"]) {
       const view = renderAt("acme-brokers.nevermorepeo.com", path);
       expect(await screen.findByText("You aren't a member of this firm"), path).toBeInTheDocument();
       view.unmount();
     }
+  });
+
+  // The answer to "is this person a member" was asked while they were not, and kept: after joining, leaving the join page showed
+  // "You aren't a member of this firm" until a reload.
+  it("asks again after a person has joined, so leaving the join page lets them in without a reload", async () => {
+    auth.user = { id: "u1" };
+    let member = false;
+    fetchIsMemberOfFirmAddress.mockImplementation(async () => member);
+    render(
+      <MemoryRouter initialEntries={["/join"]}>
+        <FirmAddressProvider hostname="acme-brokers.nevermorepeo.com">
+          <FirmAddressGate>
+            <Link to="/advisor">Continue</Link>
+            <p>The console</p>
+          </FirmAddressGate>
+        </FirmAddressProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("link", { name: "Continue" });
+    await waitFor(() => expect(fetchIsMemberOfFirmAddress).toHaveBeenCalledTimes(1));
+    member = true;
+    await act(async () => { notifyMembershipChanged(); });
+    await waitFor(() => expect(fetchIsMemberOfFirmAddress).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("link", { name: "Continue" }));
+    expect(await screen.findByText("The console")).toBeInTheDocument();
+    expect(screen.queryByText("You aren't a member of this firm")).not.toBeInTheDocument();
   });
 });

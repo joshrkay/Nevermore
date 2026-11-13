@@ -73,7 +73,7 @@ const App = () => (
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/firms/new" element={<SignUpFirmPage />} />
-                <Route path="/join/:token" element={<JoinFirmPage />} />
+                <Route path="/join" element={<JoinFirmPage />} />
                 <Route path="/firm/invitations" element={<FirmInvitationsPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />
