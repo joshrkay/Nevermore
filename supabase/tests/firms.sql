@@ -291,7 +291,7 @@ BEGIN
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Brand', 'nevermore-brokers')$q$, '23514', 'an address naming Nevermore');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Brand', 'never-more')$q$, '23514', 'an address spelling Nevermore with a hyphen');
   -- D-26: an address is a PEO's only when, with everything but letters and digits removed, it is exactly a
-  -- listed PEO's name. Exact, so a name that merely contains or starts with one is the firm's own.
+  -- listed PEO's name or short name (the name cut to 20 characters). Exact, so a name that merely contains or starts with one is the firm's own.
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'trinet')$q$, '23514', 'an address that is TriNet');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-totalsource')$q$, '23514', 'an address naming ADP TotalSource');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('PEO', 'adp-total-source')$q$, '23514', 'ADP TotalSource with hyphens');
@@ -309,6 +309,12 @@ BEGIN
   INSERT INTO public.peos (name) VALUES ('The Marathon Group');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Smith', 'the-smith-agency')$q$, 'rows:1', 'an address starting with a common first word');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Mar', 'the-marathon-group')$q$, '23514', 'an address spelling the whole name');
+  -- A PEO's short name is its cleaned name cut to 20 characters, as the reply addresses cut it (D-26).
+  INSERT INTO public.peos (name) VALUES ('Paychex Business Solutions');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusinesssolut')$q$, '23514', 'an address equal to a long PEO name''s short name');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychex-business-solutions')$q$, '23514', 'a long PEO name with hyphens');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusinesssolutio')$q$, 'rows:1', 'an address longer than the short name but not the name');
+  PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Pay', 'paychexbusiness')$q$, 'rows:1', 'an address shorter than the short name');
   -- A listed PEO whose name leaves nothing (or almost nothing) to compare holds no address back.
   INSERT INTO public.peos (name) VALUES ('Ö'), ('A1');
   PERFORM pg_temp.expect($q$INSERT INTO public.firms (name, address) VALUES ('Zed', 'zzz-brokers')$q$, 'rows:1', 'an address with a PEO named Ö listed');
