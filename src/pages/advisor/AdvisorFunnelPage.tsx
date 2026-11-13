@@ -166,7 +166,8 @@ const SourceTable = ({ sources, firms }: { sources: SourceRow[]; firms: MemberFi
           {sources.map((row) => {
             const { title, detail } = sourceTitle(row);
             const started = row.counts.started;
-            // A member of several firms sees each firm's rows apart, so each row says whose it is.
+            // A member of several firms sees each firm's rows apart, so each row says whose it is. Unreachable for now: RequireFirm keeps
+            // a member of several firms out of the console (ADR 0014) until the Epic 2 workspace shell lets them choose one firm.
             const firmName = firms.length > 1 ? firms.find((f) => f.id === row.firmId)?.name : undefined;
             return (
               <tr key={[row.firmId, row.source.referral_code, row.source.utm_source, row.source.utm_medium, row.source.utm_campaign].join("|")} className="border-b border-border/60">

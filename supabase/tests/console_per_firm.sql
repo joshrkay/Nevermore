@@ -113,6 +113,7 @@
 \i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
+\i supabase/migrations/20261116220000_mailbox_ends_with_membership.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -322,4 +323,15 @@ SELECT pg_temp.is(public.mailbox_secret(pg_temp.id('roleless_a')) ->> 'address',
 SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('platform_admin')), '42501', 'a platform admin who belongs to no firm connects none (D-16)');
 SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('nobody')), '42501', 'nor does a person with no membership');
 SELECT pg_temp.expect(format('SELECT public.mailbox_store(%L, ''microsoft'', ''x@y.example'', ''Mail.Send'', ''c'', ''i'')', pg_temp.id('former_a')), '42501', 'nor a former member');
+-- ---------- 5. A mailbox goes when its owner's last membership ends, whether or not they ever held a platform role ----------
+-- The only other cleanup is on user_roles, which a founder or an invited agent never had a row in.
+SELECT pg_temp.as_owner();
+SELECT public.mailbox_store(pg_temp.id('both'), 'microsoft', 'both@alpha.example', 'Mail.Send', 'cipher', 'iv');
+UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('both') AND firm_id = pg_temp.id('firm_a');
+SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('both')), 1::bigint, 'ending one of two memberships keeps the mailbox');
+UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('both') AND firm_id = pg_temp.id('firm_b');
+SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('both')), 0::bigint, 'ending the last membership deletes the mailbox of a person with no platform role');
+SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('roleless_a')), 1::bigint, 'and another member''s mailbox stays');
+DELETE FROM public.firm_memberships WHERE user_id = pg_temp.id('roleless_a');
+SELECT pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE user_id = pg_temp.id('roleless_a')), 0::bigint, 'deleting the last membership deletes it too');
 \echo console_per_firm: ok

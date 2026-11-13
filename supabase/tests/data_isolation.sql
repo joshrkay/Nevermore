@@ -159,6 +159,7 @@
 \i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
+\i supabase/migrations/20261116220000_mailbox_ends_with_membership.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -3005,7 +3006,7 @@ SELECT unnest(ARRAY[
 
 INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
-  'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
+  'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role', 'drop_mailbox_without_membership',
   'record_membership_change', 'record_send_activity',
   'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',

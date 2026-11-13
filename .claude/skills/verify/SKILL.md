@@ -9,7 +9,7 @@ There is no Docker or hosted Supabase in the sandbox, so `harness/` stands up th
 
 | Layer | Real or stand-in |
 |---|---|
-| Postgres 16, the real migrations (certification, guest block, field provenance, outbox, outbox reliability, outbox operations, outbox schedule, email delivery events, intake validation and versioning, chosen PEO, certification readiness, submission records, the certification File ID check) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`, as are a `documents` table and `schema_version`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
+| Postgres 16 with the e2e stack's Supabase bootstrap (`e2e/stack/bootstrap.sql`) and EVERY migration in filename order, firms included (`setup.sql`, then `up.sh` appends one `\i` per migration, then `seed.sql`) | **real** |
 | PostgREST 12.2.3 (so `authenticated` / `anon` / `service_role` table privileges are enforced; function ACLs are not, see Gotchas) | **real** |
 | `supabase/functions/dispatch-outbox/index.ts` under Deno | **real, unmodified** |
 | `supabase/functions/resend-webhook/index.ts` under Deno on :8001 (`webhook.sh`) | **real, unmodified** |
@@ -28,6 +28,8 @@ mkdir -p /tmp/verify-pgrst && cd /tmp/verify-pgrst \
 ## Run
 
 ```bash
+# The server comes from PGHOST, PGPORT, PGUSER, PGPASSWORD (a superuser; default localhost:5432 postgres/postgres). The ports below (3001, 54321, 54400, 8000, 8001) are fixed:
+# when other people use the machine, run the whole session under `flock /tmp/crm-e2e.lock`. RUN_DIR picks the run directory.
 .claude/skills/verify/harness/up.sh                  # prints: up: pgrst=200 gateway=404 func(GET)=405
 source .claude/skills/verify/harness/lib.sh          # PROSPECT/GUEST/SVC/ANON tokens, sql, invoke, newsession, certify, mode, stats, due, provider
 DATA='{"company_name":"Acme Co","states":["NY"],"pay_frequency":"weekly"}'                  # the three required answers, or the database refuses (EA003)
@@ -83,6 +85,7 @@ is limited to service-role callers and runs ahead of the claim: `index.ts` is De
 - Config problems write on the events: `func.sh APP_BASE_URL=`, certify, `invoke POST $PROSPECT` (the nudge writes nothing), then `invoke POST $SVC`: the advisor event stays `pending`, attempts 0, `last_error`
   `not_configured: APP_BASE_URL is not set to an https URL`, the confirmation is sent; a second scheduled run does not rewrite the row (`xmin` is unchanged). `func.sh` with the default settings sends it and clears the note.
 - Who an advisor alert goes to (CRM-P2.1c): the current members of the intake's firm, not `ADVISORY_NOTIFY_EMAIL`. `select public.outbox_alert_recipients('<session>')` as the service role lists them; the advisor email's `to` is exactly that list; end a member's membership and the next attempt's `to` no longer has them; a firm with no current member leaves the event `pending` with `last_error = no_recipients` and sends nothing.
+- An alert whose stored message is rebuilt (D-35, ADR 0016). Seed users with emails and `firm_memberships` in the default firm (`select id from firms`); `mode accept_then_hang`, certify, `invoke POST $SVC` freezes the alert to the members at that moment. Then end one member (`update firm_memberships set valid_until = now() ...`), add another, age the alert (`update outbox_events set pending_send = jsonb_set(pending_send,'{frozen_at}', to_jsonb(now() - interval '21 hours'))`), `mode ok`, `due`, `invoke POST $SVC`: the provider's `to` is the stayers only. Rewrite the frozen `to` to the shared inbox (`jsonb_set(pending_send,'{message,to}','["advisors@verify.example"]')`): the rebuilt alert goes to the current members. End every named person (disable `firm_memberships_keep_owner` to end the last owner) while someone else is a member: it goes to the current members. A firm with no current member: the advisor event stays `pending` with `last_error = no_recipients`, the confirmation is sent.
 - The claim lease: `mode accept_then_hang`, certify, start `invoke POST $SVC` in the background and, 3 s in, `select status, claimed_at is not null, locked_until - claimed_at from outbox_events`: `claimed`, true, `00:10:00`.
   After the 10 s provider timeout it is `pending` with `last_error = timeout` and `claimed_at` null.
 - Bounces and suppression: sign fixtures with the OFFICIAL signer, not the function's own code (`npm i svix` in a scratch dir, never in the repo; `new Webhook(secret).sign(id, date, body)`, headers `svix-id`, `svix-timestamp`,

@@ -69,8 +69,9 @@ export async function handleMailboxRequest(req: Request, deps: MailboxDeps): Pro
 
   // Who they are comes from their id; whether their token belongs to a current member of a firm is asked of the database with
   // their own login (my_firms() answers a password sign-in that has not completed a second factor with no firm), so that
-  // is refused here too. A platform role is not asked: a founder or an invited member holds none.
-  if (body.action === "connect" || body.action === "check" || body.action === "disconnect") {
+  // is refused here too. A platform role is not asked: a founder or an invited member holds none. Disconnecting is not asked:
+  // it only removes the caller's own row, and a person who has left every firm must still be able to.
+  if (body.action === "connect" || body.action === "check") {
     const mine = await user.rpc("my_firms", {});
     if (mine.error || !Array.isArray(mine.data) || mine.data.length === 0) return json({ error: NOT_MEMBER, code: "not_member" }, 403);
   }
