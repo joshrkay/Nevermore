@@ -717,7 +717,8 @@ END $$;
 
 -- ---------- an opportunity's stage, worked out ----------
 -- Break caught: a stage is stored instead of worked out; a pipeline stage maps to the wrong stage (D-206); an opportunity with no intake is not
--- Qualifying; a stage nobody mapped is let through as nothing; the functions are open to the API roles.
+-- Qualifying; a stage nobody mapped is let through as nothing; the functions are open to the API roles; a submission archived from won reads Lost (D-216),
+-- also once "needs action" is marked or cleared on it (a history row from archived to archived taken for the move into archived).
 DO $$
 DECLARE s text; want text; got text; i uuid; o uuid;
 BEGIN
@@ -754,6 +755,22 @@ BEGIN
   PERFORM pg_temp.move('w1', 'archived');
   PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'a submission archived from won keeps its opportunity Won (D-216)');
   PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account a client');
+  -- Marking it as needing action, and clearing that, through the real function: each writes a history row from archived to archived, which is not a
+  -- move into archived (the move from won still decides).
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM public.set_submission_needs_action(pg_temp.id('w1'), true, 'Send the client the signed agreement');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT h.from_status || '>' || h.to_status FROM public.submission_status_history h WHERE h.session_id = pg_temp.id('w1') ORDER BY h.id DESC LIMIT 1),
+    'archived>archived', 'the fixture: marking it wrote a row from archived to archived');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'archived from won and marked as needing action is still Won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account still a client');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM public.set_submission_needs_action(pg_temp.id('w1'), false);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.submission_status_history h WHERE h.session_id = pg_temp.id('w1') AND h.from_status = 'archived' AND h.to_status = 'archived'),
+    2::bigint, 'the fixture: clearing it wrote a second');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'and cleared, still Won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account still a client');
   PERFORM pg_temp.move('w1', 'submitted');
   PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'intake_under_way', 'reopened, it is under way again');
   PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'prospect', 'and its account a prospect until it is won again');

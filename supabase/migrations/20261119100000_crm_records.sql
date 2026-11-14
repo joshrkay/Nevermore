@@ -366,10 +366,11 @@ $$;
 REVOKE ALL ON FUNCTION public.opportunity_stage_of(text) FROM PUBLIC, anon, authenticated, service_role;
 
 -- The stage a submission gives its opportunity (D-206, with D-216): the pipeline stage's stage, except that a submission archived straight from won (the
--- last move into archived, in its status history, was from won) keeps its opportunity Won: archived is the only move the pipeline allows from won, so
--- every won file put away would otherwise flip to Lost and its account back to a prospect. Archived from any other stage is Lost. Reopening it (archived
--- to submitted) brings it back, since the stage is asked each time. A submission with no pipeline row yet is a draft. Internal: the two functions below
--- ask it.
+-- last move into archived from another stage, in its status history, was from won) keeps its opportunity Won: archived is the only move the pipeline
+-- allows from won, so every won file put away would otherwise flip to Lost and its account back to a prospect. Archived from any other stage is Lost.
+-- A row from archived to archived is not a move: set_submission_needs_action writes one (from the status it is at to the same) each time "needs
+-- action" is marked or cleared, and it must not hide the move from won. Reopening it (archived to submitted) brings it back, since the stage is asked
+-- each time. A submission with no pipeline row yet is a draft. Internal: the two functions below ask it.
 CREATE FUNCTION public.submission_opportunity_stage(p_intake_id uuid)
 RETURNS text
 LANGUAGE sql
@@ -379,7 +380,8 @@ AS $$
   SELECT CASE
     WHEN s.status = 'archived' AND (
       SELECT h.from_status FROM public.submission_status_history h
-      WHERE h.session_id = p_intake_id AND h.to_status = 'archived' ORDER BY h.id DESC LIMIT 1) = 'won' THEN 'won'
+      WHERE h.session_id = p_intake_id AND h.to_status = 'archived' AND h.from_status IS DISTINCT FROM 'archived'
+      ORDER BY h.id DESC LIMIT 1) = 'won' THEN 'won'
     ELSE public.opportunity_stage_of(s.status)
   END
   FROM (SELECT COALESCE((SELECT w.status FROM public.submission_workflow w WHERE w.session_id = p_intake_id), 'draft') AS status) s
