@@ -145,6 +145,18 @@ export async function suspendFirm(firmId: string, reason: string): Promise<void>
     : "Couldn't suspend the firm. Try again.");
 }
 
+/** Stops a firm's closing with a reason (story CRM-P1.7): the request ends, the firm stays open, and its owners are told. A platform admin cannot ask to close a firm. */
+export async function stopFirmClosure(firmId: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_stop_firm_closure", { p_firm_id: firmId, p_reason: reason });
+  if (!error) return;
+  if (error.code === "PT409") throw new Error("That firm is not waiting to close.");
+  if (error.code === "PT404") throw new Error("That firm no longer exists.");
+  if (error.code === "22023") throw new Error("Give a reason of 1 to 500 characters.");
+  throw classifyApiError(error, error.code === "42501"
+    ? "Only a platform admin who isn't a member of the firm can stop its closing."
+    : "Couldn't stop the closing. Try again.");
+}
+
 /** Lifts a firm's suspension: everything is as it was. */
 export async function liftFirmSuspension(firmId: string): Promise<void> {
   const { error } = await supabase.rpc("admin_lift_firm_suspension", { p_firm_id: firmId });

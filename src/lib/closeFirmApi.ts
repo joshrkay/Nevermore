@@ -20,6 +20,7 @@ function refusal(error: DbError, fallback: string): Error {
   switch (error.code) {
     case "22023": return new CloseFirmError("Type the firm's name exactly as it is written above.");
     case "42501": return new CloseFirmError("Only an owner of the firm can do that.");
+    case "PT403": return new CloseFirmError("This firm takes the intakes people start on Nevermore, so it can't be closed.");
     case "PT409": return new CloseFirmError(error.message || fallback);
     case "PT423": return new CloseFirmError("This firm is closing and can't be changed.");
     default: return new CloseFirmError(fallback);
@@ -39,17 +40,24 @@ export async function withdrawFirmClosure(firmId: string): Promise<void> {
   if (error) throw refusal(error, "Couldn't withdraw the request. Try again.");
 }
 
+export interface FirmClosure {
+  /** When the firm closes, or null when it is not closing. */
+  closesAt: string | null;
+  /** Whether the person may ask to close the firm: an owner of a firm that is not closing, refused, or the one that takes every intake. */
+  canAsk: boolean;
+}
+
 /**
- * When the firm closes, or null when it is not closing. Only a current member of the firm is told. It is for showing the banner, so a
- * failed question is just no banner: the database refuses every change itself, whatever the screen shows.
+ * Whether the firm is closing and whether the person may ask, for the banner and Settings. Only a current member of the firm is told. A failed
+ * question is no banner and no offer: the database refuses every change itself, whatever the screen shows.
  */
-export async function fetchMyFirmClosure(firmId: string): Promise<string | null> {
+export async function fetchMyFirmClosure(firmId: string): Promise<FirmClosure> {
   try {
     const res = await supabase.rpc("my_firm_closure", { p_firm_id: firmId });
-    if (!res || res.error) return null;
+    if (!res || res.error) return { closesAt: null, canAsk: false };
     const row = (res.data ?? [])[0];
-    return row ? row.closes_at : null;
+    return row ? { closesAt: row.closes_at, canAsk: row.can_ask === true } : { closesAt: null, canAsk: false };
   } catch {
-    return null;
+    return { closesAt: null, canAsk: false };
   }
 }

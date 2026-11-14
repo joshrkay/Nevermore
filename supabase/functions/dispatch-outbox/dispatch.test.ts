@@ -1685,3 +1685,25 @@ describe("dispatching the email that a request to close the firm was made or wit
     expect(deps.fail).toHaveBeenCalledWith("evt-closing", "not_configured", 60, 1, false);
   });
 });
+
+describe("dispatching the email that Nevermore stopped a closing", () => {
+  // Catches: the firm learns who at Nevermore stopped it or why (D-33), or the email reads like an owner's withdrawal.
+  it("says Nevermore stopped it and names no person, whatever the payload held", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([closingRow({ payload: { event: "stopped", firm_name: "Acme Brokers", by_email: "staff@nevermore.example", reason: "under investigation" } })], deps);
+    const { message } = sent[0];
+    expect(message.subject).toBe("Nevermore stopped the request to close Acme Brokers");
+    expect(message.text).toContain("The firm stays open and nothing was deleted.");
+    for (const leaked of ["staff@nevermore.example", "investigation"]) {
+      expect(message.text).not.toContain(leaked);
+      expect(message.html).not.toContain(leaked);
+    }
+  });
+
+  it("gives up on a stop that names no firm", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([closingRow({ payload: { event: "stopped" } })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+  });
+});

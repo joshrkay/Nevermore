@@ -180,6 +180,7 @@
 \i supabase/migrations/20261118100000_join_by_organisation.sql
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
+\i supabase/migrations/20261118110500_close_a_firm_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1065,6 +1066,8 @@ INSERT INTO callable VALUES
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
   ('admin_suspend_firm(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_suspend_firm(%2$L, ''probe'')', 'a platform admin who is no member of the firm suspends it with a reason (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
+  ('admin_stop_firm_closure(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_stop_firm_closure(%2$L, ''probe'')', 'a platform admin who is no member of the firm ends its open request to close with a reason (CRM-P1.7); refused for everyone else, a firm''s own owner included'),
+  ('intake_folder_firm_read_only(p_folder text)', 'own', NULL, 'the manuscripts storage policies call it as the caller: whether the intake a folder names is of a closing firm the caller currently belongs to; false for anyone else'),
   ('admin_lift_firm_suspension(p_firm_id uuid)', 'admin', 'SELECT public.admin_lift_firm_suspension(%2$L)', 'a platform admin who is no member of the firm lifts its suspension (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
   ('admin_firm_states()', 'admin', 'SELECT * FROM public.admin_firm_states()', 'every firm with its approval state and whether it is suspended, with the reason, for platform admins only (D-16)'),
   ('my_suspended_firm_at_address(p_address text)', 'own', NULL, 'whether the firm at an address is suspended, true only for a current member of it, so the screen can say so; false for anyone else (supabase/tests/firm_suspension.sql)'),
@@ -3357,6 +3360,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('my_suspended_firm_at_address', 'own', 'whether the caller''s own firm at an address is suspended'),
   ('request_firm_closure', 'own', 'a current owner of the firm asks to close it; acts only for the caller and the firm they own (supabase/tests/close_a_firm.sql)'),
   ('withdraw_firm_closure', 'own', 'a current owner of the firm withdraws its request to close; acts only for the caller and the firm they own'),
+  ('admin_stop_firm_closure', 'platform_wide', 'a platform admin ends a firm''s open request to close, with a reason: no firm''s member can, and nothing of the firm''s is touched'),
+  ('intake_folder_firm_read_only', 'own', 'storage policy helper: whether the intake a folder names is of a closing firm the caller belongs to'),
   ('my_firm_closure', 'own', 'when the caller''s own firm closes, for a current member of it only'),
   ('firm_is_read_only', 'service_only', 'whether a firm is closing or closed: the helper the write paths ask, as the database''s own question; no API role can call it'),
   ('firm_is_closed', 'service_only', 'whether a firm has been closed by the daily job: the address and alert functions ask it'),
@@ -3456,7 +3461,7 @@ INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
   'record_membership_change', 'record_send_activity', 'keep_suspension', 'drop_mailbox_when_membership_ends',
-  'refuse_note_on_closing_firm', 'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
+  'refuse_note_on_closing_firm', 'end_alert_of_closed_firm', 'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',
   'snapshot_certified_evidence', 'stamp_message_firm', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',

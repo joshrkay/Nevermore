@@ -5,7 +5,7 @@ import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { fetchIsAdmin } from "@/lib/advisorApi";
-import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, suspendFirm, type FirmState, type WaitingFirm } from "@/lib/firmApi";
+import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, stopFirmClosure, suspendFirm, type FirmState, type WaitingFirm } from "@/lib/firmApi";
 import { firmHostname } from "@/lib/firmHost";
 
 type Load =
@@ -32,7 +32,7 @@ const AdvisorFirmsPage = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   // The suspension being asked for or lifted: which firm, and (to suspend) the reason typed.
-  const [changing, setChanging] = useState<{ id: string; lift: boolean } | null>(null);
+  const [changing, setChanging] = useState<{ id: string; lift: boolean; stop?: boolean } | null>(null);
   const [reason, setReason] = useState("");
 
   useEffect(() => {
@@ -73,6 +73,22 @@ const AdvisorFirmsPage = () => {
       if (firm.suspended) await liftFirmSuspension(firm.id);
       else await suspendFirm(firm.id, reason.trim());
       toast.success(firm.suspended ? `The suspension of ${firm.name} is lifted.` : `${firm.name} is suspended.`);
+      setChanging(null);
+      setReason("");
+      setAttempt((n) => n + 1);
+    } catch (err) {
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error((err as Error).message);
+    }
+    setBusy(null);
+  };
+
+  // Stopping a firm's closing, with a reason: its owners are emailed, and the firm stays open.
+  const stopClosing = async (firm: FirmState) => {
+    setBusy(firm.id);
+    try {
+      await stopFirmClosure(firm.id, reason.trim());
+      toast.success(`The closing of ${firm.name} is stopped.`);
       setChanging(null);
       setReason("");
       setAttempt((n) => n + 1);
@@ -174,7 +190,23 @@ const AdvisorFirmsPage = () => {
                           {`Suspended${f.suspendedAt ? ` ${formatDateTime(f.suspendedAt)}` : ""}: ${f.suspensionReason ?? ""}`}
                         </p>
                       )}
-                      {f.closedOn ? null : changing?.id === f.id ? (
+                      {f.closingOn && (changing?.id === f.id && changing.stop ? (
+                        <div className="space-y-2">
+                          <p className="text-sm">Its owners are told the closing was stopped, and the firm stays open. They are not told your reason.</p>
+                          <label htmlFor={`stop-${f.id}`} className="text-xs text-muted-foreground">{`Reason for stopping the closing of ${f.name}`}</label>
+                          <input id={`stop-${f.id}`} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)}
+                            className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm" />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => void stopClosing(f)} disabled={busy !== null || reason.trim() === ""}
+                              className={`${button} bg-primary text-primary-foreground border-primary hover:bg-primary/90`}>Yes, stop it</button>
+                            <button onClick={() => { setChanging(null); setReason(""); }} disabled={busy !== null} className={button}>Let it run</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setChanging({ id: f.id, lift: false, stop: true }); setReason(""); }} disabled={busy !== null} className={button}
+                          aria-label={`Stop the closing of ${f.name}`}>Stop the closing</button>
+                      ))}
+                      {f.closedOn || (changing?.id === f.id && changing.stop) ? null : changing?.id === f.id ? (
                         <div className="space-y-2">
                           {f.suspended ? (
                             <p className="text-sm">Lift the suspension? Its members get everything back as it was.</p>

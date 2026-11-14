@@ -30,7 +30,7 @@ const renderAt = async (at: string) => {
   await settle();
 };
 const answer = (closesAt: string | null) =>
-  rpc.mockImplementation(async (fn: string) => (fn === "my_firm_closure" ? { data: closesAt ? [{ asked_at: "2026-11-18T10:00:00Z", closes_at: closesAt }] : [], error: null } : { data: null, error: null }));
+  rpc.mockImplementation(async (fn: string) => (fn === "my_firm_closure" ? { data: [{ asked_at: closesAt ? "2026-11-18T10:00:00Z" : null, closes_at: closesAt, can_ask: !closesAt }], error: null } : { data: null, error: null }));
 
 beforeEach(() => {
   clearMyFirms();

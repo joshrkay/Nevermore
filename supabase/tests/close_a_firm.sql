@@ -129,6 +129,7 @@
 \i supabase/migrations/20261118100000_join_by_organisation.sql
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
+\i supabase/migrations/20261118110500_close_a_firm_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -211,6 +212,25 @@ $$;
 
 CREATE FUNCTION pg_temp.hash(t text) RETURNS text LANGUAGE sql AS $$ SELECT encode(extensions.digest(t, 'sha256'), 'hex') $$;
 
+-- A firm with an open request, for the cases that need one of their own: asked 31 days ago and due a day ago when `due`, else asked now.
+CREATE FUNCTION pg_temp.make_closing_firm(n text, addr text, owner text, due boolean, decided boolean DEFAULT true) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE fid uuid;
+BEGIN
+  IF decided THEN
+    INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES (n, addr, now(), 'approved', now()) RETURNING id INTO fid;
+  ELSE
+    INSERT INTO public.firms (name, address) VALUES (n, addr) RETURNING id INTO fid;
+  END IF;
+  INSERT INTO fx VALUES (lower(split_part(n, ' ', 1)), fid);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fid, pg_temp.id(owner), 'owner');
+  IF due THEN
+    INSERT INTO public.firm_closures (firm_id, asked_at, asked_by, closes_at) VALUES (fid, now() - interval '31 days', pg_temp.id(owner), now() - interval '1 day');
+  ELSE
+    INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (fid, pg_temp.id(owner), now() + interval '30 days');
+  END IF;
+  RETURN fid;
+END $$;
+
 -- ---------- set up ----------
 -- alpha: the firm that closes. Two owners, an agent who also holds the advisor role, a member with a team and a mailbox, a member
 -- who also belongs to beta, a suspended member, and a membership dated for later. beta: another firm with the same kinds of rows.
@@ -227,7 +247,7 @@ BEGIN
   INSERT INTO fx VALUES ('alpha', fa), ('beta', fb), ('gamma', fg), ('omega', fo), ('rho', fr), ('sigma', fs);
   PERFORM pg_temp.new_user(n) FROM unnest(ARRAY['owner_a', 'owner_a2', 'agent_a', 'teamed', 'both', 'susp', 'future', 'leaver', 'owner_b', 'agent_b',
     'owner_g', 'owner_w', 'owner_r', 'owner_s', 'platform_admin', 'outsider', 'prospect_a', 'prospect_b', 'invitee', 'joiner',
-    'founder1', 'founder2', 'founder3']) AS n;
+    'founder1', 'founder2', 'founder3', 'admin_member', 'prospect_a2', 'owner_d', 'owner_e', 'owner_dl', 'owner_z', 'owner_x']) AS n;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
     (fa, pg_temp.id('owner_a'), 'owner'), (fa, pg_temp.id('owner_a2'), 'owner'), (fa, pg_temp.id('agent_a'), 'agent'), (fa, pg_temp.id('both'), 'agent'),
     (fa, pg_temp.id('leaver'), 'agent'), (fa, pg_temp.id('susp'), 'agent'),
@@ -237,7 +257,8 @@ BEGIN
   INSERT INTO public.firm_teams (firm_id, name) VALUES (fb, 'Beta team') RETURNING id INTO t2;
   INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES (fa, pg_temp.id('teamed'), 'agent', t1);
   INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from) VALUES (fa, pg_temp.id('future'), 'agent', now() + interval '10 days');
-  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('platform_admin'), 'admin'), (pg_temp.id('agent_a'), 'advisor'), (pg_temp.id('agent_b'), 'advisor'),
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fa, pg_temp.id('admin_member'), 'agent'), (public.default_firm_id(), pg_temp.id('owner_d'), 'owner');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('admin_member'), 'admin'), (pg_temp.id('platform_admin'), 'admin'), (pg_temp.id('agent_a'), 'advisor'), (pg_temp.id('agent_b'), 'advisor'),
     (pg_temp.id('owner_a'), 'advisor');
   -- Each firm's intake, and a quote request on alpha's with a mail thread, held mail and an open alert.
   INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES (pg_temp.id('prospect_a'), fa, '{}') RETURNING id INTO s;
@@ -267,6 +288,10 @@ BEGIN
     (pg_temp.id('agent_a'), 'google', 'agent_a@mailbox.test', 'gmail.send', 'c', 'i'),
     (pg_temp.id('both'), 'google', 'both@mailbox.test', 'gmail.send', 'c', 'i'),
     (pg_temp.id('agent_b'), 'google', 'agent_b@mailbox.test', 'gmail.send', 'c', 'i');
+  -- A failed deletion of a second intake of alpha (for retry_intake_deletion); the first intake must stay open to files.
+  INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES (pg_temp.id('prospect_a2'), fa, '{}') RETURNING id INTO sv;
+  INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, status) VALUES (sv, pg_temp.id('prospect_a2'), 'request', 'probe', 'failed') RETURNING id INTO sv;
+  INSERT INTO fx VALUES ('deletion_a', sv);
   INSERT INTO fx VALUES ('quote_a', gen_random_uuid());
   PERFORM set_config('test.quote_a', q::text, false);
 END $$;
@@ -370,6 +395,7 @@ DECLARE fa uuid := pg_temp.id('alpha'); closes timestamptz := (SELECT closes_at 
 BEGIN
   PERFORM pg_temp.as_user('agent_a');
   PERFORM pg_temp.is((SELECT c.closes_at FROM public.my_firm_closure(fa) c), closes, 'an agent of the firm is told when it closes');
+  PERFORM pg_temp.is((SELECT c.can_ask FROM public.my_firm_closure(fa) c), false, 'and may not ask: an agent is not an owner, and one request is open');
   PERFORM pg_temp.as_user('owner_a');
   PERFORM pg_temp.is((SELECT count(*) FROM public.my_firm_closure(fa)), 1::bigint, 'so is an owner');
   PERFORM pg_temp.is((SELECT count(*) FROM public.my_firm_closure(pg_temp.id('beta'))), 0::bigint, 'nobody is told about a firm that is not closing');
@@ -381,6 +407,32 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.my_firm_closure(%L)$q$, fa)), '42501', 'nor a signed-out visitor');
   RESET ROLE;
   RAISE NOTICE 'close_a_firm: banner cases passed';
+END $$;
+
+-- ---------- the default firm can't be closed (D-101, D-121) ----------
+-- Break caught: the firm that takes every intake people start on Nevermore is asked to close (every later intake would go to a firm nobody
+-- reads, and the platform's intake work would be read-only for 30 days); the closing deletes it anyway when a request row exists; the page
+-- is told it may ask. The database tells the page, so the id is not written twice.
+DO $$
+DECLARE fd uuid := public.default_firm_id(); fa uuid := pg_temp.id('alpha');
+BEGIN
+  PERFORM pg_temp.as_user('owner_d');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.request_firm_closure(%L, 'Edgar Allan Advisory')$q$, fd)),
+    'PT403: This firm takes the intakes people start on Nevermore, so it can''t be closed', 'the default firm cannot be asked to close, even by its owner');
+  PERFORM pg_temp.is((SELECT c.can_ask FROM public.my_firm_closure(fd) c), false, 'and its owner is told they may not ask');
+  PERFORM pg_temp.is((SELECT c.can_ask FROM public.my_firm_closure(fa) c), NULL::boolean, 'while they are told nothing of another firm');
+  PERFORM pg_temp.as_user('owner_a2');
+  PERFORM pg_temp.is((SELECT c.can_ask FROM public.my_firm_closure(fa) c), false, 'an owner of a firm with a request open is not offered another');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = fd), 0::bigint, 'no request was made');
+  -- Even with a due request row, the closing never closes it.
+  INSERT INTO public.firm_closures (firm_id, asked_at, closes_at) VALUES (fd, now() - interval '31 days', now() - interval '1 day');
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.close_firm_now(%L)$q$, fd)), 'PT403: This firm takes the intakes people start on Nevermore, so it can''t be closed', 'the closing refuses it');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE firm_id = fd AND public.membership_is_current(valid_from, valid_until)), 1::bigint, 'and its owner is still a member');
+  DELETE FROM public.firm_closures WHERE firm_id = fd;
+  RAISE NOTICE 'close_a_firm: the default firm passed';
 END $$;
 
 -- ---------- every write path is refused while the firm is closing ----------
@@ -430,6 +482,10 @@ BEGIN
     ('correct a note', 'agent_a', format($q$SELECT public.advisor_correct_quote_request_note(%s, 'other', current_date, 'y')$q$, note), closing_msg),
     ('issue a new reply address', 'agent_a', format($q$SELECT public.advisor_reissue_quote_request_address(%s)$q$, q), closing_msg),
     ('retry a send', 'agent_a', format($q$SELECT public.advisor_requeue_outbox_event(%L)$q$, ev), closing_msg),
+    ('record a packet', 'agent_a', format($q$SELECT public.record_manuscript_version(%L, 1, %L, 'x', NULL, 0, false, 'h', now())$q$, s, s || '/p.pdf'), closing_msg),
+    ('ask for an intake to be deleted, as an admin who is also a member', 'admin_member', format($q$SELECT public.request_intake_deletion(%L, 'probe')$q$, s), closing_msg),
+    ('revoke an intake, as an admin who is also a member', 'admin_member', format($q$SELECT public.revoke_chamber_session(%L, 'probe')$q$, s), closing_msg),
+    ('retry an intake''s deletion, as an admin who is also a member', 'admin_member', format($q$SELECT public.retry_intake_deletion(%L)$q$, pg_temp.id('deletion_a')), closing_msg),
     ('write a note on an intake', 'agent_a', format($q$INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, %L, 'hi')$q$, s, pg_temp.id('agent_a')), closing_msg);
   RAISE NOTICE 'close_a_firm: % write paths listed', (SELECT count(*) FROM writes);
 END $$;
@@ -444,10 +500,24 @@ BEGIN
     PERFORM pg_temp.is(got, w.refusal, 'while closing: ' || w.label);
     n := n + 1;
   END LOOP;
-  PERFORM pg_temp.is(n >= 30, true, 'the list of write paths has not been emptied');
+  PERFORM pg_temp.is(n >= 35, true, 'the list of write paths has not been emptied');
   PERFORM pg_temp.is(pg_temp.held(pg_temp.id('alpha')), before, 'and nothing of the firm''s working data changed');
   PERFORM pg_temp.is((SELECT count(*) FROM public.advisor_notes WHERE session_id = pg_temp.id('intake_a')), 0::bigint, 'no note was written');
   RAISE NOTICE 'close_a_firm: every write path is refused while closing';
+END $$;
+
+-- The two storage policies a firm's members use on the manuscripts bucket. Break caught: a member of a closing firm stores a generated
+-- file in its intake's folder, or removes one that no packet records (a policy's refusal is a row it will not insert, or none deleted).
+DO $$
+DECLARE s uuid := pg_temp.id('intake_a');
+BEGIN
+  RESET ROLE;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', s || '/unrecorded.pdf');
+  PERFORM pg_temp.as_user('agent_a');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', %L)$q$, s || '/new.pdf')), '42501', 'a member of a closing firm cannot store a generated file');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$DELETE FROM storage.objects WHERE bucket_id = 'manuscripts' AND name = %L$q$, s || '/unrecorded.pdf')), 'rows:0', 'nor remove an unrecorded one');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM storage.objects WHERE bucket_id = 'manuscripts' AND name = s || '/unrecorded.pdf'), 1::bigint, 'it is still there');
 END $$;
 
 -- Break caught: a person who is no member of the closing firm is told it is closing by the refusal (the answer must be the one they get
@@ -510,8 +580,8 @@ DECLARE fa uuid := pg_temp.id('alpha'); fo uuid := pg_temp.id('omega'); s uuid :
   local text; res jsonb; before bigint;
 BEGIN
   PERFORM pg_temp.as_user('agent_a');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions), 1::bigint, 'a member reads the firm''s intake');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)), 1::bigint, 'the queue lists it');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions), 2::bigint, 'a member reads the firm''s intakes');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 500, 0, NULL, NULL, NULL)), 2::bigint, 'the queue lists them');
   PERFORM pg_temp.is((SELECT count(*) FROM public.my_firms()), 1::bigint, 'the console lists the firm');
   PERFORM pg_temp.is((SELECT count(*) FROM public.referral_partners), 1::bigint, 'and the firm''s referral partners');
   PERFORM pg_temp.is((SELECT count(*) FROM public.list_saved_views(pg_temp.id('alpha'), 'submissions')), 1::bigint, 'and the saved views');
@@ -583,7 +653,8 @@ BEGIN
   PERFORM pg_temp.is(public.firm_is_read_only(fa), false, 'the firm is no longer read-only');
   PERFORM pg_temp.as_user('owner_a2');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.withdraw_firm_closure(%L)$q$, fa)), 'PT409', 'a withdrawn request is not withdrawn twice');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.my_firm_closure(fa)), 0::bigint, 'and no banner is shown');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.my_firm_closure(fa) c WHERE c.closes_at IS NOT NULL), 0::bigint, 'and no banner is shown');
+  PERFORM pg_temp.is((SELECT c.can_ask FROM public.my_firm_closure(fa) c), true, 'and an owner may ask again');
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.held(fa), before, 'nothing of the firm''s was deleted');
 
@@ -595,6 +666,10 @@ BEGIN
     PERFORM pg_temp.is(got <> 'PT423', true, 'after withdrawing: ' || w.label || ' (gave ' || got || ')');
     n := n + 1;
   END LOOP;
+  PERFORM pg_temp.as_user('agent_a');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', %L)$q$, pg_temp.id('intake_a') || '/new.pdf')), 'rows:1', 'after withdrawing a member stores a generated file again');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$DELETE FROM storage.objects WHERE bucket_id = 'manuscripts' AND name = %L$q$, pg_temp.id('intake_a') || '/unrecorded.pdf')), 'rows:1', 'and removes an unrecorded one');
+  RESET ROLE;
   SET LOCAL ROLE service_role;
   PERFORM pg_temp.is(public.mailbox_secret(pg_temp.id('agent_a')) IS NOT NULL, true, 'a member''s mailbox is read for sending again');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.plan_mail_move(%s, NULL, %L)$q$, current_setting('test.m_thread'), pg_temp.id('agent_a'))), 'rows:1', 'and mail can be moved again');
@@ -712,21 +787,210 @@ BEGIN
 END $$;
 
 -- ---------- the daily job ----------
--- Break caught: the job closes the wrong firms (omega is not due; beta has no request); it closes one and stops; the counts are wrong.
+-- Break caught: the job closes the wrong firms (omega is not due; beta has no request); it closes a firm that is suspended (the firm
+-- would be deleted mid-investigation, with its owners unable to withdraw); it closes one and stops.
 DO $$
 DECLARE closed integer;
 BEGIN
   SET LOCAL ROLE service_role;
   closed := public.close_due_firms();
   RESET ROLE;
-  PERFORM pg_temp.is(closed, 2, 'the job closes the two firms whose 30 days have passed');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE closed_at IS NOT NULL), 2::bigint, 'and no others');
+  PERFORM pg_temp.is(closed, 1, 'the job closes the one due firm that is not suspended');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE closed_at IS NOT NULL), 1::bigint, 'and no others');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = pg_temp.id('omega') AND closed_at IS NULL AND withdrawn_at IS NULL), 1::bigint, 'omega is still waiting out its 30 days');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = pg_temp.id('gamma') AND closed_at IS NULL AND withdrawn_at IS NULL), 1::bigint, 'gamma, due but suspended, is not closed and its request stays open');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE firm_id = pg_temp.id('gamma') AND public.membership_is_current(valid_from, valid_until)), 1::bigint, 'and its owner is still a member, as the suspension left it');
   SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.close_firm_now(%L)$q$, pg_temp.id('gamma'))), '55000: A suspended firm is not closed', 'closing it by hand is refused too');
   PERFORM pg_temp.is(public.close_due_firms(), 0, 'running the job again closes nothing');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.close_firm_now(%L)$q$, pg_temp.id('alpha'))), 'PT404', 'and a closed firm is not closed twice');
   RESET ROLE;
   RAISE NOTICE 'close_a_firm: the job passed';
+END $$;
+
+-- ---------- lifting a suspension gives the owners seven days ----------
+-- Break caught: lifting a suspension of a firm whose request is overdue lets the job close it that night, before its owners can see the banner;
+-- the date is moved even when it was later already; the grace is given to a firm with no request.
+DO $$
+DECLARE fg uuid := pg_temp.id('gamma'); before_date timestamptz; later timestamptz;
+BEGIN
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_lift_firm_suspension(fg);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT closes_at >= now() + interval '7 days' - interval '1 minute' FROM public.firm_closures WHERE firm_id = fg AND closed_at IS NULL AND withdrawn_at IS NULL), true,
+    'the date is seven days from the lift');
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(public.close_due_firms(), 0, 'so the job does not close it that night');
+  RESET ROLE;
+  PERFORM pg_temp.as_user('owner_g');
+  PERFORM pg_temp.is((SELECT c.closes_at >= now() + interval '7 days' - interval '1 minute' FROM public.my_firm_closure(fg) c), true, 'and its owner is shown that date');
+  RESET ROLE;
+  -- A request whose date was already later keeps it.
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_suspend_firm(fg, 'Again');
+  RESET ROLE;
+  UPDATE public.firm_closures SET closes_at = now() + interval '20 days' WHERE firm_id = fg AND closed_at IS NULL AND withdrawn_at IS NULL;
+  before_date := (SELECT closes_at FROM public.firm_closures WHERE firm_id = fg AND closed_at IS NULL AND withdrawn_at IS NULL);
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_lift_firm_suspension(fg);
+  RESET ROLE;
+  later := (SELECT closes_at FROM public.firm_closures WHERE firm_id = fg AND closed_at IS NULL AND withdrawn_at IS NULL);
+  PERFORM pg_temp.is(later, before_date, 'a date already later than seven days off is kept');
+  -- A firm with no request gets nothing written.
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_suspend_firm(pg_temp.id('beta'), 'Brief');
+  PERFORM public.admin_lift_firm_suspension(pg_temp.id('beta'));
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = pg_temp.id('beta') AND closed_at IS NULL AND withdrawn_at IS NULL), 0::bigint, 'lifting a suspension of a firm that is not closing starts no request');
+  -- Its owner can withdraw now; do, so gamma is open for the rest.
+  PERFORM pg_temp.as_user('owner_g');
+  PERFORM public.withdraw_firm_closure(fg);
+  RESET ROLE;
+  PERFORM pg_temp.is(public.firm_is_read_only(fg), false, 'and the owner then withdrew it');
+  RAISE NOTICE 'close_a_firm: the grace after a suspension passed';
+END $$;
+
+-- ---------- a firm that fails to close is seen ----------
+-- Break caught: the job logs a warning nobody reads, so a firm that fails every day goes unseen: it must write an ops event with a code and
+-- the firm's id and no content; it leaves half a closing behind after the failure; a failure stops the other firms.
+CREATE FUNCTION pg_temp.refuse_team_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$;
+DO $$
+DECLARE fe uuid; closed integer;
+BEGIN
+  RESET ROLE;
+  fe := pg_temp.make_closing_firm('Epsilon Partners', 'epsilon-partners', 'owner_e', true, false);
+  INSERT INTO public.firm_teams (firm_id, name) VALUES (fe, 'Epsilon team');
+  CREATE TRIGGER force_failure BEFORE DELETE ON public.firm_teams FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse_team_delete();
+  SET LOCAL ROLE service_role;
+  closed := public.close_due_firms();
+  RESET ROLE;
+  PERFORM pg_temp.is(closed, 0, 'a firm that fails is not counted as closed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.ops_events WHERE kind = 'app_error' AND source = 'close-firms' AND code = 'firm_close_failed' AND detail = 'could not close a firm' AND session_id = fe), 1::bigint,
+    'it is an ops event with a code and the firm, for the monitoring page');
+  PERFORM pg_temp.is((SELECT length(detail) FROM public.ops_events WHERE code = 'firm_close_failed'), length('could not close a firm'), 'with nothing else in it');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_memberships WHERE firm_id = fe AND public.membership_is_current(valid_from, valid_until)), 1::bigint, 'nothing was left half done');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = fe AND closed_at IS NULL AND withdrawn_at IS NULL), 1::bigint, 'and the request is still open, to be tried tomorrow');
+  DROP TRIGGER force_failure ON public.firm_teams;
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(public.close_due_firms(), 1, 'tomorrow it closes');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.ops_events WHERE code = 'firm_close_failed'), 1::bigint, 'with no further event');
+  -- A closed firm that was never approved can't be decided on afterwards, and no closed firm is suspended.
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.admin_decide_firm(%L, true, NULL)$q$, fe)), '55000: That firm is closed', 'an admin cannot approve a closed firm');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.admin_suspend_firm(%L, 'late')$q$, fe)), '55000: That firm is closed', 'nor suspend it');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.admin_suspend_firm(%L, 'late')$q$, pg_temp.id('beta'))), 'ok', 'control: a firm that is not closed can still be suspended');
+  PERFORM public.admin_lift_firm_suspension(pg_temp.id('beta'));
+  RESET ROLE;
+  RAISE NOTICE 'close_a_firm: a failing firm is seen';
+END $$;
+
+-- ---------- Nevermore stops a closing ----------
+-- Break caught: a firm suspended for investigation is deleted because its owners can't withdraw and nobody else can stop it; the stop is
+-- possible for someone who is not a platform admin, or for a firm the admin belongs to; it is not in the firm's record as Nevermore's,
+-- or shows who at Nevermore or why; the owners are not told, or told the reason; the firm stays read-only; a platform admin could ask.
+DO $$
+DECLARE fd uuid; c public.firm_closures;
+BEGIN
+  RESET ROLE;
+  fd := pg_temp.make_closing_firm('Delta Dealers Co', 'delta-dealers-co', 'owner_dl', false);
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_suspend_firm(fd, 'Under investigation');
+  PERFORM pg_temp.as_user('owner_dl');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.withdraw_firm_closure(%L)$q$, fd)), '42501', 'the owner of a suspended firm cannot withdraw');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, 'mine')$q$, fd)), '42501', 'nor stop it: not a platform admin');
+  PERFORM pg_temp.as_user('agent_a');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, 'x')$q$, fd)), '42501', 'nor an agent of another firm');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, 'x')$q$, fd)), '42501', 'nor a visitor');
+  RESET ROLE;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fd, pg_temp.id('admin_member'), 'agent');
+  PERFORM pg_temp.as_user('admin_member');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, 'x')$q$, fd)), '42501', 'an admin does not stop the closing of a firm they belong to');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, '  ')$q$, fd)), '22023', 'a reason is required');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.admin_stop_firm_closure(gen_random_uuid(), 'x')$q$), 'PT404', 'for a firm that exists');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, 'x')$q$, pg_temp.id('beta'))), 'PT409', 'and that is closing');
+  PERFORM public.admin_stop_firm_closure(fd, '  Under investigation  ');
+  RESET ROLE;
+  SELECT * INTO c FROM public.firm_closures WHERE firm_id = fd;
+  PERFORM pg_temp.is(c.withdrawn_at IS NOT NULL AND c.closed_at IS NULL, true, 'the request is over');
+  PERFORM pg_temp.is(c.withdrawn_by IS NULL AND c.stopped_by = pg_temp.id('platform_admin') AND c.stop_reason = 'Under investigation', true, 'as stopped by Nevermore: who and why are the platform''s record');
+  PERFORM pg_temp.is(public.firm_is_read_only(fd), false, 'the firm is not read-only any more');
+  PERFORM pg_temp.is((SELECT actor_is_staff FROM public.firm_activity WHERE firm_id = fd AND kind = 'closure_stopped'), true, 'the firm''s record shows it as Nevermore''s (D-33)');
+  PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM public.outbox_events e, jsonb_object_keys(e.payload) k WHERE e.firm_id = fd AND e.payload ->> 'event' = 'stopped'), 'event,firm_name',
+    'the owners are emailed that it was stopped, with no person and no reason');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.admin_stop_firm_closure(%L, 'again')$q$, fd)), 'PT409', 'a stopped request is not stopped twice');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.request_firm_closure(%L, 'Delta Dealers Co')$q$, fd)), '42501', 'a platform admin still cannot ask to close it');
+  PERFORM public.admin_lift_firm_suspension(fd);
+  PERFORM pg_temp.as_user('owner_dl');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_add_referral_partner('delta', 'Delta', 'accounting', %L)$q$, fd)), 'rows:1', 'its owner can change the firm again');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.request_firm_closure(%L, 'Delta Dealers Co')$q$, fd)), 'rows:1', 'and ask again later');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.admin_firm_states() s WHERE s.firm_id = fd AND s.closing_on IS NULL), 1::bigint, 'the platform page no longer shows it as closing');
+  RESET ROLE;
+  RAISE NOTICE 'close_a_firm: stopping a closing passed';
+END $$;
+
+-- ---------- withdrawing and closing at the same moment (D-32) ----------
+-- The closure row's lock (and the time conditions) order a withdrawal against the closing. A request whose 30 days end in two seconds is
+-- withdrawn in one session, which holds its transaction open past that moment; the job's closing, in another, then must wait and find the
+-- request withdrawn: nothing is deleted. Without the row's lock the closing does its deleting first and is only stopped at the end by a
+-- check constraint, with a different error. The firm-row locks the first version also took are gone: this row lock and the conditions
+-- are what orders these, and the unique index orders two requests.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+DO $$
+DECLARE fz uuid;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Zeta Race Co', 'zeta-race-co', now(), 'approved', now()) RETURNING id INTO fz;
+  INSERT INTO fx VALUES ('zeta', fz);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fz, pg_temp.id('owner_z'), 'owner');
+  INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at) VALUES (fz, 'z@example.test', 'agent', pg_temp.hash('zeta'), now() + interval '7 days');
+  INSERT INTO public.firm_closures (firm_id, asked_at, asked_by, closes_at) VALUES (fz, now() - interval '1 day', pg_temp.id('owner_z'), now() + interval '2 seconds');
+END $$;
+
+DO $$
+DECLARE
+  fz uuid := pg_temp.id('zeta');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  as_owner text := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('owner_z'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'owner_z@example.test')::text);
+  second_pid integer; tries integer := 0; s text; m text;
+BEGIN
+  PERFORM race.dblink_connect('race_withdraw', dsn);
+  PERFORM race.dblink_connect('race_close', dsn);
+  PERFORM race.dblink_exec('race_close', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_close', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_withdraw', 'BEGIN');
+  PERFORM race.dblink_exec('race_withdraw', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_withdraw', as_owner) AS t(c text);
+  PERFORM * FROM race.dblink('race_withdraw', format($q$SELECT public.withdraw_firm_closure(%L)::text$q$, fz)) AS t(r text);
+  PERFORM pg_sleep(2.5);
+  PERFORM race.dblink_exec('race_close', 'BEGIN');
+  PERFORM race.dblink_send_query('race_close', format($q$SELECT public.close_firm_now(%L)::text$q$, fz));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the closing never waited for the withdrawal'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_withdraw', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_close') AS t(r text);
+    RAISE EXCEPTION 'FAIL: the firm was closed after its request was withdrawn';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    IF s <> 'PT404' THEN RAISE EXCEPTION 'FAIL: the closing gave % (%), expected PT404', s, m; END IF;
+  END;
+  PERFORM race.dblink_disconnect('race_withdraw');
+  BEGIN PERFORM race.dblink_exec('race_close', 'ROLLBACK'); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_disconnect('race_close');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_invitations WHERE firm_id = fz), 1::bigint, 'nothing of the firm was deleted');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = fz AND withdrawn_at IS NOT NULL AND closed_at IS NULL), 1::bigint, 'and the request is withdrawn, not closed');
+  RAISE NOTICE 'close_a_firm: two-session withdraw and close race passed';
 END $$;
 
 -- ---------- what was deleted ----------
@@ -747,7 +1011,9 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'referral_partners', 1, 'firm_teams', 1,
-    'memberships_ended', 6, 'member_suspensions_ended', 1, 'broker_mailboxes', 2), 'a count per table of what was deleted');
+    'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
+  PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
+    AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
   PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE address IN ('teamed@mailbox.test', 'agent_a@mailbox.test')), 0::bigint, 'the mailboxes of people whose last firm this was are deleted');
   PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE address = 'both@mailbox.test'), 1::bigint, 'the mailbox of a person who belongs to another firm is kept');
@@ -861,7 +1127,7 @@ BEGIN
   PERFORM pg_temp.is(got.closure_asked_by, pg_temp.id('owner_a'), 'asked by');
   PERFORM pg_temp.is(got.closure_deleted ->> 'saved_views', '2', 'with a count per table');
   SELECT * INTO got FROM public.admin_firm_states() s WHERE s.firm_id = fg;
-  PERFORM pg_temp.is(got.closed_on IS NOT NULL AND got.suspended, true, 'gamma, which was suspended while closing, closed all the same, and is still shown as suspended');
+  PERFORM pg_temp.is(got.closed_on IS NULL AND got.closing_on IS NULL AND NOT got.suspended, true, 'gamma, which was suspended while closing and whose owner then withdrew, is neither closing nor closed');
   SELECT * INTO got FROM public.admin_firm_states() s WHERE s.firm_id = pg_temp.id('omega');
   PERFORM pg_temp.is(got.closing_on IS NOT NULL AND got.closed_on IS NULL, true, 'omega is shown as closing, with its date');
   SELECT * INTO got FROM public.admin_firm_states() s WHERE s.firm_id = pg_temp.id('beta');
@@ -872,6 +1138,14 @@ BEGIN
   SELECT string_agg(c.dedupe_key, ',') INTO claimed FROM public.claim_outbox_events(ARRAY['advisor_notification', 'firm_closing', 'member_left'], 10, 5, 600) c;
   PERFORM pg_temp.is(claimed IS NULL OR claimed NOT LIKE '%alert-a%', true, 'an alert of the closed firm is not claimed: nobody is left to tell');
   PERFORM pg_temp.is(array_to_string(public.outbox_owner_recipients(fa), ','), '', 'and its owners have no addresses left');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT status || '/' || last_error FROM public.outbox_events WHERE dedupe_key = 'alert-a'), 'suppressed/cancelled: the firm closed', 'the alert that was waiting at closing was ended, as a cancelled reminder is');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events e WHERE e.firm_id = fa AND e.status IN ('pending', 'claimed')), 0::bigint, 'and so were the firm''s own emails: nothing waits for good');
+  INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload) VALUES ('peo_mail_arrived', pg_temp.id('intake_a'), 'late-alert', '{}');
+  PERFORM pg_temp.is((SELECT status || '/' || last_error FROM public.outbox_events WHERE dedupe_key = 'late-alert'), 'suppressed/cancelled: the firm closed', 'an alert queued afterwards, for mail that arrives later, is ended the moment it is queued');
+  INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload) VALUES ('prospect_confirmation', pg_temp.id('intake_a'), 'late-confirm', '{"recipient_email":"p@example.test"}');
+  PERFORM pg_temp.is((SELECT status FROM public.outbox_events WHERE dedupe_key = 'late-confirm'), 'pending', 'while the employer''s own email is not touched');
+  SET LOCAL ROLE service_role;
   RESET ROLE;
   RAISE NOTICE 'close_a_firm: record and platform page passed';
 END $$;
@@ -899,15 +1173,38 @@ BEGIN
   PERFORM pg_temp.is((SELECT address FROM public.firms WHERE id = new_id), 'alpha-brokers', 'after twelve months another firm takes the address');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firms WHERE id = fa), 1::bigint, 'the closed firm''s row stays');
   PERFORM pg_temp.is((SELECT address <> 'alpha-brokers' FROM public.firms WHERE id = fa), true, 'under another address, so it no longer holds this one');
+  PERFORM pg_temp.is((SELECT address = 'x.' || replace(fa::text, '-', '') FROM public.firms WHERE id = fa), true, 'a placeholder with a dot, which is not an address anyone can ask for');
+  -- Nobody who knows the firm's id can take the placeholder first: a sign-up takes ordinary addresses only, and the table's rule agrees.
+  PERFORM pg_temp.as_user('founder2');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.sign_up_firm('Squatter', %L)$q$, 'x.' || replace(fa::text, '-', ''))), '23514', 'the placeholder is refused as an address');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Squatter', 'has.dot')$q$), '23514', 'and so is any address with a dot');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.sign_up_firm('Squatter', 'x.00000000000000000000000000000000')$q$), '23514', 'whatever its digits');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.firms (name, address) VALUES ('Direct', 'x.zz')$q$), '23514', 'and the table refuses a placeholder that is not the exact shape');
+  PERFORM pg_temp.is((SELECT address FROM public.firm_closures WHERE firm_id = fa AND closed_at IS NOT NULL), 'alpha-brokers', 'the record is as it was');
   PERFORM pg_temp.is((SELECT address FROM public.firm_closures WHERE firm_id = fa AND closed_at IS NOT NULL), 'alpha-brokers', 'the platform''s record still says which address it held');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = fa), 0::bigint + (SELECT (v #>> '{}')::bigint FROM snap WHERE k = 'activity_a'), 'and its record is intact');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions WHERE firm_id = fa), 1::bigint, 'and its intake stays with it');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions WHERE firm_id = fa), 2::bigint, 'and its intakes stay with it');
   PERFORM pg_temp.as_user('platform_admin');
   PERFORM pg_temp.is((SELECT count(*) FROM public.admin_firm_states() s WHERE s.address = 'alpha-brokers'), 2::bigint, 'the platform page lists the new firm and the closed one, each at the address it held');
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(public.firm_public_name('alpha-brokers'), 'New Alpha', 'and the address now shows the new firm');
   RESET ROLE;
   RAISE NOTICE 'close_a_firm: the address hold passed';
+END $$;
+
+-- ---------- who asked is kept when the account is deleted ----------
+-- Break caught: deleting the account of the owner who asked (or withdrew) erases "on whose request" from the platform's record, or is refused
+-- because of it.
+DO $$
+DECLARE fa uuid := pg_temp.id('alpha'); asker uuid := pg_temp.id('owner_a');
+BEGIN
+  RESET ROLE;
+  DELETE FROM auth.users WHERE id = asker;
+  PERFORM pg_temp.is((SELECT count(*) FROM auth.users WHERE id = asker), 0::bigint, 'the account is deleted');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = fa AND asked_by = asker), 2::bigint, 'and the platform''s record still says whose requests they were (the id alone)');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closures WHERE firm_id = fa AND withdrawn_by = pg_temp.id('owner_a2')), 1::bigint, 'and who withdrew one');
+  RAISE NOTICE 'close_a_firm: who asked is kept';
 END $$;
 
 -- ---------- what closing deletes is one list, and it is complete ----------
@@ -940,7 +1237,7 @@ DECLARE
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
-    'plan_mail_move', 'apply_mail_move'];
+    'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s: the PEO list is the same for every firm',
@@ -952,19 +1249,16 @@ DECLARE
     'admin_register_census_template', 'a platform admin''s',
     'admin_save_peo_profile', 'a platform admin''s',
     'admin_set_peo_listed', 'a platform admin''s',
+    'admin_stop_firm_closure', 'a platform admin''s, who is no member of the firm',
     'admin_suspend_firm', 'a platform admin''s',
     'advisor_open_quote_request_thread', 'marks a thread read, which is what reading is; allowed while a firm is closing',
     'archive_chamber_session', 'the employer''s own intake: not the firm''s to freeze',
     'consume_ai_quota', 'the caller''s own allowance',
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',
-    'record_manuscript_version', 'the employer''s own intake',
-    'report_client_event', 'the platform''s monitoring',
+        'report_client_event', 'the platform''s monitoring',
     'request_firm_closure', 'the closing''s own door',
-    'request_intake_deletion', 'a platform admin''s',
-    'retry_intake_deletion', 'a platform admin''s',
-    'revoke_chamber_session', 'a platform admin''s',
-    'sign_up_firm', 'a new firm',
+        'sign_up_firm', 'a new firm',
     'withdraw_firm_closure', 'the closing''s own way back');
   lost text; unplaced text; stale text;
 BEGIN
@@ -984,6 +1278,42 @@ BEGIN
   WHERE NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = k);
   PERFORM pg_temp.is(stale, NULL::text, 'and the exempt list names no function that is gone');
   RAISE NOTICE 'close_a_firm: every writing function is accounted for';
+END $$;
+
+-- ---------- a write policy nobody thought about ----------
+-- Break caught: the same, for a table or storage policy, which no function guards: a policy that lets a member write (insert, update or
+-- delete) on a table of the public schema or on storage.objects must carry the read-only condition, or the table must have the trigger that
+-- refuses it, or it is listed here with the true reason it is not a member's change to a firm's data. The list is of every such policy.
+DO $$
+DECLARE
+  by_trigger text[] := ARRAY['public.advisor_notes'];
+  exempt jsonb := jsonb_build_object(
+    'public.chamber_sessions | Users can insert their own sessions', 'the employer''s own intake (user_id is the caller), not a member''s',
+    'public.chamber_sessions | Users can update their own sessions', 'the employer''s own intake',
+    'public.documents | Users can insert documents into their own sessions', 'the employer''s own documents in their own intake',
+    'public.documents | Users can update documents in their own sessions', 'the employer''s own documents',
+    'public.documents | Users can delete documents in their own sessions', 'the employer''s own documents',
+    'public.profiles | Users can insert their own profile', 'a person''s own profile',
+    'public.profiles | Users can update their own profile', 'a person''s own profile',
+    'public.firm_activity | firm_activity_pruner_delete', 'the retention role (no login) that prunes the firm''s record after ninety days',
+    'storage.objects | Users can delete documents in their own sessions', 'the employer''s own folder in the documents bucket');
+  unplaced text; lost text; stale text;
+BEGIN
+  RESET ROLE;
+  SELECT string_agg(p.schemaname || '.' || p.tablename || ' | ' || p.policyname || ' (' || p.cmd || ')', '; ' ORDER BY p.tablename, p.policyname) INTO unplaced
+  FROM pg_policies p
+  WHERE p.cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL') AND (p.schemaname = 'public' OR (p.schemaname = 'storage' AND p.tablename = 'objects'))
+    AND coalesce(p.qual, '') || coalesce(p.with_check, '') !~ 'read_only'
+    AND (p.schemaname || '.' || p.tablename) <> ALL (by_trigger)
+    AND NOT exempt ? (p.schemaname || '.' || p.tablename || ' | ' || p.policyname);
+  PERFORM pg_temp.is(unplaced, NULL::text, 'every write policy asks whether the firm is closing, or is listed as exempt with the reason');
+  SELECT string_agg(k, ', ') INTO lost FROM unnest(by_trigger) k
+  WHERE NOT EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = k::regclass AND g.tgname LIKE '%firm_not_closing' AND NOT g.tgisinternal);
+  PERFORM pg_temp.is(lost, NULL::text, 'and a table guarded by a trigger still has it');
+  SELECT string_agg(k, ', ') INTO stale FROM jsonb_object_keys(exempt) k
+  WHERE NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname || '.' || p.tablename || ' | ' || p.policyname = k);
+  PERFORM pg_temp.is(stale, NULL::text, 'and the exempt list names no policy that is gone');
+  RAISE NOTICE 'close_a_firm: every write policy is accounted for';
 END $$;
 
 SELECT 'close_a_firm: all cases passed' AS result;

@@ -7,7 +7,7 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "admin@exam
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const advisor = { fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => advisor);
-const firms = { fetchWaitingFirms: vi.fn(), decideFirm: vi.fn(), fetchFirmStates: vi.fn(), suspendFirm: vi.fn(), liftFirmSuspension: vi.fn() };
+const firms = { fetchWaitingFirms: vi.fn(), decideFirm: vi.fn(), fetchFirmStates: vi.fn(), suspendFirm: vi.fn(), liftFirmSuspension: vi.fn(), stopFirmClosure: vi.fn() };
 vi.mock("@/lib/firmApi", () => firms);
 
 const { default: AdvisorFirmsPage } = await import("./AdvisorFirmsPage");
@@ -30,6 +30,7 @@ describe("AdvisorFirmsPage", () => {
     firms.fetchFirmStates.mockReset().mockResolvedValue([state()]);
     firms.suspendFirm.mockReset().mockResolvedValue(undefined);
     firms.liftFirmSuspension.mockReset().mockResolvedValue(undefined);
+    firms.stopFirmClosure.mockReset().mockResolvedValue(undefined);
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();
   });
@@ -47,6 +48,22 @@ describe("AdvisorFirmsPage", () => {
     expect(items[1]).toHaveTextContent("Closed on November 1, 2026");
     expect(items[1]).toHaveTextContent("Deleted, by table: saved views 2, referral partners 1, memberships ended 3.");
     expect(within(items[1]).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // Catches: a platform admin has no way to stop a closing (a firm suspended for investigation would be deleted), or can stop one without a
+  // reason, or is offered it for a firm that is not closing.
+  it("stops a firm's closing with a reason, offered only beside a firm that is closing", async () => {
+    firms.fetchFirmStates.mockResolvedValue([state({ id: "c1", name: "Closing Co", address: "closing-co", closingOn: "2026-12-18T12:00:00Z" }), state()]);
+    renderPage();
+    const items = within(await screen.findByRole("list", { name: "Every firm" })).getAllByRole("listitem");
+    expect(within(items[1]).queryByRole("button", { name: /Stop the closing/ })).not.toBeInTheDocument();
+    fireEvent.click(within(items[0]).getByRole("button", { name: "Stop the closing of Closing Co" }));
+    const yes = within(items[0]).getByRole("button", { name: "Yes, stop it" });
+    expect(yes).toBeDisabled();
+    fireEvent.change(within(items[0]).getByLabelText("Reason for stopping the closing of Closing Co"), { target: { value: " Under investigation " } });
+    fireEvent.click(yes);
+    await waitFor(() => expect(firms.stopFirmClosure).toHaveBeenCalledWith("c1", "Under investigation"));
+    expect(toast.success).toHaveBeenCalledWith("The closing of Closing Co is stopped.");
   });
 
   it("is for admins, and loads nothing for anyone else", async () => {

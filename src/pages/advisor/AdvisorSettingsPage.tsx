@@ -59,7 +59,7 @@ const AdvisorSettingsPage = () => {
   const [closing, setClosing] = useState(false);
   const [typed, setTyped] = useState("");
   const [closeProblem, setCloseProblem] = useState<string | null>(null);
-  const { closesAt } = useFirmClosure(firm?.id ?? null);
+  const { closesAt, canAsk, loaded: closureKnown } = useFirmClosure(firm?.id ?? null);
 
   const leave = async () => {
     if (!firm) return;
@@ -145,13 +145,15 @@ const AdvisorSettingsPage = () => {
               {firm.name} closes on {closingDate(closesAt)}. Until then it is read-only. Withdraw the request and it is exactly as it was.
             </p>
           ) : (
-            <p className="text-sm text-muted-foreground mb-3">Ask to close {firm.name}. It stays read-only for 30 days, and you can change your mind until then.</p>
+            canAsk && <p className="text-sm text-muted-foreground mb-3">Ask to close {firm.name}. It stays read-only for 30 days, and you can change your mind until then.</p>
           )}
           {closeProblem && <p role="alert" className="text-sm text-destructive mb-3">{closeProblem}</p>}
           {closesAt ? (
             <button type="button" disabled={busy} onClick={() => void withdraw()} className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50">
               Withdraw the request to close
             </button>
+          ) : !closureKnown ? null : !canAsk ? (
+            <p className="text-sm">This firm takes the intakes people start on Nevermore, so it can't be closed.</p>
           ) : (
             <button type="button" onClick={() => { setCloseProblem(null); setTyped(""); setClosing(true); }}
               className="min-h-11 px-3 rounded-md border border-destructive text-destructive text-sm hover:bg-muted disabled:opacity-50">
