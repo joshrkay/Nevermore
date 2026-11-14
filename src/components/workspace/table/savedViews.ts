@@ -8,11 +8,14 @@ import type { Readiness, TableDefinition, TableView, UnavailableView } from "./c
 function whyUnavailable<K extends TableFields>(table: TableDefinition<K, never, never>, view: SavedView): string | null {
   for (const f of view.filters) {
     if (!has(table.fields, f.field)) return "This view uses a field this table no longer has.";
-    if (!readStoredFilter(table, f)) return "This view uses a filter this table no longer takes.";
-    // The database refuses a choice a field doesn't list, for the whole question; it trims and lowercases a value before it compares, so this does too.
-    const choices = table.fields[f.field as keyof K & string].choices;
+    // The filter as the database will be asked it: a value stored as one text is read as a list of one, as the address reads it.
+    const read = readStoredFilter(table, f);
+    if (!read) return "This view uses a filter this table no longer takes.";
+    // The database refuses a choice a field it holds a list for doesn't list, for the whole question; it trims and lowercases a value before it compares, so this does too.
+    const field = table.fields[f.field as keyof K & string];
+    const value = (read as { value?: unknown }).value;
     const named = (v: unknown) => String(v).trim().toLowerCase();
-    if (choices && Array.isArray(f.value) && f.value.some((v) => !choices.some((c) => named(c.value) === named(v)))) return "This view uses a choice its field no longer lists.";
+    if (field.choices && field.choicesEnforced && Array.isArray(value) && value.some((v) => !field.choices!.some((c) => named(c.value) === named(v)))) return "This view uses a choice its field no longer lists.";
   }
   if (view.sort && !has(table.fields, view.sort.field)) return "This view is sorted by a field this table no longer has.";
   return null;

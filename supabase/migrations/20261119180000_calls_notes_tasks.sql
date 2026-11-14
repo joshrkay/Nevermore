@@ -642,3 +642,31 @@ AS $$
     (900, 'storage.objects WHERE bucket_id = ''peo-mail''', 'keep', NULL, 'an intake''s files')
   ) AS t (ord, src, action, firm_column, why)
 $$;
+
+-- ---------- 10. Last activity takes them in (D-201) ----------
+-- account_activity_times (20261119130000), restated with every branch it had (the account's making; a status change of a quote request on one of its
+-- opportunities' intakes) and one more: a call, a note or a task logged or completed on the account, which is also how one on its contacts or its
+-- opportunities is found, since each carries the account. A call counts at when it took place, a note or a task at when it was made, a task again when it
+-- was done, and a note again at each addition. Found by the firm and the account, so the (firm_id, account_id) index reads it and the accounts table's
+-- query keeps reading a few rows. Editing a call, a task or a note's text, or opening a task again, is not activity.
+CREATE OR REPLACE FUNCTION public.account_activity_times(p_firm_id uuid, p_account_id uuid)
+RETURNS TABLE (at timestamptz)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT a.created_at FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = p_account_id
+  UNION ALL
+  SELECT e.changed_at
+  -- OFFSET 0: the account's own opportunities are found first (by the account), and only then their quote requests, by intake: left to itself the database
+  -- may start from every firm's quote requests and look each one's opportunity up.
+  FROM (SELECT o.intake_id FROM public.opportunities o WHERE o.firm_id = p_firm_id AND o.account_id = p_account_id AND o.intake_id IS NOT NULL OFFSET 0) o
+  JOIN public.quote_requests q ON q.session_id = o.intake_id
+  JOIN public.quote_request_events e ON e.quote_request_id = q.id AND e.field = 'status'
+  UNION ALL
+  SELECT x.at FROM public.activities x WHERE x.firm_id = p_firm_id AND x.account_id = p_account_id
+  UNION ALL
+  SELECT x.done_at FROM public.activities x WHERE x.firm_id = p_firm_id AND x.account_id = p_account_id AND x.done_at IS NOT NULL
+  UNION ALL
+  SELECT (ad ->> 'at')::timestamptz FROM public.activities x CROSS JOIN LATERAL jsonb_array_elements(x.additions) AS ad
+  WHERE x.firm_id = p_firm_id AND x.account_id = p_account_id AND x.kind = 'note'
+$$;

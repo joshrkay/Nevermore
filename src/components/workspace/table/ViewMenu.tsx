@@ -30,6 +30,9 @@ export function ViewMenu({ view, control }: Props) {
   const ids = useId();
   // The attempt on its way: closing the dialog ends it, so a refusal that arrives later is not shown in the next, clean dialog.
   const attempt = useRef(0);
+  // A change that has been started is not over until its call settles, whatever the dialog does meanwhile: closing the dialog hides it but does not free
+  // the lock, so a reopened one cannot start another change of the view. A ref, because two clicks can come before the next render.
+  const locked = useRef(false);
   const { canChange, canShare, canUnshare } = view.saved;
   if (!canChange && !canShare && !canUnshare) return null;
 
@@ -38,7 +41,6 @@ export function ViewMenu({ view, control }: Props) {
     setOpen(false);
     setStep("menu");
     setProblem(null);
-    setBusy(false);
   };
   /** The name offered is the view's name as it is NOW, every time the rename step starts (it may have been renamed, or half typed over, since). */
   const startRename = () => {
@@ -48,18 +50,19 @@ export function ViewMenu({ view, control }: Props) {
   };
   /** Runs one change: the dialog closes when it was made, and says why when it wasn't. */
   const run = async (change: () => Promise<void>, fallback: string) => {
-    if (busy) return;
+    if (locked.current) return;
     const mine = ++attempt.current;
+    locked.current = true;
     setBusy(true);
     setProblem(null);
     try {
       await change();
       if (attempt.current === mine) close();
     } catch (error) {
-      if (attempt.current === mine) {
-        setProblem(wordsOf(error, fallback));
-        setBusy(false);
-      }
+      if (attempt.current === mine) setProblem(wordsOf(error, fallback));
+    } finally {
+      locked.current = false;
+      setBusy(false);
     }
   };
   const submitRename = (e: FormEvent) => {
@@ -81,10 +84,12 @@ export function ViewMenu({ view, control }: Props) {
       <PopoverContent align="start" className="w-72" aria-label={`Options for ${view.label}`}>
         {step === "menu" && (
           <div className="space-y-1">
-            {canChange && <button type="button" onClick={startRename} className={ITEM}>Rename</button>}
-            {canShare && <button type="button" onClick={() => void run(() => control.share(view.id), "Couldn't share the view. Try again.")} className={ITEM}>Share with the firm</button>}
-            {canUnshare && <button type="button" onClick={() => void run(() => control.unshare(view.id), "Couldn't stop sharing the view. Try again.")} className={ITEM}>Stop sharing</button>}
-            {canChange && <button type="button" onClick={() => setStep("delete")} className={ITEM}>Delete</button>}
+            {/* While an earlier change of this view is still on its way, nothing here starts another: the items stay in the tab order, say so, and ignore the click. */}
+            {canChange && <button type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) startRename(); }} className={`${ITEM} ${busy ? "opacity-50" : ""}`}>Rename</button>}
+            {canShare && <button type="button" aria-disabled={busy || undefined} onClick={() => void run(() => control.share(view.id), "Couldn't share the view. Try again.")} className={`${ITEM} ${busy ? "opacity-50" : ""}`}>Share with the firm</button>}
+            {canUnshare && <button type="button" aria-disabled={busy || undefined} onClick={() => void run(() => control.unshare(view.id), "Couldn't stop sharing the view. Try again.")} className={`${ITEM} ${busy ? "opacity-50" : ""}`}>Stop sharing</button>}
+            {canChange && <button type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) setStep("delete"); }} className={`${ITEM} ${busy ? "opacity-50" : ""}`}>Delete</button>}
+            {busy && <p className="px-3 pt-1 text-xs text-muted-foreground">Finishing the last change to this view.</p>}
             {canShare && <p className="px-3 pt-1 text-xs text-muted-foreground">Everyone in the firm can open a shared view, and sees only the submissions they may see.</p>}
           </div>
         )}

@@ -9,8 +9,9 @@ import { classifyApiError } from "@/lib/advisorApi";
 // fresh sign-in for a whole table, the refusal of Nevermore support, the most rows and the alert to the owners. This only puts its answer
 // and its refusals into the page's shape and words. The CSV and the button are CRM-S3.8a's.
 
-/** The tables that can be exported today. A later table is added here when the database's list (`export_table_registry`) gains it. */
-export type ExportTable = "referral_partners" | "firm_activity";
+/** The tables that can be exported today, in the order of the database's list (`export_table_registry`; src/lib/exportApi.test.ts compares them): a later table is added to both. */
+export const EXPORT_TABLES = ["referral_partners", "firm_activity", "accounts"] as const;
+export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** A value in a row: text, a number, a yes or no, or nothing. A column never holds anything else. */
 export type ExportValue = string | number | boolean | null;
@@ -49,7 +50,7 @@ export class ExportError extends Error {
 export interface ExportRequest {
   firmId: string;
   table: ExportTable;
-  /** The table's own filters, as the page shows them (`{}` for none): referral partners take `kind` and `search`; the firm's record `person` and `kind`. */
+  /** The table's own filters, as the page shows them (`{}` for none): referral partners take `kind` and `search`; the firm's record `person`, `kind`, `from` and `to`; accounts `filters` (the table's own, as listAccounts sends them), `search` and `time_zone`. */
   filters?: Record<string, Json>;
   /** The ids of the records selected, to export only them (at most 1,000); leave out for every row that matches the filters. */
   ids?: string[];
@@ -57,7 +58,7 @@ export interface ExportRequest {
 
 const value = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const answer = z.object({
-  table: z.enum(["referral_partners", "firm_activity"]),
+  table: z.enum(EXPORT_TABLES),
   label: z.string().min(1),
   columns: z.array(z.object({ id: z.string().min(1), label: z.string().min(1) })).min(1),
   rows: z.array(z.record(value)),

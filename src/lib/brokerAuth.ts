@@ -36,12 +36,16 @@ export function brokerNext(raw: string | null | undefined): string {
   return raw;
 }
 
-/** The address the provider sends the broker back to. It must be on Supabase's Redirect URLs list (docs/SUPABASE_SETUP.md). */
+/** Whether a page was named to come back to: a page of the console `brokerNext` keeps as it is. The queue itself ("/advisor") is one; nothing at all, or a link that leaves the console, is not. */
+export const namesABrokerPage = (raw: string | null | undefined): raw is string => !!raw && brokerNext(raw) === raw;
+
+/**
+ * The address the provider sends the broker back to. It must be on Supabase's Redirect URLs list (docs/SUPABASE_SETUP.md). A page that was named is always
+ * carried, the queue included, so the return can tell a sign-in for the queue from one for no page in particular (which a failed mailbox sends to the
+ * mailbox page).
+ */
 export function brokerCallbackUrl(origin: string, next?: string | null): string {
-  const target = brokerNext(next);
-  return target === BROKER_DEFAULT_NEXT
-    ? `${origin}${BROKER_CALLBACK_PATH}`
-    : `${origin}${BROKER_CALLBACK_PATH}?next=${encodeURIComponent(target)}`;
+  return namesABrokerPage(next) ? `${origin}${BROKER_CALLBACK_PATH}?next=${encodeURIComponent(next)}` : `${origin}${BROKER_CALLBACK_PATH}`;
 }
 
 /** Sends the browser to Google or Microsoft to sign in, asking for the send-only permission with it. Throws if Supabase refuses to start. */

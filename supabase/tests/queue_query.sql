@@ -432,6 +432,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
@@ -639,12 +640,31 @@ SELECT pg_temp.refused($$SELECT pg_temp.q('[{"field":"needs_action","op":"is","v
 SELECT pg_temp.refused($$SELECT pg_temp.q('[{"field":"needs_action","op":"is"}]')$$, '22023', 'true or false', 'yes or no with no value is refused');
 SELECT pg_temp.refused($$SELECT pg_temp.q('[{"field":"needs_action","op":"is_not","value":true}]')$$, '22023', 'A yes_no field can''t be filtered with "is_not"', 'an operator no kind has is refused');
 
--- person: the shape takes it; the queue has no owner yet (D-15), so it is refused until CRM-A1.1
+-- person (CRM-A1.1b, D-173): the shape takes any of a list of people, me and my team. The queue lists no person field (an intake has no owner, D-15),
+-- so these are the shared check and matcher the accounts table uses (supabase/tests/accounts_query.sql runs them over rows).
 SELECT pg_temp.as_owner();
-SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"me"}')$$, '0A000', 'CRM-A1.1', 'a "me" filter waits for CRM-A1.1');
-SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"my_team"}')$$, '0A000', 'CRM-A1.1', 'a "my team" filter waits for CRM-A1.1');
-SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"any_of","value":["x"]}')$$, '0A000', 'CRM-A1.1', 'a person filter waits for CRM-A1.1');
+SELECT pg_temp.is(public.workspace_filter_check('person', '{"field":"owner","op":"me"}'), '{"op":"me"}'::jsonb, 'a "me" filter is read');
+SELECT pg_temp.is(public.workspace_filter_check('person', '{"field":"owner","op":"my_team"}'), '{"op":"my_team"}'::jsonb, 'a "my team" filter is read');
+SELECT pg_temp.is(public.workspace_filter_check('person', '{"field":"owner","op":"any_of","value":["B0000000-0000-4000-8000-000000000002","b0000000-0000-4000-8000-000000000001","b0000000-0000-4000-8000-000000000002"]}'),
+  '{"op":"any_of","vs":["b0000000-0000-4000-8000-000000000001","b0000000-0000-4000-8000-000000000002"]}'::jsonb, 'any of people is read in lower case, sorted, each once');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"any_of","value":["x"]}')$$, '22023', 'people', 'a person is named by their id, not by anything else');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"any_of","value":[]}')$$, '22023', '1 to 100 people', 'an empty list of people is refused');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', jsonb_build_object('field', 'owner', 'op', 'any_of', 'value', (SELECT jsonb_agg(gen_random_uuid()) FROM generate_series(1, 101))))$$, '22023', '1 to 100 people', '101 people are refused');
+SELECT pg_temp.is(public.workspace_filter_check('person', jsonb_build_object('field', 'owner', 'op', 'any_of', 'value', (SELECT jsonb_agg(gen_random_uuid()) FROM generate_series(1, 100))))->'vs' IS NOT NULL, true, '100 people are taken');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"any_of","value":"b0000000-0000-4000-8000-000000000001"}')$$, '22023', 'list of people', 'one person, not in a list, is refused');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"any_of"}')$$, '22023', 'list of people', 'any of with no value is refused');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"is","value":"x"}')$$, '22023', 'A person field can''t be filtered with "is"', 'an operator a person field has not is refused');
 SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"me","value":"x"}')$$, '22023', 'takes no value', '"me" takes no value');
+SELECT pg_temp.refused($$SELECT public.workspace_filter_check('person', '{"field":"owner","op":"my_team","value":[]}')$$, '22023', 'takes no value', '"my team" takes no value');
+-- The matcher: a person on a row (null for none) against a checked filter. Never raises; nobody matches no one.
+SELECT pg_temp.is(ARRAY[
+  public.workspace_filter_match_person('b0000000-0000-4000-8000-000000000001', '{"op":"any_of","vs":["b0000000-0000-4000-8000-000000000001"]}'),
+  public.workspace_filter_match_person('b0000000-0000-4000-8000-000000000003', '{"op":"any_of","vs":["b0000000-0000-4000-8000-000000000001"]}'),
+  public.workspace_filter_match_person(NULL, '{"op":"any_of","vs":["b0000000-0000-4000-8000-000000000001"]}'),
+  public.workspace_filter_match_person('b0000000-0000-4000-8000-000000000001', '{"op":"me"}'),
+  public.workspace_filter_match_person('b0000000-0000-4000-8000-000000000001', '{"op":"nonsense"}'),
+  public.workspace_filter_match_person('b0000000-0000-4000-8000-000000000001', NULL)],
+  ARRAY[true, false, false, false, false, false], 'a person is matched by their id; a row with no owner matches no one; an unresolved or unknown filter matches nothing');
 SELECT pg_temp.refused($$SELECT public.workspace_filter_check('colour', '{"field":"x","op":"is"}')$$, '22023', 'No field is of the kind', 'an unknown kind is refused');
 SELECT pg_temp.as_user('agent_a1');
 
