@@ -277,28 +277,43 @@ const PartnerTable = ({ partners, counts, links, onChanged }: { partners: Referr
   </div>
 );
 
-const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
+type SavedPartner = ReferralPartner;
+
+const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
   const [editing, setEditing] = useState(false);
+  // What this row's own last save answered, shown (and edited from) at once; the list reload that follows confirms it and takes over.
+  const [saved, setSaved] = useState<ReferralPartner | null>(null);
+  const partner = saved && saved.version >= listed.version ? saved : listed;
   const link = partnerLink(partner.code);
   const api = useWorkspaceForm({
     schema: partnerSchema,
     defaultValues: { name: partner.name, kind: partner.kind },
-    save: async (v) => {
-      const answer = await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind, partner.version);
-      if (answer.conflict) {
+    version: partner.version,
+    versionOf: (answer: SavedPartner) => answer.version,
+    save: async (v, started): Promise<SavedPartner> => {
+      // The version the person started editing from, never the row's live one (a reload may have brought a newer one).
+      if (started.version === undefined) throw new SaveRefused("Couldn't save the partner. Reload the page and try again.");
+      const answer = await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind, started.version);
+      if (!("partner" in answer)) {
         // Nothing was saved. Until the conflict dialog arrives (CRM-S2.4a), say so plainly and keep what was typed.
         throw new SaveRefused("Someone else changed this partner while you were editing. Reload to see their change.");
       }
       toast.success("Partner saved");
+      return answer.partner;
     },
     savedValues: (_, v) => v,
-    onSaved: () => {
+    onSaved: (answer) => {
+      setSaved(answer);
       setEditing(false);
       onChanged();
     },
     failureMessage: "Couldn't save the partner. Check your connection and try again.",
     onCancel: () => setEditing(false),
   });
+  const startEditing = () => {
+    api.begin({ name: partner.name, kind: partner.kind }, partner.version);
+    setEditing(true);
+  };
 
   return (
     <WorkspaceFormProvider api={api}>
@@ -344,7 +359,7 @@ const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPa
         {editing ? (
           <FormActions className="min-w-44" />
         ) : (
-          <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
+          <button type="button" onClick={startEditing} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
             Edit
           </button>
         )}

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Json } from "@/integrations/supabase/types";
 
 // What a save answers when the record has a version (story CRM-S2.4b; D-46). A save names the version it started from. If someone else
@@ -29,17 +30,31 @@ export type RecordConflict<Current> = {
 /** A save that went through: the saved record, with its new version. */
 export type Saved<Row> = { conflict: false; record: Row };
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const changedFieldSchema = z.object({
+  field: z.string().min(1),
+  value: z.any().refine((v) => v !== undefined, "a value, or null"),
+  who: z.string().min(1),
+  at: z.string().min(1),
+});
 
-/** Reads the database's answer to a save, or null when it isn't one of the two shapes. */
-export function readSaveAnswer<Row, Current>(data: unknown, readCurrent: (current: Record<string, unknown>) => Current | null): Saved<Row> | RecordConflict<Current> | null {
-  if (!isObject(data)) return null;
-  if (data.conflict === false && isObject(data.record)) return { conflict: false, record: data.record as Row };
-  if (data.conflict === true && typeof data.currentVersion === "number" && isObject(data.current) && Array.isArray(data.changed)) {
-    const current = readCurrent(data.current);
-    if (!current) return null;
-    const changed = data.changed.filter(isObject).map((c) => ({ field: String(c.field), value: (c.value ?? null) as Json | null, who: String(c.who), at: String(c.at) }));
-    return { conflict: true, currentVersion: data.currentVersion, current, changed };
+/**
+ * Reads the database's answer to a save, checking every part of it. `row` describes the saved record (it must carry its new `version`) and
+ * `current` the editable fields of a conflict. An answer that is not exactly one of the two shapes (a missing or malformed part included) is
+ * null: the caller treats it as a failed save, never as a success and never as an empty conflict.
+ */
+export function readSaveAnswer<Row extends { version: number }, Current>(
+  data: unknown,
+  row: z.ZodType<Row>,
+  current: z.ZodType<Current>,
+): Saved<Row> | RecordConflict<Current> | null {
+  const saved = z.object({ conflict: z.literal(false), record: row.and(z.object({ version: z.number().int().min(1) })) }).safeParse(data);
+  if (saved.success) return { conflict: false, record: saved.data.record };
+  const conflict = z
+    .object({ conflict: z.literal(true), currentVersion: z.number().int().min(1), current, changed: z.array(changedFieldSchema) })
+    .safeParse(data);
+  if (conflict.success) {
+    const { currentVersion, current: values, changed } = conflict.data;
+    return { conflict: true, currentVersion, current: values, changed: changed as ChangedField[] };
   }
   return null;
 }

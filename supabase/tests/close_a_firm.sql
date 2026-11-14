@@ -139,6 +139,7 @@
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
+\i supabase/migrations/20261118160500_record_version_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -460,7 +461,7 @@ BEGIN
   SELECT id INTO ev FROM public.outbox_events WHERE dedupe_key = 'alert-a';
   INSERT INTO writes VALUES
     ('add a referral partner', 'agent_a', format($q$SELECT public.advisor_add_referral_partner('new-code', 'New', 'accounting', %L)$q$, fa), closing_msg),
-    ('change a referral partner', 'agent_a', format($q$SELECT public.advisor_update_referral_partner('existing', 'Renamed', 'accounting', %L)$q$, fa), closing_msg),
+    ('change a referral partner', 'agent_a', format($q$SELECT public.advisor_update_referral_partner('existing', 'Renamed', 'accounting', %L, 1)$q$, fa), closing_msg),
     ('invite a member', 'owner_a', format($q$SELECT public.invite_member(%L, 'new@example.test', 'agent', NULL, %L)$q$, fa, pg_temp.hash('x1')), closing_msg),
     ('send an invitation again', 'owner_a', format($q$SELECT public.resend_invitation(%L, %L)$q$, inv, pg_temp.hash('x2')), closing_msg),
     ('withdraw an invitation', 'owner_a', format($q$SELECT public.cancel_invitation(%L)$q$, inv), closing_msg),

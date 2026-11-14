@@ -299,7 +299,8 @@ describe("AdvisorPartnersPage", () => {
       await user.click(within(row).getByRole("button", { name: "Save" }));
       await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme Fractional CFOs", "accounting", 3));
       expect(toast.success).toHaveBeenCalledWith("Partner saved");
-      await waitFor(() => expect(screen.getByRole("button", { name: "Edit Acme CFO Partners" })).toBeInTheDocument());
+      // The saved name shows at once, from the answer (the list's reload is mocked unchanged).
+      await waitFor(() => expect(screen.getByRole("button", { name: "Edit Acme Fractional CFOs" })).toBeInTheDocument());
     });
 
     it("turns the details into fields marked Required, with Save and Cancel", async () => {
@@ -441,7 +442,7 @@ describe("AdvisorPartnersPage", () => {
       const { user, row } = await openEdit();
       await user.type(within(row).getByLabelText("Name"), " II");
       await user.click(within(row).getByRole("button", { name: "Save" }));
-      await screen.findByRole("button", { name: "Edit Acme CFO Partners" });
+      await screen.findByRole("button", { name: "Edit Acme CFO Partners II" });
       const leave = new Event("beforeunload", { cancelable: true });
       window.dispatchEvent(leave);
       expect(leave.defaultPrevented).toBe(false);
@@ -588,6 +589,88 @@ describe("AdvisorPartnersPage", () => {
       answer([acme, beta, { ...acme, code: "gamma", name: "Gamma", kind: "other" }]);
       await screen.findByRole("row", { name: /Gamma/ });
       expect(within(screen.getByRole("row", { name: /Save/ })).getByLabelText("Name")).toHaveValue("Beta Legal");
+    });
+  });
+
+  // The version a save sends is the one the person STARTED editing from, never the one a list reload brought later (CRM-S2.4b, review).
+  describe("a save names the version the person started from", () => {
+    const bobs = { ...acme, name: "Bob's Acme", version: 4 };
+    const gamma = { ...acme, code: "gamma", name: "Gamma", kind: "other", version: 1 };
+    const addGamma = async (user: ReturnType<typeof userEvent.setup>) => {
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "Gamma");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+    };
+    const conflict = { conflict: true, currentVersion: 4, current: { name: "Bob's Acme", kind: "accounting" }, changed: [{ field: "name", value: "Bob's Acme", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" }] };
+
+    // Catches: Save sending the version the row holds NOW, so a reload in between lets old typing overwrite someone else's change.
+    it("sends the starting version when a reload brought a newer one, and shows the conflict line again after another reload", async () => {
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme]).mockResolvedValue([bobs, gamma]);
+      api.addReferralPartner.mockResolvedValue(gamma);
+      api.updateReferralPartner.mockResolvedValue(conflict);
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      const row = screen.getByRole("row", { name: /Save/ });
+      await user.type(within(row).getByLabelText("Name"), " II");
+      await addGamma(user); // the list reloads, and the partner is now version 4
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(2));
+      await screen.findByRole("row", { name: /Gamma/ });
+      await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Save" }));
+      expect(await within(screen.getByRole("row", { name: /Save/ })).findByRole("alert")).toHaveTextContent("Someone else changed this partner while you were editing.");
+      expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      // Another reload, then Save again: still the starting version, still a conflict.
+      api.listReferralPartners.mockResolvedValue([{ ...bobs, version: 5 }, gamma]);
+      api.addReferralPartner.mockResolvedValue({ ...gamma, code: "delta", name: "Delta" });
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "Delta");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(3));
+      await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(2));
+      expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      expect(await within(screen.getByRole("row", { name: /Save/ })).findByRole("alert")).toHaveTextContent("Someone else changed this partner");
+    });
+
+    // Catches: a closed row keeping its old starting version, so the next edit conflicts with a change the person already saw.
+    it("starts again from the then-current version when the row is closed and Edit is opened again", async () => {
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme]).mockResolvedValue([bobs, gamma]);
+      api.addReferralPartner.mockResolvedValue(gamma);
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...bobs, name: "Mine", version: 5 } });
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      await addGamma(user);
+      await screen.findByRole("row", { name: /Gamma/ });
+      await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Cancel" }));
+      await user.click(await screen.findByRole("button", { name: "Edit Bob's Acme" }));
+      const row = screen.getByRole("row", { name: /Save/ });
+      expect(within(row).getByLabelText("Name")).toHaveValue("Bob's Acme");
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "Mine");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "acme-cfo", "Mine", "accounting", 4));
+    });
+
+    // Catches: a save conflicting with the person's own previous save because the page waits for the list to say the new version.
+    it("uses the answer to a save at once, so editing again before the list reloads starts from the new version", async () => {
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme]).mockReturnValue(new Promise(() => {}));
+      api.updateReferralPartner.mockResolvedValueOnce({ conflict: false, partner: { ...acme, name: "First", version: 4 } }).mockResolvedValue({ conflict: false, partner: { ...acme, name: "Second", version: 5 } });
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      let row = screen.getByRole("row", { name: /Save/ });
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "First");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      await user.click(await screen.findByRole("button", { name: "Edit First" })); // shown from the answer, though the list has not reloaded
+      row = screen.getByRole("row", { name: /Save/ });
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "Second");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Second", "accounting", 4));
     });
   });
 

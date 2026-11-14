@@ -157,6 +157,7 @@
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
+\i supabase/migrations/20261118160500_record_version_fixes.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

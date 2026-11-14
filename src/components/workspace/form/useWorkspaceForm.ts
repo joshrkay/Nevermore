@@ -20,8 +20,18 @@ export interface Explained { message: string; field?: string }
 export interface WorkspaceFormOptions<S extends z.ZodTypeAny, R> {
   schema: S;
   defaultValues: z.input<S>;
-  /** Sends the values (already trimmed and checked by the schema). Throw to refuse the save: the form stays open and keeps everything typed. */
-  save: (values: z.output<S>) => Promise<R>;
+  /**
+   * Sends the values (already trimmed and checked by the schema). Throw to refuse the save: the form stays open and keeps everything typed.
+   * `started.version` is the version of the record the person STARTED editing from (see `version` and `begin`), never the live one a list reload brought.
+   */
+  save: (values: z.output<S>, started: { version: number | undefined }) => Promise<R>;
+  /**
+   * The version of the record when this form first opened. Read once: a later change to this option (a list reloaded under an open form) is
+   * ignored on purpose, so a save can't name a version the person never saw. Start each edit with `begin`.
+   */
+  version?: number;
+  /** The version a successful save left the record at, taken from what `save` returned; the form starts from it afterwards. */
+  versionOf?: (result: R) => number | undefined;
   /** Runs after a successful save, with what `save` returned. The form has been cleared (or set to `savedValues`) and asks nothing more about leaving. */
   onSaved?: (result: R, values: z.output<S>) => void;
   /** What the form is set to after a save. Default: back to `defaultValues`, which is what an "add" form wants. */
@@ -44,6 +54,12 @@ export interface WorkspaceFormApi {
   dirty: boolean;
   /** Escape closes a form that has a Cancel, asking first when something changed. Put it on the form, and on any wider element (a table row) whose buttons sit outside it. */
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
+  /** The version of the record this edit started from: set by `begin`, moved only by this form's own successful save or `startFrom`. */
+  startedVersion: number | undefined;
+  /** Begins an edit: puts the form back to `values` and takes `version` as the one this edit starts from. Call it when the person opens Edit. */
+  begin: (values: FieldValues, version: number | undefined) => void;
+  /** Moves the starting version (for "keep mine": save again over their change, starting from the version that holds it). */
+  startFrom: (version: number | undefined) => void;
   /** The form's submit handler. */
   submit: (e?: BaseSyntheticEvent) => Promise<void>;
   /** Cancel: asks first when something changed, then clears the form and calls `onCancel`. Undefined when the form has no `onCancel`. */
@@ -82,7 +98,9 @@ let formCount = 0;
  * losing unsaved changes. Pair it with `WorkspaceForm`, `Field` and `FormActions`.
  */
 export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: WorkspaceFormOptions<S, R>): WorkspaceFormApi {
-  const { schema, defaultValues, save, onSaved, savedValues, explain, failureMessage = "Couldn't save. Check your connection and try again.", onCancel } = options;
+  const { schema, defaultValues, save, onSaved, savedValues, explain, failureMessage = "Couldn't save. Check your connection and try again.", onCancel, versionOf } = options;
+  // Held with the form, not read from the options again: a list reload under an open form must not change what a save starts from.
+  const [startedVersion, setStartedVersion] = useState<number | undefined>(options.version);
   const form = useForm<FieldValues>({
     resolver: zodResolver(schema),
     defaultValues: defaultValues as FieldValues,
@@ -99,7 +117,9 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await save(values as z.output<S>);
+      const result = await save(values as z.output<S>, { version: startedVersion });
+      const next = versionOf?.(result);
+      if (next !== undefined) setStartedVersion(next);
       guard.release();
       form.reset((savedValues ? savedValues(result, values as z.output<S>) : defaultValues) as FieldValues);
       onSaved?.(result, values as z.output<S>);
@@ -129,5 +149,11 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
     }
   };
 
-  return { form, formId, saving, saveError, dirty, submit, onKeyDown, cancel, requestClose: useCallback(requestClose, [requestClose]), prompt: guard.prompt };
+  const begin = useCallback((values: FieldValues, version: number | undefined) => {
+    form.reset(values);
+    setSaveError(null);
+    setStartedVersion(version);
+  }, [form]);
+
+  return { form, formId, saving, saveError, dirty, startedVersion, begin, startFrom: setStartedVersion, submit, onKeyDown, cancel, requestClose: useCallback(requestClose, [requestClose]), prompt: guard.prompt };
 }

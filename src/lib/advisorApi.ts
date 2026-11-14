@@ -29,6 +29,7 @@ import {
 
 import { downloadName } from "../../supabase/functions/_shared/fileSignature.ts";
 import { functionErrorReply } from "@/lib/functionError";
+import { z } from "zod";
 import { readSaveAnswer, type RecordConflict, type Saved } from "@/lib/recordVersion";
 // Every call here is authorized by the database (row security and advisor-only functions);
 // the advisor routes in the UI are a convenience on top of that, not the control.
@@ -162,6 +163,10 @@ export async function addReferralPartner(firmId: string, code: string, name: str
   return data as ReferralPartner;
 }
 
+const referralPartnerFieldsSchema = z.object({ name: z.string(), kind: z.string() }) as z.ZodType<ReferralPartnerFields>;
+const referralPartnerRowSchema = z
+  .object({ firm_id: z.string(), code: z.string(), name: z.string(), kind: z.string(), version: z.number() })
+  .passthrough() as unknown as z.ZodType<ReferralPartner>;
 /** The editable fields of a referral partner as they are now, in a conflict. */
 export type ReferralPartnerFields = { name: string; kind: string };
 /** Someone else changed the partner while the person was editing it (CRM-S2.4b). Nothing was saved; the answer says what is there now and who changed what. */
@@ -180,10 +185,9 @@ export async function updateReferralPartner(
 ): Promise<{ conflict: false; partner: ReferralPartner } | ReferralPartnerConflict> {
   const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind, p_version: version });
   if (error || !data) fail(error, "Couldn't save the partner.");
-  const answer = readSaveAnswer<ReferralPartner, ReferralPartnerFields>(data, (c) =>
-    typeof c.name === "string" && typeof c.kind === "string" ? { name: c.name, kind: c.kind } : null,
-  );
+  const answer = readSaveAnswer<ReferralPartner, ReferralPartnerFields>(data, referralPartnerRowSchema, referralPartnerFieldsSchema);
   if (!answer) fail(null, "Couldn't save the partner.");
+  // The generic layer says `record`; this call says `partner`, mapped here once.
   return answer.conflict ? answer : { conflict: false, partner: (answer as Saved<ReferralPartner>).record };
 }
 

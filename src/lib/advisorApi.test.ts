@@ -847,8 +847,8 @@ describe("referral partners belong to a firm", () => {
     rpc.mockResolvedValue({ data: { firm_id: "firm-b", code: "x" }, error: null });
     await addReferralPartner("firm-b", "x", "X", "other");
     expect(rpc).toHaveBeenCalledWith("advisor_add_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "X", p_kind: "other" });
-    rpc.mockResolvedValue({ data: { conflict: false, record: { firm_id: "firm-b", code: "x", version: 2 } }, error: null });
-    await expect(updateReferralPartner("firm-b", "x", "Y", "other", 1)).resolves.toEqual({ conflict: false, partner: { firm_id: "firm-b", code: "x", version: 2 } });
+    rpc.mockResolvedValue({ data: { conflict: false, record: { firm_id: "firm-b", code: "x", name: "Y", kind: "other", version: 2 } }, error: null });
+    await expect(updateReferralPartner("firm-b", "x", "Y", "other", 1)).resolves.toEqual({ conflict: false, partner: { firm_id: "firm-b", code: "x", name: "Y", kind: "other", version: 2 } });
     expect(rpc).toHaveBeenCalledWith("advisor_update_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "Y", p_kind: "other", p_version: 1 });
   });
 
@@ -864,6 +864,20 @@ describe("referral partners belong to a firm", () => {
       current: { name: "N", kind: "other" },
       changed: [{ field: "name", value: "N", who: "Nevermore", at: "2026-11-14T10:00:00+00:00" }],
     });
+  });
+
+  // Catches: an answer with a missing or malformed part being taken as a saved partner or as an empty conflict, so a failed save looks like a success.
+  it.each([
+    ["a conflict whose changed entry has no who", { conflict: true, currentVersion: 4, current: { name: "N", kind: "other" }, changed: [{ field: "name", value: "N", at: "2026-11-14T10:00:00+00:00" }] }],
+    ["a conflict with a changed entry that is not an object", { conflict: true, currentVersion: 4, current: { name: "N", kind: "other" }, changed: ["name"] }],
+    ["a conflict with no current values", { conflict: true, currentVersion: 4, changed: [] }],
+    ["a conflict with no current version", { conflict: true, current: { name: "N", kind: "other" }, changed: [] }],
+    ["a saved partner with no version", { conflict: false, record: { firm_id: "firm-b", code: "x", name: "Y", kind: "other" } }],
+    ["a saved answer with no partner", { conflict: false }],
+    ["neither shape", { ok: true }],
+  ])("treats %s as a failed save, never a success or an empty conflict", async (_, data) => {
+    rpc.mockResolvedValue({ data, error: null });
+    await expect(updateReferralPartner("firm-b", "x", "Y", "other", 2)).rejects.toThrow("Couldn't save the partner.");
   });
 
   it("lists the firms the caller belongs to, by name", async () => {

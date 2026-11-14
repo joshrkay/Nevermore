@@ -149,6 +149,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
+\i supabase/migrations/20261118160500_record_version_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -260,6 +261,17 @@ CREATE FUNCTION pg_temp.version_of(fid uuid, k text) RETURNS integer LANGUAGE sq
 $$;
 CREATE FUNCTION pg_temp.history_count(fid uuid, k text) RETURNS bigint LANGUAGE sql SECURITY DEFINER AS $$
   SELECT count(*) FROM public.record_history WHERE firm_id = fid AND table_name = 'referral_partners' AND record_key = k
+$$;
+
+-- Tables whose version trigger watches different fields from the history trigger's list (empty when none).
+CREATE FUNCTION pg_temp.versions_that_disagree() RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg(c.relname, ',' ORDER BY c.relname)
+  FROM pg_trigger h
+  JOIN pg_class c ON c.oid = h.tgrelid
+  JOIN pg_trigger v ON v.tgrelid = h.tgrelid AND v.tgfoid = 'public.record_version_bump'::regproc AND NOT v.tgisinternal
+  WHERE h.tgfoid = 'public.record_history_capture'::regproc AND NOT h.tgisinternal AND c.relnamespace = 'public'::regnamespace
+    AND (string_to_array(rtrim(replace(encode(h.tgargs, 'escape'), '\000', ','), ','), ','))[3:]
+        IS DISTINCT FROM string_to_array(rtrim(replace(encode(v.tgargs, 'escape'), '\000', ','), ','), ',')
 $$;
 
 -- ---------- 1. set up: two firms, two partners ----------
@@ -469,6 +481,11 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_update_referral_partner('acme-cfo', 'No version', 'other', %L, 0)$q$, acme)), '22023', 'and a version that can''t exist');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_update_referral_partner('acme-cfo', 'No version', 'other', %L)$q$, acme)),
     '22023: This save did not say which version of the partner it started from, so it was refused. Reload the page and try again.', 'with words a person can follow');
+  -- A version the partner has never had is no conflict (nobody changed anything): it is refused like a missing one.
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_update_referral_partner('acme-cfo', 'Ahead', 'other', %L, %s)$q$, acme, pg_temp.version_of(acme, 'acme-cfo') + 1)),
+    '22023: This save names a version of the partner that does not exist, so it was refused. Reload the page and try again.', 'a version above the current one is refused, not answered with an empty conflict');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_update_referral_partner('acme-cfo', 'Ahead', 'other', %L, 100000)$q$, acme)), '22023', 'however far ahead');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_update_referral_partner('no-such-code', 'Ahead', 'other', %L, 100000)$q$, acme)), 'PT404', 'and a code no partner has is still not found first');
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.row_of(acme, 'acme-cfo'), before_row, 'none of them changed the row');
   PERFORM pg_temp.is(pg_temp.history_count(acme, 'acme-cfo'), before_hist, 'or the history');
@@ -592,7 +609,16 @@ BEGIN
         AND NOT EXISTS (SELECT 1 FROM pg_trigger v WHERE v.tgrelid = t.tgrelid AND v.tgfoid = 'public.record_history_capture'::regproc)), NULL::text,
     'and every table with a version trigger has a history');
   PERFORM pg_temp.is((SELECT replace(encode(t.tgargs, 'escape'), '\000', ',') FROM pg_trigger t WHERE t.tgrelid = 'public.referral_partners'::regclass AND t.tgname = 'referral_partners_version'),
-    'name,kind,', 'the fields that raise the version are the very ones the history tracks: name and kind');
+    'name,kind,', 'referral partners: the fields that raise the version are name and kind');
+  -- The standing check: on EVERY table that carries both triggers, the version watches exactly the fields the history tracks.
+  PERFORM pg_temp.is(pg_temp.versions_that_disagree(), NULL::text, 'on every table the version watches the very fields the history tracks');
+  CREATE TABLE public.version_probe3 (firm_id uuid NOT NULL, code text NOT NULL, a text, b text, PRIMARY KEY (firm_id, code));
+  PERFORM public.record_history_track('public.version_probe3', 'referral_partners', ARRAY['code'], ARRAY['a', 'b']);
+  PERFORM public.record_version_track('public.version_probe3', ARRAY['a']);
+  PERFORM pg_temp.is(pg_temp.versions_that_disagree(), 'version_probe3', 'a table that attaches the two separately with different lists is named (the check goes red)');
+  PERFORM public.record_version_track('public.version_probe3', ARRAY['a', 'b']);
+  PERFORM pg_temp.is(pg_temp.versions_that_disagree(), NULL::text, 'and is not once the lists agree');
+  DROP TABLE public.version_probe3;
   PERFORM pg_temp.is((SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_update_referral_partner'), 1::bigint, 'and there is one way to save a partner');
   RAISE NOTICE 'record_version: attaching passed';
 END $$;
