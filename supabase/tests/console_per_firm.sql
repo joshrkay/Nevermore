@@ -139,6 +139,7 @@
 \i supabase/migrations/20261118140000_menu_counts.sql
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -293,13 +294,13 @@ SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NU
 SELECT pg_temp.is((SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 50, 0) WHERE session_id = pg_temp.id('intake_b')), 0::bigint, 'and not the other firm''s');
 SELECT pg_temp.is((SELECT count(*) FROM public.peos), 0::bigint, 'and reads no PEO of the platform''s catalogue');
 SELECT pg_temp.is((SELECT firm_id FROM public.advisor_add_referral_partner('p1', 'A partner', 'accounting')), pg_temp.id('firm_a'), 'and adds a referral partner to their own firm, as CRM-P2.1c makes partners a firm''s own');
-SELECT pg_temp.is((SELECT name FROM public.advisor_update_referral_partner('p1', 'Renamed partner', 'accounting')), 'Renamed partner', 'edits it');
+SELECT pg_temp.is((SELECT public.advisor_update_referral_partner('p1', 'Renamed partner', 'accounting', NULL, (SELECT version FROM public.referral_partners WHERE code = 'p1')) -> 'record' ->> 'name'), 'Renamed partner', 'edits it');
 SELECT pg_temp.as_owner();
 INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (pg_temp.id('firm_b'), 'b1', 'Other firm''s partner', 'accounting');
 SELECT pg_temp.as_user('roleless_a');
 SELECT pg_temp.is((SELECT string_agg(code, ',' ORDER BY code) FROM public.referral_partners), 'p1', 'lists their firm''s partners and none of the other firm''s');
-SELECT pg_temp.expect('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'')', 'PT404', 'cannot edit the other firm''s partner by its code');
-SELECT pg_temp.expect(format('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'', %L)', pg_temp.id('firm_b')), '42501', 'nor by naming that firm');
+SELECT pg_temp.expect('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'', NULL, 1)', 'PT404', 'cannot edit the other firm''s partner by its code');
+SELECT pg_temp.expect(format('SELECT public.advisor_update_referral_partner(''b1'', ''Taken'', ''accounting'', %L, 1)', pg_temp.id('firm_b')), '42501', 'nor by naming that firm');
 SELECT pg_temp.is((SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_add_referral_partner'), 1, 'only one way to add a partner exists: the three-argument version that ignores the firm is gone');
 SELECT pg_temp.is((SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'advisor_update_referral_partner'), 1, 'and only one way to edit one');
 SELECT pg_temp.as_user('owner_b');

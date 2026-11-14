@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
 import {
-  choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
+  choiceRule, Field, FormActions, nameRule, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
 } from "@/components/workspace/form";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
@@ -284,7 +284,11 @@ const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPa
     schema: partnerSchema,
     defaultValues: { name: partner.name, kind: partner.kind },
     save: async (v) => {
-      await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind);
+      const answer = await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind, partner.version);
+      if (answer.conflict) {
+        // Nothing was saved. Until the conflict dialog arrives (CRM-S2.4a), say so plainly and keep what was typed.
+        throw new SaveRefused("Someone else changed this partner while you were editing. Reload to see their change.");
+      }
       toast.success("Partner saved");
     },
     savedValues: (_, v) => v,

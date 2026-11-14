@@ -189,6 +189,7 @@
 \i supabase/migrations/20261118140000_menu_counts.sql
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1204,8 +1205,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now(), public.default_firm_id())', 'the funnel by source'),
   ('advisor_add_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_add_referral_partner(''probe-partner'', ''Probe'', ''other'')', 'adding a referral partner'),
-  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
-                                                                     'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
+  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid, p_version integer)', 'advisor',
+                                                                     'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'', NULL, 1)', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
@@ -1698,7 +1699,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$),
   -- A referral partner is its firm's own: adding one to a firm, or changing one by its code, is that firm's members' alone.
   ('advisor_add_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_add_referral_partner('probe-added', 'Probe', 'other', {firm})::text$$),
-  ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm})::text$$);
+  ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm}, 1)::text$$);
 -- Invitations (CRM-P1.2): only a current owner of the firm invites, resends, withdraws and lists. The matrix's admin and second
 -- firm owner are those owners; every other caller, the other firm's owner and a platform admin included, is refused (D-16, D-18).
 INSERT INTO fprobe (fn, who, shape, call) VALUES
@@ -2241,12 +2242,12 @@ BEGIN
   FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent', 'prospect_a', 'guest_a', 'signed_out', 'advisor_as_guest'] LOOP
     r := pg_temp.call_as(who, $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('nobody-test', 'Nobody', 'other')$q$);
     IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % adding a partner with no firm named gave %, expected a refusal', who, r; END IF;
-    r := pg_temp.call_as(who, $q$SELECT code FROM public.advisor_update_referral_partner('acme-cfo', 'Nobody', 'other')$q$);
+    r := pg_temp.call_as(who, $q$SELECT public.advisor_update_referral_partner('acme-cfo', 'Nobody', 'other', NULL, 1)::text$q$);
     IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % renaming a partner with no firm named gave %, expected a refusal', who, r; END IF;
   END LOOP;
 
   -- A change by code reaches the caller's own firm's partner only, though the other firm holds the same code.
-  r := pg_temp.call_as('agent_b', $q$SELECT name FROM public.advisor_update_referral_partner('acme-cfo', 'Renamed by B', 'other')$q$);
+  r := pg_temp.call_as('agent_b', $q$SELECT public.advisor_update_referral_partner('acme-cfo', 'Renamed by B', 'other', NULL, (SELECT version FROM public.referral_partners WHERE code = 'acme-cfo'))  -> 'record' ->> 'name'$q$);
   IF r <> 'ok:Renamed by B' THEN RAISE EXCEPTION 'FAIL: the second firm''s agent could not rename their own partner (%)', r; END IF;
   RESET ROLE;
   IF (SELECT name FROM public.referral_partners WHERE code = 'acme-cfo' AND firm_id = fa) <> 'Acme CFO Partners' THEN
@@ -3411,6 +3412,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_history_can_see', 'service_only', 'whether the caller may see a record of a firm, per table: the reading function asks it; no API role can call it'),
   ('record_history_remove', 'service_only', 'the one function that deletes history, owned by the role that may (ADR 0012): a record''s once the record is gone, a firm''s only while it closes; no API role can run it'),
   ('record_history_record_exists', 'service_only', 'whether a record still exists, per table: record_history_remove asks it; no API role can call it'),
+  ('record_history_who', 'service_only', 'how a history names who made a change (a member''s email, "Nevermore", "System"): the reading function and a conflict ask it, so they cannot disagree; no API role can call it (D-33, D-156)'),
+  ('record_version_changes', 'service_only', 'the fields that differ from what a person started from, and who changed each: a record''s save function asks it after its own firm checks, for a record the caller may see; no API role can call it (D-155)'),
   ('firm_actor_is_staff', 'service_only', 'whether an actor was Nevermore''s own person acting on a firm they were not a member of (D-33): the firm''s record and the history of a record stamp it; no API role can call it');
 
 INSERT INTO fn_class (fn, class, why) VALUES

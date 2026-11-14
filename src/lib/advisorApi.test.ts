@@ -847,8 +847,23 @@ describe("referral partners belong to a firm", () => {
     rpc.mockResolvedValue({ data: { firm_id: "firm-b", code: "x" }, error: null });
     await addReferralPartner("firm-b", "x", "X", "other");
     expect(rpc).toHaveBeenCalledWith("advisor_add_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "X", p_kind: "other" });
-    await updateReferralPartner("firm-b", "x", "Y", "other");
-    expect(rpc).toHaveBeenCalledWith("advisor_update_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "Y", p_kind: "other" });
+    rpc.mockResolvedValue({ data: { conflict: false, record: { firm_id: "firm-b", code: "x", version: 2 } }, error: null });
+    await expect(updateReferralPartner("firm-b", "x", "Y", "other", 1)).resolves.toEqual({ conflict: false, partner: { firm_id: "firm-b", code: "x", version: 2 } });
+    expect(rpc).toHaveBeenCalledWith("advisor_update_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "Y", p_kind: "other", p_version: 1 });
+  });
+
+  // Catches: a conflict read as a saved partner (so a stale save looks as if it worked), or its who and when dropped.
+  it("reads a conflict: the current version and values, and who changed which field and when", async () => {
+    rpc.mockResolvedValue({
+      data: { conflict: true, currentVersion: 4, current: { name: "N", kind: "other" }, changed: [{ field: "name", value: "N", who: "Nevermore", at: "2026-11-14T10:00:00+00:00" }] },
+      error: null,
+    });
+    await expect(updateReferralPartner("firm-b", "x", "Y", "other", 2)).resolves.toEqual({
+      conflict: true,
+      currentVersion: 4,
+      current: { name: "N", kind: "other" },
+      changed: [{ field: "name", value: "N", who: "Nevermore", at: "2026-11-14T10:00:00+00:00" }],
+    });
   });
 
   it("lists the firms the caller belongs to, by name", async () => {

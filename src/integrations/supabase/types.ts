@@ -604,6 +604,8 @@ export type Database = {
           name: string
           updated_at: string
           updated_by_email: string | null
+          // Raised by a trigger by one whenever the name or the kind really changes; a save names the one it started from (20261118160000).
+          version: number
         }
         Insert: never
         Update: never
@@ -869,10 +871,11 @@ export type Database = {
         Args: { p_kind: string; p_record_id: string; p_record_type: string }
         Returns: undefined
       }
-      // Renames a referral partner or changes its kind; the code never changes.
+      // Renames a referral partner or changes its kind; the code never changes. A save names the version it started from (20261118160000):
+      // a save that names none is refused (22023). The answer is {conflict: false, record} or {conflict: true, currentVersion, current, changed}.
       advisor_update_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
-        Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
       }
       advisor_list_outbox_events: {
         Args: { p_limit?: number; p_status?: string | null }

@@ -29,6 +29,7 @@ import {
 
 import { downloadName } from "../../supabase/functions/_shared/fileSignature.ts";
 import { functionErrorReply } from "@/lib/functionError";
+import { readSaveAnswer, type RecordConflict, type Saved } from "@/lib/recordVersion";
 // Every call here is authorized by the database (row security and advisor-only functions);
 // the advisor routes in the UI are a convenience on top of that, not the control.
 
@@ -161,11 +162,29 @@ export async function addReferralPartner(firmId: string, code: string, name: str
   return data as ReferralPartner;
 }
 
-/** Renames a firm's partner or changes its kind. Its code never changes. */
-export async function updateReferralPartner(firmId: string, code: string, name: string, kind: string): Promise<ReferralPartner> {
-  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind });
+/** The editable fields of a referral partner as they are now, in a conflict. */
+export type ReferralPartnerFields = { name: string; kind: string };
+/** Someone else changed the partner while the person was editing it (CRM-S2.4b). Nothing was saved; the answer says what is there now and who changed what. */
+export type ReferralPartnerConflict = RecordConflict<ReferralPartnerFields>;
+
+/**
+ * Renames a firm's partner or changes its kind. Its code never changes. `version` is the partner's version when the person started: a save from a
+ * version that is no longer current saves nothing and returns the conflict (`conflict: true`) instead of the partner (`conflict: false`, with its new version).
+ */
+export async function updateReferralPartner(
+  firmId: string,
+  code: string,
+  name: string,
+  kind: string,
+  version: number,
+): Promise<{ conflict: false; partner: ReferralPartner } | ReferralPartnerConflict> {
+  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind, p_version: version });
   if (error || !data) fail(error, "Couldn't save the partner.");
-  return data as ReferralPartner;
+  const answer = readSaveAnswer<ReferralPartner, ReferralPartnerFields>(data, (c) =>
+    typeof c.name === "string" && typeof c.kind === "string" ? { name: c.name, kind: c.kind } : null,
+  );
+  if (!answer) fail(null, "Couldn't save the partner.");
+  return answer.conflict ? answer : { conflict: false, partner: (answer as Saved<ReferralPartner>).record };
 }
 
 /**

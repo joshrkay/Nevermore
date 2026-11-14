@@ -146,6 +146,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118140000_menu_counts.sql
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -291,7 +292,7 @@ DO $$
 DECLARE acme uuid := pg_temp.id('acme'); r text; n bigint;
 BEGIN
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance', 'law_firm', acme);
+  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance', 'law_firm', acme, 1);
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, 'acme-cfo')), 3::bigint, 'two fields changed: two new rows beside the creation');
   PERFORM pg_temp.is((SELECT count(DISTINCT change_id) FROM pg_temp.held(acme, 'acme-cfo') WHERE kind = 'changed'), 1::bigint, 'the two belong to one save');
@@ -300,7 +301,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT old_value::text || '>' || new_value::text FROM pg_temp.held(acme, 'acme-cfo') WHERE field = 'kind'), '"accounting">"law_firm"', 'the kind, from and to');
   -- Only one field changes: one row.
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance Group', 'law_firm', acme);
+  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance Group', 'law_firm', acme, 2);
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, 'acme-cfo')), 4::bigint, 'one field changed: one new row');
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
@@ -318,7 +319,7 @@ DECLARE acme uuid := pg_temp.id('acme'); before_rows bigint;
 BEGIN
   SELECT count(*) INTO before_rows FROM pg_temp.held(acme, 'acme-cfo');
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance Group', 'law_firm', acme);
+  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance Group', 'law_firm', acme, 3);
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, 'acme-cfo')), before_rows, 'saving the same values writes nothing (although the updated stamp moved)');
   UPDATE public.referral_partners SET created_by_email = 'someone@example.test', updated_at = now(), updated_by_email = 'x@example.test' WHERE firm_id = acme AND code = 'acme-cfo';
@@ -399,7 +400,7 @@ BEGIN
     'a platform admin''s change is stored with the real actor and stamped as staff');
   -- An admin who is also a member acts as a member: shown as themselves.
   PERFORM pg_temp.as_user('acme_admin_member', 'acme-brokers');
-  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance Group (member admin)', 'law_firm', acme);
+  PERFORM public.advisor_update_referral_partner('acme-cfo', 'Acme Finance Group (member admin)', 'law_firm', acme, (SELECT version FROM public.referral_partners WHERE firm_id = acme AND code = 'acme-cfo'));
   RESET ROLE;
   PERFORM pg_temp.is((SELECT actor_is_staff FROM pg_temp.held(acme, 'acme-cfo') WHERE new_value = '"Acme Finance Group (member admin)"'), false, 'an admin who is a member of the firm acts as a member');
 
@@ -553,7 +554,7 @@ BEGIN
   PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
   r := pg_temp.read_as(acme, 'acme-cfo');
   PERFORM pg_temp.is(r <> '' AND position('platform_admin' IN r) = 0, true, 'a support session reads the history, and sees the staff change as Nevermore');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_update_referral_partner('acme-cfo', 'By support', 'other', %L)$q$, acme)), 'PT423', 'and changes no partner');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_update_referral_partner('acme-cfo', 'By support', 'other', %L, 1)$q$, acme)), 'PT423', 'and changes no partner');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.advisor_add_referral_partner('by-support', 'By support', 'other', %L)$q$, acme)), 'PT423', 'and adds none');
   PERFORM pg_temp.is(pg_temp.attempt($q$SELECT count(*) FROM public.record_history$q$), '42501', 'and reads the table no more than anyone');
   PERFORM pg_temp.as_user('platform_admin');

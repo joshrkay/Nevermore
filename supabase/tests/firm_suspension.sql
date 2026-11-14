@@ -136,6 +136,7 @@
 \i supabase/migrations/20261118140000_menu_counts.sql
 \i supabase/migrations/20261118140500_menu_counts_fixes.sql
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
