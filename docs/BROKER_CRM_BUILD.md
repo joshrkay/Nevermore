@@ -502,7 +502,20 @@ _Grilled in its pull request._
 
 ### CRM-A2.4 decisions
 
-_Grilled in its pull request._
+Grilled 2026-11-14 against PRD 7 and 10 ("placements and renewals"), D-197, D-209, D-212 and CRM-A2.1's states.
+Builds as Epic 4 rows 3 (database) and 7 (screens).
+
+| # | Decision |
+|---|---|
+| D-265 | Two new tables, as PRD 10 lists them. `placements`: what was won (the account, the opportunity, the quote request taken, the PEO's name, the start date, the broker of record, when it ended, and CRM-O1.3's commission). `renewals`: the account, what renews (`peo_placement` or `current_plan`), with whom (at most 80), the date, the placement it came from, and the opportunity working it. Both are made here; CRM-O1.3a writes placements |
+| D-266 | A renewal from a won opportunity is made by Mark won (CRM-O1.3), with the date asked there and the placement's PEO as with whom. Others are added by hand on the account: what renews (A PEO placement, or The employer's current plan), with whom, the date. A PEO placement added by hand (one the firm placed before the product) makes its placement record in the same step: the PEO, a start date if known, no opportunity and no quote. So every PEO placement, won here or not, makes the account a client and can end, by one rule (D-270). The employer's current plan makes no placement |
+| D-267 | Days away is worked out each time from today: "in 45 days", "today", "12 days ago". A past renewal not done shows in the warning colour |
+| D-268 | A renewal names at most one opportunity working it. "Start the renewal" opens New opportunity filled in: name "<Month YYYY> renewal" from the renewal's date, target start that date, source Renewal, employees and main contact from the account. Saving links it. While that opportunity is open the renewal shows it and Start the renewal is not offered. Lost: the renewal shows "<name>, lost" and offers Start the renewal again, which links the new one. Won: the renewal is done ("Renewed"), and the win adds the next renewal. A renewal is also done when it is marked "Didn't renew" (D-270). Done is worked out from those two and nothing else |
+| D-269 | The accounts table's Renewal column is the account's nearest renewal not done, as its date and days away. "Renewing in 120 days" is a built-in view of the accounts table: accounts with a renewal not done within the next 120 days, overdue included, sorted by that date. Home's part is CRM-H1 (D-221) |
+| D-270 | Former client (D-197, PRD 7). An account is a client while it has a placement not ended, or a won submission with no placement (one won before Epic 4); a former client when it has placements and all of them have ended; otherwise a prospect account. "Didn't renew" on a renewal asks the date (offered as the renewal date) and keeps it on the renewal (`not_renewed_on`). That renewal is then done, so it leaves the Renewal column and the 120-day view, and the placement it came from ends on that date. Undo clears the date, which brings both back. An account's status is still worked out, never stored |
+| D-271 | Who. Renewals and placements are read by their account's visibility. A renewal is added by anyone who may see the account (as a contact, D-209), and edited or deleted by whoever may change the account. A renewal made by a win is deleted only by reopening that win (CRM-O1.3) |
+| D-272 | Renewals and placements get history and a version (`record_track`); the history domain gains `renewals` and `placements` |
+| D-273 | The account's Renewals tab, with its count: what, with whom, the date, days away, the opportunity working it, and Add a renewal. Empty: "No renewal on file. Add a renewal" (CRM-A2.1). The Overview's renewals list shows the first five |
 
 ### CRM-O1.3 with Q-4.1 decisions
 
