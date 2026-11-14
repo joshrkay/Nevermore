@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { SubmissionSummary } from "@/lib/advisorApi";
 
@@ -76,6 +76,28 @@ describe("AdvisorDashboardPage", () => {
     listSubmissions.mockReset();
     listEmailProblems.mockReset().mockResolvedValue([]);
     signOut.mockReset().mockResolvedValue(undefined);
+  });
+
+  // Catches: Inbox (the menu's "Inbox, 2 with new mail") opening the whole queue with nothing saying so, so the number looks wrong.
+  it("says, when it was opened from Inbox, that every submission is shown and what marks the ones with new PEO mail", async () => {
+    listSubmissions.mockResolvedValue([row({ new_peo_mail_requests: 1 })]);
+    renderAt("/advisor?mail=new");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(screen.getByText("Showing every submission. The ones with new PEO mail are marked “New PEO mail”.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Submissions" })).toBeInTheDocument();
+    expect(screen.getByText("New PEO mail")).toBeInTheDocument();
+  });
+
+  // Catches: the line showing on the ordinary queue, where nobody came from Inbox.
+  it("shows no such line on the ordinary queue, or for another value of the parameter", async () => {
+    listSubmissions.mockResolvedValue([row()]);
+    renderAt("/advisor");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(screen.queryByText(/Showing every submission/)).not.toBeInTheDocument();
+    cleanup();
+    renderAt("/advisor?mail=old");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(screen.queryByText(/Showing every submission/)).not.toBeInTheDocument();
   });
 
   it("shows a loading state", () => {

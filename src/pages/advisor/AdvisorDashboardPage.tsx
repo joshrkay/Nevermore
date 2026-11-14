@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { INBOX_PARAM } from "@/components/workspace/menu";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { BellRing, ChevronLeft, ChevronRight, Inbox, Loader2, RefreshCw, Search, SearchX } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -60,6 +61,8 @@ const AdvisorDashboardPage = () => {
   const needsAction = searchParams.get("action") === "1";
   // Only the submissions with a quote request sent and not yet answered.
   const waiting = searchParams.get("waiting") === "1";
+  // The menu's Inbox link (D-38). Only the line above the list reads it for now (see where it is drawn).
+  const inboxLink = searchParams.get(INBOX_PARAM.name) === INBOX_PARAM.value;
   const sortParam = searchParams.get("sort");
   const sort: QueueSort | null = sortParam === "oldest_waiting" || sortParam === "earliest_expiry" ? sortParam : null;
   const pageParam = Number(searchParams.get("page"));
@@ -234,6 +237,12 @@ const AdvisorDashboardPage = () => {
             </button>
           </div>
         </div>
+
+        {/* Inbox opens this page with mail=new, but the filter for "has new PEO mail" is not on this page yet: until CRM-S3.3a applies it, say so
+            in one line instead of letting the menu's Inbox number look wrong. CRM-S3.3a removes this line when it applies the filter. */}
+        {inboxLink && (
+          <p className="text-sm text-muted-foreground mb-4">Showing every submission. The ones with new PEO mail are marked “New PEO mail”.</p>
+        )}
 
         {load.kind === "loading" && (
           <div className="flex items-center justify-center py-24 text-muted-foreground" role="status">

@@ -146,6 +146,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118130000_record_history.sql
 \i supabase/migrations/20261118130500_record_history_fixes.sql
 \i supabase/migrations/20261118140000_menu_counts.sql
+\i supabase/migrations/20261118140500_menu_counts_fixes.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -429,4 +430,33 @@ SELECT pg_temp.menu();
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT activity FROM before_rows), (SELECT count(*) FROM public.firm_activity), 'asking for counts adds nothing to the firm''s record');
 SELECT pg_temp.is((SELECT reads FROM before_rows), (SELECT count(*) FROM public.quote_request_thread_reads), 'and marks no thread read');
+-- ---------- 5. an intake the queue hides is not counted either ----------
+-- Catches: the menu counting an empty guest draft (anonymous, never certified, nothing in it) that has a sent quote request with unread mail,
+-- which the queue hides, so the menu said 3 while the queue's filter said 2. Both counts share the queue's own test for "an intake it shows".
+SELECT pg_temp.as_owner();
+DO $$
+DECLARE
+  uid uuid := gen_random_uuid();
+  sid uuid;
+  q bigint;
+BEGIN
+  INSERT INTO auth.users (id, aud, role, email, is_anonymous, created_at, updated_at) VALUES (uid, 'authenticated', 'authenticated', NULL, true, now(), now());
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, '{}') RETURNING id INTO sid;
+  UPDATE public.chamber_sessions SET firm_id = pg_temp.id('firm_a') WHERE id = sid;
+  INSERT INTO fx VALUES ('ghost', sid);
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) VALUES (sid, 'TriNet', 'sent', current_date) RETURNING id INTO q;
+  INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, recorded_at, firm_id)
+  VALUES ('ghost-new', q, sid, 'received', 'rep@trinet.test', now() - interval '1 hour', pg_temp.id('firm_a'));
+END $$;
+SELECT pg_temp.as_user('a1', 'alpha-brokers');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 'the hidden empty draft counts in neither Quotes nor Inbox');
+SELECT pg_temp.inbox_agrees();
+SELECT pg_temp.is((public.queue_list_submissions('[{"field":"waiting_on_peo","op":"is","value":true}]') ->> 'total')::bigint, 3::bigint, 'and the queue does not list it as waiting on a PEO either');
+-- A prospect who then does something with it (a PEO chosen) makes it a real row: the queue shows it, and so do both counts.
+SELECT pg_temp.as_owner();
+UPDATE public.chamber_sessions SET chosen_peo = 'TriNet' WHERE id = pg_temp.id('ghost');
+SELECT pg_temp.as_user('a1', 'alpha-brokers');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":5,"inbox":2}'::jsonb, 'once the draft holds something, both counts include it');
+SELECT pg_temp.inbox_agrees();
 SELECT 'menu_counts: all passed' AS result;

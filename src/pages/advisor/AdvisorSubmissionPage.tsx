@@ -135,10 +135,11 @@ const Detail = ({
   const peoCatalog = usePeoCatalog();
   // A thread marked read clears the mark on the queue; the menu's Inbox count follows at once, not at its next refresh (story CRM-S1.1c).
   const queryClient = useQueryClient();
-  const threadOpened = useCallback(() => {
-    reload();
-    void queryClient.invalidateQueries({ queryKey: [...MENU_COUNTS_KEY] });
-  }, [reload, queryClient]);
+  const refreshMenuCounts = useCallback(() => void queryClient.invalidateQueries({ queryKey: [...MENU_COUNTS_KEY] }), [queryClient]);
+  const threadOpened = useCallback(() => { reload(); refreshMenuCounts(); }, [reload, refreshMenuCounts]);
+  // A change to a quote request or to the status (a send recorded, a quote received or declined, Won or Lost closing the rest) moves the
+  // Quotes count, so the menu is told at once too, not at its next refresh.
+  const quotesChanged = useCallback(() => { reload(); refreshMenuCounts(); }, [reload, refreshMenuCounts]);
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
   // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
@@ -208,7 +209,7 @@ const Detail = ({
             submission={sub}
             sessionId={detail.id}
             stage={detail.pipelineStatus}
-            onSendRecorded={reload}
+            onSendRecorded={quotesChanged}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
           />
           <PeoThreadPanel
@@ -276,7 +277,7 @@ const Detail = ({
             data={detail.data}
             catalog={peoCatalog.peos}
             onAskProspect={(message) => askProspect(message)}
-            onChanged={reload}
+            onChanged={quotesChanged}
           />
           <StatusPanel
             key={detail.pipelineStatus}
@@ -287,7 +288,7 @@ const Detail = ({
             certifiedOnce={!!detail.submission?.signer_name}
             history={detail.history}
             quoteRequests={detail.quoteRequests}
-            onChanged={reload}
+            onChanged={quotesChanged}
           />
           <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} />
           <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />

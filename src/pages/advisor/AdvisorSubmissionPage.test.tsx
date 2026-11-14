@@ -1159,6 +1159,21 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.loadSubmission.mock.calls.length).toBeGreaterThan(loads));
   });
 
+  // Catches: the Quotes count in the menu keeping its old number for up to a minute after the person's own change to a quote request or status
+  // (a status of Won or Lost closes the submission's other quote requests).
+  it("tells the menu's counts to refresh as soon as the status is changed", async () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "lost" } });
+    api.setStatus.mockResolvedValue(undefined);
+    expect(invalidate).not.toHaveBeenCalled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(api.setStatus).toHaveBeenCalled());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
+    invalidate.mockRestore();
+  });
+
   // Catches: the Inbox count in the menu staying as it was for up to a minute after the member opened the thread that cleared its mark.
   it("tells the menu's counts to refresh as soon as a thread is marked read, so Inbox and the queue's mark stay in step", async () => {
     const request = { id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
@@ -1709,6 +1724,22 @@ describe("AdvisorSubmissionPage", () => {
         await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
         expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
         await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      // Catches: a send recorded from the bundle's "Sent this to ...?" question leaving the Quotes count one short for a minute.
+      it("tells the menu's counts to refresh as soon as a send is recorded", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.recordQuoteSend.mockResolvedValue(undefined);
+        const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        await zipOf();
+        expect(invalidate).not.toHaveBeenCalled();
+        fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
+        await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalled());
+        await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
+        invalidate.mockRestore();
       });
 
       it("records no send once the certification has changed since the bundle was made", async () => {

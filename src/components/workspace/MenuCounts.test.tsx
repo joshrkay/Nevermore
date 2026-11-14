@@ -50,6 +50,11 @@ const renderShell = async (guarded = false) => { const v = render(shell("/adviso
 const menu = () => screen.getByRole("navigation", { name: "Workspace" });
 const link = (name: string | RegExp) => within(menu()).getByRole("link", { name });
 const seen = (name: string) => within(menu()).findByRole("link", { name });
+// With fake timers: let the firm resolve and the first answer arrive before a test changes what the next one says.
+const loaded = async () => {
+  for (let i = 0; i < 20 && !within(menu()).queryByRole("link", { name: "Quotes, 4 open" }); i++) await tick(10);
+  expect(link("Quotes, 4 open")).toBeInTheDocument();
+};
 const linkNames = () => within(menu()).getAllByRole("link").map((l) => l.getAttribute("aria-label") ?? l.textContent);
 
 beforeEach(() => {
@@ -131,7 +136,7 @@ describe("keeping the counts fresh", () => {
   it("asks again every 60 seconds, keeping the old numbers on screen while the next arrive", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
     render(shell());
-    await tick(0);
+    await loaded();
     expect(counts).toHaveBeenCalledTimes(1);
     await tick(59_000);
     expect(counts).toHaveBeenCalledTimes(1);
@@ -150,7 +155,7 @@ describe("keeping the counts fresh", () => {
   it("keeps the last numbers when a refresh fails, and shows no error", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
     render(shell());
-    await tick(0);
+    await loaded();
     counts.mockRejectedValue(new Error("offline"));
     await tick(60_000);
     expect(counts).toHaveBeenCalledTimes(2);
@@ -160,12 +165,12 @@ describe("keeping the counts fresh", () => {
   });
 
   // Catches: an old number shown as if it were fresh for ever once the connection is gone.
-  it("drops the numbers once the last good answer is more than five minutes old", async () => {
+  it("drops the numbers once refreshes have been failing for five minutes", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
     render(shell());
-    await tick(0);
+    await loaded();
     counts.mockRejectedValue(new Error("offline"));
-    await tick(4 * 60_000);
+    await tick(5 * 60_000);
     expect(link("Quotes, 4 open")).toBeInTheDocument();
     await tick(2 * 60_000);
     expect(link("Quotes")).toHaveTextContent(/^Quotes$/);
@@ -175,6 +180,49 @@ describe("keeping the counts fresh", () => {
     await tick(60_000);
     await tick(10);
     expect(link("Quotes, 1 open")).toBeInTheDocument();
+  });
+
+  // Catches: a tab that was only in the background losing its badges when it comes back, while the new numbers are still on their way
+  // (D-49: keep what is on screen while the next arrive). Old is not the same as failing.
+  it("keeps the numbers of a tab that sat in the background, while the refresh on return is in flight", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    render(shell());
+    await loaded();
+    visibility.mockReturnValue("hidden");
+    await act(async () => { window.dispatchEvent(new Event("visibilitychange")); });
+    await tick(10 * 60_000);
+    expect(counts).toHaveBeenCalledTimes(1);
+    expect(link("Quotes, 4 open")).toBeInTheDocument();
+    let arrive: (v: { quotes: number; inbox: number }) => void = () => {};
+    counts.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+    visibility.mockReturnValue("visible");
+    await act(async () => { window.dispatchEvent(new Event("visibilitychange")); });
+    await tick(10);
+    expect(counts).toHaveBeenCalledTimes(2);
+    expect(link("Quotes, 4 open")).toBeInTheDocument();
+    await act(async () => { arrive({ quotes: 9, inbox: 0 }); });
+    await tick(10);
+    expect(link("Quotes, 9 open")).toBeInTheDocument();
+    visibility.mockRestore();
+  });
+
+  // Catches: one failed refresh after a long time in the background taking the numbers away at once, as if it had been failing for minutes.
+  it("does not drop the numbers for a single failed refresh on return from the background", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    render(shell());
+    await loaded();
+    visibility.mockReturnValue("hidden");
+    await act(async () => { window.dispatchEvent(new Event("visibilitychange")); });
+    await tick(10 * 60_000);
+    counts.mockRejectedValue(new Error("offline"));
+    visibility.mockReturnValue("visible");
+    await act(async () => { window.dispatchEvent(new Event("visibilitychange")); });
+    await tick(10);
+    expect(counts).toHaveBeenCalledTimes(2);
+    expect(link("Quotes, 4 open")).toBeInTheDocument();
+    visibility.mockRestore();
   });
 });
 

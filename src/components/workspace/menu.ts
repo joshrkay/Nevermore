@@ -28,8 +28,9 @@ export interface MenuItem {
 }
 
 /**
- * The address parameter that asks the queue for new PEO mail only. The queue page does not read it yet: the database filter
- * for "has new PEO mail" is story CRM-S3.3b, which will honour this parameter. Until then Inbox opens the whole queue.
+ * The address parameter that asks the queue for new PEO mail only. The database filter for "has new PEO mail" shipped with
+ * CRM-S3.3b; the page does not apply it until it moves onto the table frame (CRM-S3.5a) and gets its filters (CRM-S3.3a), which
+ * will honour this parameter. Until then Inbox opens the whole queue, and the page says so in one line.
  */
 export const INBOX_PARAM = { name: "mail", value: "new" } as const;
 
