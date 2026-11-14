@@ -11,6 +11,7 @@ import { refusedQueryReason } from "./refusal";
 import { tableIsLoading } from "./tableIsLoading";
 import type { useTableAddress } from "./useTableAddress";
 import { useFirmReady, useRefreshTable, type useTableRows } from "./useTableRows";
+import { EmptyBody } from "../states/EmptyStates";
 import { LoadingStatus } from "../states/LoadingStatus";
 import { PlaceholderBody } from "../states/PlaceholderBody";
 import { placeholderColumns } from "../states/placeholderShapes";
@@ -84,10 +85,13 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
   const placeholdering = !page || pastTheEnd || hasHeld(address);
   const { ready: firmReady } = useFirmReady();
   const refresh = useRefreshTable(table);
-  const slowLoad = useSlowLoad(loadingNow, refresh);
+  // Waiting for an answer to a question the person has changed, over the previous answer (dimmed rows, or the dimmed empty words), is a wait too: a request
+  // that never arrives must not leave the old question's words on screen for ever. Ten seconds of either shows the line with "Try again" (D-145).
+  const waitingNow = loadingNow || (data.isPlaceholder && !data.error);
+  const slowLoad = useSlowLoad(waitingNow, refresh);
   const slowLine = (
     <SlowLoadLine
-      loading={loadingNow}
+      loading={waitingNow}
       slow={slowLoad.slow}
       onTryAgain={slowLoad.tryAgain}
       // While the address holds what the table can't judge yet, or the firm isn't known, nothing has been asked, so there is nothing to ask again.
@@ -143,9 +147,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             placeholder={
               placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} />
               : isEmpty ? (
-                <tbody className={data.isPlaceholder ? "opacity-70" : undefined}>
-                  <tr><td colSpan={columns.length} className="p-0">{empty(settled.current, { focusTable })}</td></tr>
-                </tbody>
+                <EmptyBody columns={columns.length} dimmed={data.isPlaceholder}>{empty(settled.current, { focusTable })}</EmptyBody>
               ) : undefined
             }
             caption={caption}

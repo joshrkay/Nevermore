@@ -5,6 +5,8 @@ import {
 } from "@/data/advisor";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { formatDay, waitingLabel } from "@/data/quoteRequests";
+import { US_STATE_CODES } from "@/data/chamberValidation";
+import { RECOMMENDED_ITEMS, REQUIRED_ITEMS } from "@/data/readiness";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 import { INBOX_PARAM } from "@/components/workspace/menu";
 import type { ColumnDefinition, FieldChoice, FieldDefinitions, TableDefinition, TableQuery, TableView } from "@/components/workspace/table";
@@ -86,6 +88,10 @@ const FIELD_LABELS: Record<QueueField, string> = {
 /** The values of the queue's choice fields, as the database lists them (queue_field_choices), with their words. */
 const FIELD_CHOICES: Partial<Record<QueueField, readonly FieldChoice[]>> = {
   pipeline_status: PIPELINE_STATUSES.map((value) => ({ value, label: PIPELINE_LABELS[value] })),
+  // The state codes the database takes (`is_us_state_code`); a code reads as itself.
+  states: US_STATE_CODES.map((value) => ({ value, label: value })),
+  // The required answers an intake can lack, by the keys the database names (the same list the Reckoning uses, `REQUIRED_ITEMS`), plus the recommended ones.
+  missing_required: [...REQUIRED_ITEMS, ...RECOMMENDED_ITEMS].map((item) => ({ value: item.key, label: item.label })),
   intake_status: [
     { value: "in_progress", label: "In progress" },
     { value: "submitted", label: "Submitted" },
@@ -295,6 +301,7 @@ export const QUEUE_TABLE: QueueTableDefinition = {
   defaultSortLabel: DEFAULT_SORT_LABEL,
   defaultSortReset: DEFAULT_SORT_RESET,
   searchMinChars: QUEUE_SEARCH_MIN_CHARS,
+  searchHint: "Search covers company, contact and File ID.",
   legacy,
 };
 

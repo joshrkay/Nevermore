@@ -94,19 +94,26 @@ const AdvisorDashboardPage = () => {
   // (New quote arrives with CRM-Q2.1), and a narrowed question is never answered with "make a new one".
   const empty = (a: typeof address, { focusTable }: { focusTable: () => void }) => {
     if (!isNarrowed(a)) {
-      return <NothingYet icon={<Inbox className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />} sentence="Submissions appear here as soon as a prospect starts an intake." />;
+      return <NothingYet icon={<Inbox className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />} sentence="Submissions appear here once a prospect has started filling in an intake." />;
     }
     // The Inbox alone (only "has new PEO mail" in force) has an exact thing to say that is true even if the firm has no submissions at all.
     const inboxOnly = !a.view && !a.search && a.filters.length === 1 && same(a.filters[0], NEW_PEO_MAIL_FILTER);
+    const by = { search: a.search !== "", filters: a.filters.length > 0, view: a.view !== null };
     return (
       <NothingMatches
         plural={table.noun.plural}
-        by={{ search: a.search !== "", filters: a.view !== null || a.filters.length > 0 }}
+        by={by}
         inForce={inForceInWords(table, a)}
         headline={inboxOnly ? "No submissions have new PEO mail." : undefined}
+        showAll={`Show ${table.allViewLabel.toLowerCase()}`}
+        hint={table.searchHint}
         icon={<SearchX className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />}
-        // Clears the tab, the search and every filter (the whole list again). The sort stays: it only orders the same rows.
-        onClear={() => { change({ view: null, search: "", filters: [] }); focusTable(); }}
+        // Each button does the one thing its label names, and is a step Back undoes (as a tab and a new sort column are). "Clear search", "Clear filters" and
+        // "Clear filters and search" clear those and KEEP the tab and the sort; when only the tab narrows the list the button is "Show all statuses" and leaves it.
+        onClear={() => {
+          change(by.search || by.filters ? { search: "", filters: [] } : { view: null }, { push: true });
+          focusTable();
+        }}
       />
     );
   };

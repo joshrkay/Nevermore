@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
@@ -19,7 +19,7 @@ type Load =
   | { kind: "error"; error: Error }
   | { kind: "not_allowed" }
   | { kind: "choose"; firms: OwnedFirm[] }
-  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse>; asked: string };
+  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse>; asked: string; firmKey: string | null };
 
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -82,7 +82,7 @@ const AdvisorActivityPage = () => {
   const firmAddress = useFirmAddress();
   const address = firmAddress.status === "known" ? firmAddress.address : null;
   const firmParam = params.get("firm");
-  const [load, setLoad] = useState<Load>({ kind: "loading" });
+  const [loaded, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [person, setPerson] = useState<string | null>(null);
   const [kind, setKind] = useState<string | null>(null);
@@ -92,6 +92,10 @@ const AdvisorActivityPage = () => {
   const after = trail.length > 0 ? trail[trail.length - 1] : null;
   // What the page is asking for now, and (in `load.asked`) what the entries on screen answer: they differ while the next page or filter loads.
   const asking = JSON.stringify([person, kind, after]);
+  // Another firm is never "the same list, dimmed" (D-144): whichever way the firm changed (the list, a link, the address), the entries and the people
+  // of the firm left are gone at once and the grey rows show, before the new firm's answer arrives.
+  const firmKey = address ?? firmParam;
+  const load: Load = loaded.kind === "ready" && loaded.firmKey !== firmKey ? { kind: "loading", firms: loaded.firms } : loaded;
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +114,7 @@ const AdvisorActivityPage = () => {
       const [people, result, useList] = await Promise.all([
         listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, after }), fetchFirmSupportUses(firmId),
       ]);
-      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore, uses: new Map(useList.map((u) => [u.id, u])), asked: JSON.stringify([person, kind, after]) };
+      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore, uses: new Map(useList.map((u) => [u.id, u])), asked: JSON.stringify([person, kind, after]), firmKey: address ?? firmParam };
     })()
       .then((next) => !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad((error as Partial<AdvisorApiError>).forbidden ? { kind: "not_allowed" } : { kind: "error", error }));
@@ -151,15 +155,15 @@ const AdvisorActivityPage = () => {
   const answeredFiltered = answeredPerson !== null || answeredKind !== null;
   const personInWords = answeredPerson === NEVERMORE_FILTER ? "Nevermore" : (people?.find((p) => p.user_id === answeredPerson)?.email ?? "A former member");
   const clearFilters = () => { setPerson(null); setKind(null); setTrail([]); personList.current?.focus(); };
-  const emptyState = !isEmpty ? null : answeredFiltered ? (
+  const emptyState = !isEmpty ? null : answeredAfter !== null ? (
+    <NothingMatches plural="entries" by={{ search: false, filters: false }} inForce={[]} headline="There are no older entries." clearLabel="Back to the newest" onClear={() => { setTrail([]); personList.current?.focus(); }} />
+  ) : answeredFiltered ? (
     <NothingMatches
       plural="entries"
       by={{ search: false, filters: true }}
       inForce={[...(answeredPerson !== null ? [`Person: ${personInWords}`] : []), ...(answeredKind !== null ? [`Kind: ${kindLabel(answeredKind)}`] : [])]}
       onClear={clearFilters}
     />
-  ) : answeredAfter !== null ? (
-    <NothingMatches plural="entries" by={{ search: false, filters: false }} inForce={[]} headline="There are no older entries." clearLabel="Back to the newest" onClear={() => setTrail([])} />
   ) : (
     <NothingYet sentence="Nothing has been recorded for your firm in the last 90 days: entries appear here as its people sign in, open submissions or change who belongs." />
   );
@@ -247,9 +251,10 @@ const AdvisorActivityPage = () => {
                 <ActivityHead />
                 {load.kind === "loading" ? (
                   <PlaceholderBody columns={COLUMNS} />
+                ) : isEmpty ? (
+                  <EmptyBody columns={COLUMNS.length}>{emptyState}</EmptyBody>
                 ) : (
                   <tbody>
-                    {isEmpty && <tr><td colSpan={COLUMNS.length} className="p-0">{emptyState}</td></tr>}
                     {load.kind === "ready" && load.entries.map((e) => (
                       <tr key={e.entry_key} className="border-t border-border align-top">
                         <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>

@@ -366,6 +366,53 @@ describe("AdvisorActivityPage", () => {
       expect(screen.queryByText(/No entries match/)).not.toBeInTheDocument();
     });
 
+    // Catches: "Back to the newest" leaving focus on a button that goes away, which drops it to the top of the page.
+    it("puts focus on the Person list when Back to the newest is pressed", async () => {
+      api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });
+      renderPage();
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      const back = await screen.findByRole("button", { name: "Back to the newest" });
+      back.focus();
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.click(back);
+      await screen.findByText("agent@example.com", { selector: "td" });
+      expect(screen.getByLabelText("Person")).toHaveFocus();
+    });
+
+    // Catches: a page after the first that comes back empty under a filter saying nothing matches, when the first page had matches.
+    it("says there are no older entries, not that none match, when a later page under a filter is empty", async () => {
+      renderPage();
+      fireEvent.change(await screen.findByLabelText("Kind"), { target: { value: "sign_in" } });
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: true });
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      expect(await screen.findByText("There are no older entries.")).toBeInTheDocument();
+      expect(screen.queryByText(/No entries match/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Back to the newest" })).toBeInTheDocument();
+    });
+
+    // Catches: another firm's entries or empty words staying on screen, undimmed, while a new firm loads when the firm changed by a link, not by the list.
+    it("clears the entries at once when the firm in the address changes by navigation", async () => {
+      api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }, { firm_id: "firm-2", name: "Beta Advisory" }]);
+      const { Link } = await import("react-router-dom");
+      render(<MemoryRouter initialEntries={["/advisor/activity?firm=firm-1"]}><Link to="/advisor/activity?firm=firm-2">Go to Beta</Link><AdvisorActivityPage /></MemoryRouter>);
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("link", { name: "Go to Beta" }));
+      expect(screen.queryByText("agent@example.com", { selector: "td" })).not.toBeInTheDocument();
+      expect(document.querySelector("tbody[aria-hidden=true]")).not.toBeNull();
+      cleanup();
+      api.listFirmActivity.mockResolvedValue(none);
+      render(<MemoryRouter initialEntries={["/advisor/activity?firm=firm-1"]}><Link to="/advisor/activity?firm=firm-2">Go to Beta</Link><AdvisorActivityPage /></MemoryRouter>);
+      await screen.findByText(/Nothing has been recorded/);
+      api.listFirmActivity.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("link", { name: "Go to Beta" }));
+      expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
+    });
+
     // Catches: an empty page after the first (the older entries aged out meanwhile) being called "nothing yet", which would be false.
     it("does not say nothing has been recorded when the page after the first comes back empty", async () => {
       api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });

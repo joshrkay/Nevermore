@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ElementType, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { clearLabelFor, type NarrowedBy } from "./clearLabel";
 
 // The two kinds of empty (story CRM-S2.2), which are never confused:
 //   - NOTHING YET: the firm has no records of this kind at all. One sentence saying what belongs here, and one primary action that makes the
@@ -60,28 +61,25 @@ export function NothingYet({ sentence, primary, secondary, icon, layout = "block
   );
 }
 
-/** Which of the two things narrowing the list is in force, which decides the words ("this search", "these filters") and what the way back is called. */
-export interface NarrowedBy {
-  search: boolean;
-  /** Filters, or a view (a tab is a filter with a name). */
-  filters: boolean;
-}
-
 /**
  * Nothing matches. Says "No <plural> match <this search | these filters | this search and these filters>." and lists, in words, what is in force. The
- * one way back is `onClear`, whose label says what it clears ("Clear filters", "Clear filters and search"). `headline` and `clearLabel` replace the
- * generic words where a page can say something more exact (the Inbox: "No submissions have new PEO mail"; the outbox: "No notifications are dead").
+ * one way back is `onClear`, named by `clearLabelFor`. `headline` and `clearLabel` replace the generic words where a page can say something more exact
+ * (the Inbox: "No submissions have new PEO mail"; the outbox: "No notifications are dead"). `hint` is a plain line after a search that found nothing
+ * ("Search covers company, contact and File ID."), given by the table.
  */
-export function NothingMatches({ plural, by, inForce, onClear, headline, clearLabel, icon }: {
+export function NothingMatches({ plural, by, inForce, onClear, headline, clearLabel, showAll = `Show all ${plural}`, hint, icon }: {
   plural: string;
   by: NarrowedBy;
   inForce: string[];
   onClear: () => void;
   headline?: string;
   clearLabel?: string;
+  /** What leaving the tab is called when the tab alone narrows the list ("Show all statuses"). */
+  showAll?: string;
+  hint?: string;
   icon?: ReactNode;
 }) {
-  const what = by.search && by.filters ? "this search and these filters" : by.search ? "this search" : "these filters";
+  const what = by.search && (by.filters || by.view) ? "this search and these filters" : by.search ? "this search" : "these filters";
   return (
     <div className="flex min-h-48 flex-col items-center justify-center p-12 text-center" data-empty="nothing-matches">
       {icon}
@@ -93,9 +91,27 @@ export function NothingMatches({ plural, by, inForce, onClear, headline, clearLa
           </ul>
         )}
       </SpokenOnce>
+      {by.search && hint && <p className="mt-2 text-sm text-muted-foreground">{hint}</p>}
       <button type="button" onClick={onClear} className={cn(BUTTON, "mt-4")}>
-        {clearLabel ?? (by.search ? "Clear filters and search" : "Clear filters")}
+        {clearLabel ?? clearLabelFor(by, showAll)}
       </button>
     </div>
+  );
+}
+
+/** The body of a table with nothing to list: one cell across every column, under the table's own headers, holding the empty state. The cell's `Cell` is the plain table's own (a `td`, or the shared `TableCell`). */
+export function EmptyBody({ columns, children, dimmed, Body = "tbody", Row = "tr", Cell = "td" }: {
+  columns: number;
+  children: ReactNode;
+  /** The words answer a question already left: dimmed (not marked busy: the status inside must stay outside a busy region). */
+  dimmed?: boolean;
+  Body?: ElementType;
+  Row?: ElementType;
+  Cell?: ElementType;
+}) {
+  return (
+    <Body className={dimmed ? "opacity-70" : undefined}>
+      <Row className="hover:bg-transparent"><Cell colSpan={columns} className="p-0">{children}</Cell></Row>
+    </Body>
   );
 }

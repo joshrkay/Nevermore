@@ -22,7 +22,10 @@ export interface FieldDefinition<Kind extends FieldKind = FieldKind> {
   /** What the field is called on screen ("Needs advisor action", "Has new PEO mail"). */
   label: string;
   kind: Kind;
-  /** The values of a choice field, when the table lists them. */
+  /**
+   * The values of a choice field, when the table lists them, each with its words. A value not listed is shown in quotes as it was written. A
+   * `person` field lists none: it must be named through the lookup `filterInWords` is given (CRM-A1.1), never by its id.
+   */
   choices?: readonly FieldChoice[];
   /**
    * The direction a first click on a column of this field sorts in (CRM-S3.2a). Left out, it follows the kind: a date starts newest first
@@ -120,6 +123,8 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
   defaultSortReset: string;
   /** Searches shorter than this (spaces left out) are not run. */
   searchMinChars: number;
+  /** One plain line said after a search that found nothing, about what the search covers ("Search covers company, contact and File ID."). */
+  searchHint?: string;
   /** Old parameters mapped onto the new shape, so today's links keep working. A field an old parameter and a new filter both name is the new filter's. */
   legacy?: (params: URLSearchParams) => LegacyAddress<K> | null;
 }

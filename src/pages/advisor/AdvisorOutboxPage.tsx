@@ -29,7 +29,7 @@ import {
 import { listOutboxEvents, outboxSummary, requeueOutboxEvent, type OutboxEvent, type OutboxSummaryRow } from "@/lib/advisorApi";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 
 type Load =
   | { kind: "loading" }
@@ -115,11 +115,12 @@ const AdvisorOutboxPage = () => {
   const slowLoad = useSlowLoad(load.kind === "loading", reload);
 
   // The filter lives in the URL, so a refresh or a shared link shows the same view.
-  const setStatus = (next: OutboxStatus | null) => {
+  // A status button replaces the entry (it corrects the same list); the way back out of an empty status is a place to come back to, so it pushes (`push`).
+  const setStatus = (next: OutboxStatus | null, options: { push?: boolean } = {}) => {
     const params = new URLSearchParams(searchParams);
     if (next) params.set("status", next);
     else params.delete("status");
-    setSearchParams(params, { replace: true });
+    setSearchParams(params, { replace: !options.push });
   };
 
   const retry = async (event: OutboxEvent, rebuild: boolean) => {
@@ -155,11 +156,11 @@ const AdvisorOutboxPage = () => {
   const emptyState = answered !== null && total > 0 ? (
     <NothingMatches
       plural="notifications"
-      by={{ search: false, filters: true }}
+      by={{ search: false, filters: false, view: true }}
       headline={`No notifications are ${OUTBOX_STATUS_LABELS[answered].toLowerCase()}.`}
       inForce={[`Status: ${OUTBOX_STATUS_LABELS[answered]}`]}
       clearLabel="Show all notifications"
-      onClear={() => { setStatus(null); allButton.current?.focus(); }}
+      onClear={() => { setStatus(null, { push: true }); allButton.current?.focus(); }}
       icon={<Inbox className="w-8 h-8 text-muted-foreground mb-3" aria-hidden="true" />}
     />
   ) : (
@@ -252,11 +253,10 @@ const AdvisorOutboxPage = () => {
                 <OutboxHead />
                 {load.kind === "loading" ? (
                   <PlaceholderBody columns={COLUMNS} cellClassName="p-4 align-middle" />
+                ) : events.length === 0 ? (
+                  <EmptyBody columns={COLUMNS.length} Body={TableBody} Row={TableRow} Cell={TableCell}>{emptyState}</EmptyBody>
                 ) : (
                 <TableBody>
-                  {load.kind === "ready" && events.length === 0 && (
-                    <TableRow className="hover:bg-transparent"><TableCell colSpan={COLUMNS.length} className="p-0">{emptyState}</TableCell></TableRow>
-                  )}
                   {events.map((e) => {
                     const gloss = explainOutboxError(e.last_error);
                     const what = `${outboxKindLabel(e.kind)} for ${e.company_name ?? "a company with no name"}`;

@@ -5,4 +5,5 @@ export { PLACEHOLDER_ROWS, placeholderColumns, type PlaceholderColumn } from "./
 export { PlaceholderBody } from "./PlaceholderBody";
 export { SlowLoadLine } from "./SlowLoadLine";
 export { SLOW_LOAD_MS, useSlowLoad } from "./useSlowLoad";
-export { NothingMatches, NothingYet, type EmptyAction, type EmptyLayout, type NarrowedBy } from "./EmptyStates";
+export { clearLabelFor, type NarrowedBy } from "./clearLabel";
+export { EmptyBody, NothingMatches, NothingYet, type EmptyAction, type EmptyLayout } from "./EmptyStates";

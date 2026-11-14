@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import type { OutboxEvent, OutboxSummaryRow } from "@/lib/advisorApi";
 
 const signOut = vi.fn();
@@ -52,7 +52,8 @@ const summaryOf = (counts: Partial<Record<string, number>>, oldestDue: string | 
     oldest_due_at: status === "pending" ? oldestDue : null,
   }));
 
-const Where = () => <p data-testid="where">{useLocation().search}</p>;
+const GoBack = () => { const navigate = useNavigate(); return <button type="button" onClick={() => navigate(-1)}>Go back</button>; };
+const Where = () => <><p data-testid="where">{useLocation().search}</p><GoBack /></>;
 
 const renderAt = (url = "/advisor/outbox") =>
   render(
@@ -394,6 +395,17 @@ describe("AdvisorOutboxPage", () => {
       expect(screen.getByTestId("where")).toHaveTextContent("");
       expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByRole("button", { name: /^All/ })).toHaveFocus();
+    });
+
+    // Catches: "Show all notifications" replacing the history entry, so Back cannot return to the status the person just left.
+    it("makes showing all a step Back undoes", async () => {
+      ready([], summaryOf({ sent: 3 }));
+      renderAt("/advisor/outbox?status=dead");
+      await screen.findByText("No notifications are dead.");
+      fireEvent.click(screen.getByRole("button", { name: "Show all notifications" }));
+      await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent(/^$/));
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("?status=dead"));
     });
 
     // Catches: "No notifications are dead" being said when the outbox has no notification of any status, which would suggest others exist.

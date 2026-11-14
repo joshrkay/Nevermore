@@ -1,4 +1,5 @@
 import type { TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
+import { has } from "./has";
 import { OPERATORS, type OperatorShape } from "./operators";
 import {
   FILTER_DAYS_MAX, FILTER_LIST_MAX, FILTER_TEXT_MAX, MAX_TABLE_PAGE, TABLE_FILTER_LIMIT, type TableDefinition,
@@ -45,7 +46,6 @@ export interface Dropped {
   filterFields: string[];
 }
 
-const has = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
 
 // ---- text: always well formed, counted in characters ----
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
