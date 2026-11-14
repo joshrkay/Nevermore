@@ -149,6 +149,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261118170000_export.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1021,7 +1022,7 @@ DECLARE
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'record_history_list', 'retention_review_due', 'session_verified_fields'];
-  writes text[] := ARRAY['add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  writes text[] := ARRAY['add_firm_organisation', 'export_table', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
@@ -1119,6 +1120,7 @@ DECLARE
     'archive_chamber_session', 'changes the caller''s own intake only (user_id is the caller); a support session has no intake of the firm''s prospects',
     'consume_ai_quota', 'the caller''s own allowance',
     'end_support_session', 'the doorway itself: the admin''s own session, in the platform''s table and the firm''s record of the use',
+    'export_table', 'an export (CRM-S3.8b): it calls refuse_support_session(firm) before it reads or records anything, so a support session exports nothing (the exports section above calls it as one)',
     'leave_firm', 'ends the caller''s own membership: a support session has none, so it answers "not a member"',
     'record_intake_consent', 'the caller''s own agreement as an employer; writes a row with the caller''s id',
     'report_client_event', 'the platform''s monitoring: a row with the caller''s own id, read by platform admins only',
