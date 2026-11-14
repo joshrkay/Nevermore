@@ -445,6 +445,22 @@ _Avoid_: audit log, activity (the firm's record of who did what is a different t
 A whole number on each editable record (today a referral partner; later an account, contact, lead or opportunity) that says how many times its own fields have really changed, starting at 1. A trigger owns it: it is raised by exactly one when one of the fields the record's history tracks (a partner's name or kind) really changes, and by nothing else, so saving a form without changing it, or changing only a stamp such as when it was saved, leaves it alone. Nobody sets it: whatever a statement writes into it is put back, and a new row is 1 whatever it said. A save names the version it started from (`p_version`); a save that names none is refused. The record's history also says which version each entry produced, so "what changed since version N" is exact. It is the whole-record counter of D-46, not a record's history and not an intake's `schema_version`.
 _Avoid_: revision, etag, timestamp (it is not a time), history
 
+**Export** (code: `export_table`, recorded as the entry kind `export_made`):
+The rows of one of a firm's tables that a person may see and that match what they asked (the filters in force, or the rows they selected), in the columns they chose, handed over by the database in the same step that writes it to the firm's record: who, when, which table, how many rows. Today referral partners (any current member) and the firm's record itself (its owners). Never the queue, whose columns are an intake's answers, and never an intake's answers, a census, a FEIN or a file. At most 10,000 rows; a larger one is refused, never cut short. A Nevermore support session can't make one.
+_Avoid_: download (a file of a submission is a download), report, dump, backup
+
+**Whole-table export**:
+An export that holds every row the person may see in that table (and at least one), whatever filters or selection were used to get there. It needs a **recent sign-in**.
+_Avoid_: full export (that is what a closing firm's owners are offered: every table, made of exports), bulk export
+
+**Recent sign-in** (code: `signed_in_within`):
+A sign-in made, or a second factor completed, within the last 12 hours, read from when the sign-in token says it was proved (its `amr` times), never from when the token was last refreshed. A whole-table export asks for one; "Sign in again" is what the screen offers when it is missing.
+_Avoid_: fresh session, re-authentication, step-up
+
+**Export alert** (code: outbox kind `export_alert`):
+The email to a firm's current owners that a member made an export of more than 500 rows, or their third export within an hour: who, which table, how many rows, when, and which of the two. It holds nothing that was exported. One email per export that calls for it, queued in the same step as the export, through the outbox like the firm's other emails.
+_Avoid_: export notification, security alert
+
 **Conflict** (answered by `advisor_update_referral_partner` as `conflict: true`):
 What a save is answered with when the record's version is no longer the one the person started from: someone else changed it while they were editing. Nothing is saved. The answer carries the current version, the current values of the editable fields, and for each field whose value now differs from what the person started from, the value now, who changed it last and when. Who is named the way the record's history names people (a member's email, "Nevermore" for Nevermore's own people, "System" for the server), never an id (D-33). It is a normal answer, not an error, and it is only given to someone the save would have let through: a person who is refused (not a member, suspended, a support session, a closing firm) gets that refusal whatever version they send. The partners form opens the conflict dialog on it (see Conflict dialog).
 _Avoid_: collision, merge conflict, stale write, error
@@ -476,7 +492,7 @@ A view a table ships with (for the queue, today's status tabs), written in the p
 _Avoid_: default view (the table's default sort and columns are something else)
 
 **Column choice** (code: `table_preferences`, `my_table_columns`, `set_my_table_columns`):
-Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults.
+Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults. It is a list of column ids in order, the columns shown, and a person makes it with the **Columns menu**. A column not in the list is not shown, so a column a table gains later stays under "Not shown" until the person shows it; a person with no choice follows the table's **default columns**. An id the table no longer has is left out, and a list that names no column the table has is no choice at all.
 _Avoid_: layout, column settings, preferences (on its own)
 
 **Entry kind** (code: `firm_activity.kind`):
@@ -493,7 +509,7 @@ How a workspace table asks the database for its rows (D-44): a list of **filters
 _Avoid_: dynamic query, search (a search is the words typed in the search box, which is one part of the query)
 
 **Table frame** (code: `src/components/workspace/table/`; story CRM-S3.5a):
-The one piece every workspace table is drawn with: its **table address** read from the page, its rows fetched through the query library (asked again on focus and every 60 seconds, the rows staying on screen while the next arrive), the table itself, and the pager. A table gives the frame a **column definition** list and its fields (a constant: what a cell needs besides its row comes through the frame's `context`); the frame owns what a view means for the query (the view's filters, then the address's, within the 20 the database takes) and draws the view tabs; the frame leaves named places for what later stories add: `empty` and `error` (Epic 2's page-state stories), the filter row (built, CRM-S3.3a: `FilterRow`), the columns menu, saved views and row selection. The queue is the first table on it.
+The one piece every workspace table is drawn with: its **table address** read from the page, its rows fetched through the query library (asked again on focus and every 60 seconds, the rows staying on screen while the next arrive), the table itself, and the pager. A table gives the frame a **column definition** list and its fields (a constant: what a cell needs besides its row comes through the frame's `context`); the frame owns what a view means for the query (the view's filters, then the address's, within the 20 the database takes) and draws the view tabs; the frame leaves named places for what later stories add: `empty` and `error` (Epic 2's page-state stories), the filter row (built, CRM-S3.3a: `FilterRow`), the columns menu (built, CRM-S3.1a: `ColumnsMenu`), saved views and row selection. The queue is the first table on it.
 _Avoid_: grid, data table (in screen words, say "table")
 
 **Loading state** (code: `src/components/workspace/states/`; story CRM-S2.1, D-143 to D-146):
@@ -556,6 +572,18 @@ _Avoid_: filter bar, filter panel, facets
 **Filter chip** (code: in `FilterRow`):
 One filter the address holds, shown as its words (`filterInWords`: "Employees is more than 50"): the chip itself opens its editor and the small button beside it ("Remove filter: Employees is more than 50") takes it off. A filter that belongs to the current tab is not a chip (it is not in the address; the tab is its control). A filter held for a field that has not loaded yet (D-141) is a quiet chip with its text as written, which can only be removed.
 _Avoid_: tag, pill, token
+
+**Columns menu** (code: `ColumnsMenu`, `useTableColumns`, `columnChoice.ts`, `src/components/workspace/table/`; story CRM-S3.1a, D-185 to D-195):
+The "Columns" button over a table and the small panel it opens, where a person shows, hides and reorders the table's columns. The **name column** is listed first as "Always shown", with nothing to change it by. Each shown column has a checkbox (clear it to hide the column) and "Move Contact up" and "Move Contact down" buttons; under "Not shown", each hidden column has a checkbox (set it to show the column, at the end). "Back to default columns" puts the table's own back and has the database forget the choice. There is no Apply: each change is on the table at once and is kept (the **column choice**, one save after another). It works by keyboard alone, focus stays on the control that was used wherever its row went, and one polite status in the panel says what the change did ("States is now column 2 of 10."). A choice that can't be kept (the firm is closing, or Nevermore support is looking in) stays on screen and says why next to the button. It is unavailable, with the reason, until the person's choice has loaded, and until then the table is in its loading state so no row is drawn in columns the person is about to lose.
+_Avoid_: column picker, column settings, customise (in screen words)
+
+**Name column** (code: `ColumnDefinition.isName`):
+A table's first column, the one that names the record (the queue's Company). It can't be hidden or moved and no choice can put another column before it (a stored choice that leaves it out or puts it elsewhere is read with it first), and it is **pinned**: it stays in view at the left of the table's scroll box when the table scrolls sideways, in the header and in every row, including the grey rows of the loading state. Its cell is each row's header cell.
+_Avoid_: key column, frozen column
+
+**Default columns** (code: `TableDefinition.columns`):
+The columns a table ships with, in its order: what a person sees until they choose their own, and what "Back to default columns" restores. Today every column a table lists is a default column.
+_Avoid_: standard columns, built-in columns
 
 **View count** (code: `queue_view_counts`):
 The number on a view's tab: how many rows that view's filters match, under the same rules as the table, for several views in one call.
