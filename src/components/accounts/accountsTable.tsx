@@ -316,7 +316,7 @@ export const dayInZone = (moment: string, timeZone: string): string => {
     return moment.slice(0, 10);
   }
 };
-const EXPORTED = (timeZone: string): Record<string, { id: string; text?: (row: Record<string, ExportValue>) => string }> => ({
+const exportedFor = (timeZone: string): Record<string, { id: string; text?: (row: Record<string, ExportValue>) => string }> => ({
   account: { id: "name" },
   main_contact: { id: "main_contact", text: (r) => [str(r.main_contact), str(r.main_contact_email) || str(r.main_contact_phone)].filter(Boolean).join(", ") },
   opportunity: {
@@ -344,6 +344,6 @@ const EXPORTED = (timeZone: string): Record<string, { id: string; text?: (row: R
 });
 
 export const exportColumnsFor = (shown: readonly { id: string; header: string }[], timeZone: string): ShownColumn[] => {
-  const known = EXPORTED(timeZone);
+  const known = exportedFor(timeZone);
   return shown.filter((c) => known[c.id]).map((c) => ({ id: known[c.id].id, heading: c.header, ...(known[c.id].text ? { text: known[c.id].text } : {}) }));
 };
