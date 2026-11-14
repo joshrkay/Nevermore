@@ -70,6 +70,12 @@ describe("BrokerSignInPage", () => {
     await waitFor(() => expect(startBrokerSignIn).toHaveBeenCalledWith("microsoft", "/advisor/held"));
   });
 
+  it("returns to the page with its filters and its firm, not only to the console", async () => {
+    renderPage({ from: { pathname: "/advisor/activity", search: "?firm=f1&kind=send_recorded" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    await waitFor(() => expect(startBrokerSignIn).toHaveBeenCalledWith("google", "/advisor/activity?firm=f1&kind=send_recorded"));
+  });
+
   it("says so, and lets the broker try again, when the sign-in can't start", async () => {
     startBrokerSignIn.mockRejectedValue(new Error("down"));
     renderPage();

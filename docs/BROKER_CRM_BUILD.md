@@ -424,8 +424,9 @@ order.
 
 Epic 2's last four rows (its build order's rows 16 to 19: CRM-S3.1a, CRM-S3.4a, CRM-S3.8b and CRM-S3.8a) were built on two lines
 that did not see each other. `main` built CRM-S3.1a, CRM-S3.8b and CRM-S3.8a (#142 and #147). The Epic 3 branch built CRM-S3.1a,
-CRM-S3.8b and CRM-S3.4a, its rows 1, 2 and 4 (#144, #145 and #150); its row 5, CRM-S3.8a, is #160, which is not merged yet, so after
-this merge the Epic 3 branch has no Export button until #160 lands. The founder decided Epic 3's versions win. The decisions `main` recorded for its versions, numbered D-185 to D-242 there (D-185 to D-195 the Columns menu, D-200
+CRM-S3.8b and CRM-S3.4a, its rows 1, 2 and 4 (#144, #145 and #150); its row 5, CRM-S3.8a, is #160, which was not merged when `main`
+was first merged in (321fad2), so the merged branch had no Export button until #160 landed; it is merged now (79061f5), and its
+`ExportControl` is the Export button. The founder decided Epic 3's versions win. The decisions `main` recorded for its versions, numbered D-185 to D-242 there (D-185 to D-195 the Columns menu, D-200
 to D-214 and D-241 to D-242 the export in the database, D-230 to D-240 the Export button and the CSV; `main` built no saved views),
 described the implementation Epic 3 replaced. They are kept below as they were, renumbered M-185 to M-242 so that they cannot be
 mistaken for Epic 3's D-185 to D-221, with their references to each other renumbered the same way; a number below D-185 in them is
