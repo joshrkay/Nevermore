@@ -19,6 +19,13 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } })
 const listQueue = vi.fn();
 const countQueueViews = vi.fn();
 const listEmailProblems = vi.fn();
+// The person's kept columns (CRM-S3.1a): the database's own answers are tested in supabase/tests/table_settings.sql; the page is tried with them faked.
+const fetchMyColumns = vi.fn();
+const setMyColumns = vi.fn();
+vi.mock("@/lib/tableSettingsApi", () => ({
+  fetchMyColumns: (...a: unknown[]) => fetchMyColumns(...a),
+  setMyColumns: (...a: unknown[]) => setMyColumns(...a),
+}));
 vi.mock("@/lib/advisorApi", async (original) => ({ ...(await original<typeof import("@/lib/advisorApi")>()), listEmailProblems: () => listEmailProblems() }));
 // A test can resolve a plain list (one page holding everything) or a whole page with its own total.
 vi.mock("@/lib/queueApi", async (original) => ({
@@ -131,6 +138,8 @@ describe("AdvisorDashboardPage", () => {
     listQueue.mockReset();
     countQueueViews.mockReset().mockResolvedValue([]);
     listEmailProblems.mockReset().mockResolvedValue([]);
+    fetchMyColumns.mockReset().mockResolvedValue({ columns: null, source: "default" });
+    setMyColumns.mockReset().mockResolvedValue(undefined);
     signOut.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -3197,6 +3206,99 @@ describe("AdvisorDashboardPage", () => {
         expect(screen.queryByText("This is taking longer than usual.")).not.toBeInTheDocument();
         expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
       });
+    });
+  });
+  // Columns (story CRM-S3.1a): show, hide and reorder, the name column pinned, the choice kept per person in the database (D-43).
+  describe("the columns a person chooses (CRM-S3.1a)", () => {
+    const inFirm = (url = "/advisor") =>
+      render(
+        <WorkspaceContext.Provider value={{ firm: { id: "firm-1", name: "Alpha", address: "alpha" }, role: "Agent", isOwner: false, isSupport: false, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: false, person: "Sam" }}>
+          <QueryClientProvider client={new QueryClient()}>
+            <MemoryRouter initialEntries={[url]}>
+              <Routes><Route path="/advisor" element={<AdvisorDashboardPage />} /></Routes>
+            </MemoryRouter>
+          </QueryClientProvider>
+        </WorkspaceContext.Provider>,
+      );
+    const headerWords = () => screen.getAllByRole("columnheader").map((h) => h.textContent);
+
+    // Catches: a person with no kept choice not seeing the queue's ten columns, in its own order.
+    it("shows every column in the table's own order when the person has kept no choice", async () => {
+      listQueue.mockResolvedValue([row()]);
+      inFirm();
+      await screen.findByRole("link", { name: "Acme" });
+      expect(headerWords()).toEqual(["Company", "Contact", "States", "Employees", "Submitted", "Status", "Completeness", "Quotes", "Waiting since", "Quote expires"]);
+      expect(fetchMyColumns).toHaveBeenCalledWith("firm-1", "submissions", null);
+    });
+
+    // Catches: the kept choice reaching the database but not the table, or the order of the headers and the cells disagreeing.
+    it("draws the kept columns, headers and cells, in the kept order", async () => {
+      fetchMyColumns.mockResolvedValue({ columns: ["company", "status", "states"], source: "mine" });
+      listQueue.mockResolvedValue([row()]);
+      inFirm();
+      await screen.findByRole("link", { name: "Acme" });
+      await waitFor(() => expect(headerWords()).toEqual(["Company", "Status", "States"]));
+      const cells = [...screen.getAllByRole("row")[1].querySelectorAll("th, td")];
+      expect(cells).toHaveLength(3);
+      expect(cells[1]).toHaveTextContent("Submitted");
+      expect(cells[2]).toHaveTextContent("CA, NY");
+    });
+
+    // Catches: the grey loading rows drawn with the table's own columns while the real ones are the person's, so the table jumps when the rows arrive.
+    it("draws the grey loading rows with the same columns, with the first one pinned", async () => {
+      fetchMyColumns.mockResolvedValue({ columns: ["company", "employees"], source: "mine" });
+      listQueue.mockReturnValue(new Promise(() => {}));
+      inFirm();
+      await waitFor(() => expect(headerWords()).toEqual(["Company", "Employees"]));
+      const first = tableBody().querySelector("tr")!;
+      expect(first.querySelectorAll("td")).toHaveLength(2);
+      expect(first.querySelector("td")!.className).toMatch(/\bsticky\b/);
+    });
+
+    // Catches: the name column scrolling out of sight in the queue (ten columns, none sticky before this story).
+    it("keeps the company column in view: its header and every row's first cell are pinned to the left edge", async () => {
+      listQueue.mockResolvedValue([row(), row({ session_id: "s2", company_name: "Birch" })]);
+      inFirm();
+      await screen.findByRole("link", { name: "Acme" });
+      for (const cell of [screen.getByRole("columnheader", { name: "Company" }), ...screen.getAllByRole("rowheader")]) expect(cell.className).toMatch(/\bsticky\b/);
+      expect(screen.getByRole("columnheader", { name: "Contact" }).className).not.toMatch(/sticky/);
+    });
+
+    // Catches: the control missing from the page, or hiding a column keeping nothing (back again at the next visit, or on another device).
+    it("hides a column from the Columns control and keeps the choice, name column first, for this firm", async () => {
+      listQueue.mockResolvedValue([row()]);
+      const user = userEvent.setup();
+      inFirm();
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(screen.getByRole("button", { name: "Columns" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "Completeness" }));
+      expect(headerWords()).not.toContain("Completeness");
+      expect(headerWords()).toHaveLength(9);
+      await waitFor(() => expect(setMyColumns).toHaveBeenCalledWith("firm-1", "submissions", null, ["company", "contact", "states", "employees", "submitted", "status", "quotes", "waiting_since", "quote_expires"]));
+    });
+
+    // Catches: a reordered column breaking sorting (the header's button sorting another column's field) or the rows being asked for again by a change of columns.
+    it("still sorts a moved column by its own field, and does not ask for the rows again when columns change", async () => {
+      listQueue.mockResolvedValue([row()]);
+      const user = userEvent.setup();
+      inFirm();
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(screen.getByRole("button", { name: "Columns" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move Status earlier" }));
+      expect(headerWords().indexOf("Status")).toBe(4);
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: /^Status/ }));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "pipeline_status", direction: "asc" } })));
+      expect(listQueue).toHaveBeenCalledTimes(2);
+    });
+
+    // Catches: a failure to load the choice taking the queue away with it.
+    it("still shows the queue, with the usual columns, when the kept choice can't be loaded", async () => {
+      fetchMyColumns.mockRejectedValue(new Error("Couldn't load your columns."));
+      listQueue.mockResolvedValue([row()]);
+      inFirm();
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(headerWords()).toHaveLength(10);
     });
   });
 });

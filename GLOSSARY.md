@@ -36,7 +36,7 @@ _Avoid_: company (on its own), client, customer
 
 **Prospect**:
 The person who gives the answers and certifies them for an employer: the employer's owner or someone acting for it, such as its CFO.
-_Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet)
+_Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet), and "prospect" for a business (a prospect account is an account's status, see **Account**)
 
 **PEO**:
 A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one. The PEOs we list are kept by admins, each with its **Requirement profile**; a PEO is never removed, only marked not listed, after which nothing offers it but what was sent to it still reads. A PEO a prospect or advisor names that isn't listed stays a name in free text, with no profile.
@@ -165,7 +165,7 @@ _Avoid_: follow-up, RFI, query
 
 **Quote request**:
 One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product: the product sends nothing to a PEO yet, and an advisor sends from their own mail. Counsel cleared the product sending (QP-D1) on 2026-11-11; it starts when Epic M's sending is built and counsel's wording is in. Each quote request has its own reply address and one **thread**. The prospect never sees it.
-_Avoid_: quote (a quote is what a PEO returns on a quote request), submission, RFP, deal
+_Avoid_: quote (a quote is what a PEO returns on a quote request; only the workspace's screens call the pair a quote, see **Quote** (on the workspace's screens)), submission, RFP, deal (an opportunity is the CRM's word)
 
 **Thread**:
 Every email sent and received about one quote request, read newest first on its timeline with its sends, status changes and quote request notes; corrections to the quote request's fields stay in its change log. A submission's threads can also be read together on one combined timeline, each entry naming its PEO. A message the product sends for a broker through their **connected mailbox** lists the reply address first in Reply-To and the broker's own address second, so a plain Reply reaches the thread and their inbox. Mail reaches a thread through the quote request's reply address: the File ID, the PEO's short name and an unguessable part, on a subdomain of nevermorepeo.com. The address keeps receiving after the quote request closes, until the intake is deleted or an advisor revokes and reissues it. A message to it joins the thread whoever sent it, with a sender not seen before marked as new, an automatic reply marked as one, and an advisor's own copied-in email marked as sent by hand. Mail a person at the PEO wrote sets a "new PEO mail" mark, one for the whole team, until any advisor opens the thread. Messages are shown as plain text, and an attachment that fails its malware scan is blocked while the rest of the message stays readable. An arriving message never changes the quote request status. Kept and deleted with the intake; the prospect never sees it.
@@ -403,7 +403,7 @@ A person who runs Nevermore itself: keeps the PEO list and its profiles, reads m
 _Avoid_: admin (on its own, where a firm's owner could be meant), super user
 
 **Record owner**:
-The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it.
+The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it. Who may change a record also follows level, whatever the firm's visibility: an agent their own, a lead their team's, an owner the firm's, and a record with no owner only an owner. That covers its fields, its owner, archiving, deleting and moving a contact. Adding to a record (a contact, a call, a note, a task) is open to anyone who may see it (D-209).
 _Avoid_: assignee, creator
 
 **Visibility helper** (code: `can_see_firm_record(firm, owner)`):
@@ -479,8 +479,61 @@ _Avoid_: default view (the table's default sort and columns are something else)
 Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults.
 _Avoid_: layout, column settings, preferences (on its own)
 
+**Columns menu** (code: `ColumnsMenu`, `useMyColumns`, `columnChoice.ts` in `src/components/workspace/table/`; story CRM-S3.1a):
+The "Columns" control over a workspace table, where a person shows or hides each column with a box, moves a shown one earlier or later with a pair of buttons, and goes back to the table's usual columns. Each change is kept at once as the person's column choice for the table (no Apply). The **name column** (the table's first, `isName`: the queue's Company) is always shown and always first. A saved view's own columns and the firm's custom fields join this menu with CRM-S3.4a and CRM-X3.1; it has no place for them yet.
+_Avoid_: column picker, column settings, customise
+
 **Entry kind** (code: `firm_activity.kind`):
 What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. Removing a member writes `member_removed`, suspending one `member_suspended` and lifting it `member_restored`, each with who did it and to whom (and instead of, not as well as, the `member_ended` or `owner_added` that ending and beginning a membership would write). A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
+
+### The broker's CRM
+
+**Account**:
+A business the firm quotes for: one of the firm's records, with a **Record owner** or, until one is assigned, none (an account made from an employer's intake or brought in starts with none, D-214). Made by an agent, by bringing an existing submission in (CRM-Q1.3), or when an intake an employer started is first certified (ADR 0025); later also by New quote, by converting a lead and by an import. When it is made from a submission, its empty fields are filled from the certified answers (legal name, address, states of operation, employees, industry, current provider), never the FEIN, the census or anything about an employee (ADR 0006); once copied they are the firm's own fields. It is archived, never deleted, while it holds an intake; one with no intake, quote or email can be deleted by its record owner or a firm owner, and its contacts, calls, notes and tasks go with it. Its status is worked out, never set: Prospect until one of its submissions is won, then Client (Former client arrives with the placement record in Epic 4). A prospect account is never the person the glossary calls the **Prospect** (D-208). Its source is set by the product and never edited: Employer's intake (with the referral partner's name when the intake came by a partner's link), Added by hand, and later New quote, Lead and Import (D-211).
+_Avoid_: company, customer, employer (the employer is the business; the account is the firm's record of it)
+
+**Contact**:
+A person at an account, on exactly one account, with a name and an email or a phone. Seen by whoever may see its account. An account has at most one main contact. The prospect of a submission becomes one when its chain is made: the contact keeps a link to that prospect so they are never added twice to that account (the same prospect can be a contact on two accounts, one each), and their name, email and phone are copied once and not kept in step, because the contact is the firm's record and the profile is the person's.
+_Avoid_: PEO contact (a person at a PEO), prospect (the person who certifies; a prospect becomes a contact and the two stay separate records), lead
+
+**Opportunity**:
+One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known. It holds at most one intake; next year's renewal is a new opportunity on the same account. Until CRM-O1.2 its stage is worked out from its submission's pipeline stage, never stored: Intake under way (draft, submitted, under review, information requested), Ready to send (ready for market), In market (sent to PEOs), Quoted, Won, and Lost (lost or archived). It is open until it is won or lost (D-206).
+_Avoid_: deal, search (on its own), case
+
+**Activity tab**:
+The tab of an account's page that lists, newest first, its calls, notes and tasks (from Epic 6 its emails) together with its record history, with a filter for All, Calls, Notes, Tasks and Changes (D-212). It is never the **Firm activity** record.
+_Avoid_: activity feed, audit log, timeline (on its own)
+
+**The chain**:
+A quote request's opportunity and that opportunity's account, with the account's contacts. No quote request without an opportunity, no opportunity without an account, and every submission on one opportunity: the database refuses anything else. It is made in the same step a quote starts, and the same step run twice makes one chain, not two. An intake an employer started that has not been certified yet has none (ADR 0025).
+_Avoid_: hierarchy, link, filing
+
+**Quote** (on the workspace's screens):
+One row of the Quotes list or of an account's Quotes tab: a **Quote request** together with the **Quote** it returns, if any (D-185). In code and in the entries above, the two keep their own names.
+
+**Duplicate match**:
+How the product decides that a business may already be an account, exactly and never by likeness: the same web domain (without `www.`, and never a free-mail domain such as gmail.com), the same name and state (the name's last word dropped when it is a legal designator, LLC, Inc, Corp, Co, Ltd, LLP, PC or PLLC, with or without its punctuation, and only then put in lower case with letters and digits only, so "Acme Co." and "Acme" match but "Costco" and "Cost" do not), or a contact with the same email, ignoring case. While a person creates a record, a match is a warning naming the record and its owner, with a link; one they may not see says only that one exists and who to ask. They can still save.
+_Avoid_: fuzzy match, similar record
+
+**Possible duplicate**:
+A mark on an account that the duplicate match found may be a business the firm already has, made when an employer's intake or the bringing-in of existing submissions created it. Nothing is merged by guesswork: an agent merges it or keeps it separate, which clears the mark. The employer is never asked.
+_Avoid_: duplicate (on its own: it is a question, not a finding)
+
+**Merge**:
+Two accounts, two contacts or two leads made one. For each field that differs the person picks the value to keep; everything attached to the one removed moves to the one kept; the one removed is deleted, its history moves to the kept record marked as from the merged record, its old address leads to the kept record, and the merge is recorded on the kept record. Anyone allowed to change both can merge them. There is no unmerge. Two accounts that each hold an intake can be merged: both intakes stay, each on its own opportunity.
+_Avoid_: combine, dedupe
+
+**Label**:
+A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records).
+_Avoid_: tag, category
+
+**Call**, **Note**, **Task**:
+What an agent logs on an account or a contact (later on a lead or an opportunity). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
+_Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
+
+**Last activity**:
+When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity.
+_Avoid_: last modified, updated
 
 ### Advisors
 
@@ -493,7 +546,7 @@ How a workspace table asks the database for its rows (D-44): a list of **filters
 _Avoid_: dynamic query, search (a search is the words typed in the search box, which is one part of the query)
 
 **Table frame** (code: `src/components/workspace/table/`; story CRM-S3.5a):
-The one piece every workspace table is drawn with: its **table address** read from the page, its rows fetched through the query library (asked again on focus and every 60 seconds, the rows staying on screen while the next arrive), the table itself, and the pager. A table gives the frame a **column definition** list and its fields (a constant: what a cell needs besides its row comes through the frame's `context`); the frame owns what a view means for the query (the view's filters, then the address's, within the 20 the database takes) and draws the view tabs; the frame leaves named places for what later stories add: `empty` and `error` (Epic 2's page-state stories), the filter row (built, CRM-S3.3a: `FilterRow`), the columns menu, saved views and row selection. The queue is the first table on it.
+The one piece every workspace table is drawn with: its **table address** read from the page, its rows fetched through the query library (asked again on focus and every 60 seconds, the rows staying on screen while the next arrive), the table itself, and the pager. A table gives the frame a **column definition** list and its fields (a constant: what a cell needs besides its row comes through the frame's `context`); the frame owns what a view means for the query (the view's filters, then the address's, within the 20 the database takes) and draws the view tabs; the frame leaves named places for what later stories add: `empty` and `error` (Epic 2's page-state stories), the filter row (built, CRM-S3.3a: `FilterRow`), the columns menu (built, CRM-S3.1a: `ColumnsMenu`; the first column is pinned to the left edge when the table scrolls sideways), saved views and row selection. The queue is the first table on it.
 _Avoid_: grid, data table (in screen words, say "table")
 
 **Loading state** (code: `src/components/workspace/states/`; story CRM-S2.1, D-143 to D-146):

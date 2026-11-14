@@ -43,7 +43,7 @@ export type FieldDefinitions<K extends TableFields> = { readonly [F in keyof K &
 
 /** One column of a table. It carries no kind of its own: the field it names has one. */
 export interface ColumnDefinition<Row, Field extends string = string, Context = undefined> {
-  /** Kept in the database for column choices (CRM-S3.1b), so it never changes once shipped. */
+  /** Kept in the database in a person's column choice (CRM-S3.1a, `useMyColumns`), so it never changes once shipped. */
   id: string;
   /** The words in the column's header. */
   header: string;
@@ -63,8 +63,9 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
 
 /**
  * A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too.
- * CRM-S3.4a adds a view's own `sort` here (and makes `queryFor` and `sameAddress` apply it: today a view has no sort of its own, so the
- * address's sort is the only one); CRM-S3.1a adds the view's own `columns`.
+ * CRM-S3.4a adds a view's own `sort` and `columns` here (and makes `queryFor` and `sameAddress` apply the sort: today a view has no sort of
+ * its own, so the address's sort is the only one). CRM-S3.1a built the person's column choice for the table (`useMyColumns`, `ColumnsMenu`); the
+ * choice per saved view is S3.4a's, which gives the hook the view's id.
  *
  * How the table's limit of 20 filters is applied to the total: the view's filters count first and the address's take what is left
  * (`effectiveFilters`). The rows use the current view's room. A tab's count uses the room of ITS view, so a tab whose view has more
