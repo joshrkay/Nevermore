@@ -6,7 +6,7 @@ import type { Json } from "@/integrations/supabase/types";
 // may not see it all get the same refusal. The screens that show a history (CRM-A2.1, CRM-L2.1) only render what this returns.
 
 /** The tables that keep a history. A table is added here when the migration that attaches its trigger adds it to the database's list. */
-export type RecordHistoryTable = "referral_partners";
+export type RecordHistoryTable = "referral_partners" | "accounts" | "contacts" | "opportunities";
 
 /** One entry of a record's history: its creation, or the change of one field. A value that was not there is null. */
 export type RecordHistoryEntry = {
@@ -35,7 +35,7 @@ export type RecordHistoryPage = {
 };
 
 /**
- * One page of a record's history, newest first. `key` names the record within its firm (a referral partner's code; several columns are a compact JSON array of the parts). The page is full when
+ * One page of a record's history, newest first. `key` names the record within its firm (a referral partner's code, an account's, a contact's or an opportunity's id; several columns are a compact JSON array of the parts). The page is full when
  * `next` is set, so the caller asks again with it until it is null.
  */
 export async function listRecordHistory(
