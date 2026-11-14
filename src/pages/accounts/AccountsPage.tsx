@@ -30,14 +30,19 @@ const AccountsPage = () => {
   // The columns this person chose, kept in the database (CRM-S3.1a); the table and its grey loading rows draw the same list.
   const mine = useMyColumns(table, address.view);
   const columns = useMemo(() => shownColumns(table, mine.kept), [table, mine.kept]);
-  const savedViews = useSavedViewsControl(table, location, { columns: mine.kept, columnsStatus: mine.status, refused: !!data.error && refusedQueryReason(data.error) !== null, rowsSettled: !hasHeld(address) && !data.isPlaceholder && (data.page !== null || data.error !== null) });
+  const rowsSettled = !hasHeld(address) && !data.isPlaceholder && (data.page !== null || data.error !== null);
+  // A view saved now keeps the columns on screen: with no choice kept those are the usual ones, so they are named once the choice has loaded.
+  const onScreen = mine.kept ?? (mine.status === "ready" ? columns.map((c) => c.id) : null);
+  const savedViews = useSavedViewsControl(table, location, { columns: onScreen, columnsStatus: mine.status, refused: !!data.error && refusedQueryReason(data.error) !== null, rowsSettled });
   const addFilterRef = useRef<HTMLButtonElement>(null);
 
   // What the Export button asks for: the filters and search in force, as the table's own call takes them (the database applies the person's visibility itself).
   const asked = queryFor(table, address);
-  const exportFilters: Record<string, Json> = { filters: asked.filters as unknown as Json, ...(address.search ? { search: address.search } : {}), time_zone: browserTimeZone() };
-  // Offered only when there are rows to take (D-223).
-  const hasRows = !!data.page && data.page.total > 0;
+  const timeZone = browserTimeZone();
+  const exportFilters: Record<string, Json> = { filters: asked.filters as unknown as Json, ...(address.search ? { search: address.search } : {}), time_zone: timeZone };
+  // Offered only when there are rows to take (D-223), and only once the rows on screen answer the question on screen: the filters sent are the address's, so the
+  // previous question's rows kept while the next loads must not be exported under the new filters.
+  const hasRows = rowsSettled && !data.error && !!data.page && data.page.total > 0;
 
   const toolbar = ({ loading, slowLine }: { loading: boolean; slowLine: ReactNode }) => (
     <>
@@ -46,7 +51,7 @@ const AccountsPage = () => {
           <h1 className="font-display text-3xl font-bold">Accounts</h1>
           {slowLine}
         </div>
-        {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns)} filters={exportFilters} />}
+        {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={exportFilters} />}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3 mb-3">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Search accounts, contacts, emails" onSearch={(term) => change({ search: term })} />

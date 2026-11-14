@@ -281,8 +281,10 @@ export const useAccountsTable = (): AccountsTable => {
     const people = members.data;
     const base: AccountsTableDefinition = people ? { ...ACCOUNTS_TABLE, fields: fieldsWith(people) } : ACCOUNTS_TABLE;
     const byId = new Map((people ?? []).map((p) => [p.value, p.label]));
-    return { table: withSavedViews(base, saved, status), names: (id: string) => byId.get(id) };
-  }, [members.data, saved, status]);
+    // A person the lookup can't name (it failed, or they have left the firm) reads "A member", never their id (D-227).
+    const settled = !members.isPending;
+    return { table: withSavedViews(base, saved, status), names: (id: string) => byId.get(id) ?? (settled ? "A member" : undefined) };
+  }, [members.data, members.isPending, saved, status]);
 };
 
 // ---------- the two calls ----------
@@ -304,7 +306,17 @@ export const countAccountsViews = (firmId: string | null) =>
  */
 const num = (v: ExportValue | undefined): number => (typeof v === "number" ? v : 0);
 const str = (v: ExportValue | undefined): string => (typeof v === "string" ? v : "");
-const EXPORTED: Record<string, { id: string; text?: (row: Record<string, ExportValue>) => string }> = {
+/** The calendar day of a moment in the time zone the page shows it in (the one sent as `time_zone`), as YYYY-MM-DD. */
+export const dayInZone = (moment: string, timeZone: string): string => {
+  const at = new Date(moment);
+  if (Number.isNaN(at.getTime())) return moment.slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  } catch {
+    return moment.slice(0, 10);
+  }
+};
+const EXPORTED = (timeZone: string): Record<string, { id: string; text?: (row: Record<string, ExportValue>) => string }> => ({
   account: { id: "name" },
   main_contact: { id: "main_contact", text: (r) => [str(r.main_contact), str(r.main_contact_email) || str(r.main_contact_phone)].filter(Boolean).join(", ") },
   opportunity: {
@@ -313,19 +325,25 @@ const EXPORTED: Record<string, { id: string; text?: (row: Record<string, ExportV
   },
   quotes: {
     id: "quote_requests_sent",
-    text: (r) => quotesWords({ open_opportunities: num(r.open_opportunities), quote_requests_sent: num(r.quote_requests_sent), quotes_received: num(r.quotes_received) }),
+    text: (r) => {
+      const words = quotesWords({ open_opportunities: num(r.open_opportunities), quote_requests_sent: num(r.quote_requests_sent), quotes_received: num(r.quotes_received) });
+      // The page's second line under the count: when the nearest quote expires.
+      return typeof r.earliest_quote_expires_on === "string" && r.earliest_quote_expires_on ? `${words}, ${expiryWords(r.earliest_quote_expires_on).text}` : words;
+    },
   },
   employees: { id: "employees" },
   owner: { id: "owner" },
-  last_activity: { id: "last_activity_at", text: (r) => str(r.last_activity_at).slice(0, 10) },
+  last_activity: { id: "last_activity_at", text: (r) => dayInZone(str(r.last_activity_at), timeZone) },
   status: { id: "status" },
   website: { id: "website" },
   industry: { id: "industry" },
   states_of_operation: { id: "states_of_operation" },
   current_provider: { id: "current_provider" },
   source: { id: "source" },
-  created: { id: "created_at", text: (r) => str(r.created_at).slice(0, 10) },
-};
+  created: { id: "created_at", text: (r) => dayInZone(str(r.created_at), timeZone) },
+});
 
-export const exportColumnsFor = (shown: readonly { id: string; header: string }[]): ShownColumn[] =>
-  shown.filter((c) => EXPORTED[c.id]).map((c) => ({ id: EXPORTED[c.id].id, heading: c.header, ...(EXPORTED[c.id].text ? { text: EXPORTED[c.id].text } : {}) }));
+export const exportColumnsFor = (shown: readonly { id: string; header: string }[], timeZone: string): ShownColumn[] => {
+  const known = EXPORTED(timeZone);
+  return shown.filter((c) => known[c.id]).map((c) => ({ id: known[c.id].id, heading: c.header, ...(known[c.id].text ? { text: known[c.id].text } : {}) }));
+};

@@ -31,8 +31,10 @@ vi.mock("@/lib/accountsApi", async (original) => ({
 }));
 const fetchMyColumns = vi.fn();
 const setMyColumns = vi.fn();
+const saveView = vi.fn();
 vi.mock("@/lib/tableSettingsApi", () => ({
   listSavedViews: async () => [],
+  saveView: (...a: unknown[]) => saveView(...a),
   fetchMyColumns: (...a: unknown[]) => fetchMyColumns(...a),
   setMyColumns: (...a: unknown[]) => setMyColumns(...a),
 }));
@@ -84,12 +86,13 @@ const headers = () => within(screen.getByRole("table")).getAllByRole("columnhead
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
-  for (const fn of [listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
+  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
   countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   fetchMyColumns.mockResolvedValue({ columns: null, source: "none" });
   setMyColumns.mockResolvedValue(undefined);
+  saveView.mockResolvedValue("v1");
 });
 afterEach(() => cleanup());
 
@@ -240,6 +243,29 @@ describe("the Accounts page: views and filters", () => {
     await screen.findByRole("link", { name: "Harborview Dental Group" });
     await user.click(screen.getByRole("button", { name: "Filter by Owner" }));
     expect(await screen.findByLabelText("Condition")).toBeInTheDocument();
+  });
+
+  // Catches: a view saved from the default layout keeping no columns (it would then show whatever the person has later, not what they saw).
+  it("saves a view from the default layout with the seven columns on screen", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).not.toHaveAttribute("aria-disabled"));
+    await user.click(screen.getByRole("button", { name: "Save this as a view" }));
+    await user.type(await screen.findByLabelText("Name"), "My view");
+    await user.click(screen.getByRole("button", { name: "Save view" }));
+    await waitFor(() => expect(saveView).toHaveBeenCalled());
+    expect(saveView.mock.calls[0][0]).toMatchObject({ table: "accounts", name: "My view", columns: ["account", "main_contact", "opportunity", "quotes", "employees", "owner", "last_activity"] });
+  });
+
+  // Catches: an Owner chip showing a person's id when the firm's people could not be listed (D-227: "A member"); me and my team keep their words.
+  it("words an owner it can't name as 'A member', never by id, and keeps 'my team'", async () => {
+    listFirmMembers.mockRejectedValue(new Error("Couldn't load the firm's people."));
+    renderAt("/accounts?filter=owner:any_of:5f1c2a9e-0000-4000-8000-000000000002&filter=owner:my_team");
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    const chips = await screen.findByRole("list", { name: "Filters in force" });
+    await waitFor(() => expect(chips).toHaveTextContent("A member"));
+    expect(chips).not.toHaveTextContent("5f1c2a9e");
   });
 
   // Catches: a State filter that sends the state's name or the wrong field, instead of the code the database takes.
@@ -407,6 +433,43 @@ describe("the Accounts page: Export", () => {
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Website,Source\r\nHarborview Dental Group,harborviewdental.example,Employer's intake\r\n");
+  });
+
+  // Catches: Export offered over the previous question's rows while the next are on their way, which would take the new filters' rows, not those on screen.
+  it("offers no Export while the rows on screen answer an earlier question", async () => {
+    const user = userEvent.setup();
+    let release: (v: unknown) => void = () => {};
+    listAccounts.mockImplementation((o: { filters: unknown[] }) => (o.filters.length ? new Promise((r) => { release = r; }) : Promise.resolve([row()])));
+    renderAt();
+    await screen.findByRole("button", { name: "Export" });
+    await user.click(screen.getByRole("link", { name: /Clients/ }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument());
+    release([second]);
+    expect(await screen.findByRole("button", { name: "Export" })).toBeInTheDocument();
+  });
+
+  // Catches: the Quotes cell in the file leaving out the expiry the page shows under the count.
+  it("writes the Quotes column with the expiry the page shows", async () => {
+    const user = userEvent.setup();
+    fetchMyColumns.mockResolvedValue({ columns: ["account", "quotes"], source: "person" });
+    exportRows.mockResolvedValue(answer([exported({ earliest_quote_expires_on: "2020-01-05" })]));
+    renderAt();
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).map((h) => h.textContent?.trim())).toEqual(["Account", "Quotes"]));
+    await press(user);
+    await screen.findByText("Exported 1 account.");
+    expect((await theFile()).text).toBe("Account,Quotes\r\nHarborview Dental Group,\"1 of 3 back, Expired Jan 5, 2020\"\r\n");
+  });
+
+  // Catches: the file's dates being the UTC day while the page shows the person's own: 00:30 UTC on the 11th is the evening of the 10th in Los Angeles.
+  it("writes dates as the day the page shows, in the time zone it sends", async () => {
+    const user = userEvent.setup();
+    fetchMyColumns.mockResolvedValue({ columns: ["account", "last_activity", "created"], source: "person" });
+    exportRows.mockResolvedValue(answer([exported({ last_activity_at: "2026-11-11T00:30:00+00:00", created_at: "2026-10-28T03:00:00+00:00" })]));
+    renderAt();
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).map((h) => h.textContent?.trim())).toEqual(["Account", "Last activity", "Created"]));
+    await press(user);
+    await screen.findByText("Exported 1 account.");
+    expect((await theFile()).text).toBe("Account,Last activity,Created\r\nHarborview Dental Group,2026-11-10,2026-10-27\r\n");
   });
 
   // Catches: an Export button on a list with nothing to export (D-223).
