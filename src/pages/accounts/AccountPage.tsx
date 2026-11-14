@@ -39,7 +39,8 @@ const AccountPage = () => {
   }, [queryClient, firmId, id]);
 
   const go = (next: string) => {
-    setParams(next === "overview" ? {} : { tab: next });
+    // Replaced, not pushed: each arrow key in the tab list chooses a tab, and Back would step through every one it passed.
+    setParams(next === "overview" ? {} : { tab: next }, { replace: true });
   };
 
   if (waiting) return <Frame><AccountLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;

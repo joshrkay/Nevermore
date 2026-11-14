@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { Link } from "react-router-dom";
 import { PlaceholderLine, PlaceholderLines } from "@/components/workspace/states";
 
@@ -16,8 +16,19 @@ export function Rows<R>({ caption, columns, rows, rowKey, highlight }: {
   highlight?: string | null;
 }) {
   const marked = useRef<HTMLTableRowElement>(null);
+  // The marked row is brought into view and its name takes focus, once for each contact named: a link that opened this list moved the page under the
+  // person's hands, so focus goes where they were sent. Rows loading in after it (Show more) take nothing back.
+  const arrived = useRef<string | null>(null);
   useEffect(() => {
-    marked.current?.scrollIntoView?.({ block: "center" });
+    if (!highlight) {
+      arrived.current = null;
+      return;
+    }
+    if (marked.current && arrived.current !== highlight) {
+      arrived.current = highlight;
+      marked.current.scrollIntoView?.({ block: "center" });
+      marked.current.querySelector("a")?.focus({ preventScroll: true });
+    }
   }, [highlight, rows.length]);
   return (
     <div className="overflow-x-auto">
@@ -64,11 +75,13 @@ export const ListRowsLoading = ({ rows = 3 }: { rows?: number }) => (
 );
 
 /** A section of the Overview or a tab: its heading with its count, "See all" when it has rows, and its body. */
-export function ListPanel({ id, heading, count, seeAll, children }: { id: string; heading: string; count?: number; seeAll?: ReactNode; children: ReactNode }) {
+export function ListPanel({ id, heading, count, seeAll, headingRef, children }: {
+  id: string; heading: string; count?: number; seeAll?: ReactNode; headingRef?: Ref<HTMLHeadingElement>; children: ReactNode;
+}) {
   return (
     <section aria-labelledby={id} className="border border-border rounded-xl p-5">
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 id={id} className="font-display text-lg font-bold">
+        <h2 id={id} ref={headingRef} tabIndex={-1} className="font-display text-lg font-bold focus:outline-none">
           {heading}
           {count !== undefined && <span className="ml-2 text-base font-normal text-muted-foreground">{count}</span>}
         </h2>
@@ -79,8 +92,9 @@ export function ListPanel({ id, heading, count, seeAll, children }: { id: string
   );
 }
 
+/** "See all" leaves `focusHeading` in the navigation, so the tab it opens puts focus on its heading. */
 export const SeeAll = ({ to, noun }: { to: string; noun: string }) => (
-  <Link to={to} className="text-sm text-primary underline underline-offset-2 hover:text-primary/90">
+  <Link to={to} state={{ focusHeading: true }} className="text-sm text-primary underline underline-offset-2 hover:text-primary/90">
     See all<span className="sr-only"> {noun}</span>
   </Link>
 );

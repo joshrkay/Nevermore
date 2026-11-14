@@ -92,7 +92,10 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
       onSaved(saved);
     },
     failureMessage: "Couldn't save the account. Check your connection and try again.",
-    onCancel: () => setEditing(false),
+    onCancel: () => {
+      setEditing(false);
+      setFocusEdit(true);
+    },
   });
 
   const startEditing = () => {

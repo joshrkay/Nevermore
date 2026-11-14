@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getAccountPage, listAccountFiles, listAccountTab, type AccountFile, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
 
 /** An account's page and its lists are asked again this often, and when the window gets focus (D-49). */
@@ -24,26 +24,35 @@ export function useAccountPageQuery(firmId: string | null, accountId: string) {
   });
 }
 
-/** How many rows a tab asks for at first, and how many more "Show more" adds. */
+/** How many rows a page of a tab holds. The database allows 100 at most, and the screen asks for fifty (D-44), each page starting after the rows already loaded. */
 export const TAB_STEP = 50;
 
 type TabAnswer<T extends AccountListTab | "files"> = TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile> | null;
 
 /**
- * One tab's rows, the first `limit` of them (the tab's own list, so what "see all" opens is the whole list and not the page's first five). Asked only while
- * the tab is open. The rows on screen stay while a longer list or a refresh loads.
+ * One tab's list, a page of fifty at a time: the first page from the first row, and each next page from the row after the last one loaded (never the whole list
+ * again with a longer limit, which the database refuses past a hundred rows). Asked only while the tab is open. `rows` is every row loaded so far and `count` how
+ * many the tab holds in all; `null` rows say the account is not there or not theirs. A refresh asks the loaded pages again, and the rows stay while it does.
  */
-export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: string | null, accountId: string, tab: T, limit: number) {
-  return useQuery<TabAnswer<T>>({
-    queryKey: [...accountKey(firmId, accountId), "tab", tab, limit],
-    queryFn: async () => (tab === "files"
-      ? await listAccountFiles(firmId as string, accountId, { limit })
-      : await listAccountTab(firmId as string, accountId, tab as AccountListTab, { limit })) as TabAnswer<T>,
+export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: string | null, accountId: string, tab: T) {
+  const query = useInfiniteQuery({
+    queryKey: [...accountKey(firmId, accountId), "tab", tab],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }): Promise<TabAnswer<T>> => (tab === "files"
+      ? await listAccountFiles(firmId as string, accountId, { limit: TAB_STEP, offset: pageParam })
+      : await listAccountTab(firmId as string, accountId, tab as AccountListTab, { limit: TAB_STEP, offset: pageParam })) as TabAnswer<T>,
+    getNextPageParam: (last, all) => {
+      if (last === null) return undefined;
+      const loaded = all.reduce((n, page) => n + (page?.rows.length ?? 0), 0);
+      return last.rows.length > 0 && loaded < last.count ? loaded : undefined;
+    },
     enabled: firmId !== null,
-    placeholderData: keepPreviousData,
     refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
     refetchOnWindowFocus: (q) => keepsAsking(q),
     refetchOnReconnect: (q) => keepsAsking(q),
     retry: false,
   });
+  const pages = query.data?.pages;
+  const data = pages === undefined ? undefined : pages[0] === null ? null : { count: pages[pages.length - 1]!.count, rows: pages.flatMap((page) => page?.rows ?? []) as TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile>["rows"] };
+  return { query, data };
 }

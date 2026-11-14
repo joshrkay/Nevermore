@@ -43,6 +43,17 @@ const change = (n: number, over: object = {}) => ({
 const file = (n: number) => ({ id: `d${n}`, fileName: `census-${n}.csv`, mimeType: "text/csv", sizeBytes: 2048, category: "employee_census", createdAt: "2026-11-02T10:00:00+00:00", submissionId: "i1", storagePath: `u1/i1/census-${n}.csv` });
 const tabOf = <R,>(rows: R[], count = rows.length) => ({ count, rows });
 
+/** The database's page of a tab: the rows from `offset`, at most 100 a page (it refuses more with 22023), and how many there are in all. */
+const pageOf = <R,>(all: R[], o: { limit?: number; offset?: number } = {}) => {
+  const limit = o.limit ?? 50;
+  const offset = o.offset ?? 0;
+  if (limit > 100 || limit < 0 || offset < 0) throw new AccountError("invalid", "A page is 0 to 100 rows, from a place that is not before the first", "22023");
+  return tabOf(all.slice(offset, offset + limit), all.length);
+};
+/** A fake of `listAccountTab` and `listAccountFiles` over a list of rows, with the database's page rule. */
+const serveTab = <R,>(all: R[]) => client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) => pageOf(all, o));
+const serveFiles = <R,>(all: R[]) => client.listAccountFiles.mockImplementation(async (_f: string, _a: string, o?: { limit?: number; offset?: number }) => pageOf(all, o));
+
 const account = {
   id: "a1", version: 3, name: "Harborview Dental Group", tradeName: "Harborview Dental", website: "harborviewdental.example", webDomain: "harborviewdental.example",
   phone: "(503) 555-0140", street: "410 SW Alder St", city: "Portland", state: "OR", postalCode: "97204", industry: "Dental practice", employees: 45,
@@ -123,7 +134,7 @@ describe("AccountPage: the header and the tabs", () => {
     await user.click(await screen.findByRole("tab", { name: /Contacts/ }));
     expect(router.state.location.search).toBe("?tab=contacts");
     expect(await screen.findByRole("region", { name: /Contacts/ })).toBeInTheDocument();
-    expect(client.listAccountTab).toHaveBeenCalledWith("f1", "a1", "contacts", { limit: 50 });
+    expect(client.listAccountTab).toHaveBeenCalledWith("f1", "a1", "contacts", { limit: 50, offset: 0 });
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     expect(router.state.location.search).toBe("");
   });
@@ -186,7 +197,7 @@ describe("AccountPage: the Overview", () => {
     const router = renderPage();
     await user.click(await screen.findByRole("link", { name: "See all opportunities" }));
     expect(router.state.location.search).toBe("?tab=opportunities");
-    expect(client.listAccountTab).toHaveBeenCalledWith("f1", "a1", "opportunities", { limit: 50 });
+    expect(client.listAccountTab).toHaveBeenCalledWith("f1", "a1", "opportunities", { limit: 50, offset: 0 });
     expect(await screen.findByText("Search 3")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Opportunities/ })).toHaveAttribute("aria-selected", "true");
   });
@@ -215,29 +226,80 @@ describe("AccountPage: every name opens its record", () => {
     expect(screen.getByRole("cell", { name: /Elena Marsh/ }).closest("tr")).not.toHaveAttribute("aria-current");
   });
 
-  // Catches: a contact further down than the first fifty never coming into view.
-  it("loads on until a contact named in the address is in the list", async () => {
-    const first = Array.from({ length: 50 }, (_, i) => contact(i + 100));
-    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o: { limit: number }) =>
-      tabOf(o.limit >= 100 ? [...first, contact(2)] : first, 51));
+  // Catches: a contact further down than the first fifty never coming into view, or one past row 100 never coming (a page asked for from row 0 with a longer
+  // limit is refused by the database at 100).
+  it("loads on, a page at a time, until a contact named in the address is in the list", async () => {
+    const all = Array.from({ length: 130 }, (_, i) => contact(i + 1000));
+    all[119] = contact(2);
+    serveTab(all);
     renderPage("/accounts/a1?tab=contacts&contact=c2");
-    expect((await screen.findByText("Person2 Abel")).closest("tr")).toHaveAttribute("aria-current", "true");
-    expect(client.listAccountTab).toHaveBeenCalledWith("f1", "a1", "contacts", { limit: 100 });
+    expect((await screen.findByText("Person2 Abel", undefined, { timeout: 4000 })).closest("tr")).toHaveAttribute("aria-current", "true");
+    expect(client.listAccountTab.mock.calls.map((c) => c[3])).toEqual([{ limit: 50, offset: 0 }, { limit: 50, offset: 50 }, { limit: 50, offset: 100 }]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("AccountPage: a contact named in the address, when a page fails", () => {
+  // Catches: the page that failed being asked for again and again, for as long as the contact is not in view.
+  it("asks for the failed page once, and says so", async () => {
+    const all = Array.from({ length: 130 }, (_, i) => contact(i + 1000));
+    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) => {
+      if (o?.offset === 50) throw new AccountError("failed", "Couldn't load the list. Try again.");
+      return pageOf(all, o);
+    });
+    renderPage("/accounts/a1?tab=contacts&contact=c2");
+    expect(await screen.findByText(/We couldn't refresh the contacts/, undefined, { timeout: 4000 })).toBeInTheDocument();
+    await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+    expect(client.listAccountTab).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("AccountPage: the tabs' own lists", () => {
-  it("shows the Quotes tab's rows with their dates, and Show more for a list longer than what is loaded", async () => {
+  // Catches: "Show more" asking again from the first row with a longer limit, which the database refuses past 100: the rows on screen swapped for a failure.
+  it("shows the Quotes tab's rows with their dates, and Show more adds the next fifty after the rows already there, past a hundred rows", async () => {
     const user = userEvent.setup();
-    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o: { limit: number }) =>
-      tabOf(Array.from({ length: Math.min(o.limit, 60) }, (_, i) => quote(i + 1, { quoteReceivedOn: "2026-11-03", quoteExpiresOn: "2026-12-05" })), 60));
+    serveTab(Array.from({ length: 160 }, (_, i) => quote(i + 1, { quoteReceivedOn: "2026-11-03", quoteExpiresOn: "2026-12-05" })));
     renderPage("/accounts/a1?tab=quotes");
-    expect(await screen.findByText("Showing 50 of 60.")).toBeInTheDocument();
+    expect(await screen.findByText("Showing 50 of 160.")).toBeInTheDocument();
     expect(screen.getAllByText("Dec 5, 2026").length).toBe(50);
     await user.click(screen.getByRole("button", { name: "Show more" }));
-    expect(await screen.findAllByRole("row")).toHaveLength(61);
-    expect(client.listAccountTab).toHaveBeenLastCalledWith("f1", "a1", "quotes", { limit: 100 });
+    expect(await screen.findByText("Showing 100 of 160.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByText("Showing 150 of 160.")).toBeInTheDocument();
+    expect(screen.getByText("PEO 150")).toBeInTheDocument();
+    expect(screen.getByText("PEO 101")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByText("PEO 160")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    expect(client.listAccountTab.mock.calls.map((c) => c[3])).toEqual([0, 50, 100, 150].map((offset) => ({ limit: 50, offset })));
+  });
+
+  it("pages the Files tab the same way", async () => {
+    const user = userEvent.setup();
+    serveFiles(Array.from({ length: 120 }, (_, i) => file(i + 1)));
+    renderPage("/accounts/a1?tab=files");
+    expect(await screen.findByText("Showing 50 of 120.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await user.click(await screen.findByRole("button", { name: "Show more" }));
+    expect(await screen.findByText("census-120.csv")).toBeInTheDocument();
+    expect(client.listAccountFiles.mock.calls.map((c) => c[2])).toEqual([0, 50, 100].map((offset) => ({ limit: 50, offset })));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // Catches: a page that fails taking the rows already on screen with it.
+  it("keeps the rows on screen when the next page fails, and says they may be out of date", async () => {
+    const user = userEvent.setup();
+    const all = Array.from({ length: 80 }, (_, i) => quote(i + 1));
+    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) => {
+      if (o?.offset === 50) throw new AccountError("failed", "Couldn't load the list. Try again.");
+      return pageOf(all, o);
+    });
+    renderPage("/accounts/a1?tab=quotes");
+    await user.click(await screen.findByRole("button", { name: "Show more" }, { timeout: 4000 }));
+    expect(await screen.findByText(/We couldn't refresh the quotes/)).toBeInTheDocument();
+    expect(screen.getByText("PEO 50")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   // Catches: a kind filter with more than All and Changes (calls, notes and tasks come with CRM-E1.5), or one that hides the changes.
@@ -246,13 +308,80 @@ describe("AccountPage: the tabs' own lists", () => {
     client.listAccountTab.mockResolvedValue(tabOf([change(1), change(2, { kind: "created", field: null, from: null, to: null, recordTable: "contacts", recordName: "Elena Marsh" })], 2));
     renderPage("/accounts/a1?tab=activity");
     expect(await screen.findByText("Employees changed from 40 to 45")).toBeInTheDocument();
-    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["All", "Changes"]);
-    expect(screen.getByRole("radio", { name: "All" })).toHaveAttribute("aria-checked", "true");
+    const group = screen.getByRole("group", { name: "Show" });
+    expect(within(group).getAllByRole("button").map((r) => r.textContent)).toEqual(["All", "Changes"]);
+    expect(within(group).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Elena Marsh added as a contact")).toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "Changes" }));
-    expect(screen.getByRole("radio", { name: "Changes" })).toHaveAttribute("aria-checked", "true");
+    await user.click(within(group).getByRole("button", { name: "Changes" }));
+    expect(within(group).getByRole("button", { name: "Changes" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(group).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("Employees changed from 40 to 45")).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(3);
+  });
+});
+
+describe("AccountPage: where focus goes", () => {
+  // Catches: Enter on a link that opens another view leaving focus on the page's body.
+  it("puts focus on the contact's name when a contact's name opens the Contacts tab", async () => {
+    const user = userEvent.setup();
+    serveTab([contact(1), contact(2)]);
+    renderPage();
+    const link = await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" });
+    link.focus();
+    await user.keyboard("{Enter}");
+    const named = await screen.findByRole("link", { name: "Person2 Abel" });
+    await waitFor(() => expect(named.closest("tr")).toHaveAttribute("aria-current", "true"));
+    await waitFor(() => expect(screen.getByRole("link", { name: "Person2 Abel" })).toHaveFocus());
+  });
+
+  it("does not take focus back from Show more when more rows of the same contact's list load", async () => {
+    const user = userEvent.setup();
+    serveTab(Array.from({ length: 80 }, (_, i) => contact(i === 0 ? 2 : i + 1000)));
+    renderPage("/accounts/a1?tab=contacts&contact=c2");
+    await waitFor(() => expect(screen.getByRole("link", { name: "Person2 Abel" })).toHaveFocus(), { timeout: 4000 });
+    const more = screen.getByRole("button", { name: "Show more" });
+    await user.click(more);
+    await screen.findByText("Person1079 Abel");
+    expect(screen.getByRole("link", { name: "Person2 Abel" })).not.toHaveFocus();
+  });
+
+  it("puts focus on the tab's heading when See all opens it", async () => {
+    const user = userEvent.setup();
+    serveTab([opportunity(1), opportunity(2), opportunity(3)]);
+    renderPage();
+    const seeAll = await screen.findByRole("link", { name: "See all opportunities" });
+    seeAll.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("heading", { name: /^Opportunities/ })).toHaveFocus());
+  });
+
+  it("leaves focus on the tab when a tab is chosen from the tab list", async () => {
+    const user = userEvent.setup();
+    serveTab([contact(1)]);
+    renderPage();
+    const tab = await screen.findByRole("tab", { name: /Contacts/ });
+    await user.click(tab);
+    await screen.findByRole("heading", { name: /^Contacts/ });
+    expect(screen.getByRole("tab", { name: /Contacts/ })).toHaveFocus();
+  });
+
+  // Catches: Cancel leaving focus on the page's body once the form it was in has gone.
+  it("puts focus on Edit when Cancel closes the form", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Edit/ })).toHaveFocus());
+  });
+
+  // Catches: each arrow key in the tab list adding a history entry, so Back steps through every tab the arrows passed.
+  it("replaces the address when a tab is chosen, so Back leaves the page and does not step through tabs", async () => {
+    const user = userEvent.setup();
+    serveTab([contact(1)]);
+    const router = renderPage();
+    await user.click(await screen.findByRole("tab", { name: /Contacts/ }));
+    expect(router.state.location.search).toBe("?tab=contacts");
+    expect(router.state.historyAction).toBe("REPLACE");
   });
 });
 
@@ -269,7 +398,7 @@ describe("AccountPage: the Files tab", () => {
     Object.defineProperty(window, "location", { value: { ...window.location, assign }, configurable: true });
     renderPage("/accounts/a1?tab=files");
     expect(await screen.findByText("census-1.csv")).toBeInTheDocument();
-    expect(client.listAccountFiles).toHaveBeenCalledWith("f1", "a1", { limit: 50 });
+    expect(client.listAccountFiles).toHaveBeenCalledWith("f1", "a1", { limit: 50, offset: 0 });
     expect(screen.getAllByText("Employee census")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Download census-2.csv" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));

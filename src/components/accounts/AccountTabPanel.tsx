@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { PanelFailed, RefreshFailed } from "@/components/workspace/states";
 import { ACTIVITY_KINDS, activityIsOfKind, type ActivityKind } from "@/data/accountPage";
 import type { AccountFile, AccountListTab, AccountPage, AccountTabRows, TabRows } from "@/lib/accountPageApi";
 import { AccountFiles } from "./AccountFiles";
 import { activityColumns, contactColumns, EMPTY_WORDS, opportunityColumns, quoteColumns, TAB_LABELS } from "./accountColumns";
 import { EmptyLine, ListPanel, ListRowsLoading, Rows } from "./accountLists";
-import { TAB_STEP, useAccountTabQuery } from "./useAccountQueries";
+import { useAccountTabQuery } from "./useAccountQueries";
 
 const NOUNS = { contacts: "the contacts", opportunities: "the opportunities", quotes: "the quotes", activity: "the activity", files: "the files" } as const;
 
@@ -21,23 +22,29 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   page: AccountPage;
   contactId: string | null;
 }) {
-  const [limit, setLimit] = useState(TAB_STEP);
   const [kind, setKind] = useState<ActivityKind>("all");
-  const query = useAccountTabQuery(firmId, accountId, tab, limit);
-  const data = query.data;
+  const { query, data } = useAccountTabQuery(firmId, accountId, tab);
   const heading = TAB_LABELS[tab];
   const id = `account-${tab}-heading`;
-
-  // A contact named in the address that is further down the list than what is loaded: load on until it is in view.
-  const loadedContacts = tab === "contacts" && data ? (data.rows as AccountTabRows["contacts"][]) : null;
-  const missing = contactId !== null && loadedContacts !== null && !loadedContacts.some((c) => c.id === contactId) && loadedContacts.length < (data?.count ?? 0);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const location = useLocation();
+  // "See all" opened this tab from the Overview: focus goes to the heading, where the person was sent.
   useEffect(() => {
-    if (missing && !query.isFetching) setLimit((n) => n + TAB_STEP);
-  }, [missing, query.isFetching]);
+    if ((location.state as { focusHeading?: boolean } | null)?.focusHeading) headingRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the tab opens
+  }, []);
+
+  // A contact named in the address that is further down the list than what is loaded: load the next page, and the next, until it is in view. Not after a
+  // failed page, which would ask for the same one again for ever.
+  const loadedContacts = tab === "contacts" && data ? (data.rows as AccountTabRows["contacts"][]) : null;
+  const missing = contactId !== null && loadedContacts !== null && !loadedContacts.some((c) => c.id === contactId) && query.hasNextPage;
+  useEffect(() => {
+    if (missing && !query.isFetching && !query.isError) void query.fetchNextPage();
+  }, [missing, query]);
 
   if (!data) {
     return (
-      <ListPanel id={id} heading={heading}>
+      <ListPanel id={id} heading={heading} headingRef={headingRef}>
         {query.isError ? (
           <PanelFailed what={NOUNS[tab]} error={query.error as Error} onRetry={() => void query.refetch()} />
         ) : query.isPending ? (
@@ -50,16 +57,15 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   }
 
   return (
-    <ListPanel id={id} heading={heading} count={data.count}>
+    <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef}>
       {query.isError && <RefreshFailed what={NOUNS[tab]} onRetry={() => void query.refetch()} retrying={query.isFetching} />}
       {tab === "activity" && (
-        <div role="radiogroup" aria-label="Show" className="mb-3 flex gap-2">
+        <div role="group" aria-label="Show" className="mb-3 flex gap-2">
           {ACTIVITY_KINDS.map((k) => (
             <button
               key={k.id}
               type="button"
-              role="radio"
-              aria-checked={kind === k.id}
+              aria-pressed={kind === k.id}
               onClick={() => setKind(k.id)}
               className={`min-h-9 rounded-full border px-3 text-sm ${kind === k.id ? "border-primary bg-primary/10 font-medium" : "border-border text-muted-foreground hover:bg-muted"}`}
             >
@@ -72,7 +78,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
       {data.rows.length < data.count && (
         <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">
           <span>Showing {data.rows.length} of {data.count}.</span>
-          <button type="button" onClick={() => setLimit((n) => n + TAB_STEP)} disabled={query.isFetching} className="min-h-9 text-primary underline underline-offset-2 disabled:opacity-50">
+          <button type="button" onClick={() => void query.fetchNextPage()} disabled={query.isFetching || !query.hasNextPage} className="min-h-9 text-primary underline underline-offset-2 disabled:opacity-50">
             Show more
           </button>
         </div>
