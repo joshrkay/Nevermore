@@ -42,14 +42,17 @@ function Harness({ table }: { table: TableDefinition<Record<string, never>, Row,
 }
 
 const firm = { id: "firm-1", name: "Firm", address: "firm" };
-const draw = (table = demo(), firmValue: Workspace["firm"] = firm) =>
+const draw = (table = demo(), firmValue: Workspace["firm"] = firm) => {
+  const client = new QueryClient();
   render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={client}>
       <WorkspaceContext.Provider value={{ firm: firmValue, role: "Owner", isOwner: true, isSupport: false, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: false, person: "Pat" }}>
         <Harness table={table} />
       </WorkspaceContext.Provider>
     </QueryClientProvider>,
   );
+  return client;
+};
 const shown = () => within(screen.getByRole("list", { name: "Shown" })).queryAllByRole("listitem").map((li) => li.textContent);
 const open = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: "Columns" }));
@@ -137,7 +140,7 @@ describe("the Columns menu", () => {
     await user.click(within(menu).getByRole("button", { name: "Move Contact later" }));
     expect(shown()).toEqual(["Company", "Status", "Contact", "States"]);
     await waitFor(() => expect(setMyColumns).toHaveBeenLastCalledWith("firm-1", "submissions", null, ["company", "status", "contact", "states"]));
-    expect(screen.getByRole("status")).toHaveTextContent("Contact moved later");
+    expect(screen.getByRole("status")).toHaveTextContent("Contact moved to 3 of 4.");
   });
 
   // Catches: a column going before the name column or off the end, and a button that does nothing saying nothing.
@@ -195,7 +198,7 @@ describe("the Columns menu", () => {
     await waitFor(() => expect(within(menu).queryByRole("alert")).toBeNull());
   });
 
-  // Catches: a failed load hiding the table or leaving a person with no word on why their columns are not theirs.
+  // Catches: a failed load hiding the table, or leaving a person with no word on why their columns are not theirs.
   it("shows the usual columns, and says why, when the kept choice can't be loaded", async () => {
     fetchMyColumns.mockRejectedValue(new Error("Couldn't load your columns."));
     const user = userEvent.setup();
@@ -203,6 +206,45 @@ describe("the Columns menu", () => {
     const menu = await open(user);
     expect(await within(menu).findByText("Couldn't load your columns, so this shows the usual ones.")).toBeInTheDocument();
     expect(shown()).toEqual(["Company", "Contact", "States", "Status"]);
+  });
+
+  // Catches: a change made over the usual columns after a failed load saving "the usual ones minus one" over the person's real choice.
+  it("keeps the controls inert after a failed load, with the reason on each, until Try again loads the choice", async () => {
+    fetchMyColumns.mockRejectedValueOnce(new Error("Couldn't load your columns."));
+    const user = userEvent.setup();
+    draw();
+    const menu = await open(user);
+    const reason = await within(menu).findByText("Couldn't load your columns, so this shows the usual ones.");
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    await user.click(within(menu).getByRole("button", { name: "Move Status earlier" }));
+    expect(setMyColumns).not.toHaveBeenCalled();
+    for (const el of [within(menu).getByRole("checkbox", { name: "Contact" }), within(menu).getByRole("button", { name: "Move Status earlier" }), within(menu).getByRole("button", { name: "Show the usual columns" })]) {
+      expect(el).toHaveAttribute("aria-disabled", "true");
+      expect(el).toHaveAccessibleDescription(reason.textContent!);
+    }
+    kept(["company", "status"]);
+    await user.click(within(menu).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    await waitFor(() => expect(setMyColumns).toHaveBeenCalledWith("firm-1", "submissions", null, ["company", "status", "contact"]));
+  });
+
+  // Catches: a change made before the kept choice arrives saving "the usual ones minus one" over it.
+  it("keeps the controls inert until the kept choice has arrived, and says why", async () => {
+    let arrive: (v: unknown) => void = () => {};
+    fetchMyColumns.mockReturnValue(new Promise((r) => { arrive = r; }));
+    const user = userEvent.setup();
+    draw();
+    const menu = await open(user);
+    expect(within(menu).getByText("Available once your columns have loaded.")).toBeInTheDocument();
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    await user.click(within(menu).getByRole("button", { name: "Move Status earlier" }));
+    expect(setMyColumns).not.toHaveBeenCalled();
+    expect(within(menu).getByRole("button", { name: "Move Status earlier" })).toHaveAccessibleDescription("Available once your columns have loaded.");
+    expect(within(menu).getByRole("button", { name: "Show the usual columns" })).toHaveAccessibleDescription("Available once your columns have loaded.");
+    arrive({ columns: ["company", "status", "contact"], source: "mine" });
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status", "Contact"]));
+    await waitFor(() => expect(within(menu).queryByText("Available once your columns have loaded.")).toBeNull());
   });
 
   // Catches: a choice kept while the table's custom fields are still loading (CRM-X3.1): the ones not loaded yet would be dropped from the kept list.
@@ -225,5 +267,120 @@ describe("the Columns menu", () => {
     await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
     expect(setMyColumns).not.toHaveBeenCalled();
     expect(fetchMyColumns).not.toHaveBeenCalled();
+  });
+  describe("changes that follow each other, and answers that arrive late", () => {
+    const control = (name: string | RegExp, role: "checkbox" | "button" = "button") => within(screen.getByRole("dialog")).getByRole(role, { name });
+    const later = () => { let release: () => void = () => {}; const p = new Promise<void>((r) => { release = r; }); return { p, release }; };
+
+    // Catches: two quick changes written at the same time, finishing in either order, so the database keeps the older one.
+    it("writes one change after another, never two at once, and ends on the last", async () => {
+      const first = later();
+      setMyColumns.mockReset().mockReturnValueOnce(first.p).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      draw();
+      await open(user);
+      await user.click(control("Move Status earlier"));
+      await user.click(control("Move Contact later"));
+      expect(shown()).toEqual(["Company", "Status", "Contact", "States"]);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(setMyColumns).toHaveBeenCalledTimes(1);
+      first.release();
+      await waitFor(() => expect(setMyColumns).toHaveBeenCalledTimes(2));
+      expect(setMyColumns.mock.calls.map((c) => c[3])).toEqual([
+        ["company", "contact", "status", "states"],
+        ["company", "status", "contact", "states"],
+      ]);
+    });
+
+    // Catches: an earlier change that failed rolling the screen back past a later one the database kept.
+    it("does not roll the screen back past a later change when an earlier one fails", async () => {
+      const first = later();
+      setMyColumns.mockReset().mockReturnValueOnce(first.p.then(() => { throw new Error("Couldn't keep your columns. Try again."); })).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      draw();
+      await open(user);
+      await user.click(control("Move Status earlier"));
+      await user.click(control("Move Contact later"));
+      first.release();
+      await waitFor(() => expect(setMyColumns).toHaveBeenCalledTimes(2));
+      expect(shown()).toEqual(["Company", "Status", "Contact", "States"]);
+      await waitFor(() => expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull());
+      expect(shown()).toEqual(["Company", "Status", "Contact", "States"]);
+    });
+
+    // Catches: a later change that failed putting back the state before both, though the earlier one was kept.
+    it("puts back the last choice that was kept when a later change fails", async () => {
+      setMyColumns.mockReset().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Couldn't keep your columns. Try again."));
+      const user = userEvent.setup();
+      draw();
+      await open(user);
+      await user.click(control("Move Status earlier"));
+      await user.click(control("States", "checkbox"));
+      expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeInTheDocument();
+      expect(shown()).toEqual(["Company", "Contact", "Status", "States"]);
+    });
+
+    // Catches: a refresh on focus or each minute putting the old choice back over one still being kept.
+    it("is not replaced by an answer to a question asked before the change", async () => {
+      const pending = later();
+      setMyColumns.mockReset().mockReturnValue(pending.p);
+      const user = userEvent.setup();
+      const client = draw();
+      await open(user);
+      await user.click(control("Contact", "checkbox"));
+      fetchMyColumns.mockClear();
+      await client.refetchQueries();
+      await waitFor(() => expect(fetchMyColumns).toHaveBeenCalled());
+      expect(shown()).toEqual(["Company", "States", "Status"]);
+      pending.release();
+    });
+
+    // Catches: the same move twice in a row being announced once (the live region's words did not change).
+    it("announces the place a column moved to, so the same move twice is heard twice", async () => {
+      const user = userEvent.setup();
+      draw();
+      await open(user);
+      await user.click(control("Move Status earlier"));
+      expect(screen.getByRole("status")).toHaveTextContent("Status moved to 3 of 4.");
+      await user.click(control("Move Status earlier"));
+      expect(screen.getByRole("status")).toHaveTextContent("Status moved to 2 of 4.");
+    });
+  });
+
+  describe("what the kept choice means when it is read", () => {
+    // Catches: a stored list without the name column (or with it later) leaving the table with no name in view.
+    it("puts the name column first even when the kept list leaves it out or puts it later", async () => {
+      kept(["status", "contact"]);
+      draw();
+      await waitFor(() => expect(shown()).toEqual(["Company", "Status", "Contact"]));
+    });
+    it("keeps the name column first when the kept list puts it later", async () => {
+      kept(["states", "company"]);
+      draw();
+      await waitFor(() => expect(shown()).toEqual(["Company", "States"]));
+    });
+
+    // Catches: a column renamed or removed since the choice was kept breaking the table, or showing twice.
+    it("leaves out an id the table doesn't have and a repeated one", async () => {
+      kept(["company", "gone", "status", "status"]);
+      draw();
+      await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    });
+
+    // Catches: a choice with no known column leaving only the name column, with no word on why.
+    it("shows every column when none of the kept ones is known", async () => {
+      kept(["gone", "also_gone"]);
+      draw();
+      await waitFor(() => expect(fetchMyColumns).toHaveBeenCalled());
+      await new Promise((r) => setTimeout(r, 30));
+      expect(shown()).toEqual(["Company", "Contact", "States", "Status"]);
+    });
+
+    // Catches: hiding everything but the name being read as "nothing kept".
+    it("keeps a choice of the name column alone", async () => {
+      kept(["company"]);
+      draw();
+      await waitFor(() => expect(shown()).toEqual(["Company"]));
+    });
   });
 });

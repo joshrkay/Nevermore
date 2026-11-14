@@ -118,7 +118,7 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
 
   await test.step("a hidden column stays hidden after a reload, because the choice is kept in the database for this person", async () => {
     await expect(page.getByRole("columnheader", { name: "Completeness" })).toBeVisible();
-    await page.getByRole("button", { name: "Columns" }).click();
+    await page.getByRole("button", { name: "Columns", exact: true }).click();
     await page.getByRole("checkbox", { name: "Completeness" }).click();
     await expect(page.getByRole("columnheader", { name: "Completeness" })).toHaveCount(0);
     // Company is the name column: always shown, and it cannot be hidden.
@@ -129,7 +129,7 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await expect(page.getByRole("columnheader", { name: "Completeness" })).toHaveCount(0);
     await expect(page.getByRole("columnheader", { name: "Quotes" })).toBeVisible();
     // Back to the usual columns, so the steps after this see the table as they always did.
-    await page.getByRole("button", { name: "Columns" }).click();
+    await page.getByRole("button", { name: "Columns", exact: true }).click();
     await page.getByRole("button", { name: "Show the usual columns" }).click();
     await expect(page.getByRole("columnheader", { name: "Completeness" })).toBeVisible();
     await page.keyboard.press("Escape");

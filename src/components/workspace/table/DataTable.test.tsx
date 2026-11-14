@@ -33,10 +33,24 @@ describe("DataTable's first column", () => {
   });
 
   // Catches: a pinned cell with no background, so the columns scrolling under it show through and the words overlap.
-  it("has a solid background, so what scrolls under it is hidden", () => {
+  it("has an opaque background, so what scrolls under it is hidden", () => {
     draw();
     expect(screen.getByRole("rowheader", { name: "Acme" }).className).toMatch(/\bbg-card\b/);
-    expect(screen.getByRole("columnheader", { name: "Name" }).className).toMatch(/\bbg-muted\b/);
+    expect(screen.getByRole("columnheader", { name: "Name" }).className).toMatch(/\bbg-card\b/);
+  });
+
+  // Catches: the pinned header reading as a darker block, and the pinned cell of a hovered row staying white, because they are painted differently from
+  // the row they sit in (the header row is the muted colour at 60% and a hovered row at 50%, over the card).
+  it("is tinted the way its row is: the header's tint on the header, the hover's on a hovered row", () => {
+    draw();
+    const head = screen.getByRole("columnheader", { name: "Name" });
+    const header = head.closest("thead")!;
+    expect(header.className).toContain("bg-muted/60");
+    expect(head.className).toContain("linear-gradient(hsl(var(--muted)/0.6),hsl(var(--muted)/0.6))");
+    const cell = screen.getByRole("rowheader", { name: "Acme" });
+    expect(cell.closest("tr")!.className).toContain("hover:bg-muted/50");
+    expect(cell.closest("tr")!.className).toMatch(/\bgroup\b/);
+    expect(cell.className).toContain("group-hover:bg-[image:linear-gradient(hsl(var(--muted)/0.5),hsl(var(--muted)/0.5))]");
   });
 
   // Catches: a pinned column that looks no different from the rest once the others slide under it (nothing says it is a floating edge).

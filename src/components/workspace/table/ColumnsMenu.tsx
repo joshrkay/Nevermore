@@ -10,11 +10,15 @@ import type { MyColumns } from "./useMyColumns";
 // The Columns control (story CRM-S3.1a): "Columns" opens one list of the table's columns. A box shows or hides each, a pair of buttons moves a
 // shown one earlier or later (a keyboard has no drag), and "Show the usual columns" forgets the person's choice. Every change is kept at once, with no
 // Apply, because the table behind it changes at once. The name column is always shown and always first.
-//   Left for later stories: a saved view's own columns (CRM-S3.4a passes the view to `useMyColumns`); the firm's custom fields (CRM-X3.1 lists
-//   them in the table's `columns` once loaded, and this list offers them with no change).
+//   Nothing can be changed until the person's kept choice has arrived (a change over the usual columns would be kept over their real choice); after a
+//   failed load the usual columns show, read-only, with "Try again".
+//   Left for later stories: a saved view's own columns (CRM-S3.4a gives `useMyColumns` the view); the firm's custom fields (CRM-X3.1 lists them in the
+//   table's `columns` once loaded, and this list offers them with no change).
 
 const LOADING_REASON = "More columns are available once the table's fields have loaded.";
 const NO_FIRM_REASON = "Available once your firm's details have loaded.";
+const LOADING_CHOICE_REASON = "Available once your columns have loaded.";
+const LOAD_FAILED_REASON = "Couldn't load your columns, so this shows the usual ones.";
 const NAME_NOTE = "Always shown";
 
 const BUTTON = "inline-flex min-h-9 items-center gap-1 rounded-md border border-border px-3 text-sm hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
@@ -38,7 +42,12 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
   const hidden = all.filter((c) => !shown.includes(c.id));
   const byId = new Map(all.map((c) => [c.id, c]));
   // Why nothing can be changed yet, in words; the controls stay in the tab order and ignore the click (a disabled one would drop focus).
-  const reason = table.fieldsStatus === "loading" ? LOADING_REASON : !mine.canKeep ? NO_FIRM_REASON : null;
+  const reason =
+    table.fieldsStatus === "loading" ? LOADING_REASON
+    : mine.status === "no_firm" ? NO_FIRM_REASON
+    : mine.status === "loading" ? LOADING_CHOICE_REASON
+    : mine.status === "failed" ? LOAD_FAILED_REASON
+    : null;
 
   const order = shown.join("\n");
   useEffect(() => {
@@ -58,7 +67,8 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
     const next = moveColumn(table, shown, id, by);
     if (next.join("\n") === order) return;
     refocus.current = `${id}:${by}`;
-    setSaid(`${byId.get(id)?.header ?? id} moved ${by < 0 ? "earlier" : "later"}.`);
+    // The place it moved to, so the same move twice is not the same words (a live region says nothing for words that did not change).
+    setSaid(`${byId.get(id)?.header ?? id} moved to ${next.indexOf(id) + 1} of ${next.length}.`);
     keep(next);
   };
   const forget = () => {
@@ -77,8 +87,12 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80" aria-label="Columns">
         <p className="mb-2 text-sm text-muted-foreground">Choose the columns this table shows you. Your choice is kept for you on any device.</p>
-        {reason && <p id={reasonId} className="mb-2 text-sm text-muted-foreground">{reason}</p>}
-        {mine.loadFailed && <p className="mb-2 text-sm text-muted-foreground">Couldn't load your columns, so this shows the usual ones.</p>}
+        {reason && (
+          <p id={reasonId} className="mb-2 text-sm text-muted-foreground">
+            {reason}
+            {mine.status === "failed" && <> <button type="button" onClick={mine.retryLoad} className="text-primary underline">Try again</button></>}
+          </p>
+        )}
         {mine.saveError && <p role="alert" className="mb-2 text-sm text-destructive">{mine.saveError}</p>}
         <ul ref={list} className="space-y-1">
           {[...shown.map((id) => byId.get(id)!), ...hidden].filter(Boolean).map((column) => {
@@ -106,6 +120,7 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
                       type="button"
                       data-move={`${column.id}:-1`}
                       aria-label={`Move ${column.header} earlier`}
+                      aria-describedby={reason ? reasonId : undefined}
                       aria-disabled={firstMovable || reason ? true : undefined}
                       onClick={() => (firstMovable ? undefined : move(column.id, -1))}
                       className={cn(MOVE, (firstMovable || reason) && "opacity-50")}
@@ -116,6 +131,7 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
                       type="button"
                       data-move={`${column.id}:1`}
                       aria-label={`Move ${column.header} later`}
+                      aria-describedby={reason ? reasonId : undefined}
                       aria-disabled={position === shown.length - 1 || reason ? true : undefined}
                       onClick={() => (position === shown.length - 1 ? undefined : move(column.id, 1))}
                       className={cn(MOVE, (position === shown.length - 1 || reason) && "opacity-50")}
@@ -132,6 +148,7 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
           <button
             type="button"
             onClick={forget}
+            aria-describedby={reason ? reasonId : undefined}
             aria-disabled={mine.kept === null || reason ? true : undefined}
             className={cn(BUTTON, (mine.kept === null || reason) && "opacity-50")}
           >

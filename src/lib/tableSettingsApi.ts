@@ -62,6 +62,8 @@ function refusal(error: DbError, words: { notAllowed: string; fallback: string }
   switch (error.code) {
     case "42501": return new Error(words.notAllowed);
     case "PT404": return new Error(NOT_AVAILABLE);
+    // A closing firm and a support session can change nothing (ADR 0023, ADR 0024): trying again cannot work, so the database's own words show (D-178).
+    case "PT423":
     case "PT409":
     case "PT422":
     case "22023": return new Error(error.message || words.fallback);
