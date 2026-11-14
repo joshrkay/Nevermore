@@ -6,13 +6,14 @@ import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import PeoPanel from "@/components/advisor/peos/PeoPanel";
 import { peoStatusLine } from "@/data/peoEditor";
 import { localToday } from "@/data/peoProfiles";
-import { fetchIsAdmin, loadPeoDirectory, type PeoDirectoryEntry } from "@/lib/advisorApi";
+import { fetchHasPlatformRole, fetchIsAdmin, loadPeoCatalogDirectory, loadPeoDirectory, type PeoDirectoryEntry } from "@/lib/advisorApi";
 import AddPeoForm from "@/components/advisor/peos/AddPeoForm";
 
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean };
+type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean; catalogue: boolean };
 
 /**
- * The PEOs and their requirement profiles (L-1.2, docs/adr/0010). Every advisor reads each PEO's profile in use,
+ * The PEOs and their requirement profiles (L-1.2, docs/adr/0010). A member of a firm with no platform role reads the version in
+ * use of each PEO, from the catalogue (P-1.4); the rest of this applies to the platform roles. Every advisor reads each PEO's profile in use,
  * where and when each part was checked, and its history. Admins also add PEOs, edit a profile section by section into
  * a draft, review and publish it, record a re-check, and take a PEO off the list or put it back. The database refuses
  * every write from anyone else.
@@ -27,8 +28,13 @@ const AdvisorPeosPage = () => {
     let cancelled = false;
     // A reload after a save keeps the page as it is until the new data is in, so nothing jumps.
     setLoad((current) => (current.kind === "ready" ? current : { kind: "loading" }));
-    Promise.all([loadPeoDirectory(), fetchIsAdmin()])
-      .then(([peos, isAdmin]) => !cancelled && setLoad({ kind: "ready", peos, isAdmin }))
+    // A platform role reads the platform's directory (versions, drafts, contacts) and an admin edits it. A member of a firm
+    // without one reads the prospect-safe catalogue, the version in use of each PEO, which the tables refuse them (ADR 0010).
+    (async () => {
+      const [hasRole, isAdmin] = await Promise.all([fetchHasPlatformRole(), fetchIsAdmin()]);
+      return [hasRole ? await loadPeoDirectory() : await loadPeoCatalogDirectory(), isAdmin, !hasRole] as const;
+    })()
+      .then(([peos, isAdmin, catalogue]) => !cancelled && setLoad({ kind: "ready", peos, isAdmin, catalogue }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
@@ -89,7 +95,7 @@ const AdvisorPeosPage = () => {
                 </nav>
               )}
             </div>
-            {selected && <PeoPanel key={selected.id} peo={selected} isAdmin={load.isAdmin} today={today} onChanged={reload} />}
+            {selected && <PeoPanel key={selected.id} peo={selected} isAdmin={load.isAdmin} showContacts={!load.catalogue} today={today} onChanged={reload} />}
           </div>
         )}
       </main>

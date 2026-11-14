@@ -10,7 +10,9 @@ import AuthRedirectGate from "./components/AuthRedirectGate";
 import Navbar from "./components/Navbar";
 import PageMeta from "./components/PageMeta";
 import RequireAuth from "./components/RequireAuth";
-import RequireAdvisor from "./components/RequireAdvisor";
+import RequireFirm, { RequirePlatformAdmin } from "./components/RequireFirm";
+import FirmAddressGate from "./components/FirmAddressGate";
+import { FirmAddressProvider } from "@/hooks/useFirmAddress";
 import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
@@ -21,9 +23,10 @@ import NotFound from "./pages/NotFound";
 
 // jsPDF and html2canvas are only needed here, so keep them out of the main bundle.
 const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
-// Advisor tools are only for advisors; keep them out of the prospect's bundle.
+// The firm's console is only for its members; keep it out of the prospect's bundle.
 const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
 const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
+const SecondFactorPage = lazy(() => import("./pages/SecondFactorPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
@@ -33,6 +36,12 @@ const AdvisorPeosPage = lazy(() => import("./pages/advisor/AdvisorPeosPage"));
 const AdvisorHeldMailPage = lazy(() => import("./pages/advisor/AdvisorHeldMailPage"));
 const AdvisorMailboxPage = lazy(() => import("./pages/advisor/AdvisorMailboxPage"));
 const AdvisorOrganisationsPage = lazy(() => import("./pages/advisor/AdvisorOrganisationsPage"));
+const AdvisorActivityPage = lazy(() => import("./pages/advisor/AdvisorActivityPage"));
+const AdvisorMembersPage = lazy(() => import("./pages/advisor/AdvisorMembersPage"));
+const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
+const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
+const JoinFirmPage = lazy(() => import("./pages/JoinFirmPage"));
+const FirmInvitationsPage = lazy(() => import("./pages/FirmInvitationsPage"));
 // Read rarely, so kept out of the main bundle too.
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
@@ -45,12 +54,14 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
+        <FirmAddressProvider>
         <BrowserRouter>
           {/* The title, description and robots rule of the page at this address (src/data/seo.ts). */}
           <PageMeta />
           <ErrorBoundary>
             <Suspense fallback={null}>
               <AuthRedirectGate>
+              <FirmAddressGate>
               <Routes>
                 <Route
                   path="/"
@@ -63,6 +74,9 @@ const App = () => (
                 />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/firms/new" element={<SignUpFirmPage />} />
+                <Route path="/join" element={<JoinFirmPage />} />
+                <Route path="/firm/invitations" element={<FirmInvitationsPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />
                 {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
@@ -74,21 +88,27 @@ const App = () => (
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 {/* A submission by its File ID; row security decides who may read it. */}
                 <Route path="/manuscript/:reference" element={<ManuscriptPage />} />
-                <Route path="/advisor" element={<RequireAdvisor><AdvisorDashboardPage /></RequireAdvisor>} />
-                <Route path="/advisor/submissions/:id" element={<RequireAdvisor><AdvisorSubmissionPage /></RequireAdvisor>} />
-                <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />
-                <Route path="/advisor/funnel" element={<RequireAdvisor><AdvisorFunnelPage /></RequireAdvisor>} />
-                <Route path="/advisor/partners" element={<RequireAdvisor><AdvisorPartnersPage /></RequireAdvisor>} />
-                <Route path="/advisor/peos" element={<RequireAdvisor><AdvisorPeosPage /></RequireAdvisor>} />
-                <Route path="/advisor/held" element={<RequireAdvisor><AdvisorHeldMailPage /></RequireAdvisor>} />
-                <Route path="/advisor/mailbox" element={<RequireAdvisor><AdvisorMailboxPage /></RequireAdvisor>} />
-                <Route path="/advisor/organisations" element={<RequireAdvisor><AdvisorOrganisationsPage /></RequireAdvisor>} />
+                <Route path="/advisor/second-factor" element={<SecondFactorPage />} />
+                <Route path="/advisor" element={<RequireFirm><AdvisorDashboardPage /></RequireFirm>} />
+                <Route path="/advisor/submissions/:id" element={<RequireFirm><AdvisorSubmissionPage /></RequireFirm>} />
+                <Route path="/advisor/outbox" element={<RequireFirm><AdvisorOutboxPage /></RequireFirm>} />
+                <Route path="/advisor/funnel" element={<RequireFirm><AdvisorFunnelPage /></RequireFirm>} />
+                <Route path="/advisor/partners" element={<RequireFirm><AdvisorPartnersPage /></RequireFirm>} />
+                <Route path="/advisor/peos" element={<RequireFirm><AdvisorPeosPage /></RequireFirm>} />
+                <Route path="/advisor/held" element={<RequirePlatformAdmin><AdvisorHeldMailPage /></RequirePlatformAdmin>} />
+                <Route path="/advisor/mailbox" element={<RequireFirm><AdvisorMailboxPage /></RequireFirm>} />
+                <Route path="/advisor/firms" element={<RequirePlatformAdmin><AdvisorFirmsPage /></RequirePlatformAdmin>} />
+                <Route path="/advisor/organisations" element={<RequirePlatformAdmin><AdvisorOrganisationsPage /></RequirePlatformAdmin>} />
+                <Route path="/advisor/activity" element={<RequireFirm as="owner"><AdvisorActivityPage /></RequireFirm>} />
+                <Route path="/advisor/members" element={<RequireFirm as="owner" ownersOnly="see and change its members"><AdvisorMembersPage /></RequireFirm>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </FirmAddressGate>
               </AuthRedirectGate>
             </Suspense>
           </ErrorBoundary>
         </BrowserRouter>
+        </FirmAddressProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

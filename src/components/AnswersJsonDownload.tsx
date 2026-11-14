@@ -13,7 +13,7 @@ import { downloadBlob } from "@/lib/downloadFile";
  * does. Offered only while the certification stands: the caller never renders it otherwise, and a tab left open
  * across a withdrawal or a new certification gives no file (`builtFrom`, checked at the click).
  */
-const AnswersJsonDownload = ({ source, builtFrom }: { source: CertifiedAnswersSource; builtFrom: BuiltFrom }) => {
+const AnswersJsonDownload = ({ source, builtFrom, onDownloaded }: { source: CertifiedAnswersSource; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
   const [busy, setBusy] = useState(false);
   const version = source.submission.version;
   const download = async () => {
@@ -23,6 +23,7 @@ const AnswersJsonDownload = ({ source, builtFrom }: { source: CertifiedAnswersSo
       const { certifiedAnswersDocument, certifiedAnswersFilename } = await import("@/data/certifiedAnswersDocument");
       const doc = certifiedAnswersDocument(source);
       downloadBlob(new Blob([`${JSON.stringify(doc, null, 2)}\n`], { type: "application/json" }), certifiedAnswersFilename(doc));
+      onDownloaded?.();
     } catch (err) {
       console.error("Failed to generate the answers as JSON:", err);
       toast.error("We couldn't generate the JSON file. Please try again.");

@@ -11,7 +11,10 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@exampl
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
   loadPeoDirectory: vi.fn(),
+  loadPeoCatalogDirectory: vi.fn(),
+  fetchHasPlatformRole: vi.fn(),
   fetchIsAdmin: vi.fn(),
+  fetchMyFirms: vi.fn(),
   addPeo: vi.fn(),
   savePeoDraft: vi.fn(),
   publishPeoDraft: vi.fn(),
@@ -33,6 +36,7 @@ const templateWith = async (headers: string[]) => {
   return new Uint8Array(await wb.xlsx.writeBuffer());
 };
 
+const { clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorPeosPage } = await import("./AdvisorPeosPage");
 
 const guide: ProfileSource = { kind: "document", name: "Broker guide 2026", link: "https://trinet.example/guide.pdf", checkedOn: "2026-10-20" };
@@ -70,6 +74,9 @@ describe("AdvisorPeosPage", () => {
     vi.mocked(toast.error).mockReset();
     api.loadPeoDirectory.mockResolvedValue(directory());
     api.fetchIsAdmin.mockResolvedValue(false);
+    api.fetchHasPlatformRole.mockResolvedValue(true);
+    api.fetchMyFirms.mockResolvedValue([{ firm_id: "f1", name: "Alpha Advisory", address: "alpha", role: "agent" }]);
+    clearMyFirms();
     for (const fn of Object.values(templates)) fn.mockReset();
     templates.listTemplateWorkbooks.mockResolvedValue([]);
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -111,10 +118,10 @@ describe("AdvisorPeosPage", () => {
     expect(within(profile).getByRole("region", { name: "Contacts · advisors only" })).toHaveTextContent("dana@trinet.example");
   });
 
-  it("is in the advisor console's navigation", async () => {
+  it("is in the console's navigation", async () => {
     renderPage();
-    const nav = await screen.findByRole("navigation", { name: "Advisor" });
-    expect(within(nav).getByRole("link", { name: "PEOs" })).toHaveAttribute("href", "/advisor/peos");
+    const nav = await screen.findByRole("navigation", { name: "Console" });
+    expect(await within(nav).findByRole("link", { name: "PEOs" })).toHaveAttribute("href", "/advisor/peos");
   });
 
   it("shows an advisor who isn't an admin the version in use, whatever an admin is drafting", async () => {
@@ -131,6 +138,57 @@ describe("AdvisorPeosPage", () => {
     for (const name of [/Add a PEO/, /^Edit/, /Checked again/, /Take off the list/, /Review and publish/]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
+  });
+
+  describe("for a member of a firm who holds no platform role", () => {
+    beforeEach(() => {
+      api.fetchHasPlatformRole.mockResolvedValue(false);
+      // The platform's tables answer a member with nothing: the page must not be reading them.
+      api.loadPeoDirectory.mockResolvedValue([]);
+      api.loadPeoCatalogDirectory.mockResolvedValue(directory().map((p) => ({ ...p, versions: p.versions.slice(0, 1) })));
+    });
+
+    it("lists the PEOs from the prospect-safe catalogue and never reads the platform's tables", async () => {
+      renderPage();
+      const list = await screen.findByRole("list", { name: "PEOs" });
+      expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toHaveLength(4);
+      expect(screen.queryByText("No PEOs yet.")).not.toBeInTheDocument();
+      expect(api.loadPeoCatalogDirectory).toHaveBeenCalled();
+      expect(api.loadPeoDirectory).not.toHaveBeenCalled();
+    });
+
+    it("shows the version in use of the chosen PEO, with none of an admin's controls", async () => {
+      renderPage("/advisor/peos?peo=5");
+      const profile = await screen.findByRole("region", { name: "TriNet" });
+      expect(within(profile).getByText("Version 2 in use")).toBeInTheDocument();
+      for (const name of [/Add a PEO/, /^Edit/, /Checked again/, /Take off the list/, /Review and publish/]) {
+        expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      }
+    });
+  });
+
+  it("leaves the Contacts section out for a catalogue reader, who is never given contacts, rather than saying none are listed", async () => {
+    api.fetchHasPlatformRole.mockResolvedValue(false);
+    api.loadPeoCatalogDirectory.mockResolvedValue(directory().map((p) => ({ ...p, versions: p.versions.slice(0, 1) })));
+    renderPage("/advisor/peos?peo=5");
+    const profile = await screen.findByRole("region", { name: "TriNet" });
+    expect(within(profile).getByRole("heading", { name: "What it won't take on" })).toBeInTheDocument();
+    expect(within(profile).queryByRole("heading", { name: /^Contacts/ })).not.toBeInTheDocument();
+    expect(within(profile).queryByText("None listed")).not.toBeInTheDocument();
+  });
+
+  it("shows the Contacts section to a platform role holder, with a PEO that has none saying so", async () => {
+    renderPage("/advisor/peos?peo=3");
+    const profile = await screen.findByRole("region", { name: "Justworks" });
+    const contacts = within(profile).getByRole("region", { name: /^Contacts/ });
+    expect(within(contacts).getByText("None listed")).toBeInTheDocument();
+  });
+
+  it("reads the platform's directory for a platform role holder, and not the catalogue", async () => {
+    renderPage();
+    await screen.findByRole("list", { name: "PEOs" });
+    expect(api.loadPeoDirectory).toHaveBeenCalled();
+    expect(api.loadPeoCatalogDirectory).not.toHaveBeenCalled();
   });
 
   it("warns that a profile not checked in 180 days may be out of date, and still shows it", async () => {

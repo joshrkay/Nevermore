@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
+import FirmName from "@/components/FirmName";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
@@ -42,6 +43,7 @@ const BrokerSignInPage = () => {
         </Link>
         <div className="bg-card border border-border rounded-xl p-8 space-y-5">
           <div>
+            <FirmName />
             <h1 className="font-display text-2xl font-bold text-center">Advisor and broker sign in</h1>
             <p className="text-sm text-muted-foreground text-center mt-2">
               Use your work account. Signing in lets Nevermore send submissions to PEOs from your own address, so they reach your contacts as you.

@@ -12,6 +12,8 @@ const auth = {
   verifySignupCode: vi.fn(),
 };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
+const firm = { current: { status: "none" } as { status: string; address?: string; name?: string } };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current }));
 const toast = { error: vi.fn(), success: vi.fn() };
 vi.mock("sonner", () => ({ toast }));
 
@@ -40,12 +42,26 @@ describe("AuthPage", () => {
     auth.user = null;
     auth.loading = false;
     auth.isAnonymous = false;
+    firm.current = { status: "none" };
     auth.signIn.mockReset().mockResolvedValue({ error: null });
     auth.signUp.mockReset().mockResolvedValue({ error: null, alreadyRegistered: false });
     auth.resendConfirmation.mockReset().mockResolvedValue({ error: null });
     auth.verifySignupCode.mockReset().mockResolvedValue({ error: null });
     toast.error.mockReset();
     toast.success.mockReset();
+  });
+
+  it("names the firm on an advisor's sign-in at a firm's address, and not on an employer's", () => {
+    firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
+    renderLogin({ audience: "advisor", from: { pathname: "/advisor" } });
+    expect(screen.getByText("Acme Brokers")).toBeInTheDocument();
+    cleanup();
+    renderLogin();
+    expect(screen.queryByText("Acme Brokers")).not.toBeInTheDocument();
+    cleanup();
+    firm.current = { status: "none" };
+    renderLogin({ audience: "advisor", from: { pathname: "/advisor" } });
+    expect(screen.queryByTestId("firm-name")).not.toBeInTheDocument();
   });
 
   it("labels every field, so a screen reader names it and a password manager knows which password it is", () => {

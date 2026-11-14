@@ -24,7 +24,8 @@ import { createResendAdapter, sendEmail, type EmailMessage, type SendResult } fr
 
 const env: Record<string, string> = {
   EMAIL_FROM: "Edgar Allan Advisory <intake@mail.example.com>",
-  ADVISORY_NOTIFY_EMAIL: "advisors@example.com",
+  // The old platform-wide list: no longer who an alert goes to (the intake's firm's members are), so it must never show up in `to`.
+  ADVISORY_NOTIFY_EMAIL: "platform-list@example.com",
   APP_BASE_URL: "https://app.example.com",
   SUPPORT_EMAIL: "support@example.com",
   PROSPECT_RESPONSE_TIME: "2 business days",
@@ -64,12 +65,15 @@ const prospectRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
   ...over,
 });
 
+/** The current members of the firm the intake belongs to, as the database answers for it. */
+const FIRM_MEMBERS = ["advisors@example.com"];
+
 const PII = ["jo@acme.example", "Joanna", "Jo Doe", "Acme", "advisors@example.com", "support@example.com"];
 
 /** A frozen send as the database stores it. */
 const pendingSend = (over: Partial<PendingSend> = {}): PendingSend => ({
   key: "outbox-evt-advisor-0123456789ab",
-  message: { from: "Old Sender <old@mail.example.com>", to: ["old-team@example.com"], subject: "Old subject", text: "Old text", html: "<p>Old html</p>" },
+  message: { from: "Old Sender <old@mail.example.com>", to: FIRM_MEMBERS, subject: "Old subject", text: "Old text", html: "<p>Old html</p>" },
   attempt: 1,
   frozen_at: new Date(NOW - HOUR).toISOString(),
   ...over,
@@ -100,6 +104,7 @@ function harness(over: Partial<DispatchDeps> = {}, sendResult: SendResult = { ok
     freeze: storing(),
     complete: vi.fn(async () => {}),
     fail: vi.fn(async () => {}),
+    advisorRecipients: vi.fn(async () => FIRM_MEMBERS),
     log: (line) => logs.push(line),
     ...over,
   };
@@ -178,7 +183,7 @@ describe("dispatching a PEO mail notice", () => {
     expect(bad.sent).toHaveLength(0);
     expect(bad.deps.fail).toHaveBeenCalledWith("evt-peo-mail", "invalid_payload", null, 1, false);
 
-    const unconfigured = harness({ config: readDispatchConfig((n) => ({ ...env, ADVISORY_NOTIFY_EMAIL: "" })[n]) });
+    const unconfigured = harness({ config: readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]) });
     await dispatchEvents([peoMailRow()], unconfigured.deps);
     expect(unconfigured.sent).toHaveLength(0);
   });
@@ -431,8 +436,12 @@ describe("reusing a frozen message", () => {
       ["21 hours", 21 * HOUR],
       ["a week", 168 * HOUR],
     ])("replaces a message frozen %s ago: rebuilt from the current settings, overwriting the stored one", async (_name, age) => {
-      const stored = pendingSend({ frozen_at: new Date(NOW - age).toISOString() });
-      const { deps, sent, logs } = harness({ config: configFrom(changedEnv) });
+      // It names the people who are still the team: age frees the message to be rebuilt, never the recipients to change (D-35).
+      const stored = pendingSend({
+        frozen_at: new Date(NOW - age).toISOString(),
+        message: { ...pendingSend().message, to: ["new-team@example.com", "second@example.com"] },
+      });
+      const { deps, sent, logs } = harness({ config: configFrom(changedEnv), advisorRecipients: vi.fn(async () => ["new-team@example.com", "second@example.com"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       const [id, attempt, message, replace] = vi.mocked(deps.freeze).mock.calls[0];
       expect([id, attempt, replace]).toEqual(["evt-advisor", 2, true]);
@@ -513,6 +522,7 @@ function createWorld(vars: Record<string, string> = env) {
   const faults = { completeFails: false, freezeReplyLost: false };
   const adapter = createResendAdapter({ apiKey: "re_key" });
   let current = configFrom(vars);
+  let members = FIRM_MEMBERS;
   let keys = 0;
 
   const fetchStub = (async (_url: string, init: RequestInit) => {
@@ -570,6 +580,10 @@ function createWorld(vars: Record<string, string> = env) {
     setEnv(next: Record<string, string>) {
       current = configFrom(next);
     },
+    /** The firm's members change (someone joins or leaves) between attempts. */
+    setMembers(next: string[]) {
+      members = next;
+    },
     add(row: OutboxRow) {
       const { id, kind, session_id, payload } = row;
       stored.set(id, { event: { id, kind, session_id, payload }, status: "pending", lapsed: false, attempts: 0, pending_send: null, last_error: null });
@@ -594,6 +608,7 @@ function createWorld(vars: Record<string, string> = env) {
         freeze,
         complete,
         fail,
+        advisorRecipients: async () => members,
         log: (line) => logs.push(line),
       });
     },
@@ -745,6 +760,7 @@ describe("a retry after a definitive failure of the first send", () => {
     expect(world.get("evt-advisor").pending_send).toBeNull();
 
     world.setEnv(changedEnv);
+    world.setMembers(["new-team@example.com"]);
     await world.run();
 
     expect(world.requests).toHaveLength(2);
@@ -1159,22 +1175,26 @@ describe("telling engineering an event died", () => {
 describe("telling a blocked kind's events why they are waiting", () => {
   it("names the settings in the way, per kind, and nothing for a kind that is ready", () => {
     expect(blockedKinds(config, null)).toEqual([]);
-    const noAdvisors = configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "" });
-    expect(blockedKinds(noAdvisors, null)).toEqual([
-      { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es)" },
-      { kind: "peo_mail_arrived", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es)" },
+    const noSender = configFrom({ ...env, EMAIL_FROM: "" });
+    expect(blockedKinds(noSender, null).map((b) => [b.kind, b.problem])).toEqual([
+      ["advisor_notification", "EMAIL_FROM is not set to a valid sender address"],
+      ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
+      ["prospect_confirmation", "EMAIL_FROM is not set to a valid sender address"],
+      ["information_request", "EMAIL_FROM is not set to a valid sender address"],
+      ["draft_expiry_reminder", "EMAIL_FROM is not set to a valid sender address"],
     ]);
-    expect(blockedKinds(configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "not an address, x" }), null)[0].problem)
-      .toBe("ADVISORY_NOTIFY_EMAIL is not set to valid address(es)");
+    // Who an advisor alert goes to is the intake's firm's members, so the platform list is not a setting it waits for.
+    expect(blockedKinds(configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "" }), null)).toEqual([]);
   });
 
   it("lists every missing setting of a kind together", () => {
-    const blocked = blockedKinds(configFrom({ ...env, APP_BASE_URL: "http://app.example.com", ADVISORY_NOTIFY_EMAIL: "" }), null);
+    const blocked = blockedKinds(configFrom({ ...env, APP_BASE_URL: "http://app.example.com", SUPPORT_EMAIL: "" }), null);
     expect(blocked).toEqual([
-      { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es); APP_BASE_URL is not set to an https URL" },
-      { kind: "peo_mail_arrived", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es); APP_BASE_URL is not set to an https URL" },
-      { kind: "information_request", problem: "APP_BASE_URL is not set to an https URL" },
-      { kind: "draft_expiry_reminder", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "advisor_notification", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
+      { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
+      { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
     ]);
   });
 
@@ -1224,5 +1244,241 @@ describe("what a run answers", () => {
 
   it("tells a browser caller only that the run happened: queue health is the advisory team's to read", () => {
     expect(runReply(false, counts)).toEqual({ ok: true });
+  });
+});
+
+// Who an advisor alert and a new-PEO-mail notice go to: the current members of the firm the intake belongs to, as the database
+// answers for the event's intake (CRM-P2.1c). Never the platform's list, never another firm's people.
+describe("who an advisor alert goes to", () => {
+  const kinds: [string, () => OutboxRow][] = [["advisor alert", advisorRow], ["new PEO mail notice", peoMailRow]];
+
+  it.each(kinds)("sends the %s to the intake's firm's current members, asking for them by the event's intake", async (_name, makeRow) => {
+    const advisorRecipients = vi.fn(async () => ["owner@firm-a.example", "agent@firm-a.example"]);
+    const { deps, sent } = harness({ advisorRecipients });
+    await dispatchEvents([makeRow()], deps);
+    expect(advisorRecipients).toHaveBeenCalledWith(SESSION);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message.to).toEqual(["owner@firm-a.example", "agent@firm-a.example"]);
+    expect(vi.mocked(deps.freeze).mock.calls[0][2].to).toEqual(["owner@firm-a.example", "agent@firm-a.example"]);
+  });
+
+  it.each(kinds)("never sends the %s to the platform-wide list, whatever it holds", async (_name, makeRow) => {
+    const { deps, sent } = harness({ config: configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "everyone@platform.example, ops@platform.example" }) });
+    await dispatchEvents([makeRow()], deps);
+    expect(sent[0].message.to).toEqual(FIRM_MEMBERS);
+    expect(JSON.stringify(sent[0])).not.toContain("platform.example");
+  });
+
+  it.each(kinds)("tells two firms' alerts apart: each intake's own members and no one else", async (_name, makeRow) => {
+    const byIntake: Record<string, string[]> = { "intake-a": ["a1@firm-a.example"], "intake-b": ["b1@firm-b.example", "b2@firm-b.example"] };
+    const { deps, sent } = harness({ advisorRecipients: vi.fn(async (id: string) => byIntake[id] ?? []) });
+    await dispatchEvents([makeRow({ id: "e-a", session_id: "intake-a" }), makeRow({ id: "e-b", session_id: "intake-b" })], deps);
+    expect(sent.map((s) => s.message.to)).toEqual([["a1@firm-a.example"], ["b1@firm-b.example", "b2@firm-b.example"]]);
+  });
+
+  it.each(kinds)("holds back the %s, sending nothing, when the firm has nobody to tell, and tries again", async (_name, makeRow) => {
+    const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => []) });
+    const summary = await dispatchEvents([makeRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.freeze).not.toHaveBeenCalled();
+    expect(summary.retrying).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 60, 1, false);
+  });
+
+  it.each(kinds)("holds back the %s, sending nothing, when the recipients cannot be looked up", async (_name, makeRow) => {
+    const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => { throw new Error("db down"); }) });
+    const summary = await dispatchEvents([makeRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.freeze).not.toHaveBeenCalled();
+    expect(summary.retrying).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "recipients_failed", 60, 1, false);
+  });
+
+  it("does not ask for recipients to send a prospect's email", async () => {
+    const { deps } = harness();
+    await dispatchEvents([prospectRow()], deps);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+  });
+
+  describe("a member who has left", () => {
+    const frozen = (to: string[]) => pendingSend({ message: { ...pendingSend().message, to } });
+
+    it.each(kinds)("stops receiving at once: a frozen %s that names them is rebuilt for the current members, under a new key", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message, replace] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(replace).toBe(true);
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+    });
+
+    // D-35: who is told is fixed when the alert is first prepared. A retry only drops the people who have left; it never adds the
+    // people who joined since, whose address would change the message's key for everyone who already has it.
+    it.each(kinds)("rebuilds a frozen %s for the people it named who are still members, and does not add anyone who joined since", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("rebuilds a frozen %s for the current members, with a new key, when everyone it named has left (D-102)", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      const stored = frozen(["gone@firm-a.example"]);
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
+    // D-35 and D-102: the first-preparation recipients are stored on the row itself, apart from the disposable frozen message, so a
+    // freeze that has aged out or was cleared by a definitive failure does not let a retry reach someone who joined after preparation.
+    it.each(kinds)("sends a %s whose freeze is gone only to the stored first recipients who are still members", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: ["stayer@firm-a.example", "gone@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("does the same when the %s's freeze is older than the key window", async (_name, makeRow) => {
+      const old = pendingSend({ frozen_at: new Date(NOW - 21 * 60 * 60 * 1000).toISOString(), message: { ...pendingSend().message, to: ["stayer@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 3, pending_send: jsonb(old), first_recipients: ["stayer@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("prefers the stored first recipients over the people a later freeze named, for a %s", async (_name, makeRow) => {
+      const later = pendingSend({ message: { ...pendingSend().message, to: ["gone@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 3, pending_send: jsonb(later), first_recipients: ["stayer@firm-a.example", "gone@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("sends a %s whose old freeze is all it has (no stored first recipients) only to those the freeze named who are still members", async (_name, makeRow) => {
+      const old = pendingSend({ frozen_at: new Date(NOW - 21 * 60 * 60 * 1000).toISOString(), message: { ...pendingSend().message, to: ["stayer@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 3, pending_send: jsonb(old), first_recipients: null })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("treats an empty stored first-recipient list as none, and falls back to the people the %s's freeze named", async (_name, makeRow) => {
+      const old = pendingSend({ frozen_at: new Date(NOW - 21 * 60 * 60 * 1000).toISOString(), message: { ...pendingSend().message, to: ["stayer@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(old), first_recipients: [] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("treats stored first recipients that are not a list of addresses as none, and sends the %s to the current members", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: [1, null] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+    });
+
+    it.each(kinds)("sends a %s with no freeze and no one left of its first recipients to the current members (D-102)", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: ["gone@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+    });
+
+    it.each(kinds)("sends nothing from a frozen %s when no one is left to tell", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => []) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
+    });
+
+    it("sends a frozen alert whose every named person has left to the current members, since none of them can have had it, once, under a new key (D-102, which amends D-35)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+      expect(deps.freeze).toHaveBeenCalledTimes(1);
+    });
+
+    it("rebuilds an alert frozen to the shared inbox, as it was before alerts went to members, for the current members", async () => {
+      const stored = frozen(["advisory@shared-inbox.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["a@firm-a.example", "b@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["a@firm-a.example", "b@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
+    it("sends nothing from a frozen message when the current members cannot be looked up", async () => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => { throw new Error("db down"); }) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith("evt-advisor", "recipients_failed", 300, 2, false);
+    });
+
+    it("matches addresses without regard to case, in either direction", async () => {
+      const stored = frozen(["Stayer@Firm-A.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
+    });
+
+    it("recognises a stayer whose address differs only in case when it rebuilds for someone who left", async () => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@Firm-A.example", "joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["Stayer@Firm-A.example"]);
+    });
+
+    it.each(kinds)("a frozen %s rebuilt because someone left, while a stayer remains, goes to the stayers only: a joiner never gets it (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("a %s frozen more than 20 hours ago is rebuilt for the people it named who are still members, not for a member who joined since or one who left (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 21 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message, replace] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(replace).toBe(true);
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+    });
+
+    it("sends an aged alert whose every named person has left to the current members (D-102)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 168 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
+    // D-35: recipients are fixed when the alert is first prepared. A later joiner is deliberately NOT added to a frozen alert: rebuilding
+    // changes the send key, so the people who already received it would get it twice. They receive every alert prepared after they joined.
+    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member, even if others have joined since (D-35)", async () => {
+      const stored = frozen(["stayer@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
+      expect(deps.freeze).not.toHaveBeenCalled();
+    });
   });
 });

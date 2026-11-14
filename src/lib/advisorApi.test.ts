@@ -11,12 +11,26 @@ const createSignedUrl = vi.fn();
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
 const inFilters: { table: string; column: string; values: unknown[] }[] = [];
+/** Each `.eq(column, value)` filter a query asked for, by table. */
+const eqFilters: { table: string; column: string; value: unknown }[] = [];
+/** Each `.select(columns)` and `.order(column)` a query asked for, by table. */
+const selects: { table: string; columns: unknown }[] = [];
+const orders: { table: string; column: string }[] = [];
 const query = (table: string) => {
+  /** `.eq(column, value)` filters of a referral-partner lookup, applied as the database does (the other tables' rows are returned whole). */
+  const eqs: [string, unknown][] = [];
   let rows = () => tables[table] ?? [];
   const result = () => ({ data: rows(), error: null });
   const chain: Record<string, unknown> = {
-    select: () => chain,
-    eq: () => chain,
+    select: (columns?: unknown) => {
+      selects.push({ table, columns });
+      return chain;
+    },
+    eq: (column: string, value: unknown) => {
+      eqs.push([column, value]);
+      eqFilters.push({ table, column, value });
+      return chain;
+    },
     is: () => chain,
     in: (column: string, values: unknown[]) => {
       inFilters.push({ table, column, values });
@@ -24,9 +38,17 @@ const query = (table: string) => {
       rows = () => before().filter((r) => values.includes((r as Record<string, unknown>)[column]));
       return chain;
     },
-    order: () => chain,
+    order: (column: string) => {
+      orders.push({ table, column });
+      return chain;
+    },
     limit: () => chain,
-    maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
+    maybeSingle: async () => {
+      // Like PostgREST: more than one row where at most one is expected is an error.
+      const found = table === "referral_partners" ? rows().filter((r) => eqs.every(([c, v]) => (r as Record<string, unknown>)[c] === v)) : rows();
+      if (table === "referral_partners" && found.length > 1) return { data: null, error: { code: "PGRST116", message: "multiple rows" } };
+      return { data: found[0] ?? null, error: null };
+    },
     then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => Promise.resolve(result()).then(ok, ko),
   };
   return chain;
@@ -49,7 +71,8 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 const {
   AdvisorApiError,
-  fetchIsAdvisor,
+  fetchMyFirms,
+  fetchNeedsSecondFactor,
   listEmailProblems,
   listOutboxEvents,
   listSubmissions,
@@ -64,6 +87,8 @@ const {
   updateQuoteRequest,
   fetchIsAdmin,
   loadPeoDirectory,
+  loadPeoCatalogDirectory,
+  fetchHasPlatformRole,
   loadVersionContacts,
   publishPeoDraft,
   savePeoDraft,
@@ -74,6 +99,18 @@ const {
   reissueQuoteRequestAddress,
   openQuoteRequestThread,
   mailAttachmentUrl,
+  recordActivity,
+  fetchOwnedFirms,
+  listMyFirms,
+  loadIntakeSources,
+  loadIntakeSourcesOfMyFirms,
+  listReferralPartners,
+  addReferralPartner,
+  updateReferralPartner,
+  listFirmActivity,
+  listFirmActivityPeople,
+  NEVERMORE_FILTER,
+  FIRM_ACTIVITY_PAGE_SIZE,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -89,20 +126,35 @@ const caught = async (run: () => Promise<unknown>) => {
 describe("advisor API errors", () => {
   beforeEach(() => rpc.mockReset());
 
-  it("reports a role check that comes back true or false", async () => {
-    rpc.mockResolvedValueOnce({ data: true, error: null });
-    await expect(fetchIsAdvisor()).resolves.toBe(true);
-    rpc.mockResolvedValueOnce({ data: false, error: null });
-    await expect(fetchIsAdvisor()).resolves.toBe(false);
+  it("asks which firms the caller currently belongs to, and their role in each, never whether they hold a platform role", async () => {
+    const firms = [{ firm_id: "firm-1", name: "Alpha", address: "alpha", role: "agent" }];
+    rpc.mockResolvedValueOnce({ data: firms, error: null });
+    await expect(fetchMyFirms()).resolves.toEqual(firms);
+    expect(rpc).toHaveBeenCalledWith("my_firms");
+    expect(rpc).not.toHaveBeenCalledWith("is_advisor");
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchMyFirms()).resolves.toEqual([]);
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "JWT expired", code: "PGRST301" } });
+    expect((await caught(() => fetchMyFirms())).unauthenticated).toBe(true);
   });
 
-  it("calls a database refusal a lack of advisor access", async () => {
+  it("reports whether only a second factor holds an advisor back, and says nothing is wrong when the answer is empty", async () => {
+    rpc.mockResolvedValueOnce({ data: true, error: null });
+    await expect(fetchNeedsSecondFactor()).resolves.toBe(true);
+    rpc.mockResolvedValueOnce({ data: false, error: null });
+    await expect(fetchNeedsSecondFactor()).resolves.toBe(false);
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchNeedsSecondFactor()).resolves.toBe(false);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_needs_second_factor");
+  });
+
+  it("calls a database refusal a lack of access to the firm's records", async () => {
     failWith({ code: "42501", message: "Advisor access required" });
     const err = await caught(() => listSubmissions({ status: null }));
     expect(err).toBeInstanceOf(AdvisorApiError);
     expect(err.forbidden).toBe(true);
     expect(err.unauthenticated).toBe(false);
-    expect(err.message).toBe("You don't have advisor access.");
+    expect(err.message).toBe("You don't have access to this firm's records.");
   });
 
   it.each([
@@ -174,12 +226,12 @@ describe("outbox API", () => {
     ["listing", () => listOutboxEvents(null)],
     ["counting", () => outboxSummary()],
     ["retrying", () => requeueOutboxEvent("e1", false)],
-  ])("calls the database's refusal of a non-advisor %s a lack of advisor access", async (_what, run) => {
+  ])("calls the database's refusal of a non-advisor %s a lack of access to the firm's records", async (_what, run) => {
     failWith({ code: "42501", message: "Advisor access required" });
     const err = await caught(run);
     expect(err).toBeInstanceOf(AdvisorApiError);
     expect(err.forbidden).toBe(true);
-    expect(err.message).toBe("You don't have advisor access.");
+    expect(err.message).toBe("You don't have access to this firm's records.");
   });
 
   it("says the session ended, for a lapsed token, so the page can send the advisor to sign in", async () => {
@@ -209,11 +261,11 @@ describe("email problems API", () => {
     await expect(listEmailProblems()).resolves.toEqual([]);
   });
 
-  it("calls the database's refusal of a non-advisor a lack of advisor access (HTTP 403)", async () => {
+  it("calls the database's refusal of a non-advisor a lack of access to the firm's records (HTTP 403)", async () => {
     failWith({ code: "42501", message: "Advisor access required" });
     const err = await caught(() => listEmailProblems());
     expect(err.forbidden).toBe(true);
-    expect(err.message).toBe("You don't have advisor access.");
+    expect(err.message).toBe("You don't have access to this firm's records.");
   });
 });
 
@@ -371,6 +423,37 @@ describe("loadSubmission", () => {
     for (const k of Object.keys(tables)) delete tables[k];
     tables.submission_workflow = [{ status: "under_review" }];
     tables.documents = [doc("d1"), doc("d3")];
+  });
+
+  // CRM-P2.3: a submission opened is written by the database where it hands the submission over, never reported.
+  it("opens a submission through the database function that records the opening, and refreshing does not", async () => {
+    tables.chamber_sessions = [row()];
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [row()], error: null });
+    const d = (await loadSubmission("s1", true))!;
+    expect(rpc).toHaveBeenCalledWith("open_submission", { p_session_id: "s1" });
+    expect(d.certified).toBe(true);
+    rpc.mockClear();
+    await loadSubmission("s1");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  // The partner key is (firm, code): two firms may use the same code, and a member of both opens either one's submissions.
+  it("names the referral partner of the submission's own firm when two of the caller's firms use the same code", async () => {
+    tables.chamber_sessions = [row({ firm_id: "firm-b", referral_code: "acme" })];
+    tables.referral_partners = [
+      { firm_id: "firm-a", code: "acme", name: "Acme of A" },
+      { firm_id: "firm-b", code: "acme", name: "Acme of B" },
+    ];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.sourcePartnerName).toBe("Acme of B");
+  });
+
+  it("finds nothing when the database hands over no row on opening", async () => {
+    tables.chamber_sessions = [row()];
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [], error: null });
+    expect(await loadSubmission("s1", true)).toBeNull();
   });
 
   it("shows a certified intake as certified: its answers, its stored answers, its conversation and its documents", async () => {
@@ -588,6 +671,33 @@ describe("the PEOs page's reads and writes", () => {
     expect(await fetchIsAdmin()).toBe(false);
   });
 
+  it("learns whether the signed-in person holds a platform role from the database's own check", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await fetchHasPlatformRole()).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("is_advisor");
+    rpc.mockResolvedValue({ data: false, error: null });
+    expect(await fetchHasPlatformRole()).toBe(false);
+  });
+
+  it("reads the catalogue a member with no platform role may read, through peo_catalog and no table, as the version in use", async () => {
+    rpc.mockResolvedValue({
+      data: [
+        { id: 2, name: "Justworks", listed: false, profile: null },
+        { id: 1, name: "TriNet", listed: true, profile: { id: 10, version: 3, published_at: "2026-11-01T00:00:00Z", min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-10-30" } } } },
+      ],
+      error: null,
+    });
+    const [justworks, trinet] = await loadPeoCatalogDirectory();
+    expect(rpc).toHaveBeenCalledWith("peo_catalog");
+    expect(justworks).toMatchObject({ id: 2, name: "Justworks", listed: false, versions: [] });
+    expect(trinet.versions.map((v) => [v.id, v.version, v.status, v.profile.rules.minHeadcount, v.profile.contacts])).toEqual([[10, 3, "published", 5, []]]);
+  });
+
+  it("says why when the catalogue can't be read", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await expect(loadPeoCatalogDirectory()).rejects.toThrow();
+  });
+
   it("reads each PEO with its versions, newest first, and each version's contacts", async () => {
     tables.peos = [{ id: 1, name: "TriNet", listed: true }, { id: 2, name: "Justworks", listed: false }];
     tables.peo_profile_versions = [
@@ -679,5 +789,128 @@ describe("documentFile: an uploaded document's file, for a bundle", () => {
     const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
     expect(err.message).toBe("Your session has expired. Sign in again to continue.");
     expect(err.unauthenticated).toBe(true);
+  });
+});
+
+describe("the firm's record of who did what", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("reports a file downloaded by the kind and the record's id alone", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    await recordActivity("document_downloaded", "document", "d1");
+    expect(rpc).toHaveBeenCalledWith("record_member_activity", { p_kind: "document_downloaded", p_record_type: "document", p_record_id: "d1" });
+  });
+
+  it("never fails the caller when the record can't be written", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "You are not a member of that record's firm", code: "42501" } });
+    await expect(recordActivity("document_downloaded", "document", "d1")).resolves.toBeUndefined();
+    rpc.mockRejectedValueOnce(new Error("offline"));
+    await expect(recordActivity("packet_downloaded", "manuscript", "v1")).resolves.toBeUndefined();
+  });
+
+  it("asks which firms the caller currently owns, by name, so the page can say which one it wants", async () => {
+    rpc.mockResolvedValueOnce({ data: [{ firm_id: "firm-1", name: "Alpha" }, { firm_id: "firm-2", name: "Beta" }], error: null });
+    await expect(fetchOwnedFirms()).resolves.toEqual([{ firm_id: "firm-1", name: "Alpha" }, { firm_id: "firm-2", name: "Beta" }]);
+    expect(rpc).toHaveBeenCalledWith("my_owner_firms");
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchOwnedFirms()).resolves.toEqual([]);
+  });
+
+  const row = (id: number) => ({ entry_key: `k${id}`, at: `2026-11-12T10:00:${String(id % 60).padStart(2, "0")}Z`, actor_id: "u1", actor_email: "a@x.test", kind: "submission_viewed", record_type: "submission", record_id: `s${id}`, subject_user_id: null, subject_email: null, role: null });
+
+  it("asks for the first page with the filters it was given, and one more row to know whether another page follows", async () => {
+    rpc.mockResolvedValue({ data: [row(3), row(2), row(1)], error: null });
+    const page = await listFirmActivity("firm-1", { person: "u1", kind: "send_recorded", after: null });
+    expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
+      p_firm_id: "firm-1", p_person: "u1", p_kind: "send_recorded", p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: null, p_before_key: null, p_nevermore: false,
+    });
+    expect(page.entries.map((e) => e.entry_key)).toEqual(["k3", "k2", "k1"]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("asks for the page after the last entry the reader saw, by its time and key, never by a count of rows", async () => {
+    rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE + 1 }, (_, i) => row(100 - i)), error: null });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, after: { at: "2026-11-12T09:00:00Z", key: "k77" } });
+    expect(rpc).toHaveBeenCalledWith("firm_activity_list", {
+      p_firm_id: "firm-1", p_person: null, p_kind: null, p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1, p_before_at: "2026-11-12T09:00:00Z", p_before_key: "k77", p_nevermore: false,
+    });
+    expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
+    expect(page.hasMore).toBe(true);
+    expect(page.entries.at(-1)?.entry_key).toBe(`k${100 - (FIRM_ACTIVITY_PAGE_SIZE - 1)}`);
+  });
+
+  it("says no page follows when the record ends exactly at the end of a page", async () => {
+    rpc.mockResolvedValue({ data: Array.from({ length: FIRM_ACTIVITY_PAGE_SIZE }, (_, i) => row(100 - i)), error: null });
+    const page = await listFirmActivity("firm-1", { person: null, kind: null, after: null });
+    expect(page.entries).toHaveLength(FIRM_ACTIVITY_PAGE_SIZE);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("is refused for anyone who isn't an owner of the firm, and says so as a refusal", async () => {
+    failWith({ message: "Only a firm's owners can read its record", code: "42501" });
+    expect((await caught(() => listFirmActivity("firm-1", { person: null, kind: null, after: null }))).forbidden).toBe(true);
+  });
+
+  it("filters by Nevermore with the filter's own flag, never by an id, and by a person with their id and no flag", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    await listFirmActivity("firm-1", { person: NEVERMORE_FILTER, kind: null, after: null });
+    expect(rpc).toHaveBeenLastCalledWith("firm_activity_list", expect.objectContaining({ p_person: null, p_nevermore: true }));
+    await listFirmActivity("firm-1", { person: "u1", kind: null, after: null });
+    expect(rpc).toHaveBeenLastCalledWith("firm_activity_list", expect.objectContaining({ p_person: "u1", p_nevermore: false }));
+  });
+
+  it("lists the people who appear in the record", async () => {
+    rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test", is_nevermore: false }], error: null });
+    await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test", is_nevermore: false }]);
+    expect(rpc).toHaveBeenCalledWith("firm_activity_people", { p_firm_id: "firm-1" });
+  });
+});
+
+describe("referral partners belong to a firm", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    eqFilters.length = 0;
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+
+  it("reads one firm's partners", async () => {
+    tables.referral_partners = [{ firm_id: "firm-a", code: "x", name: "X" }];
+    await listReferralPartners("firm-a");
+    expect(eqFilters).toContainEqual({ table: "referral_partners", column: "firm_id", value: "firm-a" });
+  });
+
+  it("adds and renames a partner for the firm named", async () => {
+    rpc.mockResolvedValue({ data: { firm_id: "firm-b", code: "x" }, error: null });
+    await addReferralPartner("firm-b", "x", "X", "other");
+    expect(rpc).toHaveBeenCalledWith("advisor_add_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "X", p_kind: "other" });
+    await updateReferralPartner("firm-b", "x", "Y", "other");
+    expect(rpc).toHaveBeenCalledWith("advisor_update_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "Y", p_kind: "other" });
+  });
+
+  it("lists the firms the caller belongs to, by name", async () => {
+    tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }];
+    selects.length = 0;
+    orders.length = 0;
+    await expect(listMyFirms()).resolves.toEqual([{ id: "firm-a", name: "Alpha", address: "alpha" }]);
+    expect(selects).toContainEqual({ table: "firms", columns: "id, name, address" });
+    expect(orders).toContainEqual({ table: "firms", column: "name" });
+  });
+
+  it("asks for one firm's funnel by source, so another membership's volume cannot push its rows out", async () => {
+    rpc.mockResolvedValue({ data: [{ referral_code: "x", firm_id: "firm-b" }], error: null });
+    const from = new Date("2026-10-01T00:00:00Z");
+    const to = new Date("2026-11-01T00:00:00Z");
+    await expect(loadIntakeSources(from, to, "firm-b")).resolves.toEqual([{ referral_code: "x", firm_id: "firm-b" }]);
+    expect(rpc).toHaveBeenCalledWith("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString(), p_firm_id: "firm-b" });
+  });
+
+  it("asks once for each of the caller's firms when no single firm is the page's, and joins the answers with the firms, the busiest source first", async () => {
+    tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }, { id: "firm-b", name: "Beta", address: "beta" }];
+    const started: Record<string, number> = { "firm-a": 2, "firm-b": 7 };
+    rpc.mockImplementation(async (_fn: string, args: { p_firm_id: string }) => ({ data: [{ referral_code: "x", firm_id: args.p_firm_id, started: started[args.p_firm_id] }], error: null }));
+    const { firms, rows } = await loadIntakeSourcesOfMyFirms(new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z"));
+    expect(firms.map((f) => f.name)).toEqual(["Alpha", "Beta"]);
+    expect(rows.map((r) => r.firm_id)).toEqual(["firm-b", "firm-a"]);
+    expect(rpc.mock.calls.map((c) => (c[1] as { p_firm_id: string }).p_firm_id)).toEqual(["firm-a", "firm-b"]);
   });
 });

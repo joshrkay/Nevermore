@@ -140,6 +140,8 @@ export type Database = {
           // The referral code and campaign tags of the link the intake started from (20261106100000): short codes
           // (src/data/intakeSource.ts), set when the intake is created and never changed.
           referral_code: string | null
+          // The firm the intake belongs to (20261116090000), set by the database.
+          firm_id: string
           utm_campaign: string | null
           utm_medium: string | null
           utm_source: string | null
@@ -461,6 +463,25 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // A firm's record of who did what (20261116160001): kinds and ids, never content. Append-only; a firm's owners
+      // read their own firm's through firm_activity_list(); written only through record_firm_activity().
+      firm_activity: {
+        Row: {
+          // The stored actor is never granted to a firm: only that an entry was by Nevermore's own people (D-33).
+          actor_is_staff: boolean
+          at: string
+          entry_key: string
+          firm_id: string
+          kind: string
+          record_id: string
+          record_type: string
+          role: string | null
+          subject_user_id: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
       // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
       quote_request_notes: {
@@ -576,6 +597,8 @@ export type Database = {
           code: string
           created_at: string
           created_by_email: string | null
+          // The firm the partner belongs to (20261116200000); a code is unique within it.
+          firm_id: string
           // One of REFERRAL_PARTNER_KINDS (src/data/referralPartners.ts).
           kind: string
           name: string
@@ -704,6 +727,17 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // A member reads their own firm (20261116090000): the columns granted to them.
+      firms: {
+        Row: {
+          id: string
+          name: string
+          address: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -773,10 +807,10 @@ export type Database = {
         Args: { p_from: string; p_to: string }
         Returns: { step: number; milestone: string; intakes: number; median_minutes: number | null }[]
       }
-      // The funnel by source (20261106100000): for intakes started in the period, each source and how many of its
-      // intakes reached each step. Intakes with no source are one row whose codes are all null.
+      // The funnel by source (20261106100000), asked for one firm the caller belongs to (20261116200500): for that firm's intakes
+      // started in the period, each source and how many of its intakes reached each step. Intakes with no source are one row whose codes are all null.
       advisor_intake_sources: {
-        Args: { p_from: string; p_to: string }
+        Args: { p_from: string; p_to: string; p_firm_id: string }
         Returns: {
           referral_code: string | null
           partner_name: string | null
@@ -791,16 +825,65 @@ export type Database = {
           email_verified: number
           certified: number
           manuscript_downloaded: number
+          // The firm the row is about (20261116200500): a code is unique within a firm, not across firms.
+          firm_id: string
         }[]
       }
       // Adds a referral partner under a new code; a code already taken is refused (23505).
       advisor_add_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string }
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+      }
+      // A page of one firm's record (p_firm_id), newest first, for that firm's current owners only (20261116160001).
+      firm_activity_list: {
+        Args: { p_firm_id: string; p_person?: string | null; p_kind?: string | null; p_limit?: number; p_before_at?: string | null; p_before_key?: string | null; p_nevermore?: boolean }
+        Returns: {
+          actor_email: string | null
+          actor_id: string | null
+          at: string
+          // True when a person at Nevermore did it: no id and no email, shown as "Nevermore" (D-33).
+          by_nevermore: boolean
+          entry_key: string
+          kind: string
+          record_id: string
+          record_type: string
+          role: string | null
+          subject_email: string | null
+          subject_user_id: string | null
+        }[]
+      }
+      firm_activity_people: {
+        Args: { p_firm_id: string }
+        Returns: { email: string | null; is_nevermore: boolean; user_id: string | null }[]
+      }
+      // The firms the caller currently belongs to, with their role in each, for a caller past the second factor.
+      my_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: { firm_id: string; name: string; address: string; role: string }[]
+      }
+      // The firms the caller currently owns, by name.
+      my_owner_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: { firm_id: string; name: string }[]
+      }
+      // The firm at an address, for a current member of it; null for anyone else.
+      my_firm_at_address: {
+        Args: { p_address: string }
+        Returns: string | null
+      }
+      // A submission handed to a current member of its firm; the database writes the opening in the firm's record (20261116160001). No row for anyone else.
+      open_submission: {
+        Args: { p_session_id: string }
+        Returns: Database["public"]["Tables"]["chamber_sessions"]["Row"][]
+      }
+      // A browser reporting a file it downloaded or built, or a sign-in; the firm and the person are worked out by the database.
+      record_member_activity: {
+        Args: { p_kind: string; p_record_id: string; p_record_type: string }
+        Returns: undefined
       }
       // Renames a referral partner or changes its kind; the code never changes.
       advisor_update_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string }
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
         Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
       advisor_list_outbox_events: {
@@ -930,6 +1013,93 @@ export type Database = {
         Returns: Json
       }
       is_advisor: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      firm_public_name: {
+        Args: { p_address: string }
+        Returns: string | null
+      }
+      // Signing up a firm and its approval (20261116170000).
+      sign_up_firm: {
+        Args: { p_name: string; p_address: string }
+        Returns: string
+      }
+      admin_waiting_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          firm_id: string
+          name: string
+          address: string
+          signed_up_by_email: string | null
+          signed_up_at: string
+        }[]
+      }
+      admin_decide_firm: {
+        Args: { p_firm_id: string; p_approve: boolean; p_note?: string | null }
+        Returns: undefined
+      }
+      // Invitations to join a firm (20261116190000). The token's hash is asked of, and never returned by, the database.
+      firm_role: {
+        Args: { p_firm_id: string }
+        Returns: string | null
+      }
+      firm_pending_invitations: {
+        Args: { p_firm_id: string }
+        Returns: {
+          invitation_id: string
+          email: string
+          role: string
+          team_id: string | null
+          invited_at: string
+          expires_at: string
+          expired: boolean
+          resent_at: string | null
+          email_sent_at: string | null
+          email_error: string | null
+          email_outcome: string | null
+        }[]
+      }
+      cancel_invitation: {
+        Args: { p_invitation_id: string }
+        Returns: undefined
+      }
+      remove_member: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      suspend_member: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      lift_member_suspension: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      firm_members: {
+        Args: { p_firm_id: string }
+        Returns: {
+          user_id: string
+          email: string
+          role: string
+          state: string
+          since: string
+          is_you: boolean
+        }[]
+      }
+      accept_invitation: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: { firm_id: string; firm_address: string; role: string }[]
+      }
+      is_member_of_firm_address: {
+        Args: { p_address: string }
+        Returns: boolean
+      }
+      advisor_needs_second_factor: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      second_factor_rule_met: {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }

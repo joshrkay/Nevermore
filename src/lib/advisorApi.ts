@@ -7,8 +7,10 @@ import { parseTranscript, type ChatMessage } from "@/data/chat";
 import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
+import type { BrowserActivityKind, BrowserActivityRecord } from "@/data/firmActivity";
 import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
+import { parsePeoCatalog } from "@/data/peoProfiles";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 import type { QuoteNoteKind } from "@/data/quoteRequests";
@@ -26,6 +28,7 @@ import {
 } from "@/data/advisor";
 
 import { downloadName } from "../../supabase/functions/_shared/fileSignature.ts";
+import { functionErrorReply } from "@/lib/functionError";
 // Every call here is authorized by the database (row security and advisor-only functions);
 // the advisor routes in the UI are a convenience on top of that, not the control.
 
@@ -60,17 +63,27 @@ export class AdvisorApiError extends Error {
 const isEndedSession = (error: { message: string; code?: string }) =>
   ["PGRST301", "PGRST302", "PGRST303"].includes(error.code ?? "") || /\bjwt\b|exp claim/i.test(error.message);
 
+/**
+ * The error to throw for a failed call, classified the way AdvisorLoadError reads it: an ended session is `unauthenticated`
+ * (it signs the person out), a refusal (42501) is `forbidden`. Anything else keeps `message`.
+ */
+export const classifyApiError = (error: { message: string; code?: string }, message: string): AdvisorApiError =>
+  error.code !== "42501" && isEndedSession(error)
+    ? new AdvisorApiError("Your session has expired. Sign in again to continue.", error.code, true)
+    : new AdvisorApiError(message, error.code);
+
 const fail = (error: { message: string; code?: string } | null, fallback: string): never => {
-  if (error?.code === "42501") throw new AdvisorApiError("You don't have advisor access.", error.code);
-  if (error && isEndedSession(error)) {
-    throw new AdvisorApiError("Your session has expired. Sign in again to continue.", error.code, true);
-  }
-  throw new AdvisorApiError(error?.message || fallback, error?.code);
+  if (error?.code === "42501") throw new AdvisorApiError("You don't have access to this firm's records.", error.code);
+  throw classifyApiError(error ?? { message: "" }, error?.message || fallback);
 };
 
-export async function fetchIsAdvisor(): Promise<boolean> {
-  const { data, error } = await supabase.rpc("is_advisor");
-  if (error) fail(error, "Couldn't check advisor access.");
+/**
+ * True when the caller's role is held back only by the second factor: they signed in with a password and
+ * haven't completed one (decision D-19). False for everyone else, including a Google or Microsoft sign-in.
+ */
+export async function fetchNeedsSecondFactor(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("advisor_needs_second_factor");
+  if (error) fail(error, "Couldn't check your sign-in.");
   return data === true;
 }
 
@@ -139,34 +152,59 @@ export async function loadFunnel(from: Date, to: Date): Promise<FunnelResult[]> 
 
 export type IntakeSourceResult = Database["public"]["Functions"]["advisor_intake_sources"]["Returns"][number];
 
-/** For intakes started between `from` and `to`: each source, and how many of its intakes reached each step. */
-export async function loadIntakeSources(from: Date, to: Date): Promise<IntakeSourceResult[]> {
-  const { data, error } = await supabase.rpc("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString() });
+/**
+ * For one firm's intakes started between `from` and `to`: each source, and how many of its intakes reached each step. The firm is named
+ * so that its rows are chosen before the database groups and limits them: another firm's volume cannot push them out.
+ */
+export async function loadIntakeSources(from: Date, to: Date, firmId: string): Promise<IntakeSourceResult[]> {
+  const { data, error } = await supabase.rpc("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString(), p_firm_id: firmId });
   if (error) fail(error, "Couldn't load the intakes by source.");
   return data ?? [];
+}
+
+/**
+ * The same for every firm the caller belongs to, one firm at a time (each row names its firm), for a page that is no single firm's.
+ * Returns the firms too, so the page can say which firm a row is about; rows are in order of intakes started, whichever firm.
+ */
+export async function loadIntakeSourcesOfMyFirms(from: Date, to: Date): Promise<{ firms: MemberFirm[]; rows: IntakeSourceResult[] }> {
+  const firms = await listMyFirms();
+  const perFirm = await Promise.all(firms.map((f) => loadIntakeSources(from, to, f.id)));
+  const rows = perFirm.flat().sort((a, b) => Number(b.started) - Number(a.started));
+  return { firms, rows };
 }
 
 // ---------- Referral partners (J-2.3) ----------
 
 export type ReferralPartner = Tables["referral_partners"]["Row"];
 
-/** Every referral partner, by name. */
-export async function listReferralPartners(): Promise<ReferralPartner[]> {
-  const { data, error } = await supabase.from("referral_partners").select("*").order("name");
+/** A firm the caller currently belongs to. */
+export type MemberFirm = { id: string; name: string; address: string };
+
+/** The firms the signed-in person currently belongs to, by name (row security shows a member their own firms and no others). */
+export async function listMyFirms(): Promise<MemberFirm[]> {
+  // `firms` isn't in the generated types (src/integrations/supabase/types.ts).
+  const { data, error } = await (supabase as unknown as SupabaseClient).from("firms").select("id, name, address").order("name");
+  if (error) fail(error, "Couldn't load your firms.");
+  return (data ?? []) as MemberFirm[];
+}
+
+/** One firm's referral partners, by name. A partner is its firm's own, and a code is unique within a firm. */
+export async function listReferralPartners(firmId: string): Promise<ReferralPartner[]> {
+  const { data, error } = await supabase.from("referral_partners").select("*").eq("firm_id", firmId).order("name");
   if (error) fail(error, "Couldn't load the referral partners.");
   return data ?? [];
 }
 
-/** Adds a partner under a new code. The database refuses a code that is taken or badly formed, with a message to show. */
-export async function addReferralPartner(code: string, name: string, kind: string): Promise<ReferralPartner> {
-  const { data, error } = await supabase.rpc("advisor_add_referral_partner", { p_code: code, p_name: name, p_kind: kind });
+/** Adds a partner to a firm under a new code. The database refuses a code that is taken in that firm or badly formed, with a message to show. */
+export async function addReferralPartner(firmId: string, code: string, name: string, kind: string): Promise<ReferralPartner> {
+  const { data, error } = await supabase.rpc("advisor_add_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind });
   if (error || !data) fail(error, "Couldn't add the partner.");
   return data as ReferralPartner;
 }
 
-/** Renames a partner or changes its kind. Its code never changes. */
-export async function updateReferralPartner(code: string, name: string, kind: string): Promise<ReferralPartner> {
-  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_code: code, p_name: name, p_kind: kind });
+/** Renames a firm's partner or changes its kind. Its code never changes. */
+export async function updateReferralPartner(firmId: string, code: string, name: string, kind: string): Promise<ReferralPartner> {
+  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind });
   if (error || !data) fail(error, "Couldn't save the partner.");
   return data as ReferralPartner;
 }
@@ -307,13 +345,14 @@ interface RecordedCertification {
   extra_answers?: Json | null;
 }
 
-export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
+export async function loadSubmission(id: string, opening = false): Promise<SubmissionDetail | null> {
+  // Opening a submission goes through the database function that hands it over and writes the entry in the firm's record
+  // (CRM-P2.3), so a browser never reports a view; a refresh after a change reads the table and is no opening.
+  const sessionRead = opening
+    ? supabase.rpc("open_submission", { p_session_id: id }).then(({ data, error }) => ({ data: data?.[0] ?? null, error }))
+    : supabase.from("chamber_sessions").select("*").eq("id", id).maybeSingle();
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
-    supabase
-      .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
-      .eq("id", id)
-      .maybeSingle(),
+    sessionRead,
     supabase
       .from("submission_workflow")
       .select("status, needs_action, needs_action_note, needs_action_at, needs_action_by, needs_action_by_email, won_quote_request_id")
@@ -353,9 +392,9 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       .order("recorded_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    // The partner behind the referral code, if one is listed.
+    // The partner behind the referral code, if one is listed: a code is unique within a firm, not across them, so the submission's own firm too.
     row.referral_code
-      ? supabase.from("referral_partners").select("name").eq("code", row.referral_code).maybeSingle()
+      ? supabase.from("referral_partners").select("name").eq("firm_id", row.firm_id).eq("code", row.referral_code).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     supabase.from("quote_requests").select("*").eq("session_id", id).order("id", { ascending: true }),
     supabase.from("quote_request_events").select("*").eq("session_id", id).order("id", { ascending: false }),
@@ -574,13 +613,9 @@ type HeldMailAction =
 async function heldMail(body: HeldMailAction, fallback: string): Promise<void> {
   const { error } = await supabase.functions.invoke("held-mail", { body });
   if (!error) return;
-  let message = fallback;
-  const context = (error as { context?: unknown }).context;
-  if (context instanceof Response) {
-    const said = await context.json().catch(() => null) as { error?: unknown } | null;
-    if (typeof said?.error === "string") message = said.error;
-    if (context.status === 403) throw new AdvisorApiError(message, "42501");
-  }
+  const { reason, status } = await functionErrorReply(error as { context?: unknown });
+  const message = reason ?? fallback;
+  if (status === 403) throw new AdvisorApiError(message, "42501");
   throw new AdvisorApiError(message);
 }
 
@@ -767,6 +802,92 @@ export async function reviewField(
   if (error) fail(error, "Couldn't save the review.");
 }
 
+/**
+ * Tells the firm's record of who did what that the caller downloaded a file or built one in the browser (CRM-P2.3); a
+ * submission opened is written by the database itself (loadSubmission). Only the
+ * kind and the record's id are sent: the database works out the firm and the person, and refuses a record that isn't in
+ * a firm the caller belongs to. Best effort: a failure is never shown and never stops what the advisor was doing.
+ */
+export async function recordActivity<K extends Exclude<BrowserActivityKind, "sign_in">>(
+  kind: K,
+  recordType: BrowserActivityRecord<K>,
+  recordId: string,
+): Promise<void> {
+  try {
+    await supabase.rpc("record_member_activity", { p_kind: kind, p_record_type: recordType, p_record_id: recordId });
+  } catch {
+    // Not recorded; the advisor's work goes on.
+  }
+}
+
+export type FirmActivityEntry = Database["public"]["Functions"]["firm_activity_list"]["Returns"][number];
+export type OwnedFirm = Database["public"]["Functions"]["my_owner_firms"]["Returns"][number];
+export type FirmActivityPerson = Database["public"]["Functions"]["firm_activity_people"]["Returns"][number];
+/**
+ * The person filter's value for everyone at Nevermore together (D-33): a firm is never given a Nevermore person's id, so
+ * this is what stands for them. A real user id is a uuid, so it can't be mistaken for this.
+ */
+export const NEVERMORE_FILTER = "nevermore";
+/** Entries on a page of the firm's record. */
+export const FIRM_ACTIVITY_PAGE_SIZE = 25;
+
+/**
+ * The firms the signed-in person currently belongs to, with their role in each (owner, lead or agent): what the console asks
+ * instead of whether they hold a platform role. Empty for a guest, a former member, a stranger and a password sign-in that still
+ * owes its second factor, so an empty answer is followed by the check for that factor.
+ */
+export type MyFirm = Database["public"]["Functions"]["my_firms"]["Returns"][number];
+export async function fetchMyFirms(): Promise<MyFirm[]> {
+  const { data, error } = await supabase.rpc("my_firms");
+  if (error) fail(error, "Couldn't check your membership.");
+  return data ?? [];
+}
+
+/** The firms the signed-in person currently owns, by name: only an owner reads a firm's record, and says which firm. */
+export async function fetchOwnedFirms(): Promise<OwnedFirm[]> {
+  const { data, error } = await supabase.rpc("my_owner_firms");
+  if (error) fail(error, "Couldn't check your role in your firm.");
+  return data ?? [];
+}
+
+/** Who appears as the doer in the firm's record, for the person filter. Owners only. */
+export async function listFirmActivityPeople(firmId: string): Promise<FirmActivityPerson[]> {
+  const { data, error } = await supabase.rpc("firm_activity_people", { p_firm_id: firmId });
+  if (error) fail(error, "Couldn't load the people in the record.");
+  return data ?? [];
+}
+
+/** Where a page of the record starts: after the last entry the reader saw, by the two things the record is ordered by. */
+export interface ActivityCursor {
+  at: string;
+  /** The entry's random key: never the table's number, which is shared by every firm. */
+  key: string;
+}
+
+/**
+ * One page of the firm's record, newest first, filtered by the person who did it and the kind (null keeps all). A page
+ * starts after the entry `after` names (null for the first), so an entry arriving meanwhile never repeats or skips a
+ * row. One more row than a page is asked for, to say whether another page follows. Owners only: for anyone else the
+ * database refuses (code 42501, `forbidden` on the error).
+ */
+export async function listFirmActivity(
+  firmId: string,
+  opts: { person: string | null; kind: string | null; after: ActivityCursor | null },
+): Promise<{ entries: FirmActivityEntry[]; hasMore: boolean }> {
+  const { data, error } = await supabase.rpc("firm_activity_list", {
+    p_firm_id: firmId,
+    p_person: opts.person === NEVERMORE_FILTER ? null : opts.person,
+    p_nevermore: opts.person === NEVERMORE_FILTER,
+    p_kind: opts.kind,
+    p_limit: FIRM_ACTIVITY_PAGE_SIZE + 1,
+    p_before_at: opts.after?.at ?? null,
+    p_before_key: opts.after?.key ?? null,
+  });
+  if (error) fail(error, "Couldn't load the record.");
+  const rows = data ?? [];
+  return { entries: rows.slice(0, FIRM_ACTIVITY_PAGE_SIZE), hasMore: rows.length > FIRM_ACTIVITY_PAGE_SIZE };
+}
+
 /** How long a link to a stored file works. src/lib/fileLinks.test.ts holds every link to this. */
 export const SIGNED_URL_SECONDS = 60;
 
@@ -909,6 +1030,38 @@ export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
         .map((v) => parseProfileVersion(p.name, v, contacts))
         .sort((a, b) => b.version - a.version),
     }));
+}
+
+/**
+ * Whether the signed-in person holds a platform role (advisor or admin), from the database's own check. It decides only which
+ * way the PEO page reads: the platform-wide tables for a role holder, the prospect-safe catalogue for a member without one.
+ * It is not a guard: nothing here opens or refuses a page.
+ */
+export async function fetchHasPlatformRole(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("is_advisor");
+  if (error) fail(error, "Couldn't check your access.");
+  return data === true;
+}
+
+/**
+ * The PEOs as a member of a firm who holds no platform role may read them (ADR 0010, peo_catalog()): each with the version
+ * in use and nothing else. No draft, no history, no contact, and no name of a person at a PEO: the tables behind the
+ * directory above are the platform's and refuse this reader, so this never reads them. Alphabetical, as peo_catalog() gives them.
+ */
+export async function loadPeoCatalogDirectory(): Promise<PeoDirectoryEntry[]> {
+  const { data, error } = await supabase.rpc("peo_catalog");
+  if (error) fail(error, "Couldn't load the PEOs.");
+  return parsePeoCatalog(data).flatMap((p): PeoDirectoryEntry[] => {
+    if (p.id === undefined) return [];
+    const raw = ((data as Record<string, unknown>[]).find((e) => Number(e.id) === p.id)?.profile ?? null) as Record<string, unknown> | null;
+    return [{
+      id: p.id,
+      name: p.name,
+      listed: p.listed,
+      // peo_catalog() drops the status because it only ever returns the published version.
+      versions: raw ? [parseProfileVersion(p.name, { ...raw, status: "published" }, [])] : [],
+    }];
+  });
 }
 
 /** The contacts each of these profile versions names, in order, by version id: for a PEO's history. */

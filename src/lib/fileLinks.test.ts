@@ -97,6 +97,27 @@ describe("private file links", () => {
     expect(signer).toMatch(/fail\(error, "Couldn't open that file\."\)/);
   });
 
+  // CRM-P2.2: every place a link to a stored file is made or followed is listed, so a new one can't slip in unnoticed. The
+  // exemptions are not firm files handed to a browser: a download built in the browser from bytes it already holds, and the mail
+  // provider's own link to an inbound attachment, followed by a server function and never handed on.
+  it("lists every other place a file link is built or followed, and why each is exempt", () => {
+    const users = (pattern: RegExp) => [...APP, ...FUNCTIONS].filter((file) => pattern.test(read(file))).sort();
+    // A browser-side object link: made from a file's bytes already in the page (a PDF built there, a bundle zipped there, a file
+    // downloaded under the person's own rights), kept for the click, then revoked. It names no server and no stored path.
+    expect(users(/createObjectURL/)).toEqual([join("src", "lib", "downloadFile.ts")]);
+    const local = read(join("src", "lib", "downloadFile.ts"));
+    expect(local).toMatch(/revokeObjectURL/);
+    // The provider's link to a received attachment: fetched by receive-mail with its own key, scanned, and stored in a private
+    // bucket. No browser receives it.
+    expect(users(/download_url|downloadUrl/)).toEqual([join("supabase", "functions", "receive-mail", "handler.ts")]);
+    // Nothing builds a Storage address by hand: a link to a file comes from createSignedUrl or not at all.
+    expect(users(/\/storage\/v1\//)).toEqual([]);
+    // No function answers a browser with a link to a stored file: signing is the browser's own call, under its own rights.
+    for (const file of FUNCTIONS.filter((f) => !/receive-mail/.test(f))) {
+      expect(read(file), file).not.toMatch(/signedUrl|signedURL|createSigned/);
+    }
+  });
+
   it("creates no public bucket in any migration", () => {
     const dir = "supabase/migrations";
     for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql"))) {

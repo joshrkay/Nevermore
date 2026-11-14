@@ -20,6 +20,7 @@ const corsHeaders = {
 };
 
 const MAX_BODY = 8192;
+const NOT_MEMBER = "Only a member of a firm can connect a mailbox. Ask a firm's owner to invite you first.";
 
 export interface MailboxClient extends MailboxDb {
   auth: { getUser: () => PromiseLike<{ data: { user: { id: string; email?: string | null } | null } }> };
@@ -65,6 +66,15 @@ export async function handleMailboxRequest(req: Request, deps: MailboxDeps): Pro
   const user = deps.createClient(url, anonKey, { global: { headers: { Authorization: authorization as string } } });
   const { data: { user: who } } = await user.auth.getUser();
   if (!who) return json({ error: "Unauthorized" }, 401);
+
+  // Who they are comes from their id; whether their token belongs to a current member of a firm is asked of the database with
+  // their own login (my_firms() answers a password sign-in that has not completed a second factor with no firm), so that
+  // is refused here too. A platform role is not asked: a founder or an invited member holds none. Disconnecting is not asked:
+  // it only removes the caller's own row, and a person who has left every firm must still be able to.
+  if (body.action === "connect" || body.action === "check") {
+    const mine = await user.rpc("my_firms", {});
+    if (mine.error || !Array.isArray(mine.data) || mine.data.length === 0) return json({ error: NOT_MEMBER, code: "not_member" }, 403);
+  }
 
   const configured = readMailboxConfig(deps.env);
   if (!configured.ok) {
@@ -125,7 +135,7 @@ async function connect(
   });
   if (stored.error) {
     deps.log(`MAILBOX_CONNECT_FAILED user=${who.id} provider=${provider} code=${stored.error.code ?? "unexpected"}`);
-    if (stored.error.code === "42501") return json({ error: "Only an advisor can connect a mailbox. Ask an administrator for access first.", code: "not_advisor" }, 403);
+    if (stored.error.code === "42501") return json({ error: NOT_MEMBER, code: "not_member" }, 403);
     return json({ error: "Something went wrong. Try again.", code: "store_failed" }, 500);
   }
   deps.log(`MAILBOX_CONNECTED user=${who.id} provider=${provider}`);
