@@ -1,9 +1,10 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { exportRows, ExportError } = await import("./exportApi");
+const { exportRows, ExportError, EXPORT_TABLES } = await import("./exportApi");
 const { AdvisorApiError } = await import("./advisorApi");
 
 const refused = (code: string, message = "refused") => ({ data: null, error: { code, message } });
@@ -120,5 +121,49 @@ describe("exportRows", () => {
   it("falls back to a plain message for any other failure, never the database's text", async () => {
     rpc.mockResolvedValue(refused("XX000", "internal detail"));
     await expect(exportRows({ firmId: "f1", table: "referral_partners" })).rejects.toMatchObject({ kind: "failed", message: "Couldn't export. Try again." });
+  });
+});
+
+const accounts = {
+  table: "accounts",
+  label: "Accounts",
+  columns: [{ id: "name", label: "Account" }, { id: "employees", label: "Employees" }, { id: "main_contact", label: "Main contact" }, { id: "archived", label: "Archived" }],
+  rows: [{ name: "Alpha Co", employees: 50, main_contact: null, archived: false }],
+  count: 1,
+  skipped: 0,
+  exportedAt: "2026-11-19T10:00:00+00:00",
+};
+
+describe("exporting accounts (CRM-A1.1b)", () => {
+  beforeEach(() => rpc.mockReset());
+
+  // Catches: the table missing from the client's list (an answer for it read as a failed export), or its filters changed on the way.
+  it("asks for the accounts the table shows, with the table's own filters, the search and the time zone", async () => {
+    rpc.mockResolvedValue({ data: accounts, error: null });
+    const filters = { filters: [{ field: "status", op: "any_of", value: ["client"] }], search: "co", time_zone: "UTC" };
+    const result = await exportRows({ firmId: "f1", table: "accounts", filters });
+    expect(rpc).toHaveBeenCalledWith("export_rows", { p_firm_id: "f1", p_table: "accounts", p_filters: filters, p_ids: null });
+    expect(result).toEqual(accounts);
+  });
+
+  it("asks for a selection by the accounts' ids", async () => {
+    rpc.mockResolvedValue({ data: accounts, error: null });
+    await exportRows({ firmId: "f1", table: "accounts", ids: ["a1", "a2"] });
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_table: "accounts", p_ids: ["a1", "a2"] });
+  });
+
+  // Catches: a database that answers with another table's rows than the one asked for.
+  it("refuses an answer that is for another table", async () => {
+    rpc.mockResolvedValue({ data: partners, error: null });
+    await expect(exportRows({ firmId: "f1", table: "accounts" })).rejects.toBeInstanceOf(ExportError);
+  });
+
+  // Catches: a table the database lists that the client cannot read, or one the client lists that the database refuses ("Choose a table to export").
+  it("lists the tables the database lists, in its order", () => {
+    const files = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
+    const holding = files.map((f) => readFileSync(`supabase/migrations/${f}`, "utf8")).filter((sql) => /FUNCTION public\.export_table_registry\(\)/.test(sql));
+    const latest = holding.at(-1)!;
+    const body = latest.slice(latest.search(/FUNCTION public\.export_table_registry\(\)/)).split(/\nCREATE\s/)[0];
+    expect([...body.matchAll(/^\s+\('(\w+)', '/gm)].map((m) => m[1])).toEqual([...EXPORT_TABLES]);
   });
 });

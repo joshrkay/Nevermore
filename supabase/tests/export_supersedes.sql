@@ -291,6 +291,7 @@ END $$;
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
 
@@ -336,7 +337,7 @@ DO $$
 BEGIN
   PERFORM pg_temp.is((SELECT string_agg(p.oid::regprocedure::text, ' ' ORDER BY p.oid::regprocedure::text) FROM pg_proc p
     WHERE p.pronamespace = 'public'::regnamespace AND (p.proname LIKE 'export%' OR p.proname IN ('signed_in_within', 'caller_last_sign_in_at'))),
-    'caller_last_sign_in_at() export_limits() export_rows(uuid,text,jsonb,jsonb) export_source_firm_activity(uuid,jsonb,jsonb,integer) '
+    'caller_last_sign_in_at() export_limits() export_rows(uuid,text,jsonb,jsonb) export_source_accounts(uuid,jsonb,jsonb,integer) export_source_firm_activity(uuid,jsonb,jsonb,integer) '
     'export_source_referral_partners(uuid,jsonb,jsonb,integer) export_table_registry()', 'only Epic 3''s export functions are left');
 END $$;
 
