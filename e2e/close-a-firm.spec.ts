@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import pg from "pg";
 import { ANON_KEY, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
@@ -6,6 +7,7 @@ import { totpCode } from "./stack/totp.mjs";
 // Asking to close a firm and taking the request back (story CRM-P1.7, decisions D-18, D-27). An owner asks from Settings, after typing the
 // firm's name; a member, in a browser of their own at the firm's address, sees a banner saying when it closes and that nothing can be
 // changed, and adding a referral partner is refused with a plain message; the owner withdraws the request and the member can add one again.
+// A closing firm can still take its tables out (CRM-S3.8a, D-218): the member exports the referral partners, and the owner reads it in the record.
 // The password sign-in is the one this gateway stands in for, so the second factor is set up on the way, as in the other firm flows.
 
 const PASSWORD = "correct-horse-battery-staple";
@@ -104,6 +106,26 @@ test("an owner asks to close the firm, a member sees the banner and can't change
     await expect(memberPage.getByRole("cell", { name: "Second Partners" })).toHaveCount(0);
     const kept = await withDb((client) => client.query("SELECT count(*)::int AS n FROM public.referral_partners WHERE firm_id = (SELECT id FROM public.firms WHERE address = $1)", [FIRM]));
     expect(kept.rows[0].n).toBe(1);
+  });
+
+  await test.step("the closing firm's member can still export the partners: a CSV of them is downloaded and the export is in the firm's record, in words", async () => {
+    await memberPage.goto(`${firmUrl(FIRM)}/advisor/partners`);
+    await expect(memberPage.getByRole("cell", { name: "First Partners" })).toBeVisible();
+    const [download] = await Promise.all([memberPage.waitForEvent("download"), memberPage.getByRole("button", { name: "Export" }).click()]);
+    expect(download.suggestedFilename()).toMatch(/^referral-partners-\d{4}-\d{2}-\d{2}\.csv$/);
+    const bytes = await readFile(await download.path());
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const lines = bytes.toString("utf8").replace(/^\uFEFF/, "").split("\r\n");
+    // The columns the page shows (this firm has no link to show, so its code), under the page's own headings.
+    expect(lines[0]).toBe('Partner,Their code,"Started, 30 days","Certified, 30 days"');
+    expect(lines[1]).toBe("First Partners,first-partners,0,0");
+    expect(lines).toHaveLength(3);
+    await expect(memberPage.getByText("Exported 1 referral partner.")).toBeVisible();
+    const entry = await withDb((client) => client.query(
+      `SELECT a.row_count FROM public.firm_activity a JOIN public.firms f ON f.id = a.firm_id WHERE f.address = $1 AND a.kind = 'export_made'`, [FIRM]));
+    expect(entry.rows).toEqual([{ row_count: 1 }]);
+    await ownerPage.goto(`${firmUrl(FIRM)}/advisor/activity`);
+    await expect(ownerPage.getByRole("cell", { name: "Exported 1 referral partner" })).toBeVisible();
   });
 
   await test.step("the owner withdraws the request, and the member can add a partner again", async () => {

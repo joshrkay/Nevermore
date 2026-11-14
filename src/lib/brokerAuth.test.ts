@@ -12,14 +12,54 @@ describe("where a broker goes after signing in", () => {
   it("is a page of the advisor console and nothing else", () => {
     expect(brokerNext("/advisor/submissions/abc-123")).toBe("/advisor/submissions/abc-123");
     expect(brokerNext("/advisor")).toBe("/advisor");
-    for (const bad of [null, undefined, "", "/start", "https://evil.example", "//evil.example", "/advisor/../start", "/advisor//x", "/advisorx", "/advisor\\x", "/advisor?next=//e"]) {
+    for (const bad of [null, undefined, "", "/start", "https://evil.example", "//evil.example", "/advisor/../start", "/advisor//x", "/advisorx", "/advisor\\x"]) {
       expect(brokerNext(bad as string | null), String(bad)).toBe("/advisor");
     }
   });
 
-  it("builds the address the provider returns to, carrying a non-default page", () => {
+  // CRM-S3.8a: a broker who must sign in again for an export comes back to the page they were on, with its filters and its firm.
+  it("keeps the page's query string, so the page and its filters come back", () => {
+    for (const kept of [
+      "/advisor/activity?person=5f1c2a9e-0000-4000-8000-000000000002&kind=send_recorded",
+      "/advisor/partners?firm=0b5c1f2e-1111-4222-8333-444455556666",
+      "/advisor?firm=abc",
+      "/advisor/activity?kind=sign_in&person=nevermore",
+      "/advisor/activity?q=a%20b%2Fc",
+    ]) {
+      expect(brokerNext(kept), kept).toBe(kept);
+    }
+  });
+
+  it("refuses every other way a query could lead off the site or hide a control character, and falls back to the console", () => {
+    for (const bad of [
+      "/advisor?next=//evil.example",
+      "/advisor/activity?x=https://evil.example",
+      "/advisor/activity?x=a\\b",
+      "/advisor/activity?x=a\nb",
+      "/advisor/activity?x=a\rb",
+      "/advisor/activity?x=a\tb",
+      "/advisor/activity?x=a\u0000b",
+      "/advisor/activity?x=a b",
+      "/advisor/activity?x=1#frag",
+      "/advisor/activity#frag",
+      "/advisor/../start?x=1",
+      "/advisorx?x=1",
+      "/start?x=1",
+      "//evil.example?x=1",
+      "https://evil.example/advisor?x=1",
+      "javascript:alert(1)",
+      "/advisor/activity?x=<script>",
+    ]) {
+      expect(brokerNext(bad), JSON.stringify(bad)).toBe("/advisor");
+    }
+  });
+
+  it("builds the address the provider returns to, carrying a non-default page and its query", () => {
     expect(brokerCallbackUrl("https://app.example.com")).toBe("https://app.example.com/broker/callback");
     expect(brokerCallbackUrl("https://app.example.com", "/advisor/held")).toBe("https://app.example.com/broker/callback?next=%2Fadvisor%2Fheld");
+    expect(brokerCallbackUrl("https://app.example.com", "/advisor/activity?kind=sign_in&person=nevermore")).toBe(
+      "https://app.example.com/broker/callback?next=%2Fadvisor%2Factivity%3Fkind%3Dsign_in%26person%3Dnevermore",
+    );
     expect(brokerCallbackUrl("https://app.example.com", "https://evil.example")).toBe("https://app.example.com/broker/callback");
   });
 });

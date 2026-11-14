@@ -198,6 +198,25 @@ describe("useAuth session ending", () => {
     }
   });
 
+  // CRM-S3.8a: an export of a whole table asks for a recent sign-in. A person who has nothing to enter in place signs in again, on this device only.
+  it("ends only this device's session to sign in again for an export, even on the bare domain, and says why, keeping the answers this browser holds", async () => {
+    localStorage.setItem("eaa.intake-backup.v1:adv1:s1", "{}");
+    vi.stubGlobal("location", { ...window.location, hostname: "nevermorepeo.com" });
+    try {
+      const { result } = await mountAuth();
+      authApi.signOut.mockClear();
+      await act(async () => { await result.current.signOut("step_up"); });
+      expect(authApi.signOut).toHaveBeenCalledTimes(1);
+      expect(authApi.signOut).toHaveBeenCalledWith({ scope: "local" });
+      act(() => listener?.("SIGNED_OUT", null));
+      expect(result.current.sessionEnded).toBe("step_up");
+      expect(localStorage.getItem("eaa.intake-backup.v1:adv1:s1")).not.toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+      localStorage.clear();
+    }
+  });
+
   it("calls a deliberate sign-out a sign-out", async () => {
     const { result } = await mountAuth();
     await act(async () => { await result.current.signOut(); });
