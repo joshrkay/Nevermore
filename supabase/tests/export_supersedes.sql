@@ -7,6 +7,9 @@
 -- actor, table and count, under Epic 3's rule that ties a count to an export; the alert with the table in words, as Epic 3's dispatcher
 -- reads it. main's functions are gone and Epic 3's work on the carried entries. An export main's export_table is making while the upgrade
 -- starts (two more connections) is carried too, and the upgrade leaves the record's guard on and the holding table closed to the API.
+-- While main's entries are set aside, Epic 3's exports pause (20261118180500_epic3_export_pause.sql): one made between 20261119090000 and
+-- 20261119090500 is refused and leaves nothing, the carried entries go back in past the pause, an export goes through once they are back,
+-- and 20261119090600_epic3_export_pause_end.sql takes the pause out.
 -- Every migration loads in filename order; the exports are made between main's last and the supersedes migration.
 \set ON_ERROR_STOP 1
 SET client_min_messages = warning;
@@ -287,8 +290,80 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.epic3_carried_exports), 8::bigint, 'it holds every export, the two concurrent ones too');
 END $$;
 
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
 \i supabase/migrations/20261119090000_export.sql
+
+-- ---------- the handoff: Epic 3's export_rows is granted, and main's entries are still set aside ----------
+-- Each migration is its own transaction, so an export can be made between 20261119090000 and 20261119090500, on a record without main's
+-- entries. Break caught: such an export is let through (20261118180500, the pause, missing or letting every entry by). It would count the
+-- acme owner's exports in the hour without main's (one, not three), so the owners' alert of a third in an hour would never be queued; and an
+-- owner's export of the record would leave main's entries out of the file. Paused, it is refused in words, records nothing and queues nothing,
+-- a large export (which is told to the owners whatever the count) too.
+-- The answer of an export as `n` at the firm's address: its count, or how it was refused.
+CREATE FUNCTION pg_temp.export_answer(n text, addr text, firm text, tbl text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE got text;
+BEGIN
+  PERFORM pg_temp.as_user(n, addr);
+  BEGIN
+    got := 'ok:' || (public.export_rows(pg_temp.id(firm), tbl, '{}') ->> 'count');
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE || ': ' || SQLERRM;
+  END;
+  RESET ROLE;
+  RETURN got;
+END $$;
+INSERT INTO public.referral_partners (firm_id, code, name, kind)
+  SELECT pg_temp.id('zenith'), 'zen-bulk-' || g, 'Bulk partner ' || g, 'accounting' FROM generate_series(1, 600) g;
+CREATE TEMP TABLE before_window AS
+  SELECT (SELECT count(*) FROM public.firm_activity) AS entries, (SELECT count(*) FROM public.outbox_events) AS events;
+DO $$
+DECLARE paused constant text := '55000: Exports are paused for a minute while the firm''s record is upgraded. Try again in a minute.';
+BEGIN
+  PERFORM pg_temp.is(pg_temp.export_answer('acme_owner', 'acme-brokers', 'acme', 'referral_partners'), paused,
+    'the acme owner''s third export in the hour is refused, in words');
+  PERFORM pg_temp.is(pg_temp.export_answer('acme_owner', 'acme-brokers', 'acme', 'firm_activity'), paused, 'and their export of the record');
+  PERFORM pg_temp.is(pg_temp.export_answer('zenith_owner', 'zenith-benefits', 'zenith', 'referral_partners'), paused, 'and a large export by the other firm''s owner');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity), (SELECT entries FROM before_window), 'none of them records anything');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events), (SELECT events FROM before_window), 'or queues an alert');
+  -- The pause is no function an API role can run (SR-1), and it holds up nothing in the record but an export.
+  PERFORM pg_temp.is((SELECT string_agg(r, ' ') FROM unnest(ARRAY['public', 'anon', 'authenticated', 'service_role']) r
+    WHERE has_function_privilege(r, 'public.epic3_export_pause()', 'EXECUTE')), NULL, 'no API role can run the pause');
+  INSERT INTO public.firm_activity (firm_id, actor_id, actor_is_staff, kind, record_type, record_id)
+    VALUES (pg_temp.id('acme'), pg_temp.id('acme_owner'), false, 'sign_in', 'firm', pg_temp.id('acme')::text);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity), (SELECT entries FROM before_window) + 1, 'any other entry goes in as before');
+END $$;
+
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
+
+-- Break caught: the pause refuses the entries 20261119090500 puts back (it has no exception for the ids the holding table lists), so the
+-- upgrade stops there with main's entries out of the record; or it outlives the holding table and refuses every export after it.
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.firm_activity'::regclass AND tgname = 'firm_activity_export_pause'), 1::bigint,
+    'the pause is still on the record');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), 8::bigint, 'and the eight carried entries went in past it');
+END $$;
+-- Once they are back, an export goes through and is counted with them: the acme owner's third in the hour queues the owners' alert. Undone,
+-- so what follows reads the record as the upgrade left it.
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.is(pg_temp.export_answer('acme_owner', 'acme-brokers', 'acme', 'referral_partners'), 'ok:3', 'an export goes through once main''s entries are back');
+  PERFORM pg_temp.is((SELECT payload ->> 'exports_in_hour' FROM public.outbox_events WHERE kind = 'export_alert' AND firm_id = pg_temp.id('acme')
+    AND dedupe_key = 'export_alert:' || (SELECT max(id) FROM public.firm_activity)), '3', 'counted with them: the owners are told of a third in an hour');
+END $$;
+ROLLBACK;
+
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
+
+-- Break caught: the pause is left on the record for good (a trigger, and a function, nobody needs once main's entries are back).
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.firm_activity'::regclass AND tgname = 'firm_activity_export_pause'), 0::bigint,
+    'the pause is taken off the record');
+  PERFORM pg_temp.is(to_regprocedure('public.epic3_export_pause()'), NULL::regprocedure, 'and its function is gone');
+END $$;
+
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119140000_account_page.sql
 
