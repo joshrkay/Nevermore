@@ -580,6 +580,33 @@ describe("what is in the way of saving", () => {
     expect(api.saveView).not.toHaveBeenCalled();
   });
 
+  // Catches: Save and Keep being usable while the rows of the question on screen are still on their way, so a query the database is about to refuse is kept before the refusal arrives.
+  it("offers neither Save nor Keep until the rows of the question on screen have arrived", async () => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    listQueue.mockReturnValue(new Promise(() => {}));
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    const keep = await screen.findByRole("button", { name: "Keep the changes to Chasing" });
+    const save = screen.getByRole("button", { name: "Save this as a view" });
+    await waitFor(() => expect(save).toHaveAccessibleDescription("Available once the rows have loaded."));
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(keep).toHaveAttribute("aria-disabled", "true");
+    expect(keep).toHaveAccessibleDescription("Available once the rows have loaded.");
+  });
+
+  // Catches: the previous question's rows (kept on screen while the next load is on its way) counting as the new question's answer.
+  it("stays blocked while the previous tab's rows are still on screen and the next tab's are on their way", async () => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    const user = userEvent.setup();
+    draw("/advisor");
+    await screen.findByRole("link", { name: "Acme" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).not.toHaveAttribute("aria-disabled"));
+    listQueue.mockReturnValue(new Promise(() => {}));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    expect(screen.getByRole("link", { name: "Acme" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAccessibleDescription("Available once the rows have loaded.");
+  });
+
   // Catches: a refused query (a choice the field doesn't list) being kept as a view, whose count then blanks every tab's.
   it("offers neither Save nor Keep over a query the database refuses", async () => {
     api.listSavedViews.mockResolvedValue([view()]);
