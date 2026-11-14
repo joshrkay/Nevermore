@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BellRing, MailWarning } from "lucide-react";
@@ -14,6 +14,7 @@ import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { LoadFailed, NotAvailable, PlaceholderBlock, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { MENU_COUNTS_KEY } from "@/lib/menuCountsApi";
@@ -31,12 +32,34 @@ import type { ExtraQuestionRef } from "@/data/extraAnswers";
 import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
+import { getSubmissionAccount } from "@/lib/accountPageApi";
 
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
   | { kind: "not_found" }
   | { kind: "ready"; detail: SubmissionDetail };
+
+/**
+ * The account that holds this submission, for the line "Account: <name>" (D-213). Read beside the submission, like the email problem: it is null (no line) when
+ * the submission is on no account, when the person may not see the account (the database answers nothing for both), when the workspace has no firm to name
+ * yet, and when the read fails, so the submission itself always loads.
+ */
+function useSubmissionAccount(submissionId: string, attempt: number): { id: string; name: string } | null {
+  const firmId = useContext(WorkspaceContext)?.firm?.id ?? null;
+  const [account, setAccount] = useState<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setAccount(null);
+    if (!firmId) return;
+    Promise.resolve()
+      .then(() => getSubmissionAccount(firmId, submissionId))
+      .then((found) => !cancelled && setAccount(found))
+      .catch(() => !cancelled && setAccount(null));
+    return () => { cancelled = true; };
+  }, [firmId, submissionId, attempt]);
+  return account;
+}
 
 const AdvisorSubmissionPage = () => {
   const { id = "" } = useParams();
@@ -48,6 +71,7 @@ const AdvisorSubmissionPage = () => {
   const openedRef = useRef<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
+  const account = useSubmissionAccount(id, attempt);
 
   // Read beside the submission, not as part of it: if this fails, the submission still loads.
   useEffect(() => {
@@ -105,7 +129,7 @@ const AdvisorSubmissionPage = () => {
         {load.kind === "not_found" && <NotAvailable noun="submission" backTo="/advisor" backLabel="Back to all submissions" />}
 
         {load.kind === "ready" && (
-          <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} />
+          <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} account={account} />
         )}
       </main>
     </div>
@@ -155,6 +179,7 @@ const Detail = ({
   highlighted,
   onShowMessage,
   emailProblem,
+  account,
 }: {
   detail: SubmissionDetail;
   reload: () => void;
@@ -162,6 +187,7 @@ const Detail = ({
   highlighted: string | null;
   onShowMessage: (id: string) => void;
   emailProblem: EmailProblem | null;
+  account: { id: string; name: string } | null;
 }) => {
   // The PEOs and their profiles in use, from the database: the quote requests' fit checks, the packet's checks and
   // the census layouts read them.
@@ -225,6 +251,11 @@ const Detail = ({
           {detail.phone && ` · ${detail.phone}`}
         </p>
         <p className="text-sm text-muted-foreground mt-1">Source: {describeSource(detail.source, detail.sourcePartnerName)}</p>
+        {account && (
+          <p className="text-sm text-muted-foreground mt-1">
+            Account: <Link to={`/accounts/${account.id}`} className="text-primary underline underline-offset-2 hover:text-primary/90">{account.name}</Link>
+          </p>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
