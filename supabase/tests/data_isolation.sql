@@ -694,8 +694,8 @@ BEGIN
   FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
     fid := pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END);
     agent := pg_temp.id(CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END);
-    INSERT INTO public.accounts (firm_id, owner_id, name, website) VALUES (fid, agent, 'Fixture owned ' || f, 'https://www.fixture-' || f || '.example/') RETURNING id INTO acc1;
-    INSERT INTO public.accounts (firm_id, name) VALUES (fid, 'Fixture unowned ' || f) RETURNING id INTO acc2;
+    INSERT INTO public.accounts (source, firm_id, owner_id, name, website) VALUES ('added_by_hand', fid, agent, 'Fixture owned ' || f, 'https://www.fixture-' || f || '.example/') RETURNING id INTO acc1;
+    INSERT INTO public.accounts (source, firm_id, name) VALUES ('added_by_hand', fid, 'Fixture unowned ' || f) RETURNING id INTO acc2;
     INSERT INTO public.contacts (firm_id, account_id, last_name, email, is_main) VALUES (fid, acc1, 'Fixture', 'c-' || f || '@example.test', true) RETURNING id INTO main_contact;
     INSERT INTO public.contacts (firm_id, account_id, last_name, phone) VALUES (fid, acc2, 'Fixture', '503-555-0100');
     INSERT INTO public.opportunities (firm_id, account_id, name, intake_id, main_contact_id)
@@ -2847,7 +2847,7 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
 -- crm_records.sql. Nobody writes through the API, so a write is refused for privilege.
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.accounts', 'firm', 'its own firm_id; read by level, written by no API role',
-   $m$INSERT INTO public.accounts (firm_id, owner_id, name) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}') RETURNING ctid::text$m$, false,
+   $m$INSERT INTO public.accounts (source, firm_id, owner_id, name) VALUES ('added_by_hand', {firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}') RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
   ('public.contacts', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account',
    $m$INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'probe-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,

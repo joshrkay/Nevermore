@@ -285,7 +285,7 @@ BEGIN
   INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (fa, 'existing', 'Existing', 'accounting'), (fb, 'existing', 'Existing', 'accounting');
   -- Each firm's records (CRM-Q1.1a): an account with its contacts and an opportunity holding the firm's intake, which closing deletes in that order and
   -- leaves the intake itself.
-  INSERT INTO public.accounts (id, firm_id, name) VALUES ('00000000-0000-4000-8000-0000000000a1', fa, 'Alpha account'), ('00000000-0000-4000-8000-0000000000b1', fb, 'Beta account');
+  INSERT INTO public.accounts (id, firm_id, name, source) VALUES ('00000000-0000-4000-8000-0000000000a1', fa, 'Alpha account', 'added_by_hand'), ('00000000-0000-4000-8000-0000000000b1', fb, 'Beta account', 'added_by_hand');
   INSERT INTO public.contacts (id, firm_id, account_id, last_name, email, is_main) VALUES
     ('00000000-0000-4000-8000-0000000000a2', fa, '00000000-0000-4000-8000-0000000000a1', 'Main', 'main@alpha.example', true),
     ('00000000-0000-4000-8000-0000000000a3', fa, '00000000-0000-4000-8000-0000000000a1', 'Other', 'other@alpha.example', false),

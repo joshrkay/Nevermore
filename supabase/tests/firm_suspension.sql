@@ -138,6 +138,7 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261119100000_crm_records.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

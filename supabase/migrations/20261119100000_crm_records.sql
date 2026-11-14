@@ -30,7 +30,8 @@
 
 -- ---------- 1. The web domain ----------
 -- The match key of D-193: the address a person typed, reduced to its domain: lower case, no scheme, no login, no path, query, port or trailing dot,
--- and no leading "www.". Nothing is left of an address that is only a "www." or blanks, and that is no domain. (Whether the domain is a free-mail one
+-- and no leading "www." (any white space around it, a tab or a line break included, is trimmed, and a scheme with one slash or three, or with
+-- backslashes, is still a scheme). Nothing is left of an address that is only a "www." or blanks, and that is no domain. (Whether the domain is a free-mail one
 -- is the duplicate match's to decide, CRM-Q1.1b.) Pure.
 CREATE FUNCTION public.web_domain_of(p_website text)
 RETURNS text
@@ -44,8 +45,10 @@ AS $$
         regexp_replace(
           regexp_replace(
             regexp_replace(
-              regexp_replace(lower(btrim(p_website)), '^[a-z][a-z0-9+.-]*://', ''),
-              '[/?#].*$', ''),
+              regexp_replace(
+                lower(regexp_replace(p_website, '^[[:space:] ​﻿]+|[[:space:] ​﻿]+$', '', 'g')),
+                '^[a-z][a-z0-9+.-]*:[/\\]+', ''),
+              '[/\\?#].*$', ''),
             '^.*@', ''),
           ':[0-9]*$', ''),
         '^www\.', ''),
@@ -87,8 +90,9 @@ CREATE TABLE public.accounts (
   employees integer CONSTRAINT accounts_employees_check CHECK (employees >= 0),
   states_of_operation text[] NOT NULL DEFAULT '{}' CONSTRAINT accounts_states_of_operation_check CHECK (public.crm_states_ok(states_of_operation)),
   current_provider text CONSTRAINT accounts_current_provider_check CHECK (char_length(current_provider) <= 200),
-  -- Set by the product when the account is made and never edited (D-211): the trigger below keeps what the row had. Later stories add nothing here.
-  source text NOT NULL DEFAULT 'added_by_hand' CONSTRAINT accounts_source_check CHECK (source IN ('employer_intake', 'added_by_hand', 'new_quote', 'lead', 'import')),
+  -- Set by the product when the account is made and never edited (D-211): the trigger below keeps what the row had. No default, so a step that makes an
+  -- account and forgets to say where it came from fails instead of writing Added by hand.
+  source text NOT NULL CONSTRAINT accounts_source_check CHECK (source IN ('employer_intake', 'added_by_hand', 'new_quote', 'lead', 'import')),
   possible_duplicate_of uuid,
   archived_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -141,11 +145,15 @@ CREATE TABLE public.contacts (
 -- At most one main contact per account (D-29; CRM-A2.2).
 CREATE UNIQUE INDEX contacts_one_main ON public.contacts (account_id) WHERE is_main;
 -- What the duplicate match asks: a contact's email, ignoring case, within a firm (D-193).
+-- Firm-scoped reads, a firm's closing (DELETE ... WHERE firm_id) and an account's cascade find a firm's contacts by this.
+CREATE INDEX contacts_firm_account_idx ON public.contacts (firm_id, account_id);
 CREATE INDEX contacts_email_idx ON public.contacts (firm_id, lower(email)) WHERE email IS NOT NULL;
 
 COMMENT ON TABLE public.contacts IS 'A person at an account (glossary: Contact), on exactly one account. Seen by whoever may see its account.';
 
 -- ---------- 4. Opportunities ----------
+ALTER TABLE public.chamber_sessions ADD CONSTRAINT chamber_sessions_id_firm_id_key UNIQUE (id, firm_id);
+
 CREATE TABLE public.opportunities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   firm_id uuid NOT NULL,
@@ -154,7 +162,7 @@ CREATE TABLE public.opportunities (
   -- The intake (chamber_sessions.id) this opportunity holds: at most one each way (D-207), by the two uniqueness rules (this column is unique, and an
   -- opportunity has one column). Plain unique so the step that makes the chain can say ON CONFLICT (intake_id) DO NOTHING. The intake's deletion
   -- leaves the opportunity, with none. Set by the product, so not one of the opportunity's own tracked fields.
-  intake_id uuid CONSTRAINT opportunities_intake_id_key UNIQUE REFERENCES public.chamber_sessions (id) ON DELETE SET NULL,
+  intake_id uuid CONSTRAINT opportunities_intake_id_key UNIQUE,
   name text NOT NULL CONSTRAINT opportunities_name_check CHECK (btrim(name) <> '' AND char_length(name) <= 200),
   target_start date,
   -- Employees in this search, which may differ from the account's.
@@ -167,10 +175,15 @@ CREATE TABLE public.opportunities (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT opportunities_account_fkey FOREIGN KEY (firm_id, account_id) REFERENCES public.accounts (firm_id, id),
+  -- The intake is one of the opportunity's own firm, enforced from both sides by this foreign key on the pair: an opportunity can't name another firm's
+  -- intake, and an intake that an opportunity holds can't be moved to another firm, by anyone (the service role can move an intake: keep_intake_firm binds
+  -- only the browser's roles). The intake's deletion leaves the opportunity, with none.
+  CONSTRAINT opportunities_intake_fkey FOREIGN KEY (intake_id, firm_id) REFERENCES public.chamber_sessions (id, firm_id) ON DELETE SET NULL (intake_id),
   -- The main contact is a contact on the same account; a contact's deletion clears it. Moving a contact to another account while it is the main
-  -- contact of an opportunity is refused: the function that moves it clears the choice first.
+  -- contact of an opportunity is refused, unless the opportunity moves with it in the same transaction. The link is deferrable (initially immediate), so a merge (CRM-S4.3b) can move contacts and the opportunities that name them in one transaction without clearing and
+  -- restoring each main contact.
   CONSTRAINT opportunities_main_contact_fkey FOREIGN KEY (account_id, main_contact_id) REFERENCES public.contacts (account_id, id)
-    ON DELETE SET NULL (main_contact_id)
+    ON DELETE SET NULL (main_contact_id) DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE INDEX opportunities_account_idx ON public.opportunities (firm_id, account_id);
@@ -179,27 +192,9 @@ CREATE INDEX opportunities_main_contact_idx ON public.opportunities (main_contac
 
 COMMENT ON TABLE public.opportunities IS 'One search for one account and one start date (glossary: Opportunity). Its stage is worked out by opportunity_stage(), never stored.';
 
--- The intake is one of the firm's own: a plain foreign key can't say it (chamber_sessions holds its firm in another column), so a trigger does.
-CREATE FUNCTION public.opportunity_intake_same_firm()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = public, pg_temp
-AS $$
-BEGIN
-  IF NEW.intake_id IS NOT NULL
-     AND (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.intake_id) IS DISTINCT FROM NEW.firm_id THEN
-    RAISE EXCEPTION 'An opportunity holds an intake of its own firm' USING ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.opportunity_intake_same_firm() FROM PUBLIC, anon, authenticated, service_role;
-
-CREATE TRIGGER opportunities_intake_same_firm
-  BEFORE INSERT OR UPDATE OF intake_id, firm_id ON public.opportunities
-  FOR EACH ROW EXECUTE FUNCTION public.opportunity_intake_same_firm();
-
+-- chamber_sessions holds its firm in another column, so the foreign key on the pair above needs it unique with the id. Additive: the id is already the key.
+-- (A trigger on the opportunity alone was tried first and refused: it fires only when the opportunity changes, so an intake moved to another firm
+-- left the opportunity on it.)
 -- ---------- 5. Stamps, and a source nobody edits ----------
 CREATE TRIGGER accounts_updated_at BEFORE UPDATE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER contacts_updated_at BEFORE UPDATE ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -259,6 +254,20 @@ SELECT public.record_track('public.contacts', 'contacts', ARRAY['id'], ARRAY[
 SELECT public.record_track('public.opportunities', 'opportunities', ARRAY['id'], ARRAY[
   'account_id', 'owner_id', 'name', 'target_start', 'employees', 'main_contact_id', 'expected_close', 'value', 'source', 'next_step']);
 
+-- A history key as the record's id, or NULL when it is not one (only the canonical lower-case form: it is what the history stores). The three tables
+-- compare ids as ids, so the primary key's index is used: comparing `id::text = key` scans the table, which a firm's contacts made slow enough to matter
+-- (deleting one account with 2,000 contacts in a database of 200,000 took 18 s). Pure.
+CREATE FUNCTION public.record_history_key_uuid(p_key text)
+RETURNS uuid
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE WHEN p_key ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN p_key::uuid END
+$$;
+
+REVOKE ALL ON FUNCTION public.record_history_key_uuid(text) FROM PUBLIC, anon, authenticated, service_role;
+
 -- Whether the caller may see THAT record in THAT firm (20261118130000, restated with its referral-partner rule). An account is seen by its own owner's
 -- level; a contact and an opportunity by their account's, as their rows are. The record must exist in the firm. Internal.
 CREATE OR REPLACE FUNCTION public.record_history_can_see(p_firm_id uuid, p_table public.record_history_table, p_key text)
@@ -276,15 +285,15 @@ BEGIN
     RETURN public.is_firm_member(p_firm_id)
       AND EXISTS (SELECT 1 FROM public.referral_partners r WHERE r.firm_id = p_firm_id AND r.code = p_key);
   ELSIF p_table = 'accounts' THEN
-    RETURN EXISTS (SELECT 1 FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id::text = p_key AND public.can_see_firm_record(a.firm_id, a.owner_id));
+    RETURN EXISTS (SELECT 1 FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
   ELSIF p_table = 'contacts' THEN
     RETURN EXISTS (
       SELECT 1 FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id
-      WHERE c.firm_id = p_firm_id AND c.id::text = p_key AND public.can_see_firm_record(a.firm_id, a.owner_id));
+      WHERE c.firm_id = p_firm_id AND c.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
   ELSIF p_table = 'opportunities' THEN
     RETURN EXISTS (
       SELECT 1 FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id
-      WHERE o.firm_id = p_firm_id AND o.id::text = p_key AND public.can_see_firm_record(a.firm_id, a.owner_id));
+      WHERE o.firm_id = p_firm_id AND o.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
   END IF;
   RETURN false;
 END;
@@ -304,11 +313,11 @@ BEGIN
   IF p_table = 'referral_partners' THEN
     RETURN EXISTS (SELECT 1 FROM public.referral_partners r WHERE r.firm_id = p_firm_id AND r.code = p_key);
   ELSIF p_table = 'accounts' THEN
-    RETURN EXISTS (SELECT 1 FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id::text = p_key);
+    RETURN EXISTS (SELECT 1 FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = public.record_history_key_uuid(p_key));
   ELSIF p_table = 'contacts' THEN
-    RETURN EXISTS (SELECT 1 FROM public.contacts c WHERE c.firm_id = p_firm_id AND c.id::text = p_key);
+    RETURN EXISTS (SELECT 1 FROM public.contacts c WHERE c.firm_id = p_firm_id AND c.id = public.record_history_key_uuid(p_key));
   ELSIF p_table = 'opportunities' THEN
-    RETURN EXISTS (SELECT 1 FROM public.opportunities o WHERE o.firm_id = p_firm_id AND o.id::text = p_key);
+    RETURN EXISTS (SELECT 1 FROM public.opportunities o WHERE o.firm_id = p_firm_id AND o.id = public.record_history_key_uuid(p_key));
   END IF;
   RETURN true;
 END;
@@ -356,9 +365,30 @@ $$;
 
 REVOKE ALL ON FUNCTION public.opportunity_stage_of(text) FROM PUBLIC, anon, authenticated, service_role;
 
--- One opportunity's stage by its id: Qualifying with no intake, else the stage of its intake's pipeline stage (an intake with no pipeline row yet is a
--- draft). NULL for an opportunity that is not there. Answers for any opportunity: no API role runs it; a query that has already decided the caller may
--- see the record calls it, for each row it returns.
+-- The stage a submission gives its opportunity (D-206, with D-216): the pipeline stage's stage, except that a submission archived straight from won (the
+-- last move into archived, in its status history, was from won) keeps its opportunity Won: archived is the only move the pipeline allows from won, so
+-- every won file put away would otherwise flip to Lost and its account back to a prospect. Archived from any other stage is Lost. Reopening it (archived
+-- to submitted) brings it back, since the stage is asked each time. A submission with no pipeline row yet is a draft. Internal: the two functions below
+-- ask it.
+CREATE FUNCTION public.submission_opportunity_stage(p_intake_id uuid)
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN s.status = 'archived' AND (
+      SELECT h.from_status FROM public.submission_status_history h
+      WHERE h.session_id = p_intake_id AND h.to_status = 'archived' ORDER BY h.id DESC LIMIT 1) = 'won' THEN 'won'
+    ELSE public.opportunity_stage_of(s.status)
+  END
+  FROM (SELECT COALESCE((SELECT w.status FROM public.submission_workflow w WHERE w.session_id = p_intake_id), 'draft') AS status) s
+$$;
+
+REVOKE ALL ON FUNCTION public.submission_opportunity_stage(uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+-- One opportunity's stage by its id: Qualifying with no intake, else its submission's (above). NULL for an opportunity that is not there. Answers for any
+-- opportunity: no API role runs it; a query that has already decided the caller may see the record calls it, for each row it returns.
 CREATE FUNCTION public.opportunity_stage(p_opportunity_id uuid)
 RETURNS text
 LANGUAGE sql
@@ -366,17 +396,16 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT public.opportunity_stage_of(CASE WHEN o.intake_id IS NULL THEN NULL ELSE COALESCE(w.status, 'draft') END)
+  SELECT CASE WHEN o.intake_id IS NULL THEN 'qualifying' ELSE public.submission_opportunity_stage(o.intake_id) END
   FROM public.opportunities o
-  LEFT JOIN public.submission_workflow w ON w.session_id = o.intake_id
   WHERE o.id = p_opportunity_id
 $$;
 
 REVOKE ALL ON FUNCTION public.opportunity_stage(uuid) FROM PUBLIC, anon, authenticated, service_role;
 
--- One account's status by its id (CRM-A1.3 as D-197 scopes it): 'prospect' until one of its submissions is won, then 'client'. Worked out from the
--- opportunities' submissions, so a won submission that is archived no longer makes a client; a former client arrives with the placement record in
--- Epic 4. NULL for an account that is not there. Not executable by an API role, for the reason above.
+-- One account's status by its id (CRM-A1.3 as D-197 scopes it): 'prospect' until one of its opportunities is Won (a submission won, and one archived
+-- straight from won, D-216), then 'client'. Reopening the submission makes it a prospect again until it is won again; a former client arrives with the
+-- placement record in Epic 4. NULL for an account that is not there. Not executable by an API role, for the reason above.
 CREATE FUNCTION public.account_status(p_account_id uuid)
 RETURNS text
 LANGUAGE sql
@@ -387,8 +416,8 @@ AS $$
   SELECT CASE
     WHEN NOT EXISTS (SELECT 1 FROM public.accounts a WHERE a.id = p_account_id) THEN NULL
     WHEN EXISTS (
-      SELECT 1 FROM public.opportunities o JOIN public.submission_workflow w ON w.session_id = o.intake_id
-      WHERE o.account_id = p_account_id AND public.opportunity_stage_of(w.status) = 'won') THEN 'client'
+      SELECT 1 FROM public.opportunities o
+      WHERE o.account_id = p_account_id AND o.intake_id IS NOT NULL AND public.submission_opportunity_stage(o.intake_id) = 'won') THEN 'client'
     ELSE 'prospect'
   END
 $$;

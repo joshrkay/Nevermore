@@ -501,11 +501,11 @@ The one contact of an account that is the person to deal with first; an account 
 _Avoid_: primary contact, lead contact
 
 **Account status** (code: `account_status(account)`; story CRM-Q1.1a, CRM-A1.3, D-197):
-Whether an account is a prospect account or a client, worked out each time it is asked and never stored: `prospect` until one of its opportunities' submissions is won, then `client` (a won submission that is archived no longer makes a client; Former client arrives with the placement record in Epic 4). Nobody sets it. Not callable by the browser: a query that has decided the caller may see the account asks it.
+Whether an account is a prospect account or a client, worked out each time it is asked and never stored: `prospect` until one of its opportunities' submissions is won, then `client`; a won submission put away (archived straight from won, D-216) stays won, so its account stays a client, until it is reopened (Former client arrives with the placement record in Epic 4). Nobody sets it. Not callable by the browser: a query that has decided the caller may see the account asks it.
 _Avoid_: account type, lifecycle stage
 
 **Opportunity stage** (code: `opportunity_stage(opportunity)`, `opportunity_stage_of(pipeline stage)`; story CRM-Q1.1a, D-206):
-Where an opportunity is, worked out from its submission's pipeline stage and never stored (until CRM-O1.2): `qualifying` when it has no intake, `intake_under_way` (draft, submitted, under review, information requested), `ready_to_send` (ready for market), `in_market` (sent to PEOs), `quoted`, `won`, and `lost` (lost or archived). A pipeline stage the mapping does not know is refused, never answered with nothing, so a stage added to the pipeline fails a test until it is mapped.
+Where an opportunity is, worked out from its submission's pipeline stage and never stored (until CRM-O1.2): `qualifying` when it has no intake, `intake_under_way` (draft, submitted, under review, information requested), `ready_to_send` (ready for market), `in_market` (sent to PEOs), `quoted`, `won`, and `lost` (lost or archived, except that a submission archived straight from won stays `won`: D-216). A pipeline stage the mapping does not know is refused, never answered with nothing, so a stage added to the pipeline fails a test until it is mapped.
 _Avoid_: status (an account has a status, an opportunity a stage), pipeline stage (that is the submission's own)
 
 **Web domain** (code: `web_domain_of(website)`, `accounts.web_domain`; story CRM-Q1.1a, D-193):

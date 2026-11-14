@@ -217,6 +217,19 @@ BEGIN
   END;
 END $$;
 
+-- The SQLSTATE and message a statement raised, or 'ok' when it did not. Nothing is rolled back.
+CREATE FUNCTION pg_temp.refusal(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE s text; m text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    RETURN s || ': ' || m;
+  END;
+END $$;
+
 -- Which of the test's named records the current caller reads from a table (row security applies), by name; 'denied' for a table it may not read.
 CREATE FUNCTION pg_temp.seen(tbl text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE r text;
@@ -240,7 +253,7 @@ END $$;
 CREATE FUNCTION pg_temp.account(n text, firm text, p_owner text, nm text DEFAULT NULL, site text DEFAULT NULL) RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE r uuid;
 BEGIN
-  INSERT INTO public.accounts (firm_id, owner_id, name, website) VALUES (pg_temp.id(firm), pg_temp.id(p_owner), COALESCE(nm, n), site) RETURNING id INTO r;
+  INSERT INTO public.accounts (source, firm_id, owner_id, name, website) VALUES ('added_by_hand', pg_temp.id(firm), pg_temp.id(p_owner), COALESCE(nm, n), site) RETURNING id INTO r;
   INSERT INTO fx VALUES (n, r);
   RETURN r;
 END $$;
@@ -320,6 +333,12 @@ BEGIN
   PERFORM pg_temp.is(public.web_domain_of('  WWW.Example.COM:8080/a/b '), 'example.com', 'a port, capitals, spaces and www.');
   PERFORM pg_temp.is(public.web_domain_of('http://user:pw@shop.example.com./x'), 'shop.example.com', 'a login and a trailing dot');
   PERFORM pg_temp.is(public.web_domain_of('http://sub.www.example.com'), 'sub.www.example.com', 'only a leading www. goes');
+  PERFORM pg_temp.is(public.web_domain_of(E'\thttps://Example.com/\n'), 'example.com', 'a tab or a line break around the address is trimmed like a space');
+  PERFORM pg_temp.is(public.web_domain_of(E' \u00a0www.Example.com\r\n'), 'example.com', 'and so is a non-breaking space');
+  PERFORM pg_temp.is(public.web_domain_of('http:/x.example.com'), 'x.example.com', 'a scheme with one slash is a scheme');
+  PERFORM pg_temp.is(public.web_domain_of('http:///x.example.com/y'), 'x.example.com', 'and one with three');
+  PERFORM pg_temp.is(public.web_domain_of('HTTPS:\\x.example.com\y'), 'x.example.com', 'and one with backslashes');
+  PERFORM pg_temp.is(public.web_domain_of('example.com:8080'), 'example.com', 'a port on a bare domain is not taken for a scheme');
   PERFORM pg_temp.is(public.web_domain_of('www.'), NULL, 'nothing left is no domain');
   PERFORM pg_temp.is(public.web_domain_of('   '), NULL, 'blank is no domain');
   PERFORM pg_temp.is(public.web_domain_of(NULL), NULL, 'nothing is no domain');
@@ -338,23 +357,23 @@ BEGIN
   a2 := pg_temp.account('a2', 'acme', NULL);
   za := pg_temp.account('za', 'zenith', 'zenith_agent');
   PERFORM pg_temp.is((SELECT web_domain FROM public.accounts WHERE id = a1), 'harborviewdental.example', 'the domain follows the website');
-  PERFORM pg_temp.is((SELECT source FROM public.accounts WHERE id = a1), 'added_by_hand', 'an account made with no source is Added by hand');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name) VALUES (%L, 'No source')$q$, acme)), '23502', 'an account made with no source is refused, not made Added by hand: the step that makes it must say where it came from');
   PERFORM pg_temp.is((SELECT states_of_operation FROM public.accounts WHERE id = a1), '{}'::text[], 'with no states of operation yet');
 
   -- accounts
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name) VALUES (%L, '')$q$, acme)), '23514', 'an account needs a name');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name) VALUES (%L, '   ')$q$, acme)), '23514', 'not blank spaces');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name) VALUES (%L, NULL)$q$, acme)), '23502', 'nor none');
-  PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (name) VALUES ('No firm')$q$), '23502', 'an account has a firm');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, state) VALUES (%L, 'X', 'ZZ')$q$, acme)), '23514', 'a state is a state code');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, states_of_operation) VALUES (%L, 'X', ARRAY['CA', 'XX'])$q$, acme)), '23514', 'and so is each state of operation');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, employees) VALUES (%L, 'X', -1)$q$, acme)), '23514', 'employees are not negative');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name) VALUES ('added_by_hand', %L, '')$q$, acme)), '23514', 'an account needs a name');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name) VALUES ('added_by_hand', %L, '   ')$q$, acme)), '23514', 'not blank spaces');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name) VALUES ('added_by_hand', %L, NULL)$q$, acme)), '23502', 'nor none');
+  PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (source, name) VALUES ('added_by_hand', 'No firm')$q$), '23502', 'an account has a firm');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name, state) VALUES ('added_by_hand', %L, 'X', 'ZZ')$q$, acme)), '23514', 'a state is a state code');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name, states_of_operation) VALUES ('added_by_hand', %L, 'X', ARRAY['CA', 'XX'])$q$, acme)), '23514', 'and so is each state of operation');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name, employees) VALUES ('added_by_hand', %L, 'X', -1)$q$, acme)), '23514', 'employees are not negative');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, source) VALUES (%L, 'X', 'made up')$q$, acme)), '23514', 'a source is one the product lists');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, source) VALUES (%L, 'X', 'employer_intake')$q$, acme)), 'rows:1', 'Employer''s intake is one');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, possible_duplicate_of) VALUES (%L, 'X', %L)$q$, acme, za)), '23503', 'a possible duplicate is of an account of the same firm');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, name, possible_duplicate_of) VALUES (%L, 'X', %L)$q$, acme, a1)), 'rows:1', 'and that is allowed');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name, possible_duplicate_of) VALUES ('added_by_hand', %L, 'X', %L)$q$, acme, za)), '23503', 'a possible duplicate is of an account of the same firm');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name, possible_duplicate_of) VALUES ('added_by_hand', %L, 'X', %L)$q$, acme, a1)), 'rows:1', 'and that is allowed');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.accounts SET possible_duplicate_of = id WHERE id = %L$q$, a1)), '23514', 'an account is not a possible duplicate of itself');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (firm_id, owner_id, name) VALUES (%L, %L, 'X')$q$, acme, gen_random_uuid())), '23503', 'an owner is a person');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, owner_id, name) VALUES ('added_by_hand', %L, %L, 'X')$q$, acme, gen_random_uuid())), '23503', 'an owner is a person');
 
   -- contacts
   c1 := pg_temp.contact('c1', 'a1', 'acme_agent2', 'elena@harborview.example', NULL, true);
@@ -383,10 +402,18 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, value) VALUES (%L, %L, 'PEO search', -5)$q$, acme, a1)), '23514', 'a value is not negative');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, employees) VALUES (%L, %L, 'PEO search', -5)$q$, acme, a1)), '23514', 'nor are the employees');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, main_contact_id) VALUES (%L, %L, 'PEO search', %L)$q$, acme, a2, c1)), '23503', 'its main contact is a contact of the same account');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, intake_id) VALUES (%L, %L, 'PEO search', %L)$q$, acme, a1, zi)), '23514', 'its intake is of the same firm');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, intake_id) VALUES (%L, %L, 'PEO search', %L)$q$, acme, a1, zi)), '23503', 'its intake is of the same firm');
   o1 := pg_temp.opportunity('o1', 'a1', 'acme_agent1', 'i1', 'c1');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, intake_id) VALUES (%L, %L, 'Another', %L)$q$, acme, a2, i1)), '23505', 'an intake is on at most one opportunity (D-207)');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, intake_id) VALUES (%L, %L, 'Another', %L)$q$, acme, a1, i2)), 'rows:1', 'and an opportunity of an account may have any other intake');
+  -- The intake's own side: the service role can move an intake to another firm (keep_intake_firm binds only the browser's roles), and an intake that
+  -- an opportunity holds must not leave the opportunity's firm.
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.chamber_sessions SET firm_id = %L WHERE id = %L$q$, zenith, i1)), '23503', 'the service role can''t move an intake that an opportunity holds to another firm');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.chamber_sessions SET firm_id = %L WHERE id = %L$q$, zenith, i2)), 'rows:1', 'but can move one that none holds');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.chamber_sessions SET firm_id = %L WHERE id = %L$q$, zenith, i1)), '23503', 'nor can the superuser');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.chamber_sessions SET firm_id = %L WHERE id = %L$q$, acme, i1)), 'rows:1', 'and a save of the same firm is not a move');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.opportunities SET intake_id = %L WHERE id = %L$q$, i2, o1)), 'rows:1', 'an opportunity holds one intake, so a second is a change of it, not an addition');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, intake_id) VALUES (%L, %L, 'Same step again', %L) ON CONFLICT (intake_id) DO NOTHING$q$, acme, a1, i1)), 'rows:0', 'the step that makes the chain can be run twice');
   PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE intake_id = i1), 1::bigint, 'and still makes one');
@@ -403,9 +430,10 @@ END $$;
 -- ---------- who sees what ----------
 -- Break caught: an account is read by someone who may not see it (another firm, a platform admin, a former member, a signed-out caller, an
 -- agent of another's); a contact or an opportunity is read by its own owner rather than by whoever may see its account; changing an account's
--- owner does not change at once who sees it and what hangs off it; a record with no owner, or whose owner left, is seen by an agent.
+-- owner does not change at once who sees it and what hangs off it; a record with no owner, or whose owner left, is seen by an agent; Nevermore support
+-- sees nothing without a session and an owner's view with one.
 DO $$
-DECLARE c uuid;
+DECLARE c uuid; sess uuid;
 BEGIN
   PERFORM pg_temp.account('a3', 'acme', 'acme_agent2');
   PERFORM pg_temp.account('a4', 'acme', 'acme_agent3');
@@ -449,6 +477,21 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.seen('public.accounts') || '|' || pg_temp.seen('public.contacts') || '|' || pg_temp.seen('public.opportunities'), '||', 'a person with no firm sees none');
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(pg_temp.seen('public.accounts') || '|' || pg_temp.seen('public.contacts') || '|' || pg_temp.seen('public.opportunities'), 'denied|denied|denied', 'a signed-out caller may not read the tables');
+
+  -- Nevermore support (ADR 0024): a platform admin with an open session reads what an owner reads, at the firm's address, and nothing without one.
+  PERFORM pg_temp.as_user('platform_admin');
+  sess := (SELECT t.session_id FROM public.start_support_session(pg_temp.id('acme'), 'Looking at an account the firm asked about') t);
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.seen('public.accounts') || '|' || pg_temp.seen('public.contacts') || '|' || pg_temp.seen('public.opportunities'),
+    'a1,a2,a3,a4,a5|c1,c2,c3,c4|o1,o2,o3,o4', 'a support session at the firm''s address reads every record of the firm, as an owner does');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history_list(pg_temp.id('acme'), 'accounts', pg_temp.id('a1')::text)) > 0, true, 'and its histories');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.accounts (source, firm_id, name) VALUES ('added_by_hand', %L, 'By support')$q$, pg_temp.id('acme'))), '42501', 'but writes nothing');
+  PERFORM pg_temp.as_user('platform_admin', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.seen('public.accounts'), '', 'and reads nothing of another firm');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.end_support_session(sess);
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.seen('public.accounts'), '', 'when the session has ended it reads nothing again');
 
   -- Changing an account's owner changes at once who sees it and what hangs off it.
   RESET ROLE;
@@ -612,7 +655,7 @@ BEGIN
 
   -- possible duplicate marks go when the earlier account does; an intake's deletion leaves its opportunity
   PERFORM pg_temp.account('e1', 'acme', NULL);
-  INSERT INTO public.accounts (firm_id, name, possible_duplicate_of) VALUES (pg_temp.id('acme'), 'Later', pg_temp.id('e1')) RETURNING id INTO d;
+  INSERT INTO public.accounts (source, firm_id, name, possible_duplicate_of) VALUES ('added_by_hand', pg_temp.id('acme'), 'Later', pg_temp.id('e1')) RETURNING id INTO d;
   DELETE FROM public.accounts WHERE id = pg_temp.id('e1');
   PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = d), NULL::uuid, 'deleting the earlier account clears the mark and keeps the later');
   di := pg_temp.intake('di', 'acme');
@@ -662,6 +705,15 @@ BEGIN
   RAISE NOTICE 'crm_records: reading a history passed';
 END $$;
 
+-- A submission moved the way set_submission_status moves it: the pipeline row changes and a history row says from where to where.
+CREATE FUNCTION pg_temp.move(intake text, to_status text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE from_status text;
+BEGIN
+  SELECT w.status INTO from_status FROM public.submission_workflow w WHERE w.session_id = pg_temp.id(intake);
+  UPDATE public.submission_workflow SET status = to_status WHERE session_id = pg_temp.id(intake);
+  INSERT INTO public.submission_status_history (session_id, from_status, to_status) VALUES (pg_temp.id(intake), from_status, to_status);
+END $$;
+
 -- ---------- an opportunity's stage, worked out ----------
 -- Break caught: a stage is stored instead of worked out; a pipeline stage maps to the wrong stage (D-206); an opportunity with no intake is not
 -- Qualifying; a stage nobody mapped is let through as nothing; the functions are open to the API roles.
@@ -693,6 +745,27 @@ BEGIN
   -- reopening an archived submission brings its opportunity back (it is worked out each time)
   UPDATE public.submission_workflow SET status = 'submitted' WHERE session_id = pg_temp.id('st_archived');
   PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('so_archived')), 'intake_under_way', 'reopened, the opportunity is back');
+  -- D-216: a submission archived straight from won keeps its opportunity Won; archived from any other stage is Lost.
+  PERFORM pg_temp.account('s2', 'acme', NULL);
+  PERFORM pg_temp.intake('w1', 'acme'); PERFORM pg_temp.opportunity('wo1', 's2', NULL, 'w1');
+  PERFORM pg_temp.move('w1', 'submitted'); PERFORM pg_temp.move('w1', 'won');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'won');
+  PERFORM pg_temp.move('w1', 'archived');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'a submission archived from won keeps its opportunity Won (D-216)');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account a client');
+  PERFORM pg_temp.move('w1', 'submitted');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'intake_under_way', 'reopened, it is under way again');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'prospect', 'and its account a prospect until it is won again');
+  PERFORM pg_temp.move('w1', 'quoted'); PERFORM pg_temp.move('w1', 'archived');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'lost', 'archived from quoted, after an earlier archive from won, is Lost: the last move into archived decides');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'prospect', 'and does not make a client');
+  PERFORM pg_temp.intake('w2', 'acme'); PERFORM pg_temp.opportunity('wo2', 's2', NULL, 'w2');
+  PERFORM pg_temp.move('w2', 'submitted'); PERFORM pg_temp.move('w2', 'lost'); PERFORM pg_temp.move('w2', 'archived');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo2')), 'lost', 'archived from lost is Lost');
+  PERFORM pg_temp.intake('w3', 'acme'); PERFORM pg_temp.opportunity('wo3', 's2', NULL, 'w3');
+  PERFORM pg_temp.move('w3', 'submitted'); PERFORM pg_temp.move('w3', 'under_review'); PERFORM pg_temp.move('w3', 'archived');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo3')), 'lost', 'archived from under review is Lost');
+  PERFORM pg_temp.is(public.opportunity_stage_of('archived'), 'lost', 'and the pure mapping of the stage alone is still D-206''s');
   -- never stored
   PERFORM pg_temp.is((SELECT count(*) FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name IN ('accounts', 'opportunities', 'contacts') AND c.column_name IN ('stage', 'status')), 0::bigint, 'no table stores a stage or a status');
   -- the API roles do not run them
@@ -728,13 +801,72 @@ BEGIN
     END IF;
   END LOOP;
   PERFORM pg_temp.is(public.account_status(pg_temp.id('t2')), 'prospect', 'another account''s win is not this one''s');
-  UPDATE public.submission_workflow SET status = 'archived' WHERE session_id = pg_temp.id('ts_won');
-  PERFORM pg_temp.is(public.account_status(pg_temp.id('t1')), 'prospect', 'a won submission that is archived no longer makes a client (a former client is Epic 4''s)');
-  UPDATE public.submission_workflow SET status = 'submitted' WHERE session_id = pg_temp.id('ts_won');
-  UPDATE public.submission_workflow SET status = 'won' WHERE session_id = pg_temp.id('ts_won');
+  PERFORM pg_temp.move('ts_won', 'archived');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('t1')), 'client', 'a won submission filed away is still a client (D-216; a former client is Epic 4''s)');
+  PERFORM pg_temp.move('ts_won', 'submitted');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('t1')), 'prospect', 'reopened, it no longer is');
+  PERFORM pg_temp.move('ts_won', 'won');
   PERFORM pg_temp.is(public.account_status(pg_temp.id('t1')), 'client', 'won again is a client again');
   PERFORM pg_temp.is(public.account_status(gen_random_uuid()), NULL::text, 'an account that is not there has no status');
   RAISE NOTICE 'crm_records: status passed';
+END $$;
+
+-- ---------- a firm's records are found by firm ----------
+-- Break caught: closing a firm (DELETE ... WHERE firm_id) and every firm-scoped read scan every firm's rows of a table with no index that leads with the firm.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['accounts', 'contacts', 'opportunities'] LOOP
+    PERFORM pg_temp.is(EXISTS (
+      SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+      WHERE i.indrelid = ('public.' || t)::regclass AND a.attname = 'firm_id' AND i.indpred IS NULL AND i.indexprs IS NULL), true, t || ' has an index that leads with the firm');
+  END LOOP;
+  RAISE NOTICE 'crm_records: indexes passed';
+END $$;
+
+-- ---------- moving a contact with its opportunity ----------
+-- Break caught: the main-contact link can't be deferred, so a merge (CRM-S4.3b) has to clear and restore every main contact to move contacts and their
+-- opportunities to another account; or deferring it lets an inconsistent move be committed.
+DO $$
+DECLARE c uuid; o uuid; from_a uuid; to_a uuid;
+BEGIN
+  from_a := pg_temp.account('m1', 'acme', NULL); to_a := pg_temp.account('m2', 'acme', NULL);
+  c := pg_temp.contact('mc', 'm1', NULL, 'mc@example.test');
+  o := pg_temp.opportunity('mo', 'm1', NULL, NULL, 'mc');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.contacts SET account_id = %L WHERE id = %L$q$, to_a, c)), '23503', 'a contact can''t be moved away from an opportunity that names it its main contact (immediately)');
+  SET CONSTRAINTS public.opportunities_main_contact_fkey DEFERRED;
+  UPDATE public.contacts SET account_id = to_a WHERE id = c;
+  UPDATE public.opportunities SET account_id = to_a WHERE id = o;
+  SET CONSTRAINTS public.opportunities_main_contact_fkey IMMEDIATE;
+  PERFORM pg_temp.is((SELECT main_contact_id FROM public.opportunities WHERE id = o), c, 'a deferred move of both keeps the main contact');
+  SET CONSTRAINTS public.opportunities_main_contact_fkey DEFERRED;
+  UPDATE public.contacts SET account_id = from_a WHERE id = c;
+  PERFORM pg_temp.is(pg_temp.refusal('SET CONSTRAINTS public.opportunities_main_contact_fkey IMMEDIATE') LIKE '23503:%', true, 'but moving one without the other is refused when the check comes');
+  UPDATE public.contacts SET account_id = to_a WHERE id = c;
+  SET CONSTRAINTS public.opportunities_main_contact_fkey IMMEDIATE;
+  RAISE NOTICE 'crm_records: moving a contact passed';
+END $$;
+
+-- ---------- a key that is not a record's ----------
+-- Break caught: a history key is compared as text (no index, a scan of every contact) or cast and raises for a key that is not an id.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); a1 uuid := pg_temp.id('a1');
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, %L, 'not-an-id')$q$, acme, 'contacts')), 'PT404', 'a key that is not an id is a record that is not there, not an error');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'accounts', %L)$q$, acme, upper(a1::text))), 'PT404', 'and so is an id in capitals, which no history holds');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'opportunities', '')$q$, acme)), 'PT404', 'and an empty one');
+  RESET ROLE;
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'accounts', a1::text), true, 'an account that is there exists');
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'accounts', 'not-an-id'), false, 'a key that is not an id is no record');
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'contacts', pg_temp.id('c1')::text), true, 'a contact');
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'opportunities', pg_temp.id('o1')::text), true, 'an opportunity');
+  -- Found by the primary key's index: the id is compared as an id (a text comparison reads every contact of the firm: 18 s to delete one account with
+  -- 2,000 contacts among 200,000). Row counts say nothing reliable about a plan, so this asks what the two functions' source compares, as
+  -- close_a_firm.sql asks whether a write still asks its guard.
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('record_history_can_see', 'record_history_record_exists')
+    AND (p.prosrc ~ 'id::text' OR p.prosrc !~ 'record_history_key_uuid')), 0::bigint, 'the history functions compare a record''s id as an id');
+  RAISE NOTICE 'crm_records: keys passed';
 END $$;
 
 -- ---------- closing a firm ----------
