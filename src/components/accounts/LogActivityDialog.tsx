@@ -53,7 +53,13 @@ export function LogActivityDialog({ firmId, accountId, accountName, kind, contac
   onSaved: (logged: Logged | { activity: ActivityItem; followUp: null }) => void;
 }) {
   const options = useQuery({ queryKey: [...accountKey(firmId, accountId), "options"], queryFn: () => getActivityOptions(firmId, accountId), retry: false });
-  const people = useMemo(() => options.data?.people ?? [], [options.data]);
+  const current = useMemo(() => options.data?.people ?? [], [options.data]);
+  // The person a task is for, when they have left the firm: kept as the choice, named as having left, unless the editor picks someone else. Never quietly the editor.
+  const departed = options.data && item?.type === "task" && item.assignee && !current.some((p) => p.id === item.assignee?.id) ? item.assignee : null;
+  const people = useMemo(
+    () => (departed ? [{ id: departed.id, name: `${departed.name ?? "Someone"} (left the firm)` }, ...current] : current),
+    [current, departed],
+  );
   const [form, setForm] = useState<Form>(() => ({
     kind: item?.type ?? kind,
     contactId: item?.contact?.id ?? contactId ?? "",
@@ -74,8 +80,8 @@ export function LogActivityDialog({ firmId, accountId, accountName, kind, contac
 
   // Who a task is for, when the person is not one of the choices (they left, or the list is still on its way): the database takes the person logging it.
   useEffect(() => {
-    if (people.length > 0) setForm((f) => (f.forId && people.some((p) => p.id === f.forId) ? f : { ...f, forId: people.find((p) => p.id === userId)?.id ?? people[0].id }));
-  }, [people, userId]);
+    if (!editing && people.length > 0) setForm((f) => (f.forId && people.some((p) => p.id === f.forId) ? f : { ...f, forId: people.find((p) => p.id === userId)?.id ?? people[0].id }));
+  }, [people, userId, editing]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

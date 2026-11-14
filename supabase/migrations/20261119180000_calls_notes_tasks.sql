@@ -20,7 +20,12 @@
 --     first beside the record history, and four more tab names for the filters: 'activity_calls', 'activity_notes', 'activity_tasks', 'activity_changes'.
 --   * Closing a firm deletes them (firm_closing_plan); deleting an account deletes them with it (D-204).
 --
--- Deferred: an account's last activity (D-201) takes these rows in the next migration, once the accounts table's query exists (CRM-A1.1b).
+-- Last activity (D-201) takes these rows in at the end of this migration (section 10): the accounts table's query (CRM-A1.1b) has merged, so its one function
+-- account_activity_times gains the branch here.
+-- An archived account takes nothing more (D-222): log_activity and add_to_note refuse it (55000). Changing a call or a task and marking a task done stay open,
+-- as an archived account can still be edited.
+-- A contact's or an opportunity's calls, notes and tasks move with it to another account (CRM-A2.2's move, the merge): the two keys to them are deferrable, and
+-- the guard lets an activity's account change only when it follows its contact or its opportunity there. The move itself is those stories'.
 -- A task due today shows on Home for the person it is for (Home is its own story); `activities_task_due_idx` is the index that list will use.
 
 -- ---------- 1. The table ----------
@@ -54,9 +59,10 @@ CREATE TABLE public.activities (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT activities_account_fkey FOREIGN KEY (firm_id, account_id) REFERENCES public.accounts (firm_id, id) ON DELETE CASCADE,
-  -- A contact and an opportunity of the same account. A deleted contact or opportunity leaves the activity on the account.
-  CONSTRAINT activities_contact_fkey FOREIGN KEY (account_id, contact_id) REFERENCES public.contacts (account_id, id) ON DELETE SET NULL (contact_id),
-  CONSTRAINT activities_opportunity_fkey FOREIGN KEY (account_id, opportunity_id) REFERENCES public.opportunities (account_id, id) ON DELETE SET NULL (opportunity_id),
+  -- A contact and an opportunity of the same account. A deleted contact or opportunity leaves the activity on the account. Deferrable, as D-219's main-contact link is,
+-- so a contact or an opportunity can move to another account with its activities in one transaction.
+  CONSTRAINT activities_contact_fkey FOREIGN KEY (account_id, contact_id) REFERENCES public.contacts (account_id, id) ON DELETE SET NULL (contact_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT activities_opportunity_fkey FOREIGN KEY (account_id, opportunity_id) REFERENCES public.opportunities (account_id, id) ON DELETE SET NULL (opportunity_id) DEFERRABLE INITIALLY IMMEDIATE,
   -- Each kind holds its own columns and none of the others'.
   CONSTRAINT activities_call_shape CHECK (kind <> 'call' OR (
     outcome IS NOT NULL AND title IS NULL AND additions = '[]'::jsonb AND assignee_id IS NULL AND due_on IS NULL AND done_at IS NULL AND done_by IS NULL)),
@@ -78,19 +84,26 @@ COMMENT ON TABLE public.activities IS 'A call, a note or a task on an account (g
 CREATE TRIGGER activities_updated_at BEFORE UPDATE ON public.activities FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- ---------- 2. The note rule (D-200), whoever writes ----------
--- What may never change: the row's identity, its kind, its account and when it was made; its author may only be cleared. A note's text changes only in
+-- What may never change: the row's identity, its firm, its kind and when it was made; its account only with its contact or opportunity; its author may only be cleared. A note's text changes only in
 -- the hands of the person who wrote it, within a day of writing it; its additions only grow at the end.
 CREATE FUNCTION public.activities_guard()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
   n integer;
 BEGIN
-  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.firm_id IS DISTINCT FROM OLD.firm_id OR NEW.account_id IS DISTINCT FROM OLD.account_id
+  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.firm_id IS DISTINCT FROM OLD.firm_id
      OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-    RAISE EXCEPTION 'A call, note or task can''t be moved to another account or made into another kind' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'A call, note or task can''t be moved to another firm or made into another kind' USING ERRCODE = '42501';
+  END IF;
+  -- Its account changes only by following its contact or its opportunity, which has already moved there (the same transaction, an earlier statement).
+  IF NEW.account_id IS DISTINCT FROM OLD.account_id AND NOT (
+       (NEW.contact_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.contacts c WHERE c.id = NEW.contact_id AND c.firm_id = NEW.firm_id AND c.account_id = NEW.account_id))
+    OR (NEW.opportunity_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = NEW.opportunity_id AND o.firm_id = NEW.firm_id AND o.account_id = NEW.account_id))) THEN
+    RAISE EXCEPTION 'A call, note or task moves to another account only with its contact or its opportunity' USING ERRCODE = '42501';
   END IF;
   IF NEW.author_id IS DISTINCT FROM OLD.author_id AND NEW.author_id IS NOT NULL THEN
     RAISE EXCEPTION 'Who logged a call, note or task can''t be changed' USING ERRCODE = '42501';
@@ -218,7 +231,7 @@ REVOKE ALL ON FUNCTION public.crm_is_current_member(uuid, uuid) FROM PUBLIC, ano
 -- task is made now. A task's p_for is the person it is for (the caller when not sent), who must be a current member of the firm. A call may also carry a
 -- follow-up task (p_follow_up_*), written in the same step: if either fails, neither is saved.
 -- Refused, in this order: not a member of the firm (42501), a closing firm or Nevermore support (PT423), an account the caller may not see or that is not
--- there (PT404, one answer for both), what is wrong with what was sent (22023, in words).
+-- there (PT404, one answer for both), an archived account (55000), what is wrong with what was sent (22023, in words).
 CREATE FUNCTION public.log_activity(
   p_kind text, p_account_id uuid, p_contact_id uuid DEFAULT NULL, p_opportunity_id uuid DEFAULT NULL, p_at timestamptz DEFAULT NULL,
   p_outcome text DEFAULT NULL, p_body text DEFAULT NULL, p_title text DEFAULT NULL, p_due_on date DEFAULT NULL, p_for uuid DEFAULT NULL,
@@ -247,6 +260,9 @@ BEGIN
   SELECT * INTO a FROM public.accounts x WHERE x.id = p_account_id AND x.firm_id = firm;
   IF a.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
     RAISE EXCEPTION 'That account isn''t available' USING ERRCODE = 'PT404';
+  END IF;
+  IF a.archived_at IS NOT NULL THEN
+    RAISE EXCEPTION 'This account is archived. Nothing can be added to it.' USING ERRCODE = '55000';
   END IF;
   problem := public.activity_input_error(p_kind, p_outcome, body_in, title_in, p_due_on);
   IF problem IS NULL AND p_kind = 'call' AND p_at IS NOT NULL AND p_at > now() + interval '5 minutes' THEN
@@ -368,7 +384,7 @@ REVOKE ALL ON FUNCTION public.update_activity(uuid, uuid, uuid, timestamptz, tex
 GRANT EXECUTE ON FUNCTION public.update_activity(uuid, uuid, uuid, timestamptz, text, text, text, date, uuid, uuid) TO authenticated;
 
 -- Appends a dated addition to a note (D-200): "Add to note". Anyone who may see the account can, whenever, and it is dated and signed. Answers the row.
--- Refused as update_activity is, and with 22023 for something that is not a note or an empty addition.
+-- Refused as update_activity is, with 55000 for an archived account, and with 22023 for something that is not a note or an empty addition.
 CREATE FUNCTION public.add_to_note(p_activity_id uuid, p_text text, p_firm_id uuid DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -388,6 +404,9 @@ BEGIN
   SELECT * INTO acc FROM public.accounts x WHERE x.id = cur.account_id;
   IF cur.id IS NULL OR NOT public.can_see_firm_record(acc.firm_id, acc.owner_id) THEN
     RAISE EXCEPTION 'That isn''t available' USING ERRCODE = 'PT404';
+  END IF;
+  IF acc.archived_at IS NOT NULL THEN
+    RAISE EXCEPTION 'This account is archived. Nothing can be added to it.' USING ERRCODE = '55000';
   END IF;
   IF cur.kind <> 'note' THEN
     RAISE EXCEPTION 'Only a note can be added to.' USING ERRCODE = '22023';
@@ -564,16 +583,18 @@ BEGIN
         WHERE c.account_id = p_account_id) e
       WHERE p_tab IN ('activity', 'activity_changes')
       UNION ALL
-      -- Its calls, notes and tasks (and those on its contacts, which carry the account too).
-      SELECT t.kind, t.at, t.id, public.crm_activity_row(t)
+      -- Its calls, notes and tasks (and those on its contacts, which carry the account too). Only the key is taken here: the row is built below, for the page's
+      -- rows alone, so an account with thousands of notes does not build them all to show five.
+      SELECT t.kind, t.at, t.id, NULL::jsonb
       FROM public.activities t
       WHERE t.account_id = p_account_id
         AND (p_tab = 'activity' OR t.kind = CASE p_tab WHEN 'activity_calls' THEN 'call' WHEN 'activity_notes' THEN 'note' WHEN 'activity_tasks' THEN 'task' END)
     )
     SELECT (SELECT count(*) FROM entries),
            COALESCE((SELECT jsonb_agg(x.j ORDER BY x.o) FROM (
-             SELECT row_number() OVER (ORDER BY e.at DESC, e.entry_key DESC) AS o, e.j
-             FROM entries e ORDER BY e.at DESC, e.entry_key DESC OFFSET p_offset LIMIT p_limit) x), '[]'::jsonb)
+             SELECT row_number() OVER (ORDER BY e.at DESC, e.entry_key DESC) AS o,
+                    COALESCE(e.j, (SELECT public.crm_activity_row(t) FROM public.activities t WHERE t.id = e.entry_key)) AS j
+             FROM (SELECT * FROM entries ORDER BY at DESC, entry_key DESC OFFSET p_offset LIMIT p_limit) e) x), '[]'::jsonb)
     INTO n, r;
   ELSE
     RAISE EXCEPTION 'An account has no tab called "%"', left(COALESCE(p_tab, ''), 40) USING ERRCODE = '22023';

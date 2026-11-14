@@ -785,3 +785,121 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src IN ('public.accounts', 'public.contacts', 'public.opportunities', 'public.record_history', 'public.referral_partners')), 5::bigint, 'and keeps every line it had');
   RAISE NOTICE 'calls_notes_tasks: all passed';
 END $$;
+
+-- ---------- an archived account takes nothing more (D-222) ----------
+-- Break caught: log_activity saves a note, or a call with its follow-up task, on an archived account; add_to_note appends to its notes; or the refusal also
+-- shuts what stays open (a call or a task can still be changed, a task marked done, as an archived account can still be edited).
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); r text; n bigint; fu text := $q$'Send it', current_date, NULL$q$;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO public.accounts (source, firm_id, owner_id, name, archived_at) VALUES ('added_by_hand', acme, pg_temp.id('acme_agent1'), 'Archived Co', now()) RETURNING id INTO STRICT r;
+  INSERT INTO fx VALUES ('arch', r::uuid);
+  INSERT INTO public.activities (id, firm_id, account_id, kind, body, author_id) VALUES (gen_random_uuid(), acme, pg_temp.id('arch'), 'note', 'An old note', pg_temp.id('acme_agent1'));
+  INSERT INTO fx SELECT 'arch_note', id FROM public.activities WHERE account_id = pg_temp.id('arch') AND kind = 'note';
+  INSERT INTO public.activities (firm_id, account_id, kind, outcome, author_id) VALUES (acme, pg_temp.id('arch'), 'call', 'spoke', pg_temp.id('acme_agent1'));
+  INSERT INTO fx SELECT 'arch_call', id FROM public.activities WHERE account_id = pg_temp.id('arch') AND kind = 'call';
+  INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, author_id, assignee_id) VALUES (acme, pg_temp.id('arch'), 'task', 'Old task', current_date, pg_temp.id('acme_agent1'), pg_temp.id('acme_agent1'));
+  INSERT INTO fx SELECT 'arch_task', id FROM public.activities WHERE account_id = pg_temp.id('arch') AND kind = 'task';
+  n := (SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('arch'));
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.log_activity('note', %L, NULL, NULL, NULL, NULL, 'More', NULL, NULL, NULL, NULL, NULL, NULL, %L)::text$q$, pg_temp.id('arch'), acme)),
+    '55000: This account is archived. Nothing can be added to it.', 'a note on an archived account');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.log_activity('call', %L, NULL, NULL, NULL, 'spoke', 'Hi', NULL, NULL, NULL, 'Send it', current_date, NULL, %L)::text$q$, pg_temp.id('arch'), acme))),
+    '55000', 'a call with its follow-up task');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.log_activity('task', %L, NULL, NULL, NULL, NULL, NULL, 'Do it', current_date, NULL, NULL, NULL, NULL, %L)::text$q$, pg_temp.id('arch'), acme))),
+    '55000', 'a task');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.add_to_note(%L, 'More', %L)::text$q$, pg_temp.id('arch_note'), acme)),
+    '55000: This account is archived. Nothing can be added to it.', 'an addition to a note');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('arch')), n, 'nothing was saved');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.update_activity(%L, NULL, NULL, NULL, 'no_answer', NULL, NULL, NULL, NULL, %L)::text$q$, pg_temp.id('arch_call'), acme))),
+    'ok', 'a call can still be changed');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.update_activity(%L, NULL, NULL, NULL, NULL, NULL, 'Renamed', current_date, NULL, %L)::text$q$, pg_temp.id('arch_task'), acme))),
+    'ok', 'and a task');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.set_task_done(%L, true, %L)::text$q$, pg_temp.id('arch_task'), acme))),
+    'ok', 'and marked done');
+  RAISE NOTICE 'calls_notes_tasks: archived passed';
+END $$;
+
+-- ---------- a call's time: five minutes past now, and no more ----------
+-- Break caught: the limit is dropped, or becomes one that refuses a clock a little ahead (5 minutes exactly passes, a second more does not), for a new call or a changed one.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.log_activity('call', %L, NULL, NULL, now() + interval '5 minutes', 'spoke', 'x', NULL, NULL, NULL, NULL, NULL, NULL, %L)::text$q$, pg_temp.id('a1'), acme))),
+    'ok', 'a call five minutes ahead is taken');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.log_activity('call', %L, NULL, NULL, now() + interval '5 minutes 1 second', 'spoke', 'x', NULL, NULL, NULL, NULL, NULL, NULL, %L)::text$q$, pg_temp.id('a1'), acme)),
+    '22023: A call can''t be in the future.', 'a second more is refused');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.update_activity(%L, NULL, NULL, now() + interval '5 minutes', 'spoke', 'x', NULL, NULL, NULL, %L)::text$q$, pg_temp.id('call1'), acme))),
+    'ok', 'a changed call five minutes ahead is taken');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.update_activity(%L, NULL, NULL, now() + interval '5 minutes 1 second', 'spoke', 'x', NULL, NULL, NULL, %L)::text$q$, pg_temp.id('call1'), acme)),
+    '22023: A call can''t be in the future.', 'and a second more refused');
+END $$;
+
+-- ---------- a contact's and an opportunity's activities move with it ----------
+-- (The move itself is CRM-A2.2's and the merge's; this proves the table lets it be made in one transaction, and only so.)
+-- Break caught: the keys to the contact and the opportunity are not deferrable (the move fails with 23503); an activity's account changes on its own, or following
+-- a contact that has not moved; an activity left behind on the old account with a contact that moved is not noticed at the end of the move.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); r text;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.account('mva', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('mvb', 'acme', 'acme_agent1');
+  PERFORM pg_temp.contact('mvc', 'mva', 'acme_agent1', 'mvc@example.test');
+  PERFORM pg_temp.contact('mvc2', 'mva', 'acme_agent1', 'mvc2@example.test');
+  PERFORM pg_temp.opportunity('mvo', 'mva', 'acme_agent1');
+  INSERT INTO public.activities (firm_id, account_id, kind, contact_id, opportunity_id, outcome, author_id) VALUES (acme, pg_temp.id('mva'), 'call', pg_temp.id('mvc'), pg_temp.id('mvo'), 'spoke', pg_temp.id('acme_agent1'));
+  INSERT INTO public.activities (firm_id, account_id, kind, contact_id, body, author_id) VALUES (acme, pg_temp.id('mva'), 'note', pg_temp.id('mvc'), 'On the contact', pg_temp.id('acme_agent1'));
+  INSERT INTO public.activities (firm_id, account_id, kind, opportunity_id, title, due_on, author_id) VALUES (acme, pg_temp.id('mva'), 'task', pg_temp.id('mvo'), 'On the opportunity', current_date, pg_temp.id('acme_agent1'));
+  INSERT INTO public.activities (firm_id, account_id, kind, contact_id, body, author_id) VALUES (acme, pg_temp.id('mva'), 'note', pg_temp.id('mvc2'), 'On the other contact', pg_temp.id('acme_agent1'));
+  INSERT INTO public.activities (firm_id, account_id, kind, body, author_id) VALUES (acme, pg_temp.id('mva'), 'note', 'On the account alone', pg_temp.id('acme_agent1'));
+  INSERT INTO fx SELECT 'mv_alone', id FROM public.activities WHERE body = 'On the account alone';
+  INSERT INTO fx SELECT 'mv_other', id FROM public.activities WHERE body = 'On the other contact';
+
+  -- on their own, none of it moves
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.contacts SET account_id = %L WHERE id = %L$q$, pg_temp.id('mvb'), pg_temp.id('mvc'))), '23503', 'a contact with activities does not move while they stay behind');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.activities SET account_id = %L WHERE id = %L$q$, pg_temp.id('mvb'), pg_temp.id('mv_alone'))), '42501', 'an activity on the account alone is not moved on its own');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.activities SET account_id = %L WHERE id = %L$q$, pg_temp.id('mvb'), pg_temp.id('mv_other'))), '42501', 'nor with a contact that has not moved');
+
+  -- one transaction: the contact and the opportunity move, and what is on them
+  SET CONSTRAINTS public.activities_contact_fkey, public.activities_opportunity_fkey DEFERRED;
+  UPDATE public.contacts SET account_id = pg_temp.id('mvb') WHERE id = pg_temp.id('mvc');
+  UPDATE public.opportunities SET account_id = pg_temp.id('mvb') WHERE id = pg_temp.id('mvo');
+  UPDATE public.activities SET account_id = pg_temp.id('mvb') WHERE contact_id = pg_temp.id('mvc') OR opportunity_id = pg_temp.id('mvo');
+  SET CONSTRAINTS public.activities_contact_fkey, public.activities_opportunity_fkey IMMEDIATE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('mvb')), 3::bigint, 'the call, the contact''s note and the opportunity''s task moved');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('mva')), 2::bigint, 'the other contact''s note and the account''s own stayed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE contact_id = pg_temp.id('mvc') AND account_id = pg_temp.id('mvb')), 2::bigint, 'each still names its contact');
+
+  -- a move that leaves one behind is refused where it ends
+  PERFORM pg_temp.account('mvd', 'acme', 'acme_agent1');
+  PERFORM pg_temp.contact('mvc3', 'mva', 'acme_agent1', 'mvc3@example.test');
+  INSERT INTO public.activities (firm_id, account_id, kind, contact_id, body, author_id) VALUES (acme, pg_temp.id('mva'), 'note', pg_temp.id('mvc3'), 'Left behind', pg_temp.id('acme_agent1'));
+  r := pg_temp.attempt(format($q$DO $d$ BEGIN SET CONSTRAINTS public.activities_contact_fkey DEFERRED; UPDATE public.contacts SET account_id = %L WHERE id = %L; SET CONSTRAINTS public.activities_contact_fkey IMMEDIATE; END $d$ $q$, pg_temp.id('mvd'), pg_temp.id('mvc3')));
+  PERFORM pg_temp.is(r, '23503', 'a contact moved and its activity left behind is refused at the end');
+  RAISE NOTICE 'calls_notes_tasks: moving with the contact passed';
+END $$;
+
+-- ---------- a big account's first page is not built from every row ----------
+-- Break caught: every call, note and task of the account is built into its row before the page is cut (5,000 notes took 765 ms to show five).
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); t0 timestamptz; ms numeric; r jsonb;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.account('big', 'acme', 'acme_agent1', 'Big account');
+  INSERT INTO public.activities (firm_id, account_id, kind, body, at, created_at, author_id)
+  SELECT acme, pg_temp.id('big'), 'note', 'Note ' || n, now() - (n || ' minutes')::interval, now() - (n || ' minutes')::interval, pg_temp.id('acme_agent1') FROM generate_series(1, 5000) n;
+  ANALYZE public.activities;
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.account_tab(acme, pg_temp.id('big'), 'activity', 5, 0);
+  t0 := clock_timestamp();
+  r := public.account_page(acme, pg_temp.id('big'));
+  ms := extract(epoch FROM clock_timestamp() - t0) * 1000;
+  RAISE NOTICE 'calls_notes_tasks: the page of an account with 5000 notes took % ms', round(ms);
+  PERFORM pg_temp.is(jsonb_array_length(r -> 'tabs' -> 'activity' -> 'rows'), 5, 'five rows');
+  PERFORM pg_temp.is((r -> 'tabs' -> 'activity' ->> 'count')::int, 5001, 'of 5000 notes and the account''s creation');
+  PERFORM pg_temp.is(r -> 'tabs' -> 'activity' -> 'rows' -> 1 ->> 'body', 'Note 1', 'the newest note first, after the account''s creation');
+  PERFORM pg_temp.is(ms < 300, true, 'the page took ' || round(ms) || ' ms');
+  PERFORM pg_temp.is(public.account_tab(acme, pg_temp.id('big'), 'activity_notes', 5, 4995) -> 'rows' -> 4 ->> 'body', 'Note 5000', 'and the last page is the oldest');
+  RESET ROLE;
+END $$;

@@ -222,6 +222,17 @@ describe("logging a call", () => {
   });
 });
 
+describe("an archived account (D-222)", () => {
+  it("says the database's words if it refuses something added to an archived account", async () => {
+    const user = userEvent.setup();
+    activity.logActivity.mockRejectedValue(new ActivityError("readOnly", "This account is archived. Nothing can be added to it.", "55000"));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Log a call" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await within(dialog()).findByRole("alert")).toHaveTextContent("This account is archived. Nothing can be added to it.");
+  });
+});
+
 describe("logging a note and a task", () => {
   it("logs a note from the same dialog", async () => {
     const user = userEvent.setup();
@@ -296,6 +307,29 @@ describe("changing what was logged (D-200)", () => {
     expect(activity.updateActivity.mock.calls[0].slice(0, 2)).toEqual(["f1", "call1"]);
     expect(activity.updateActivity.mock.calls[0][2]).toMatchObject({ contactId: "c1", opportunityId: "o1", outcome: "no_answer", body: "Elena has the 2024 loss run." });
     expect(toast.success).toHaveBeenCalledWith("Saved");
+  });
+
+  // Catches: editing a task whose assignee has left quietly reassigning it to the editor (the list of people no longer holds them).
+  it("keeps a departed person on a task unless the editor picks someone else", async () => {
+    const user = userEvent.setup();
+    const gone = { ...task, assignee: { id: "u9", name: "Mel Gone" } };
+    client.listAccountTab.mockImplementation(async () => tabOf([gone]));
+    activity.updateActivity.mockResolvedValue(gone);
+    renderPage("/accounts/a1?tab=activity");
+    await user.click(await screen.findByRole("button", { name: "Edit task" }));
+    await waitFor(() => expect(screen.getByLabelText("With")).not.toBeDisabled());
+    expect(screen.getByLabelText("For")).toHaveValue("u9");
+    expect(within(screen.getByLabelText("For")).getByRole("option", { name: "Mel Gone (left the firm)" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(activity.updateActivity).toHaveBeenCalled());
+    expect(activity.updateActivity.mock.calls[0][2]).toMatchObject({ forId: "u9" });
+    activity.updateActivity.mockClear();
+    await user.click(await screen.findByRole("button", { name: "Edit task" }));
+    await waitFor(() => expect(screen.getByLabelText("With")).not.toBeDisabled());
+    await user.selectOptions(screen.getByLabelText("For"), "u1");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(activity.updateActivity).toHaveBeenCalled());
+    expect(activity.updateActivity.mock.calls[0][2]).toMatchObject({ forId: "u1" });
   });
 
   it("edits a note's text only", async () => {

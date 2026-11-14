@@ -112,3 +112,12 @@ describe("the Activity tab's filters", () => {
     expect(tab?.rows.map((r) => r.type)).toEqual(["call", "change"]);
   });
 });
+
+describe("an archived account", () => {
+  it("says the database's words when it refuses something added to one", async () => {
+    rpc.mockResolvedValue(refused("55000", "This account is archived. Nothing can be added to it."));
+    const e = (await caught(() => logActivity("f1", { kind: "note", accountId: "a1", body: "x" }))) as InstanceType<typeof ActivityError>;
+    expect(e.kind).toBe("readOnly");
+    expect(e.message).toBe("This account is archived. Nothing can be added to it.");
+  });
+});

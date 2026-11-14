@@ -104,6 +104,7 @@ function refusal(error: DbError, fallback: string): Error {
   if (ended.unauthenticated) return ended;
   switch (error.code) {
     case "PT404": return new ActivityError("notFound", "That isn't available any more. Reload the page.", error.code);
+    case "55000": return new ActivityError("readOnly", error.message || "Nothing can be added to this account.", error.code);
     case "PT423": return new ActivityError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "22023": return new ActivityError("invalid", error.message || fallback, error.code);
     case "42501": return new ActivityError("notAllowed", error.message || "You can't change this.", error.code);
