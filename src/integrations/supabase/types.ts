@@ -871,6 +871,11 @@ export type Database = {
         Args: { p_firm_id: string; p_account_id: string; p_limit?: number; p_offset?: number }
         Returns: Json
       }
+      // A page of one tab of an account's page (contacts, opportunities, quotes, activity or files): {count, rows}; null for anyone who may not see the account.
+      account_tab: {
+        Args: { p_firm_id: string; p_account_id: string; p_tab: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
       // The id and name of the account that holds a submission, for someone who may see that account; null for anyone else.
       submission_account: {
         Args: { p_firm_id: string; p_submission_id: string }

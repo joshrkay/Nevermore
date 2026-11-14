@@ -198,8 +198,10 @@
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
+\i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -490,6 +492,11 @@ BEGIN
   -- Prospect B's intakes belong to the second firm. The API can't choose a firm (an intake always starts in Edgar Allan
   -- Advisory's, keep_intake_firm); here the superuser places them, as the address a prospect arrives at will.
   RESET ROLE;
+  -- The two certifications above made their chains (CRM-Q1.1b), in the default firm. An intake that holds an opportunity cannot be moved to another firm
+  -- (20261119100000), and the CRM fixture below makes its own records, with known owners and counts: so these go first.
+  DELETE FROM public.opportunities;
+  DELETE FROM public.contacts;
+  DELETE FROM public.accounts;
   UPDATE public.chamber_sessions SET firm_id = firm_b WHERE user_id = pb;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
@@ -1302,12 +1309,14 @@ INSERT INTO callable VALUES
    'the count behind each view tab, for the accounts the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
   ('firm_member_choices(p_firm_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) reads the firm''s current members by id and name, for the Owner filter; 42501 for every other caller');
--- CRM-A2.1a (20261119140000_account_page.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
+-- CRM-A2.1a (20261119140000_account_page.sql; CRM-A2.1b's account_tab, 20261119145000_account_tab.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
 INSERT INTO callable VALUES
   ('account_page(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) who may see the account, by level, reads its details and each tab''s count and first five rows; NULL, the same as for an account that is not there, for anyone else: another firm''s member, a platform admin, a former member, an agent whose level does not reach it'),
   ('account_files(p_firm_id uuid, p_account_id uuid, p_limit integer, p_offset integer)', 'own', NULL,
    'the same for an account''s files that passed the virus check: names and places, never what was read out of one; the link to a file is Storage''s own, under its own access rule'),
+  ('account_tab(p_firm_id uuid, p_account_id uuid, p_tab text, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for a page of one tab of an account (contacts, opportunities, quotes, activity or files), from any place: the rows the page holds the first five of; NULL for anyone who may not see the account'),
   ('submission_account(p_firm_id uuid, p_submission_id uuid)', 'own', NULL,
    'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
   ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
@@ -1871,6 +1880,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('account_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_page({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('account_files', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_files({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('account_tab', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_tab({firm}, {acct}, 'contacts'))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('submission_account', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.submission_account({firm}, {sid})) WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('update_account', 'advisor', 'by_id',
    $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$');
@@ -3561,10 +3571,17 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
   ('opportunity_stage', 'service_only', 'an opportunity''s stage, worked out from its submission''s pipeline stage; answers for any opportunity by id, so no API role can call it: a query that has decided the caller may see the opportunity asks it');
 
+-- CRM-Q1.1b (20261119110000_chain_at_certification.sql; supabase/tests/chain_at_certification.sql): the chain made when an intake is first certified.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('make_intake_chain', 'service_only', 'makes the account, contact and opportunity of one certified intake, in that intake''s firm, or answers the ones that are there; runs for any intake by id, so no API role can call it: the certification''s trigger and the bringing in of existing submissions (CRM-Q1.3) do'),
+  ('find_duplicate_account', 'service_only', 'the firm''s earliest account that may be the same business (D-193), by id of the firm; reads every account of the firm whoever may see it, so no API role can call it: a caller decides what to show'),
+  ('chain_at_certification', 'trigger', 'after an intake is certified, in the same transaction, makes its chain: not executable through the API');
+
 -- CRM-A2.1a (20261119140000_account_page.sql; supabase/tests/account_page.sql): an account's page, the level rule for changes and the save of an account's own fields.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),
+  ('account_tab', 'firm_scoped', 'the same for a page of one tab of an account: the rows of its contacts, opportunities, quotes, history or files that passed, for someone who may see the account, and nothing for anyone else (4e)'),
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
