@@ -143,7 +143,7 @@ describe("AdvisorDashboardPage", () => {
     it("shows no line saying every submission is shown, and says what an empty Inbox means", async () => {
       listQueue.mockResolvedValue([]);
       renderAt("/advisor?mail=new");
-      expect(await screen.findByText("No submissions with new PEO mail.")).toBeInTheDocument();
+      expect(await screen.findByText("No submissions have new PEO mail.")).toBeInTheDocument();
       expect(screen.queryByText(/Showing every submission/)).not.toBeInTheDocument();
     });
 
@@ -590,13 +590,14 @@ describe("AdvisorDashboardPage", () => {
 
       listQueue.mockResolvedValue([]);
       fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
-      expect(await screen.findByText("No submissions are won.")).toBeInTheDocument();
+      expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
+      expect(screen.getByText("View: Won")).toBeInTheDocument();
       expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("won")] }));
       expect(where()).toBe("?view=won");
       expect(screen.getByRole("link", { name: /^Won/ })).toHaveAttribute("aria-current", "page");
 
       listQueue.mockResolvedValue([row()]);
-      fireEvent.click(screen.getByRole("link", { name: "Show all statuses" }));
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
       expect(listQueue).toHaveBeenLastCalledWith(query());
       expect(where()).toBe("");
@@ -647,13 +648,15 @@ describe("AdvisorDashboardPage", () => {
 
     listQueue.mockResolvedValue([]);
     fireEvent.click(toggle);
-    expect(await screen.findByText("No under review submissions that need advisor action.")).toBeInTheDocument();
+    expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
+    expect(screen.getByText("View: Under review")).toBeInTheDocument();
+    expect(screen.getByText("Needs advisor action: yes")).toBeInTheDocument();
     expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("under_review"), yes("needs_action")] }));
     expect(screen.getByRole("checkbox", { name: "Needs advisor action only" })).toBeChecked();
     expect(where()).toBe("?view=under_review&filter=needs_action:is:true");
 
     listQueue.mockResolvedValue([row()]);
-    fireEvent.click(screen.getByRole("link", { name: "Show all submissions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
     expect(listQueue).toHaveBeenLastCalledWith(query());
   });
@@ -768,7 +771,7 @@ describe("AdvisorDashboardPage", () => {
   it("reads the needs-action filter from the URL", async () => {
     listQueue.mockResolvedValue([]);
     renderAt("/advisor?action=1");
-    expect(await screen.findByText("No submissions that need advisor action.")).toBeInTheDocument();
+    expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
     expect(listQueue).toHaveBeenCalledWith(query({ filters: [yes("needs_action")] }));
   });
 
@@ -878,8 +881,8 @@ describe("AdvisorDashboardPage", () => {
     it("explains a search that finds nothing, and clears it", async () => {
       listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt("/advisor?q=zzz");
-      expect(await screen.findByText("No submissions match “zzz”.")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("link", { name: "Clear search" }));
+      expect(await screen.findByText("No submissions match this search.")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters and search" }));
       expect(await screen.findByRole("link", { name: "Acme Holdings" })).toBeInTheDocument();
       expect(screen.getByLabelText("Search")).toHaveValue("");
       expect(companyOrder()).toHaveLength(3);
@@ -888,7 +891,7 @@ describe("AdvisorDashboardPage", () => {
     it("combines with the status view", async () => {
       listQueue.mockResolvedValue([]);
       renderAt("/advisor?status=won&q=zzz");
-      expect(await screen.findByText("No won submissions match “zzz”.")).toBeInTheDocument();
+      expect(await screen.findByText("No submissions match this search and these filters.")).toBeInTheDocument();
       expect(listQueue).toHaveBeenCalledWith(query({ filters: [pipeline("won")], search: "zzz" }));
     });
   });
@@ -957,7 +960,7 @@ describe("AdvisorDashboardPage", () => {
     it("lands on the first page, with the empty state, when the list has shrunk to nothing", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 0));
       renderAt("/advisor?page=4");
-      expect(await screen.findByText("No submissions yet.")).toBeInTheDocument();
+      expect(await screen.findByText("Submissions appear here as soon as a prospect starts an intake.")).toBeInTheDocument();
       await waitFor(() => expect(where()).toBe(""));
     });
 
@@ -1002,7 +1005,7 @@ describe("AdvisorDashboardPage", () => {
   it("has an empty state", async () => {
     listQueue.mockResolvedValue([]);
     renderAt();
-    expect(await screen.findByText("No submissions yet.")).toBeInTheDocument();
+    expect(await screen.findByText("Submissions appear here as soon as a prospect starts an intake.")).toBeInTheDocument();
   });
 
   it("shows an error and retries", async () => {
@@ -1107,10 +1110,11 @@ describe("AdvisorDashboardPage", () => {
     it("lists only the submissions waiting on a PEO, keeps it in the URL, and says when there are none", async () => {
       listQueue.mockResolvedValue([]);
       renderAt("/advisor?status=sent_to_carrier");
-      await screen.findByText(/No submissions are/);
+      await screen.findByText("No submissions match these filters.");
       fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
       await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("sent_to_carrier"), yes("waiting_on_peo")] })));
-      expect(await screen.findByText("No sent to peos submissions waiting on a PEO.")).toBeInTheDocument();
+      expect(await screen.findByText("Waiting on a PEO: yes")).toBeInTheDocument();
+      expect(screen.getByText("View: Sent to PEOs")).toBeInTheDocument();
     });
   });
 
@@ -2039,6 +2043,190 @@ describe("AdvisorDashboardPage", () => {
       await waitFor(() => expect(where()).toBe("?sort=-company_name"));
       await act(async () => {});
       expect(countQueueViews.mock.calls.length).toBe(counted);
+    });
+  });
+
+  // CRM-S2.2: "nothing yet" and "nothing matches" are two different things, and the person is never told the wrong one.
+  describe("when no submissions are shown (CRM-S2.2)", () => {
+    const headers = () => screen.getAllByRole("columnheader").map((h) => h.textContent);
+    const statuses = () => spoken().map((s) => s.textContent);
+    const clearFilters = () => screen.queryByRole("button", { name: /^Clear filters/ });
+    // Anything that could create or start a record.
+    const offersToCreate = () => screen.queryByRole("link", { name: /new|create|add|start/i }) ?? screen.queryByRole("button", { name: /new|create|add|start/i });
+
+    // Catches: an empty queue at the bare address being worded as a filter that excluded everything, or offering "Clear filters" with nothing to clear.
+    it("says nothing yet, in one sentence with no action, when the address is bare and no rows come back", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt();
+      expect(await screen.findByText("Submissions appear here as soon as a prospect starts an intake.")).toBeInTheDocument();
+      expect(clearFilters()).toBeNull();
+      expect(screen.queryByText(/match/)).not.toBeInTheDocument();
+      expect(offersToCreate()).toBeNull();
+      // There is no "create a submission" a member can do yet (New quote arrives with CRM-Q2.1), so the empty state has no action at all.
+      expect(within(tableBody()).queryAllByRole("button")).toHaveLength(0);
+      expect(within(tableBody()).queryAllByRole("link")).toHaveLength(0);
+    });
+
+    // Catches: the empty state replacing the table, so the column headers and the toolbar vanish and the page jumps.
+    it("keeps the toolbar, the tabs and the column headers under both kinds of empty", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt();
+      await screen.findByText(/appear here/);
+      const bare = headers();
+      expect(bare).toContain("Company");
+      expect(bare).toContain("Quote expires");
+      expect(screen.getByLabelText("Search")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Waiting on a PEO only" })).toBeInTheDocument();
+      expect(screen.getByRole("navigation", { name: "Views" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
+      await screen.findByText("No submissions match these filters.");
+      expect(headers()).toEqual(bare);
+      expect(screen.getByLabelText("Search")).toBeInTheDocument();
+      expect(screen.getByRole("navigation", { name: "Views" })).toBeInTheDocument();
+    });
+
+    // Catches: a filter, tab or search being left out of the words, or worded with the database's names instead of the page's.
+    it.each([
+      ["a tab", "/advisor?view=won", "No submissions match these filters.", ["View: Won"], "Clear filters"],
+      ["a search", "/advisor?q=zzz", "No submissions match this search.", ["Search: “zzz”"], "Clear filters and search"],
+      ["a yes or no filter", "/advisor?action=1", "No submissions match these filters.", ["Needs advisor action: yes"], "Clear filters"],
+      ["the waiting box", "/advisor?waiting=1", "No submissions match these filters.", ["Waiting on a PEO: yes"], "Clear filters"],
+      ["a list of choices", "/advisor?filter=pipeline_status:any_of:won,lost", "No submissions match these filters.", ["Status is any of Won or Lost"], "Clear filters"],
+      ["a list of states", "/advisor?filter=states:any_of:CA,NY", "No submissions match these filters.", ["States includes any of CA or NY"], "Clear filters"],
+      ["a between", "/advisor?filter=employee_count:between:10,50", "No submissions match these filters.", ["Employees is between 10 and 50"], "Clear filters"],
+      ["a text filter", "/advisor?filter=company_name:contains:acme", "No submissions match these filters.", ["Company contains “acme”"], "Clear filters"],
+      ["a filter with no value", "/advisor?filter=company_name:is_empty", "No submissions match these filters.", ["Company is empty"], "Clear filters"],
+      ["a day filter", "/advisor?filter=submitted_at:before:2026-11-01", "No submissions match these filters.", ["Submitted is before Nov 1, 2026"], "Clear filters"],
+      ["a count of days", "/advisor?filter=submitted_at:in_next_days:7", "No submissions match these filters.", ["Submitted is in the next 7 days"], "Clear filters"],
+      ["every kind at once", "/advisor?view=won&q=zzz&filter=needs_action:is:true", "No submissions match this search and these filters.", ["View: Won", "Search: “zzz”", "Needs advisor action: yes"], "Clear filters and search"],
+    ])("says nothing matches, and names what is in force, for %s", async (_name, url, headline, inForce, clear) => {
+      listQueue.mockResolvedValue([]);
+      renderAt(url);
+      expect(await screen.findByText(headline)).toBeInTheDocument();
+      const list = screen.getByRole("list", { name: "What is in force" });
+      expect(within(list).getAllByRole("listitem").map((i) => i.textContent)).toEqual(inForce);
+      expect(screen.getByRole("button", { name: clear })).toBeInTheDocument();
+      expect(screen.queryByText(/appear here/)).not.toBeInTheDocument();
+      expect(offersToCreate()).toBeNull();
+    });
+
+    // Catches: the Inbox (an address filter) saying "No submissions match these filters" when the true and specific thing is that none have new mail.
+    it("words an empty Inbox as no submissions having new PEO mail, and still names the filter and offers to clear it", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt("/advisor?mail=new");
+      expect(await screen.findByText("No submissions have new PEO mail.")).toBeInTheDocument();
+      expect(screen.queryByText(/match these filters/)).not.toBeInTheDocument();
+      expect(within(screen.getByRole("list", { name: "What is in force" })).getByText("Has new PEO mail: yes")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+      // Inbox together with another filter is no longer only the Inbox.
+      cleanup();
+      renderAt("/advisor?mail=new&action=1");
+      expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
+    });
+
+    // Catches: "Clear filters" leaving the search, the tab or a hand-written filter in force, or dropping the person's sort.
+    it("clears the search, the tab and every filter, keeps the sort, and shows the whole list with a clean address", async () => {
+      listQueue.mockImplementation(async (q: { search: string; filters: unknown[] }) => (q.search || q.filters.length ? [] : [row()]));
+      renderAt("/advisor?view=won&q=zzz&filter=needs_action:is:true&filter=company_name:contains:acme&sort=company_name");
+      await screen.findByText("No submissions match this search and these filters.");
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters and search" }));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "company_name", direction: "asc" } }));
+      expect(where()).toBe("?sort=company_name");
+      expect(screen.getByLabelText("Search")).toHaveValue("");
+      expect(screen.getByRole("checkbox", { name: "Needs advisor action only" })).not.toBeChecked();
+      expect(screen.getByRole("link", { name: /^All statuses/ })).toHaveAttribute("aria-current", "page");
+    });
+
+    // Catches: a bare address that has zero rows being called "nothing matches" (nothing to clear), or a narrowed address being told to create its first one.
+    it("never mixes the two up as the address goes from narrowed to bare and back", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt("/advisor?q=zzz");
+      await screen.findByText("No submissions match this search.");
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters and search" }));
+      expect(await screen.findByText("Submissions appear here as soon as a prospect starts an intake.")).toBeInTheDocument();
+      expect(clearFilters()).toBeNull();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Waiting on a PEO only" }));
+      expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
+      expect(screen.queryByText(/appear here/)).not.toBeInTheDocument();
+    });
+
+    // Catches: two announcements (the old empty message and the new one, or a status per piece), or none, or one hidden inside a busy region.
+    it("is announced once, as one polite status, and is not announced again by a refresh that still finds nothing", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt("/advisor?view=won");
+      await screen.findByText("No submissions match these filters.");
+      expect(statuses()).toHaveLength(1);
+      expect(statuses()[0]).toContain("No submissions match these filters.");
+      expect(statuses()[0]).toContain("View: Won");
+      expect(spoken()[0]).toHaveAttribute("aria-live", "polite");
+      expectStatusesOutsideBusy();
+      const status = spoken()[0];
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(listQueue.mock.calls.length).toBeGreaterThan(1));
+      await act(async () => {});
+      // The same element, still saying the same words: nothing was removed and put back, so nothing is said again.
+      expect(spoken()).toEqual([status]);
+    });
+
+    // Catches: the table being rebuilt when the answer is empty, which drops the focus and the sideways scroll the grey rows already had.
+    it("is the same table, with its scroll box and focus, from the grey rows to the empty state and to the rows", async () => {
+      let arrive: (rows: unknown) => void = () => {};
+      listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
+      renderAt();
+      const table = await screen.findByRole("table");
+      const box = screen.getByRole("region", { name: /scrolls sideways/ });
+      box.focus();
+      expect(box).toHaveFocus();
+      await act(async () => arrive([]));
+      await screen.findByText(/appear here/);
+      expect(screen.getByRole("table")).toBe(table);
+      expect(screen.getByRole("region", { name: /scrolls sideways/ })).toBe(box);
+      expect(box).toHaveFocus();
+      listQueue.mockResolvedValue([row()]);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("table")).toBe(table);
+      expect(box).toHaveFocus();
+    });
+
+    // Catches: "Clear filters" disappearing under the person's focus and dropping it to the top of the page.
+    it("puts focus on the table when Clear filters is pressed", async () => {
+      listQueue.mockImplementation(async (q: { search: string }) => (q.search ? [] : [row()]));
+      renderAt("/advisor?q=zzz");
+      const clear = await screen.findByRole("button", { name: "Clear filters and search" });
+      clear.focus();
+      fireEvent.click(clear);
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("region", { name: /scrolls sideways/ })).toHaveFocus();
+    });
+
+    // Catches: an empty answer being shown for a question the person has not asked: the old words must stay, dimmed, until the new answer.
+    it("keeps the empty state it has, dimmed and not re-announced, while the next tab's answer is on its way", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt();
+      await screen.findByText(/appear here/);
+      listQueue.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
+      await waitFor(() => expect(where()).toBe("?view=won"));
+      expect(screen.getByText(/appear here/)).toBeInTheDocument();
+      expect(screen.queryByText(/match these filters/)).not.toBeInTheDocument();
+      expect(tableBody()).toHaveClass("opacity-70");
+    });
+
+    // Catches: an empty list's refresh not turning into rows, or rows into the empty state, when the answer changes.
+    it("goes from empty to rows and back to empty when a refresh finds a different answer", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt();
+      await screen.findByText(/appear here/);
+      listQueue.mockResolvedValue([row()]);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.queryByText(/appear here/)).not.toBeInTheDocument();
+      listQueue.mockResolvedValue([]);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await screen.findByText(/appear here/);
+      expect(headers()).toContain("Company");
     });
   });
 });

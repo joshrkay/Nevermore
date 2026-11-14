@@ -278,11 +278,108 @@ describe("AdvisorActivityPage", () => {
     });
   });
 
-  it("says when nothing has been recorded yet", async () => {
-    api.listFirmActivity.mockResolvedValue({ entries: [], hasMore: false });
-    renderPage();
-    expect(await screen.findByText("Nothing has been recorded for your firm yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  // CRM-S2.2: nothing yet and nothing matches, as one table that keeps its headers and its filters.
+  describe("when no entries are shown (CRM-S2.2)", () => {
+    const none = { entries: [], hasMore: false };
+    const HEADERS = ["When", "Who", "What", "Record"];
+    const headers = () => within(screen.getByRole("table", { name: "Who did what" })).getAllByRole("columnheader").map((h) => h.textContent);
+    // Catches: an empty record worded as a filter that excluded everything, or an empty message that is false for a firm whose entries have all aged out (the record is pruned at ninety days).
+    it("says nothing has been recorded in the last ninety days, which is true for a firm whose entries aged out, and offers no action", async () => {
+      api.listFirmActivity.mockResolvedValue(none);
+      renderPage();
+      expect(await screen.findByText(/Nothing has been recorded for your firm in the last 90 days/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Clear filters/ })).not.toBeInTheDocument();
+      expect(screen.queryByText(/match/)).not.toBeInTheDocument();
+      // Nobody makes entries by hand: the record is written by what people do, so there is no action.
+      expect(within(screen.getByRole("table")).queryAllByRole("button")).toHaveLength(0);
+      expect(headers()).toEqual(HEADERS);
+      expect(screen.getByLabelText("Person")).toBeInTheDocument();
+      expect(screen.getByLabelText("Kind")).toBeInTheDocument();
+      expect(spoken()).toHaveLength(1);
+      expectStatusesOutsideBusy();
+    });
+
+    // Catches: the filters being left out of the words, or the offer to clear them also clearing nothing, or an offer to create.
+    it("says no entries match, names the person and the kind chosen, and clears both", async () => {
+      renderPage();
+      await screen.findByRole("table", { name: "Who did what" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.change(await screen.findByLabelText("Person"), { target: { value: "u2" } });
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "export_made" } });
+      expect(await screen.findByText("No entries match these filters.")).toBeInTheDocument();
+      const list = screen.getByRole("list", { name: "What is in force" });
+      expect(within(list).getAllByRole("listitem").map((i) => i.textContent)).toEqual(["Person: lead@example.com", "Kind: Exported records"]);
+      expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /new|create|add|start/i })).not.toBeInTheDocument();
+      expect(headers()).toEqual(HEADERS);
+      expect(spoken()).toHaveLength(1);
+
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(await screen.findByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: null });
+      expect(screen.getByLabelText("Person")).toHaveValue("");
+      expect(screen.getByLabelText("Kind")).toHaveValue("");
+      expect(screen.getByLabelText("Person")).toHaveFocus();
+    });
+
+    // Catches: a filter by Nevermore being named by its internal value, or one kind of filter alone being worded as both.
+    it("words one filter alone, and Nevermore as Nevermore", async () => {
+      api.listFirmActivityPeople.mockResolvedValue([{ user_id: null, email: null, is_nevermore: true }]);
+      renderPage();
+      await screen.findByRole("table", { name: "Who did what" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.change(screen.getByLabelText("Person"), { target: { value: NEVERMORE_FILTER } });
+      await screen.findByText("No entries match these filters.");
+      expect(within(screen.getByRole("list", { name: "What is in force" })).getAllByRole("listitem").map((i) => i.textContent)).toEqual(["Person: Nevermore"]);
+    });
+
+    // Catches: the table being rebuilt for the empty answer, which would drop focus from a control and make the page jump.
+    it("is the same table from the grey rows to the empty state and back to rows, with focus kept on the Kind list", async () => {
+      let arrive: (v: unknown) => void = () => undefined;
+      api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+      renderPage();
+      const table = screen.getByRole("table", { name: "Who did what" });
+      const kind = screen.getByLabelText("Kind");
+      kind.focus();
+      await act(async () => arrive(none));
+      await screen.findByText(/Nothing has been recorded/);
+      expect(screen.getByRole("table", { name: "Who did what" })).toBe(table);
+      expect(screen.getByLabelText("Kind")).toBe(kind);
+      expect(kind).toHaveFocus();
+      expect(table.querySelectorAll("tbody")).toHaveLength(1);
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.change(kind, { target: { value: "sign_in" } });
+      await screen.findByText("agent@example.com", { selector: "td" });
+      expect(screen.getByRole("table", { name: "Who did what" })).toBe(table);
+    });
+
+    // Catches: the empty words describing a filter the person has just chosen whose answer has not arrived yet.
+    it("keeps the words it has, dimmed, until the answer for a newly chosen filter arrives", async () => {
+      api.listFirmActivity.mockResolvedValue(none);
+      renderPage();
+      await screen.findByText(/Nothing has been recorded/);
+      api.listFirmActivity.mockReturnValue(new Promise(() => {}));
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await act(async () => {});
+      expect(screen.getByText(/Nothing has been recorded/)).toBeInTheDocument();
+      expect(screen.queryByText(/No entries match/)).not.toBeInTheDocument();
+    });
+
+    // Catches: an empty page after the first (the older entries aged out meanwhile) being called "nothing yet", which would be false.
+    it("does not say nothing has been recorded when the page after the first comes back empty", async () => {
+      api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });
+      renderPage();
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      expect(await screen.findByText("There are no older entries.")).toBeInTheDocument();
+      expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.click(screen.getByRole("button", { name: "Back to the newest" }));
+      expect(await screen.findByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: null });
+    });
   });
 
   it("says what failed, with the reason, and tries again when asked", async () => {
@@ -439,7 +536,7 @@ describe("AdvisorActivityPage", () => {
     api.listFirmActivity.mockResolvedValue({ entries: [], hasMore: false });
     fireEvent.change(kind, { target: { value: "export_made" } });
     expect(await screen.findByText("No entries match these filters.")).toBeInTheDocument();
-    expect(screen.queryByText("Nothing has been recorded for your firm yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Kind")).toHaveValue("export_made");
   });
 

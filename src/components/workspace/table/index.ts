@@ -10,3 +10,4 @@ export { tableIsLoading } from "./tableIsLoading";
 export { useTableAddress } from "./useTableAddress";
 export { useFirmReady, useRefreshTable, useTableContextKey, useTableRows, useTableViewCounts, TABLE_REFRESH_MS } from "./useTableRows";
 export { ViewTabs } from "./ViewTabs";
+export { filterInWords, inForceInWords, isNarrowed } from "./words";

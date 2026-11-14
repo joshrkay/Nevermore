@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { LoadingStatus, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
 import { endTime, fetchFirmSupportUses, type FirmSupportUse } from "@/lib/supportApi";
-import { ENTRY_KINDS, entryLabel, recordLabel } from "@/data/firmActivity";
+import { ENTRY_KINDS, entryLabel, kindLabel, recordLabel } from "@/data/firmActivity";
 import {
   listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
@@ -142,6 +142,28 @@ const AdvisorActivityPage = () => {
   // The entries on screen answer a different question than the one now asked (the next page, another filter): dimmed and marked busy until the answer arrives.
   const stale = load.kind === "ready" && load.asked !== asking;
   const firmChoice = load.kind === "choose" || load.kind === "ready" || load.kind === "loading" ? load.firms : undefined;
+  const isEmpty = load.kind === "ready" && load.entries.length === 0;
+  // Empty (CRM-S2.2). The rule: the record has no totals, so a narrowed question that comes back empty is worded to be true either way ("No entries match
+  // these filters"), never as "nothing recorded". Only the unfiltered first page that comes back empty is NOTHING YET, and its words stay true for a firm
+  // whose entries have all aged out (the record is pruned at ninety days). The page after the first coming back empty is neither: older entries are gone.
+  // The words are for the question the (empty) entries ANSWERED, which is the previous one while the next is on its way, never one not yet answered.
+  const [answeredPerson, answeredKind, answeredAfter] = (load.kind === "ready" ? JSON.parse(load.asked) : [person, kind, after]) as [string | null, string | null, ActivityCursor | null];
+  const answeredFiltered = answeredPerson !== null || answeredKind !== null;
+  const personInWords = answeredPerson === NEVERMORE_FILTER ? "Nevermore" : (people?.find((p) => p.user_id === answeredPerson)?.email ?? "A former member");
+  const clearFilters = () => { setPerson(null); setKind(null); setTrail([]); personList.current?.focus(); };
+  const emptyState = !isEmpty ? null : answeredFiltered ? (
+    <NothingMatches
+      plural="entries"
+      by={{ search: false, filters: true }}
+      inForce={[...(answeredPerson !== null ? [`Person: ${personInWords}`] : []), ...(answeredKind !== null ? [`Kind: ${kindLabel(answeredKind)}`] : [])]}
+      onClear={clearFilters}
+    />
+  ) : answeredAfter !== null ? (
+    <NothingMatches plural="entries" by={{ search: false, filters: false }} inForce={[]} headline="There are no older entries." clearLabel="Back to the newest" onClear={() => setTrail([])} />
+  ) : (
+    <NothingYet sentence="Nothing has been recorded for your firm in the last 90 days: entries appear here as its people sign in, open submissions or change who belongs." />
+  );
+  const personList = useRef<HTMLSelectElement>(null);
 
   return (
     <div className="bg-background">
@@ -188,6 +210,7 @@ const AdvisorActivityPage = () => {
                 <label htmlFor="activity-person" className="block text-xs text-muted-foreground">Person</label>
                 <select
                   id="activity-person"
+                  ref={personList}
                   value={person ?? ""}
                   // Not usable until the people have arrived: it stays in the tab order, says why, and ignores a choice.
                   aria-disabled={people === null || undefined}
@@ -217,33 +240,28 @@ const AdvisorActivityPage = () => {
               </div>
             </div>
 
-            {load.kind === "ready" && load.entries.length === 0 ? (
-              <p role="status" className="text-sm text-muted-foreground">
-                {filtered ? "No entries match these filters." : "Nothing has been recorded for your firm yet."}
-              </p>
-            ) : (
-              // One table, whether its rows are grey or real, so it is never rebuilt when they arrive. Real entries that answer another
-              // question than the one now asked are dimmed and marked busy until the answer comes.
-              <div className={`overflow-x-auto border border-border rounded-xl ${stale ? "opacity-70" : ""}`} aria-busy={load.kind === "loading" || stale || undefined}>
-                <table aria-label="Who did what" className="w-full text-sm">
-                  <ActivityHead />
-                  {load.kind === "loading" ? (
-                    <PlaceholderBody columns={COLUMNS} />
-                  ) : (
-                    <tbody>
-                      {load.kind === "ready" && load.entries.map((e) => (
-                        <tr key={e.entry_key} className="border-t border-border align-top">
-                          <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
-                          <td className="px-4 py-2">{who(e.by_nevermore, e.actor_id, e.actor_email)}</td>
-                          <td className="px-4 py-2">{entryLabel(e.kind, e.record_type)}</td>
-                          <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e, load.uses)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  )}
-                </table>
-              </div>
-            )}
+            {/* One table, whether its rows are grey, real or none (CRM-S2.2): an empty answer is one cell under the same headers, so nothing is rebuilt.
+                Real entries that answer another question than the one now asked are dimmed and marked busy until the answer comes. */}
+            <div className={`overflow-x-auto border border-border rounded-xl ${stale ? "opacity-70" : ""}`} aria-busy={load.kind === "loading" || (stale && !isEmpty) || undefined}>
+              <table aria-label="Who did what" className="w-full text-sm">
+                <ActivityHead />
+                {load.kind === "loading" ? (
+                  <PlaceholderBody columns={COLUMNS} />
+                ) : (
+                  <tbody>
+                    {isEmpty && <tr><td colSpan={COLUMNS.length} className="p-0">{emptyState}</td></tr>}
+                    {load.kind === "ready" && load.entries.map((e) => (
+                      <tr key={e.entry_key} className="border-t border-border align-top">
+                        <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
+                        <td className="px-4 py-2">{who(e.by_nevermore, e.actor_id, e.actor_email)}</td>
+                        <td className="px-4 py-2">{entryLabel(e.kind, e.record_type)}</td>
+                        <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e, load.uses)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                )}
+              </table>
+            </div>
 
             {load.kind === "ready" && (page > 1 || load.hasMore) && (
               <div className="flex items-center gap-3">

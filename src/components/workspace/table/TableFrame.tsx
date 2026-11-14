@@ -39,8 +39,13 @@ interface Props<K extends TableFields, Row, Context> {
   /** The tabs over the table: `ViewTabs`, which CRM-S3.4a extends into the saved-views bar. */
   views?: ReactNode;
   // CRM-S3.6 (D-47): the bar that appears when rows are selected goes here. Nothing selects rows yet.
-  /** What shows when nothing matches (nothing yet, or nothing matches the filters). CRM-S2.2 fills it. */
-  empty: (address: TableAddress<K>) => ReactNode;
+  /**
+   * What shows in the table's body when no rows come back (CRM-S2.2): "nothing yet" for a bare address, "nothing matches" for a narrowed one (`isNarrowed`).
+   * The table stays: its headers and the toolbar do not move. It is given the address the (empty) rows answer, which is the previous one while the next
+   * answer is on its way, so the words never describe a question the person has not been answered yet. `focusTable` puts focus on the table's scroll box,
+   * for an action that makes the empty state go away ("Clear filters"), so focus is not dropped to the page.
+   */
+  empty: (address: TableAddress<K>, helpers: { focusTable: () => void }) => ReactNode;
   /** What shows when the rows can't be loaded, with the way to try again. CRM-S2.3 fills it. A refused query is the frame's own panel, not this. */
   error: (error: Error, retry: () => void, address: TableAddress<K>) => ReactNode;
   /** A click anywhere on a row, outside its links, opens it. */
@@ -103,6 +108,11 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
     change({ sort: null }, { push: true });
     scrollBox.current?.focus();
   };
+  // The address the rows on screen answer: it only follows the address once their answer has arrived.
+  const settled = useRef(address);
+  if (!data.isPlaceholder && !placeholdering) settled.current = address;
+  const isEmpty = !placeholdering && !!page && page.rows.length === 0;
+  const focusTable = () => scrollBox.current?.focus();
   return (
     <div>
       {typeof toolbar === "function" ? toolbar({ loading: loadingNow, slowLine }) : <>{toolbar}{slowLine}</>}
@@ -119,7 +129,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
         ) : (
           error(data.error, data.retry, address)
         )
-      ) : placeholdering || page.rows.length > 0 ? (
+      ) : (
         <>
           {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
           <OrderLine table={table} sort={address.sort} onReset={resetSort} />
@@ -128,21 +138,28 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             context={context}
             columns={columns}
             rows={placeholdering ? [] : page.rows}
-            placeholder={placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} /> : undefined}
+            // The grey rows while waiting; when no rows came back, one cell under the real headers with the empty state in it, so it is the same
+            // table before and after. Rows that answer another question are dimmed here as elsewhere (no busy mark: the words do not change while it waits).
+            placeholder={
+              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} />
+              : isEmpty ? (
+                <tbody className={data.isPlaceholder ? "opacity-70" : undefined}>
+                  <tr><td colSpan={columns.length} className="p-0">{empty(settled.current, { focusTable })}</td></tr>
+                </tbody>
+              ) : undefined
+            }
             caption={caption}
             sort={shownSort}
             onSort={sortBy}
             scrollRef={scrollBox}
             // Rows on screen are dimmed and marked busy only while they answer a different question than the address now asks (the next page,
             // tab or filter, D-144); a refresh of the same question changes nothing on screen.
-            busy={placeholdering || data.isPlaceholder}
+            busy={placeholdering || (data.isPlaceholder && !isEmpty)}
             onOpenRow={onOpenRow}
             renderHeader={renderHeader}
           />
-          {!placeholdering && <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />}
+          {!placeholdering && !isEmpty && <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />}
         </>
-      ) : (
-        empty(address)
       )}
     </div>
   );

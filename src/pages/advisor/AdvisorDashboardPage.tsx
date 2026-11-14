@@ -1,17 +1,18 @@
 import type { ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Inbox, RefreshCw, SearchX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { PIPELINE_LABELS, NEEDS_ACTION_LABEL, type PipelineStatus } from "@/data/advisor";
+import { NEEDS_ACTION_LABEL } from "@/data/advisor";
 import { emailProblemsBySession } from "@/data/outbox";
 import { listEmailProblems, type EmailProblem } from "@/lib/advisorApi";
 import { countQueueViews, type QueueFilter } from "@/lib/queueApi";
+import { NothingMatches, NothingYet } from "@/components/workspace/states";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import {
   fetchQueuePage, NEEDS_ACTION_FILTER, NEW_PEO_MAIL_FILTER, useQueueTable, WAITING_FILTER, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
@@ -46,11 +47,6 @@ const AdvisorDashboardPage = () => {
   // The filters a person can add or remove with the page's own controls; anything else came from an address written by hand.
   const toggle = (filter: QueueFilter, on: boolean) =>
     change({ filters: on ? [...address.filters, filter] : address.filters.filter((f) => !same(f, filter)) });
-  const viewLabel = address.view ? PIPELINE_LABELS[address.view as PipelineStatus] : null;
-  // How the filters read in an empty or no-match message: "under review submissions that need advisor action".
-  const filtered = `${viewLabel ? `${viewLabel.toLowerCase()} ` : ""}submissions${needsAction ? " that need advisor action" : ""}${waiting ? " waiting on a PEO" : ""}${newMail ? " with new PEO mail" : ""}`;
-  const ownControls = [NEEDS_ACTION_FILTER, WAITING_FILTER, NEW_PEO_MAIL_FILTER];
-  const otherFilters = address.filters.some((f) => !ownControls.some((o) => same(o, f)));
 
   // While the first rows are on their way, what changes the QUERY stays usable (search, the two checkboxes, the sort headers, the tabs: a person can
   // correct a slow search); what needs the rows is not (Refresh, and the pager, which the frame draws only once there are rows).
@@ -91,36 +87,27 @@ const AdvisorDashboardPage = () => {
   // Today's status tabs, as the queue's built-in views; CRM-S3.4a turns them into the full saved-views bar.
   const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} />;
 
-  const empty = (a: typeof address) => {
-    if (a.search) {
-      return (
-        <div className="border border-dashed border-border rounded-xl p-12 text-center">
-          <SearchX className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
-          <p className="font-medium">No {filtered} match “{a.search}”.</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            Search covers company, contact and File ID.{" "}
-            <Link to={hrefFor({ search: "" })} className="text-primary underline">Clear search</Link>
-          </p>
-        </div>
-      );
+  // Empty (story CRM-S2.2). The rule that tells the two kinds apart: a bare address (no tab, search or filter) that comes back with no rows is NOTHING YET,
+  // because the firm has no submissions to show; a narrowed one is NOTHING MATCHES. The queue does not know how many submissions the firm has without
+  // narrowing (the tabs' numbers are counted under the search and filters on screen, D-137), so a narrowed empty is worded to be true either way
+  // ("No submissions match these filters") and never claims some exist. Nothing here offers to create a submission: a member cannot make one yet
+  // (New quote arrives with CRM-Q2.1), and a narrowed question is never answered with "make a new one".
+  const empty = (a: typeof address, { focusTable }: { focusTable: () => void }) => {
+    if (!isNarrowed(a)) {
+      return <NothingYet icon={<Inbox className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />} sentence="Submissions appear here as soon as a prospect starts an intake." />;
     }
-    const narrowed = needsAction || waiting || newMail || otherFilters;
+    // The Inbox alone (only "has new PEO mail" in force) has an exact thing to say that is true even if the firm has no submissions at all.
+    const inboxOnly = !a.view && !a.search && a.filters.length === 1 && same(a.filters[0], NEW_PEO_MAIL_FILTER);
     return (
-      <div className="border border-dashed border-border rounded-xl p-12 text-center">
-        <Inbox className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
-        <p className="font-medium">
-          {otherFilters ? "No submissions match these filters." : narrowed ? `No ${filtered}.` : viewLabel ? `No submissions are ${viewLabel.toLowerCase()}.` : "No submissions yet."}
-        </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          {narrowed ? (
-            <Link to={hrefFor({ view: null, filters: [] })} className="text-primary underline">Show all submissions</Link>
-          ) : viewLabel ? (
-            <Link to={hrefFor({ view: null })} className="text-primary underline">Show all statuses</Link>
-          ) : (
-            "Intakes appear here as soon as a prospect starts one."
-          )}
-        </p>
-      </div>
+      <NothingMatches
+        plural={table.noun.plural}
+        by={{ search: a.search !== "", filters: a.view !== null || a.filters.length > 0 }}
+        inForce={inForceInWords(table, a)}
+        headline={inboxOnly ? "No submissions have new PEO mail." : undefined}
+        icon={<SearchX className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />}
+        // Clears the tab, the search and every filter (the whole list again). The sort stays: it only orders the same rows.
+        onClear={() => { change({ view: null, search: "", filters: [] }); focusTable(); }}
+      />
     );
   };
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Inbox, Loader2, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
@@ -29,7 +29,7 @@ import {
 import { listOutboxEvents, outboxSummary, requeueOutboxEvent, type OutboxEvent, type OutboxSummaryRow } from "@/lib/advisorApi";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { LoadingStatus, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 
 type Load =
   | { kind: "loading" }
@@ -146,6 +146,25 @@ const AdvisorOutboxPage = () => {
   // The events on screen answer another status than the one now chosen: dimmed and marked busy until its own arrive.
   const stale = load.kind === "ready" && load.status !== status;
   const now = Date.now();
+  // Empty (CRM-S2.2). The rule: the summary counts every status whatever is chosen, so it says whether the outbox holds anything at all. No notification
+  // anywhere is NOTHING YET (even with a status chosen: "No notifications are dead" would suggest others exist). A status with none while others
+  // hold some is NOTHING MATCHES, with the way back to all. There is nothing a person can create here: notifications are queued when a prospect certifies.
+  const allButton = useRef<HTMLButtonElement>(null);
+  // The words are for the status the (empty) answer was FOR, which is the previous one while the next is on its way, never for a question not yet answered.
+  const answered = load.kind === "ready" ? load.status : status;
+  const emptyState = answered !== null && total > 0 ? (
+    <NothingMatches
+      plural="notifications"
+      by={{ search: false, filters: true }}
+      headline={`No notifications are ${OUTBOX_STATUS_LABELS[answered].toLowerCase()}.`}
+      inForce={[`Status: ${OUTBOX_STATUS_LABELS[answered]}`]}
+      clearLabel="Show all notifications"
+      onClear={() => { setStatus(null); allButton.current?.focus(); }}
+      icon={<Inbox className="w-8 h-8 text-muted-foreground mb-3" aria-hidden="true" />}
+    />
+  ) : (
+    <NothingYet sentence="Notifications appear here when a prospect certifies an intake." icon={<Inbox className="w-8 h-8 text-muted-foreground mb-3" aria-hidden="true" />} />
+  );
 
   return (
     <div className="bg-background">
@@ -186,6 +205,7 @@ const AdvisorOutboxPage = () => {
 
         <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-2 mb-4">
           <button
+            ref={allButton}
             onClick={() => setStatus(null)}
             aria-pressed={status === null}
             className={`text-sm px-3 py-1.5 rounded-full border ${status === null ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}
@@ -210,29 +230,16 @@ const AdvisorOutboxPage = () => {
 
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="the outbox" onRetry={reload} />}
 
-        {load.kind === "ready" && events.length === 0 && (
-          <div className="border border-dashed border-border rounded-xl p-12 text-center">
-            <Inbox className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
-            <p className="font-medium">
-              {status ? `No ${OUTBOX_STATUS_LABELS[status].toLowerCase()} notifications.` : "No notifications yet."}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              {status ? (
-                <button onClick={() => setStatus(null)} className="text-primary underline">Show all</button>
-              ) : (
-                "They appear here when a prospect certifies an intake."
-              )}
-            </p>
-          </div>
-        )}
-
         {load.kind === "loading" && <LoadingStatus name="the outbox" />}
 
-        {(load.kind === "loading" || (load.kind === "ready" && events.length > 0)) && (
+        {(load.kind === "loading" || load.kind === "ready") && (
           <>
             {/* The line above the table is held while loading, so the table doesn't move down a line when the events arrive. */}
             {load.kind === "loading" ? (
               <p aria-hidden="true" className="mb-2 flex h-4 items-center"><PlaceholderLine width="date" className="h-2.5" /></p>
+            ) : events.length === 0 ? (
+              // Room for the line the rows would have, so the table does not move when the first notification arrives.
+              <p aria-hidden="true" className="mb-2 h-4" />
             ) : (
               <p className="text-xs text-muted-foreground mb-2" aria-live="polite">
                 {events.length} {events.length === 1 ? "notification" : "notifications"}, newest first
@@ -240,13 +247,16 @@ const AdvisorOutboxPage = () => {
             )}
             {/* One table, whether its rows are grey or real, so it is never rebuilt when they arrive. Events that answer another status than the one now
                 chosen are dimmed and marked busy until its own arrive. */}
-            <div className={`border border-border rounded-xl overflow-hidden ${stale ? "opacity-70" : ""}`} aria-busy={load.kind === "loading" || stale || undefined}>
+            <div className={`border border-border rounded-xl overflow-hidden ${stale ? "opacity-70" : ""}`} aria-busy={load.kind === "loading" || (stale && events.length > 0) || undefined}>
               <Table>
                 <OutboxHead />
                 {load.kind === "loading" ? (
                   <PlaceholderBody columns={COLUMNS} cellClassName="p-4 align-middle" />
                 ) : (
                 <TableBody>
+                  {load.kind === "ready" && events.length === 0 && (
+                    <TableRow className="hover:bg-transparent"><TableCell colSpan={COLUMNS.length} className="p-0">{emptyState}</TableCell></TableRow>
+                  )}
                   {events.map((e) => {
                     const gloss = explainOutboxError(e.last_error);
                     const what = `${outboxKindLabel(e.kind)} for ${e.company_name ?? "a company with no name"}`;

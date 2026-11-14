@@ -59,10 +59,12 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
   });
 
   // Catches: a firm with nothing listed is left with a blank where the section should explain itself.
-  it("says plainly that no organisation is listed and what listing one does", async () => {
+  it("says plainly that no organisation is listed and what listing one does, and takes the owner to the form", async () => {
     join.fetchOrganisations.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText(/No organisation is listed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Organisations you list appear here; until you list one, nobody can ask to join/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "List an organisation" }));
+    expect(screen.getByLabelText("Provider")).toHaveFocus();
   });
 
   // Catches: listing sends the wrong provider, the wrong field or untrimmed words, or the list does not refresh.
@@ -126,7 +128,9 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
   it("says plainly when nobody has asked", async () => {
     join.fetchJoinRequests.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText("Nobody is waiting to join.")).toBeInTheDocument();
+    expect(await screen.findByText("People who ask to join from a listed organisation appear here.")).toBeInTheDocument();
+    // Nobody can make a request on another's behalf, so the empty list has no action.
+    expect(within(screen.getByRole("heading", { name: "Asked to join" }).closest("section")!).queryAllByRole("button")).toHaveLength(0);
   });
 
   // Catches: approving makes the person a member with a role the owner did not choose (the default must be the least access), or

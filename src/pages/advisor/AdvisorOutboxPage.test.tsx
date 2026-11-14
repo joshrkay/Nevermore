@@ -356,20 +356,99 @@ describe("AdvisorOutboxPage", () => {
     expect(listOutboxEvents).toHaveBeenCalledWith(null);
   });
 
-  it("says so, and offers everything, when a status has no events", async () => {
-    ready([], summaryOf({ sent: 3 }));
-    renderAt("/advisor/outbox?status=dead");
-    expect(await screen.findByText("No dead notifications.")).toBeInTheDocument();
-    listOutboxEvents.mockResolvedValue([event()]);
-    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
-    await screen.findByText("Acme");
-    expect(listOutboxEvents).toHaveBeenLastCalledWith(null);
-  });
+  // CRM-S2.2: nothing yet and nothing matches, as one table that keeps its headers and its status buttons.
+  describe("when no notifications are shown (CRM-S2.2)", () => {
+    const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent);
+    const HEADERS = ["Notification", "Status", "Attempts", "When", "Last error", "Actions"];
 
-  it("explains an empty queue", async () => {
-    ready([], summaryOf({}));
-    renderAt();
-    expect(await screen.findByText("No notifications yet.")).toBeInTheDocument();
+    // Catches: an empty outbox worded as a filter that excluded everything, or offering "Show all" with nothing to show.
+    it("says nothing yet, with no action, when the outbox holds no notification at all", async () => {
+      ready([], summaryOf({}));
+      renderAt();
+      expect(await screen.findByText("Notifications appear here when a prospect certifies an intake.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Show all notifications|Clear/ })).not.toBeInTheDocument();
+      expect(screen.queryByText(/No notifications are/)).not.toBeInTheDocument();
+      expect(headers()).toEqual(HEADERS);
+      expect(screen.getByRole("button", { name: /^Dead/ })).toBeInTheDocument();
+      expect(within(screen.getByRole("table")).queryAllByRole("button")).toHaveLength(0);
+      expect(spoken().map((e) => e.textContent)).toHaveLength(1);
+      expectStatusesOutsideBusy();
+    });
+
+    // Catches: a status with none being told "nothing yet" while the outbox holds notifications in other statuses (the summary says they exist).
+    it("says no notifications are in that status, names it and offers all, when the others hold some", async () => {
+      ready([], summaryOf({ sent: 3 }));
+      renderAt("/advisor/outbox?status=dead");
+      expect(await screen.findByText("No notifications are dead.")).toBeInTheDocument();
+      expect(within(screen.getByRole("list", { name: "What is in force" })).getAllByRole("listitem").map((i) => i.textContent)).toEqual(["Status: Dead"]);
+      expect(screen.queryByText(/appear here/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /new|create|add|start/i })).not.toBeInTheDocument();
+      expect(headers()).toEqual(HEADERS);
+      expect(spoken()).toHaveLength(1);
+      listOutboxEvents.mockResolvedValue([event()]);
+      const clear = screen.getByRole("button", { name: "Show all notifications" });
+      clear.focus();
+      fireEvent.click(clear);
+      await screen.findByText("Acme");
+      expect(listOutboxEvents).toHaveBeenLastCalledWith(null);
+      expect(screen.getByTestId("where")).toHaveTextContent("");
+      expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: /^All/ })).toHaveFocus();
+    });
+
+    // Catches: "No notifications are dead" being said when the outbox has no notification of any status, which would suggest others exist.
+    it("says nothing yet, not that none are in the status, when a status is chosen and the outbox is empty altogether", async () => {
+      ready([], summaryOf({}));
+      renderAt("/advisor/outbox?status=dead");
+      expect(await screen.findByText("Notifications appear here when a prospect certifies an intake.")).toBeInTheDocument();
+      expect(screen.queryByText(/No notifications are/)).not.toBeInTheDocument();
+    });
+
+    // Catches: the table being rebuilt for the empty answer (focus lost, page jump), or a status change over an empty list blanking the words.
+    it("is the same table from the grey rows to the empty state to the rows, with focus kept on the status button", async () => {
+      let arrive: (v: unknown) => void = () => undefined;
+      listOutboxEvents.mockReturnValue(new Promise((r) => { arrive = r; }));
+      outboxSummary.mockResolvedValue(summaryOf({ sent: 2 }));
+      renderAt();
+      const table = screen.getByRole("table");
+      const dead = screen.getByRole("button", { name: /^Dead/ });
+      dead.focus();
+      await act(async () => arrive([]));
+      await screen.findByText(/appear here/);
+      expect(screen.getByRole("table")).toBe(table);
+      expect(dead).toHaveFocus();
+      listOutboxEvents.mockResolvedValue([event()]);
+      fireEvent.click(dead);
+      await screen.findByText("Acme");
+      expect(screen.getByRole("table")).toBe(table);
+      expect(dead).toHaveFocus();
+    });
+
+    // Catches: the empty words describing a status the person has just chosen but whose answer has not arrived (it would say "dead" for the previous answer's list).
+    it("keeps the words it has, dimmed, until the answer for a newly chosen status arrives", async () => {
+      ready([], summaryOf({ sent: 3 }));
+      renderAt();
+      await screen.findByText(/appear here/);
+      listOutboxEvents.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("button", { name: /^Dead/ }));
+      await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("?status=dead"));
+      expect(screen.getByText(/appear here/)).toBeInTheDocument();
+      expect(screen.queryByText(/No notifications are/)).not.toBeInTheDocument();
+    });
+
+    // Catches: an empty outbox that gains a notification not showing it on Refresh, or one that loses its last one not falling back to the words.
+    it("goes from empty to rows and back when a refresh finds a different answer", async () => {
+      ready([], summaryOf({}));
+      renderAt();
+      await screen.findByText(/appear here/);
+      ready([event()], summaryOf({ dead: 1 }));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await screen.findByText("Acme");
+      ready([], summaryOf({}));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await screen.findByText(/appear here/);
+      expect(headers()).toEqual(HEADERS);
+    });
   });
 
   it("lists a suppressed email with why it was held back, and offers no retry", async () => {

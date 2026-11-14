@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import {
   cancelInvitation, fetchMyFirm, fetchPendingInvitations, inviteMember, resendInvitation,
   type Delivery, type FirmRole, type PendingInvitation,
 } from "@/lib/invitationApi";
+import { NothingYet } from "@/components/workspace/states";
 import { AskedToJoinSection, OrganisationsSection } from "@/components/workspace/FirmJoinSections";
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -90,6 +91,7 @@ const FirmInvitationsPage = () => {
   const signedIn = Boolean(user) && !isAnonymous;
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [busy, setBusy] = useState<string | null>(null);
+  const inviteForm = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!address) return;
@@ -167,9 +169,14 @@ const FirmInvitationsPage = () => {
         {address && load.kind === "not_owner" && <p role="status" className="text-sm">Only an owner of the firm can invite people.</p>}
         {address && load.kind === "ready" && (
           <>
-            <InviteForm firmId={load.firm.id} onInvited={refresh} />
+            <div ref={inviteForm}><InviteForm firmId={load.firm.id} onInvited={refresh} /></div>
             {load.invitations.length === 0 ? (
-              <p role="status" className="text-sm text-muted-foreground">No invitations are waiting.</p>
+              // Nothing yet (CRM-S2.2). The way to make the first one is the invite form just above, so the action takes the person to its first field.
+              <NothingYet
+                layout="line"
+                sentence="Invitations you send appear here until they are accepted."
+                primary={{ label: "Invite someone", onClick: () => inviteForm.current?.querySelector<HTMLElement>("input, select")?.focus() }}
+              />
             ) : (
               <ul aria-label="Pending invitations" className="space-y-3">
                 {load.invitations.map((i) => (

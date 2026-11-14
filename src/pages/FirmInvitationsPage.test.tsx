@@ -76,10 +76,19 @@ describe("FirmInvitationsPage", () => {
     expect(items[2]).toHaveTextContent("The email did not go out");
   });
 
-  it("says plainly when nobody is waiting", async () => {
+  // Catches: an empty list that leaves the owner without a way to make the first invitation, offers one that does not lead to the form, or is announced twice.
+  it("says what belongs in an empty list, with an action that takes the owner to the invite form, and is one status", async () => {
     api.fetchPendingInvitations.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText("No invitations are waiting.")).toBeInTheDocument();
+    expect(await screen.findByText("Invitations you send appear here until they are accepted.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Pending invitations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear filters/ })).not.toBeInTheDocument();
+    // Each empty list says its own sentence once, as its own polite status.
+    const statuses = screen.getAllByRole("status").filter((s) => s.textContent);
+    expect(statuses.filter((s) => s.textContent === "Invitations you send appear here until they are accepted.")).toHaveLength(1);
+    expect(statuses.every((s) => s.getAttribute("aria-live") === "polite")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    expect(screen.getByLabelText("Email address")).toHaveFocus();
   });
 
   it("invites the email typed with the role chosen, then clears the form and reloads the list", async () => {

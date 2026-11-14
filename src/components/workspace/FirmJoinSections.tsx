@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
 import { choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { NothingYet } from "@/components/workspace/states";
 import { formatDateTime } from "@/components/advisor/format";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
 import {
@@ -74,6 +75,7 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
   const key = ["firm-organisations", firmId];
   const organisations = useQuery({ queryKey: key, queryFn: () => fetchOrganisations(firmId), ...live });
   const [confirming, setConfirming] = useState<string | null>(null);
+  const form = useRef<HTMLDivElement>(null);
   const remove = useMutation({
     mutationFn: removeOrganisation,
     onSuccess: () => { toast.success("Removed. People who sign in from it will no longer be listed."); setConfirming(null); },
@@ -90,7 +92,7 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
           email address, and a free-mail domain can't be listed.
         </p>
       </div>
-      <OrganisationForm firmId={firmId} onListed={() => queryClient.invalidateQueries({ queryKey: key })} />
+      <div ref={form}><OrganisationForm firmId={firmId} onListed={() => queryClient.invalidateQueries({ queryKey: key })} /></div>
       {organisations.isError && !organisations.data && (
         <div role="alert" className="text-sm space-y-2">
           <p className="text-destructive">{organisations.error.message}</p>
@@ -101,7 +103,12 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>
       )}
       {organisations.data && organisations.data.length === 0 && (
-        <p role="status" className="text-sm text-muted-foreground">No organisation is listed, so nobody can ask to join by signing in from one.</p>
+        // Nothing yet (CRM-S2.2): the form above makes the first one, so the action takes the person to its first field.
+        <NothingYet
+          layout="line"
+          sentence="Organisations you list appear here; until you list one, nobody can ask to join by signing in from it."
+          primary={{ label: "List an organisation", onClick: () => form.current?.querySelector<HTMLElement>("input, select")?.focus() }}
+        />
       )}
       {organisations.data && organisations.data.length > 0 && (
         <ul aria-label="Listed organisations" className="space-y-2">
@@ -169,7 +176,8 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
       {requests.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>
       )}
-      {requests.data && requests.data.length === 0 && <p role="status" className="text-sm text-muted-foreground">Nobody is waiting to join.</p>}
+      {/* Nothing yet (CRM-S2.2), with no action: people ask by signing in, an owner cannot make a request. */}
+      {requests.data && requests.data.length === 0 && <NothingYet layout="line" sentence="People who ask to join from a listed organisation appear here." />}
       {requests.data && requests.data.length > 0 && (
         <ul aria-label="Asked to join" className="space-y-3">
           {requests.data.map((r: JoinRequest) => {
