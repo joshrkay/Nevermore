@@ -3627,6 +3627,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('add_to_note', 'firm_scoped', 'a current member who may see the note''s account appends a dated addition; as not there for another firm''s (4e)'),
   ('set_task_done', 'firm_scoped', 'a current member who may see the task''s account marks it done or open; as not there for another firm''s (4e)'),
   ('account_activity_options', 'firm_scoped', 'the contacts, opportunities and members the log form offers, for someone who may see the account; nothing for anyone else (4e)'),
+  ('activities_guard', 'trigger', 'the note rule (D-200) and the account rule of calls, notes and tasks, held by the table whoever writes: a note''s text only by its writer within a day, additions only appended, an account only by following its contact or opportunity; not executable through the API'),
   ('can_edit_activity', 'service_only', 'whether the caller may change a call, note or task as their own (a note: its writer within a day; else the writer, the person it is for or whoever the level rule gives the account); the reading functions answer it as can_edit; no API role can call it (D-200)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
