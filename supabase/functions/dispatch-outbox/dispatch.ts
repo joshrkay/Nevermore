@@ -156,10 +156,11 @@ function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[
     return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderFirmClosing(n) } };
   }
   if (row.kind === "export_alert") {
-    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    // It holds no link, so it needs only the sender, never the app's address (D-213).
+    if (!config.sender.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseExportAlert(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderExportAlert(n) } };
+    return { ok: true, message: { from: config.sender.from, to: advisorTo, ...renderExportAlert(n) } };
   }
   // Every other kind is about an intake. An event with none can never be built.
   const sessionId = row.session_id;
@@ -404,7 +405,8 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "member_left", "firm_closing");
+  if (config.sender.ok) kinds.push("export_alert");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
   if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
   return kinds;

@@ -228,6 +228,8 @@ export function parseExportAlert(raw: unknown): ExportAlert | null {
   if (typeof rowCount !== "number" || !Number.isInteger(rowCount) || rowCount < 0) return null;
   if (typeof inHour !== "number" || !Number.isInteger(inHour) || inHour < 1) return null;
   if (typeof large !== "boolean") return null;
+  // The database queues it for a large export or a third in the hour (D-207): a payload with neither is none it wrote.
+  if (!large && inHour !== 3) return null;
   return { memberEmail, firmName, table: table as ExportTable, rowCount, exportedAt, large, exportsInHour: inHour };
 }
 
@@ -483,7 +485,6 @@ export function renderFirmClosing(n: FirmClosing): RenderedEmail {
   return { subject, text, html };
 }
 
-const ordinal = (n: number) => (n === 3 ? "third" : `${n}th`);
 
 /**
  * The email to a firm's owners that a member exported a lot, or often: who, which table, how many rows and when, and why they are told. It
@@ -496,7 +497,8 @@ export function renderExportAlert(n: ExportAlert): RenderedEmail {
   const headline = `${n.memberEmail} exported ${rows} of ${what} from ${n.firmName} on ${utcStamp(n.exportedAt)}.`;
   const why = [
     ...(n.large ? ["It holds more than 500 rows."] : []),
-    ...(n.exportsInHour >= 3 ? [`It is their ${ordinal(n.exportsInHour)} export within an hour.`] : []),
+    // The frequency reason is the third exactly: the database queues for frequency only then (D-207, D-214).
+    ...(n.exportsInHour === 3 ? ["It is their third export within an hour."] : []),
   ].join(" ");
   const detail = "Every export is in the firm's record of who did what, which the firm's owners can read in the workspace.";
   const text = [headline, "", why, detail, "", SIGN_OFF].join("\n");
