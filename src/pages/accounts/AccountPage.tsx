@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
 import { AccountHeader, AccountHeaderLoading } from "@/components/accounts/AccountHeader";
@@ -49,12 +49,12 @@ const AccountPage = () => {
 
   if (query.isError && query.data === undefined) {
     // An address whose id is no id at all (the database refuses it, 22P02) is an account that isn't there, not a load that could work next time.
-    if ((query.error as { code?: string }).code === "22P02") return <Frame><NotAvailable noun="account" backTo="/advisor" backLabel="Back to all submissions" /></Frame>;
+    if ((query.error as { code?: string }).code === "22P02") return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
     return <Frame><LoadFailed error={query.error as Error} what="this account" onRetry={retry} /></Frame>;
   }
   const page = query.data;
   // The same answer for an account that is gone, another firm's, or one the person's level does not reach.
-  if (!page) return <Frame><NotAvailable noun="account" backTo="/advisor" backLabel="Back to all submissions" /></Frame>;
+  if (!page) return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
 
   const { account, tabs } = page;
   const count: Record<TabId, number | null> = {
@@ -69,6 +69,11 @@ const AccountPage = () => {
           <p><strong className="font-medium">This account is archived.</strong> Nothing can be added to it.</p>
         </div>
       )}
+      <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
+        <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
+        <span aria-hidden="true"> / </span>
+        <span aria-current="page">{account.name}</span>
+      </nav>
       <AccountHeader account={account} />
       <Tabs value={tab} onValueChange={go}>
         <TabsList aria-label="The account" className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0">

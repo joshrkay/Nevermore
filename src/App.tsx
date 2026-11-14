@@ -29,6 +29,7 @@ const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
 const SecondFactorPage = lazy(() => import("./pages/SecondFactorPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
+const AccountsPage = lazy(() => import("./pages/accounts/AccountsPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
@@ -82,6 +83,7 @@ const AppRoutes = () => (
                 <Route element={<RequireFirm><WorkspaceShell /></RequireFirm>}>
                   <Route path="/advisor" element={<AdvisorDashboardPage />} />
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+                  <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/advisor/outbox" element={<AdvisorOutboxPage />} />
                   <Route path="/advisor/funnel" element={<AdvisorFunnelPage />} />

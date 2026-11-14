@@ -65,10 +65,10 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the workspace menu", () => {
-  it("holds Quotes, Inbox and Reports, then Settings, and none of the sections that aren't built yet", async () => {
+  it("holds Quotes, Inbox, Accounts and Reports, then Settings, and none of the sections that aren't built yet", async () => {
     await renderAt("/advisor");
-    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Reports", "Settings"]);
-    for (const name of ["New quote", "Home", "Leads", "Accounts"]) {
+    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Accounts", "Reports", "Settings"]);
+    for (const name of ["New quote", "Home", "Leads"]) {
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
@@ -79,6 +79,7 @@ describe("the workspace menu", () => {
     const href = (name: string) => within(menu()).getByRole("link", { name }).getAttribute("href");
     expect(href("Quotes")).toBe("/advisor");
     expect(href("Inbox")).toBe("/advisor?mail=new");
+    expect(href("Accounts")).toBe("/accounts");
     expect(href("Reports")).toBe("/advisor/funnel");
     expect(href("Settings")).toBe("/settings");
   });
@@ -91,6 +92,9 @@ describe("the workspace menu", () => {
     // The queue rewrites mail=new to the filter it stands for (CRM-S3.5a); Inbox stays marked, and Quotes is not.
     ["/advisor?filter=has_new_peo_mail:is:true", "Inbox"],
     ["/advisor?view=won&filter=needs_action:is:true", "Quotes"],
+    ["/accounts", "Accounts"],
+    ["/accounts?view=clients", "Accounts"],
+    ["/accounts/abc", "Accounts"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],

@@ -132,7 +132,7 @@ export interface FirmMemberChoice {
 }
 
 /** The caller's time zone, which decides the day a moment falls on for a date filter. */
-const browserTimeZone = (): string => {
+export const browserTimeZone = (): string => {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   } catch {

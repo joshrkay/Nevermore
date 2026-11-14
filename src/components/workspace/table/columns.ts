@@ -153,6 +153,11 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
    */
   listedFilters: (keyof K & string)[];
   columns: ColumnDefinition<Row, keyof K & string, Context>[];
+  /**
+   * The ids of the columns shown until a person chooses their own, in order (the name column is always first). Left out, every column in `columns` is shown.
+   * The others are offered by the Columns menu: the accounts table has more columns than it shows (CRM-A1.1).
+   */
+  usual?: readonly string[];
   rowKey: (row: Row) => string;
   /** The views known now. */
   views: TableView<K>[];
