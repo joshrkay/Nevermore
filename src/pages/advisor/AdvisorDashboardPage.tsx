@@ -10,7 +10,7 @@ import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  FilterRow, inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  ColumnsMenu, FilterRow, inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableColumns, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
@@ -37,6 +37,7 @@ const AdvisorDashboardPage = () => {
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
   const refresh = useRefreshTable(table);
+  const shownColumns = useTableColumns(table);
   // The row's "Add filter": where focus goes when filters are cleared, from the row or from the empty state (D-170).
   const addFilterRef = useRef<HTMLButtonElement>(null);
 
@@ -54,6 +55,7 @@ const AdvisorDashboardPage = () => {
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-6">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Company, contact or File ID" onSearch={(term) => change({ search: term })} />
+        <ColumnsMenu table={table} columns={shownColumns} />
         {/* Not usable until there are rows to ask again for. It stays in the tab order, says why, and ignores the click. */}
         <button
           onClick={loading ? undefined : refresh}
@@ -118,6 +120,8 @@ const AdvisorDashboardPage = () => {
           location={location}
           data={data}
           context={context}
+          columns={shownColumns.columns}
+          columnsLoading={shownColumns.loading}
           caption="Submissions"
           toolbar={toolbar}
           views={views}
