@@ -1,4 +1,4 @@
-# The first send and the first quote move the pipeline stage
+# A send and a quote move the pipeline stage forward
 
 Status: accepted (founder, 2026-11-13, D-10; grilled 2026-11-14, D-230, D-231). Reverses D44's "the pipeline stage stays manual, with a one-click offer of the next step after a first send or a first quote".
 
@@ -8,7 +8,7 @@ D44 kept the pipeline stage manual: an advisor who recorded a send was offered, 
 
 ## Decision
 
-Recording a send while the submission is Ready for market moves it to Sent to PEOs, and recording a quote while it is Sent to PEOs moves it to Quoted, in the same transaction as the record. Nothing else moves by itself: a send or a quote recorded at any other stage changes no stage, and no move goes backward. The move is written to the submission's status history like any other, by the person who recorded the send or the quote, with its cause (`quote_send` or `quote_recorded`) and the quote request that caused it.
+Recording a send while the submission is Ready for market moves it to Sent to PEOs, and recording a quote while it is Sent to PEOs moves it to Quoted, in the same transaction as the record. The rule is the stage the submission is in, not whether the send or quote is the first: D-10 names the first because that is when it usually happens, and a submission put back to Sent to PEOs after a quote moves to Quoted again with the next one. Nothing else moves by itself: a send or a quote recorded at any other stage changes no stage, and no move goes backward. The move is written to the submission's status history like any other, by the person who recorded the send or the quote, with its cause (`quote_send` or `quote_recorded`) and the quote request that caused it.
 
 ## Consequences
 
