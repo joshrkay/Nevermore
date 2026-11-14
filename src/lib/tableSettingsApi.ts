@@ -57,13 +57,19 @@ type DbError = { code?: string; message?: string };
 const NOT_MEMBER = "You aren't a member of this firm.";
 const NOT_AVAILABLE = "That view isn't available.";
 
+/** The database's refusal of a saver who is no longer an owner, for a view that is shared (`rename_saved_view`, `change_saved_view`, `delete_saved_view`). */
+const SHARED_IS_THE_FIRMS = /a shared view is the firm's/i;
+
 /**
  * The database words these refusals plainly itself (a name taken, the ceiling, something that can't be kept); anything else gets `fallback`.
  * `locked` says what a refusal of a firm that can't be changed (closing, or a support session: PT423) means for the call, given the database's reason.
+ * 42501 is told in sentences of ours, never the database's text, because the database raises that code itself too ("permission denied for function ...", for
+ * a caller with no sign-in): its text only tells the two refusals the product raises apart. `firmsView` is said when the view is shared and the person, its
+ * saver, is no longer an owner; `notAllowed` for every other refusal of the right.
  */
-function refusal(error: DbError, words: { notAllowed: string; fallback: string; locked?: (why: string) => string }): Error {
+function refusal(error: DbError, words: { notAllowed: string; firmsView?: string; fallback: string; locked?: (why: string) => string }): Error {
   switch (error.code) {
-    case "42501": return new Error(words.notAllowed);
+    case "42501": return new Error(words.firmsView && SHARED_IS_THE_FIRMS.test(error.message ?? "") ? words.firmsView : words.notAllowed);
     case "PT423": return new Error(words.locked ? words.locked(error.message || "This firm can't be changed") : words.fallback);
     case "PT404": return new Error(NOT_AVAILABLE);
     case "PT409":
@@ -118,7 +124,7 @@ export async function saveView(input: {
 /** Renames the person's own view. */
 export async function renameSavedView(viewId: string, name: string): Promise<void> {
   const { error } = await supabase.rpc("rename_saved_view", { p_view_id: viewId, p_name: name });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can rename it.", fallback: "Couldn't rename the view. Try again.", locked: (why) => `${why}, so the view wasn't renamed.` });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can rename it.", firmsView: "A shared view is the firm's, so only an owner can rename it.", fallback: "Couldn't rename the view. Try again.", locked: (why) => `${why}, so the view wasn't renamed.` });
 }
 
 /** Replaces the person's own view's filters, sort and columns with what the page shows. */
@@ -129,13 +135,13 @@ export async function changeSavedView(viewId: string, view: { filters: ViewFilte
     p_sort: view.sort as unknown as Json,
     p_columns: view.columns,
   });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can change it.", fallback: "Couldn't change the view. Try again.", locked: (why) => `${why}, so the changes weren't saved.` });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can change it.", firmsView: "A shared view is the firm's, so only an owner can change it.", fallback: "Couldn't change the view. Try again.", locked: (why) => `${why}, so the changes weren't saved.` });
 }
 
 /** Deletes the person's own view. Built-in views are not rows and are never deleted. */
 export async function deleteSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("delete_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can delete it.", fallback: "Couldn't delete the view. Try again.", locked: (why) => `${why}, so the view wasn't deleted.` });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can delete it.", firmsView: "A shared view is the firm's, so only an owner can delete it.", fallback: "Couldn't delete the view. Try again.", locked: (why) => `${why}, so the view wasn't deleted.` });
 }
 
 /** Shares one of the owner's own views with the firm. Owners only. */
