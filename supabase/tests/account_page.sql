@@ -282,7 +282,7 @@ END $$;
 -- Acme: an owner; a lead of Sales with an agent in it and a team under it (Sales West, with an agent); a second lead with no team; two agents with no team; and
 -- a person whose membership ended. Zenith: an owner and an agent.
 DO $$
-DECLARE acme uuid; zenith uuid; sales uuid; west uuid;
+DECLARE acme uuid; zenith uuid; sales uuid; west uuid; zsales uuid;
 BEGIN
   INSERT INTO public.firms (name, address, approved_at) VALUES ('Acme Brokers', 'acme-brokers', now()) RETURNING id INTO acme;
   INSERT INTO public.firms (name, address, approved_at, visibility) VALUES ('Zenith Benefits', 'zenith-benefits', now(), 'everyone') RETURNING id INTO zenith;
@@ -290,24 +290,30 @@ BEGIN
   PERFORM pg_temp.new_user('acme_owner'); PERFORM pg_temp.new_user('acme_lead'); PERFORM pg_temp.new_user('acme_lead2'); PERFORM pg_temp.new_user('acme_agent1');
   PERFORM pg_temp.new_user('acme_agent2'); PERFORM pg_temp.new_user('acme_agent3'); PERFORM pg_temp.new_user('acme_west'); PERFORM pg_temp.new_user('acme_removed');
   PERFORM pg_temp.new_user('zenith_owner'); PERFORM pg_temp.new_user('zenith_lead'); PERFORM pg_temp.new_user('zenith_agent'); PERFORM pg_temp.new_user('zenith_agent2');
+  PERFORM pg_temp.new_user('acme_gone'); PERFORM pg_temp.new_user('zenith_gone');
   PERFORM pg_temp.new_user('platform_admin'); PERFORM pg_temp.new_user('nobody');
   INSERT INTO public.firm_teams (firm_id, name) VALUES (acme, 'Sales') RETURNING id INTO sales;
   INSERT INTO public.firm_teams (firm_id, name, parent_team_id) VALUES (acme, 'Sales West', sales) RETURNING id INTO west;
+  INSERT INTO public.firm_teams (firm_id, name) VALUES (zenith, 'Zenith Sales') RETURNING id INTO zsales;
   INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
     (acme, pg_temp.id('acme_owner'), 'owner', NULL), (acme, pg_temp.id('acme_lead'), 'lead', sales), (acme, pg_temp.id('acme_lead2'), 'lead', NULL),
     (acme, pg_temp.id('acme_agent1'), 'agent', NULL), (acme, pg_temp.id('acme_agent2'), 'agent', sales), (acme, pg_temp.id('acme_agent3'), 'agent', NULL),
     (acme, pg_temp.id('acme_west'), 'agent', west),
-    (zenith, pg_temp.id('zenith_owner'), 'owner', NULL), (zenith, pg_temp.id('zenith_lead'), 'lead', NULL), (zenith, pg_temp.id('zenith_agent'), 'agent', NULL),
+    (zenith, pg_temp.id('zenith_owner'), 'owner', NULL), (zenith, pg_temp.id('zenith_lead'), 'lead', zsales), (zenith, pg_temp.id('zenith_agent'), 'agent', NULL),
     (zenith, pg_temp.id('zenith_agent2'), 'agent', NULL);
-  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
-  VALUES (acme, pg_temp.id('acme_removed'), 'agent', now() - interval '3 days', now() - interval '1 day');
+  -- People whose membership ended: one with no team, and one in each lead's own team (a departed teammate is no one's to change but an owner's).
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id, valid_from, valid_until) VALUES
+    (acme, pg_temp.id('acme_removed'), 'agent', NULL, now() - interval '3 days', now() - interval '1 day'),
+    (acme, pg_temp.id('acme_gone'), 'agent', sales, now() - interval '3 days', now() - interval '1 day'),
+    (zenith, pg_temp.id('zenith_gone'), 'agent', zsales, now() - interval '3 days', now() - interval '1 day');
   INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('platform_admin'), 'admin');
 END $$;
 
 -- ---------- the level rule ----------
 -- Break caught: the rule that says who may change a record is read from the firm's visibility setting (so "everyone sees everything" lets an agent change a
 -- colleague's record); an agent changes a colleague's record; a lead reaches an agent outside their team or a record with no owner; a lead does not reach
--- the team under theirs; an owner is refused a record with no owner or one whose owner left; a person who is no member of the firm, a former member, a platform
+-- the team under theirs, or a lead is given a record whose owner has left even from the lead's own team (also in a firm that shows everyone everything); an
+-- owner is refused a record with no owner or one whose owner left; a person who is no member of the firm, a former member, a platform
 -- admin or Nevermore support changes anything; or no API role can run it by hand (it is the write functions' to ask, and the page answers it as can_change).
 -- The rule is asked as each person, with the superuser's rights, as a write function asks it.
 CREATE FUNCTION pg_temp.may_change(who text, firm text, p_owner text) RETURNS boolean LANGUAGE plpgsql AS $$
@@ -339,12 +345,13 @@ BEGIN
     ('acme_lead', 'acme', 'acme_lead', true), ('acme_lead', 'acme', 'acme_agent2', true), ('acme_lead', 'acme', 'acme_west', true),
     ('acme_lead', 'acme', 'acme_agent1', false), ('acme_lead', 'acme', 'acme_agent3', false), ('acme_lead', 'acme', 'acme_lead2', false),
     ('acme_lead', 'acme', 'acme_owner', false), ('acme_lead', 'acme', NULL, false), ('acme_lead', 'acme', 'acme_removed', false),
+    ('acme_lead', 'acme', 'acme_gone', false),
     ('acme_lead2', 'acme', 'acme_lead2', true), ('acme_lead2', 'acme', 'acme_agent2', false), ('acme_lead2', 'acme', 'acme_west', false),
     ('acme_lead2', 'acme', NULL, false),
     -- a firm that shows everyone everything: seeing is not changing
     ('zenith_agent', 'zenith', 'zenith_agent', true), ('zenith_agent', 'zenith', 'zenith_agent2', false), ('zenith_agent', 'zenith', 'zenith_owner', false),
     ('zenith_agent', 'zenith', NULL, false), ('zenith_lead', 'zenith', 'zenith_lead', true), ('zenith_lead', 'zenith', 'zenith_agent', false),
-    ('zenith_lead', 'zenith', NULL, false), ('zenith_owner', 'zenith', 'zenith_agent', true), ('zenith_owner', 'zenith', NULL, true),
+    ('zenith_lead', 'zenith', NULL, false), ('zenith_lead', 'zenith', 'zenith_gone', false), ('zenith_owner', 'zenith', 'zenith_gone', true), ('zenith_owner', 'zenith', 'zenith_agent', true), ('zenith_owner', 'zenith', NULL, true),
     -- nobody else
     ('zenith_owner', 'acme', 'acme_agent1', false), ('zenith_owner', 'acme', NULL, false), ('zenith_agent', 'acme', 'zenith_agent', false),
     ('acme_removed', 'acme', 'acme_removed', false), ('acme_removed', 'acme', NULL, false), ('platform_admin', 'acme', 'acme_agent1', false),
@@ -435,7 +442,7 @@ BEGIN
   i1 := pg_temp.intake_via('i1', 'acme', 'kline-cpa');
   i2 := pg_temp.intake_via('i2', 'acme', NULL);
   PERFORM pg_temp.opportunity('o1', 'a1', 'acme_agent1', 'i1', 'c1');
-  UPDATE public.opportunities SET name = 'January 2027 PEO search', target_start = '2027-01-01' WHERE id = pg_temp.id('o1');
+  UPDATE public.opportunities SET name = 'January 2027 PEO search', target_start = '2027-01-01', created_at = now() - interval '10 days' WHERE id = pg_temp.id('o1');
   PERFORM pg_temp.opportunity('o2', 'a1', 'acme_agent1', 'i2', 'c1');
   UPDATE public.opportunities SET name = '2025 PEO search', target_start = '2025-01-01' WHERE id = pg_temp.id('o2');
   FOR k IN 3..7 LOOP
@@ -591,6 +598,17 @@ BEGIN
   PERFORM pg_temp.opportunity('o8', 'a4', 'acme_agent1', 'i4');
   p := pg_temp.page('acme_agent1', 'acme', 'a4');
   PERFORM pg_temp.is(p #>> '{account,source}' || '|' || COALESCE(p #>> '{account,source_partner}', 'none'), 'added_by_hand|none', 'an account added by hand shows no partner, whatever came onto it later');
+  -- The partner is the one whose link the account's FIRST intake came by: with the first direct and a later one by a partner, there is none.
+  PERFORM pg_temp.account('a5', 'acme', 'acme_agent1', 'First Direct', NULL, 'employer_intake');
+  PERFORM pg_temp.intake_via('i5', 'acme', NULL);
+  PERFORM pg_temp.intake_via('i6', 'acme', 'kline-cpa');
+  PERFORM pg_temp.opportunity('o9', 'a5', 'acme_agent1', 'i5');
+  PERFORM pg_temp.opportunity('o10', 'a5', 'acme_agent1', 'i6');
+  UPDATE public.opportunities SET created_at = now() - interval '2 days' WHERE id = pg_temp.id('o9');
+  UPDATE public.opportunities SET created_at = now() - interval '1 day' WHERE id = pg_temp.id('o10');
+  PERFORM pg_temp.is(COALESCE(pg_temp.page('acme_agent1', 'acme', 'a5') #>> '{account,source_partner}', 'none'), 'none', 'the first intake came direct, so a later one by a partner does not name one');
+  UPDATE public.opportunities SET created_at = now() - interval '3 days' WHERE id = pg_temp.id('o10');
+  PERFORM pg_temp.is(pg_temp.page('acme_agent1', 'acme', 'a5') #>> '{account,source_partner}', 'Kline CPA', 'and when the partner''s intake is the first, it does');
   RAISE NOTICE 'account_page: a new account and a client passed';
 END $$;
 
@@ -976,4 +994,70 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.update_account(%L, 'X', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, 1)$q$, pg_temp.id('a1'), pg_temp.id('acme'))), '42501', 'a signed-out caller may not call it');
   RESET ROLE;
   RAISE NOTICE 'account_page: who may save passed';
+END $$;
+
+-- ---------- the save: two sessions save from the same version ----------
+-- Break caught: the save reads the account without holding its row, so a second save from the same version, waiting behind the first, reads the account as it
+-- was before the first and answers a conflict that names the version it sent, with the old values and nothing in `changed` (the save that went through is
+-- not named). The second session is seen WAITING on the first's row, and after it commits is answered with the first save's version, values and author.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+
+CREATE FUNCTION pg_temp.race_saves(a_who text, a_stmt text, b_who text, b_stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; ra text; rb text;
+BEGIN
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L',
+    jsonb_build_object('sub', pg_temp.id(a_who), 'role', 'authenticated', 'is_anonymous', false, 'email', a_who || '@example.test')::text));
+  SELECT r INTO ra FROM race.dblink('ra', a_stmt) AS t(r text);
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L',
+    jsonb_build_object('sub', pg_temp.id(b_who), 'role', 'authenticated', 'is_anonymous', false, 'email', b_who || '@example.test')::text));
+  PERFORM race.dblink_send_query('rb', b_stmt);
+  WHILE tries < 80 LOOP
+    IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
+    IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('ra', 'COMMIT');
+  SELECT r INTO rb FROM race.dblink_get_result('rb') AS t(r text);
+  BEGIN PERFORM * FROM race.dblink_get_result('rb') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_exec('rb', 'COMMIT');
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  RETURN CASE WHEN waited THEN 'waited' ELSE 'did not wait' END || '|' || ra || '|' || rb;
+END $$;
+
+DO $$
+DECLARE
+  acme uuid := pg_temp.id('acme'); a2 uuid := pg_temp.id('a2'); v integer := pg_temp.ver('a2'); r text; a jsonb; b jsonb; h bigint;
+BEGIN
+  RESET ROLE;
+  SELECT count(*) INTO h FROM public.record_history x WHERE x.table_name = 'accounts' AND x.record_key = a2::text;
+  r := pg_temp.race_saves(
+    'acme_owner', format($q$SELECT public.update_account(%L, 'From owner', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, %s)::text$q$, a2, acme, v),
+    'acme_agent2', format($q$SELECT public.update_account(%L, 'From agent', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, %s)::text$q$, a2, acme, v));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the second save from the same version is seen waiting for the first');
+  a := split_part(r, '|', 2)::jsonb; b := split_part(r, '|', 3)::jsonb;
+  PERFORM pg_temp.is((a ->> 'conflict')::boolean, false, 'the first wins');
+  PERFORM pg_temp.is((b ->> 'conflict')::boolean, true, 'the second is answered with the conflict, not an overwrite');
+  PERFORM pg_temp.is((b ->> 'currentVersion')::integer, v + 1, 'which carries the first''s version, not the one the second sent');
+  PERFORM pg_temp.is(b -> 'current' ->> 'name', 'From owner', 'and the first''s values');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'field', ',' ORDER BY c ->> 'field') FROM jsonb_array_elements(b -> 'changed') c), 'industry,name', 'and says which fields the first save changed (its name, and the industry it cleared)');
+  PERFORM pg_temp.is((SELECT string_agg(DISTINCT c ->> 'who', ',') FROM jsonb_array_elements(b -> 'changed') c), 'acme_owner@example.test', 'and who made them');
+  PERFORM pg_temp.is(pg_temp.ver('a2'), v + 1, 'exactly one save raised the version');
+  PERFORM pg_temp.is((SELECT name FROM public.accounts WHERE id = a2), 'From owner', 'the row holds the first save only');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history x WHERE x.table_name = 'accounts' AND x.record_key = a2::text), h + 2, 'and the history holds the first save''s two changes only');
+  RAISE NOTICE 'account_page: the race passed';
 END $$;

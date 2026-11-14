@@ -219,13 +219,11 @@ BEGIN
     RETURN NULL;
   END IF;
   IF a.source = 'employer_intake' THEN
+    -- The account's first intake is the one on its earliest opportunity that holds one; the partner is whoever's link that intake came by, if any.
     SELECT r.name INTO partner
-    FROM public.opportunities o
-    JOIN public.chamber_sessions s ON s.id = o.intake_id
-    JOIN public.referral_partners r ON r.firm_id = a.firm_id AND r.code = s.referral_code
-    WHERE o.account_id = a.id
-    ORDER BY o.created_at, o.id
-    LIMIT 1;
+    FROM (SELECT o.intake_id FROM public.opportunities o WHERE o.account_id = a.id AND o.intake_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1) first_intake
+    JOIN public.chamber_sessions s ON s.id = first_intake.intake_id
+    LEFT JOIN public.referral_partners r ON r.firm_id = a.firm_id AND r.code = s.referral_code;
   END IF;
   RETURN jsonb_build_object(
     'account', public.crm_account_fields(a) || jsonb_build_object(
@@ -365,7 +363,9 @@ BEGIN
     RAISE EXCEPTION 'This save did not say which version of the account it started from, so it was refused. Reload the page and try again.'
       USING ERRCODE = '22023';
   END IF;
-  -- The row is held from here, so a change of its owner can't slip between the level rule and the save.
+  -- The row is held from here, so that a save waiting behind another save of the same account, from the same version, reads what that save left: its
+  -- version, its values and its author. Without it the second would read the row as it was before the first and answer a conflict naming the version it
+  -- sent, with the old values and nothing in `changed`. (A change of the owner can't slip in either way: the update below asks the version.)
   SELECT * INTO cur FROM public.accounts x WHERE x.id = p_account_id AND x.firm_id = firm FOR NO KEY UPDATE;
   IF cur.id IS NULL OR NOT public.can_see_firm_record(cur.firm_id, cur.owner_id) THEN
     RAISE EXCEPTION 'That account isn''t available' USING ERRCODE = 'PT404';
