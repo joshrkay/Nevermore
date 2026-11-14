@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
@@ -112,12 +113,15 @@ describe("AdvisorActivityPage", () => {
       for (const r of Array.from(container.querySelectorAll("tbody tr"))) expect(r.children).toHaveLength(HEADERS.length);
       expect(container.querySelector("tbody")).toHaveAttribute("aria-hidden", "true");
       expect(within(table).getAllByRole("row")).toHaveLength(1);
-      const statuses = screen.getAllByRole("status");
-      expect(statuses).toHaveLength(1);
-      expect(statuses[0]).toHaveTextContent("Loading the record of who did what");
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toHaveTextContent("Loading the record of who did what");
+      expect(allStatuses()).toHaveLength(2);
+      expectStatusesOutsideBusy();
       // What changes the question stays usable; what needs the answer's own list does not.
       expect(screen.getByLabelText("Kind")).toBeEnabled();
-      expect(screen.getByLabelText("Person")).toBeDisabled();
+      // The Person list says why it can't be used yet, stays in the tab order, and ignores a choice.
+      expect(screen.getByLabelText("Person")).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByLabelText("Person")).toHaveAccessibleDescription("Available when the record has loaded");
       // No pager, and no placeholders are announced.
       expect(screen.queryByRole("button", { name: "Older" })).not.toBeInTheDocument();
       expect(container.querySelector("[class*='animate-pulse']")!.className).toContain("motion-safe:");
@@ -134,6 +138,7 @@ describe("AdvisorActivityPage", () => {
       expect(container.querySelectorAll("tbody")).toHaveLength(1);
       expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Person")).not.toHaveAttribute("aria-disabled");
       expect(screen.getByLabelText("Person")).toBeEnabled();
     });
 
@@ -145,7 +150,7 @@ describe("AdvisorActivityPage", () => {
       fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
       await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledTimes(2));
       expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", after: null });
-      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(spoken()).toHaveLength(1);
     });
 
     // Catches: the slow line coming at nine seconds, or not as a status, or Try again not asking again and not starting the count over.
@@ -153,13 +158,17 @@ describe("AdvisorActivityPage", () => {
       vi.useFakeTimers();
       hang();
       renderPage();
+      const container = allStatuses().find((e) => !e.textContent)!;
+      expect(container).toBeDefined();
       await tick(9_000);
       expect(slowLine()).not.toBeInTheDocument();
       await tick(1_000);
+      expect(slowLine()).toBe(container);
       expect(slowLine()).toHaveAttribute("role", "status");
+      expectStatusesOutsideBusy();
       expect(screen.getByRole("heading", { name: "Who did what" }).parentElement).toContainElement(slowLine());
-      expect(screen.getAllByRole("status")).toHaveLength(2);
-      expect(screen.getByLabelText("Person")).toBeDisabled();
+      expect(spoken()).toHaveLength(2);
+      expect(screen.getByLabelText("Person")).toHaveAttribute("aria-disabled", "true");
       const asked = api.listFirmActivity.mock.calls.length;
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await tick(0);
@@ -198,22 +207,58 @@ describe("AdvisorActivityPage", () => {
     it("leaves no timer behind when the page is closed while waiting", async () => {
       vi.useFakeTimers();
       hang();
-      const started: unknown[] = [];
-      const cleared = new Set<unknown>();
-      const realSet = globalThis.setTimeout;
-      const realClear = globalThis.clearTimeout;
-      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
-        const id = realSet(fn, ms, ...rest);
-        if (ms === 10_000) started.push(id);
-        return id;
-      }) as typeof setTimeout);
-      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+      const timers = watchSlowTimers();
       const { unmount } = renderPage();
       await tick(3_000);
-      expect(started.length).toBeGreaterThan(0);
       unmount();
-      for (const id of started) expect(cleared.has(id)).toBe(true);
-      vi.restoreAllMocks();
+      timers.expectAllCleared();
+      timers.restore();
+    });
+
+    // Catches: the firm's name line appearing above the filters on arrival and pushing the filters and the table down a line.
+    it("holds the line the firm's name will fill while loading at a firm's address, so nothing is pushed down", async () => {
+      api.fetchMyFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" }]);
+      firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+      const arrive = hang();
+      renderPage();
+      const reserved = screen.getByLabelText("Person").closest("div")!.parentElement!.previousElementSibling!;
+      expect(reserved).toHaveAttribute("aria-hidden", "true");
+      expect(reserved.className).toContain("h-5");
+      arrive({ entries: [entry()], hasMore: false });
+      const real = await screen.findByText("Alpha Advisory");
+      expect(real.closest("p")!.nextElementSibling).toBe(screen.getByLabelText("Person").closest("div")!.parentElement);
+      expect(real.closest("p")!.className).toContain("text-sm");
+    });
+
+    // Catches: entries of the filter just left staying at full strength under the new filter's choice while its answer loads (it looks like the answer).
+    it("dims the entries and marks them busy while another filter or page loads, and not for a refresh of the same one", async () => {
+      renderPage();
+      const table = await screen.findByRole("table");
+      await screen.findByText("agent@example.com", { selector: "td" });
+      const box = table.parentElement!;
+      expect(box).not.toHaveAttribute("aria-busy");
+      api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await waitFor(() => expect(box).toHaveAttribute("aria-busy", "true"));
+      expect(box).toHaveClass("opacity-70");
+      expect(screen.getByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(screen.getByRole("table").parentElement).toBe(box);
+    });
+
+    // Catches: another firm's entries and people (their emails) staying on screen under the new firm's name while it loads.
+    it("clears the entries and the Person list at once when another firm is chosen on the bare domain", async () => {
+      api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }, { firm_id: "firm-2", name: "Beta Brokers" }]);
+      renderPage("/advisor/activity?firm=firm-1");
+      await screen.findByText("agent@example.com", { selector: "td" });
+      expect(within(screen.getByLabelText("Person")).getByRole("option", { name: "lead@example.com" })).toBeInTheDocument();
+      api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+      api.listFirmActivityPeople.mockReturnValue(new Promise(() => undefined));
+      fireEvent.change(screen.getByLabelText("Firm"), { target: { value: "firm-2" } });
+      await waitFor(() => expect(screen.queryByText("agent@example.com", { selector: "td" })).not.toBeInTheDocument());
+      expect(screen.queryByRole("option", { name: "lead@example.com" })).not.toBeInTheDocument();
+      expect(document.querySelectorAll("tbody[aria-hidden=true] tr")).toHaveLength(8);
+      // The choice of firm stays, so the person can change their mind.
+      expect(screen.getByLabelText("Firm")).toHaveValue("firm-2");
     });
 
     // Catches (D-49): a changed filter or the next page, with entries on screen, bringing back grey rows or the slow line.

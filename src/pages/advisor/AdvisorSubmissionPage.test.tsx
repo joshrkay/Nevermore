@@ -9,6 +9,7 @@ import { workersCompFilename, type WorkersCompApplication } from "@/data/workers
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
 import { blobBytes, blobText } from "@/test/blob";
+import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { unzip } from "@/test/zip";
 
 const signOut = vi.fn();
@@ -252,9 +253,11 @@ describe("AdvisorSubmissionPage", () => {
       const { container } = renderPage();
       expect(screen.getByRole("link", { name: /All submissions/ })).toHaveAttribute("href", "/advisor");
       expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(PANELS);
-      const statuses = screen.getAllByRole("status");
-      expect(statuses).toHaveLength(1);
-      expect(statuses[0]).toHaveTextContent("Loading submission");
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toHaveTextContent("Loading submission");
+      // Both statuses are on the page already (the slow line's still empty) and neither sits inside an element marked busy.
+      expect(allStatuses()).toHaveLength(2);
+      expectStatusesOutsideBusy();
       expect(container.querySelectorAll(".animate-pulse, [class*='animate-pulse']").length).toBeGreaterThan(10);
       // Nothing from a submission yet, and the grey lines are hidden from a screen reader.
       expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
@@ -279,11 +282,16 @@ describe("AdvisorSubmissionPage", () => {
       vi.useFakeTimers();
       pending();
       renderPage();
+      const container = allStatuses().find((e) => !e.textContent)!;
+      expect(container).toBeDefined();
       await tick(9_000);
       expect(slowLine()).not.toBeInTheDocument();
       await tick(1_000);
+      // The words arrive inside the container that was already there, which is outside any busy element.
+      expect(slowLine()).toBe(container);
       expect(slowLine()).toHaveAttribute("role", "status");
-      expect(screen.getAllByRole("status")).toHaveLength(2);
+      expectStatusesOutsideBusy();
+      expect(spoken()).toHaveLength(2);
       const asked = api.loadSubmission.mock.calls.length;
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await tick(0);
@@ -315,22 +323,38 @@ describe("AdvisorSubmissionPage", () => {
     it("leaves no timer behind when the page is closed while waiting", async () => {
       vi.useFakeTimers();
       pending();
-      const started: unknown[] = [];
-      const cleared = new Set<unknown>();
-      const realSet = globalThis.setTimeout;
-      const realClear = globalThis.clearTimeout;
-      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
-        const id = realSet(fn, ms, ...rest);
-        if (ms === 10_000) started.push(id);
-        return id;
-      }) as typeof setTimeout);
-      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+      const timers = watchSlowTimers();
       const { unmount } = renderPage();
       await tick(3_000);
-      expect(started.length).toBeGreaterThan(0);
       unmount();
-      for (const id of started) expect(cleared.has(id)).toBe(true);
-      vi.restoreAllMocks();
+      timers.expectAllCleared();
+      timers.restore();
+    });
+
+    // Catches: "Try again" on a slow first answer sending a second opening: the database records an opening when it handles the call, and a
+    // second one more than half a minute later is a second "opened a submission" entry in the firm's record.
+    it("asks for the submission again without another opening when the first answer is only slow", async () => {
+      vi.useFakeTimers();
+      pending();
+      renderPage();
+      await tick(10_000);
+      expect(api.loadSubmission).toHaveBeenCalledTimes(1);
+      expect(api.loadSubmission).toHaveBeenLastCalledWith("s1", true);
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(api.loadSubmission).toHaveBeenCalledTimes(2);
+      expect(api.loadSubmission).toHaveBeenLastCalledWith("s1", false);
+    });
+
+    // Catches: a failed opening (which recorded nothing) being retried as a plain read, so the opening is never recorded at all.
+    it("retries as an opening after a failed one", async () => {
+      api.loadSubmission.mockRejectedValueOnce(new Error("Network request failed"));
+      renderPage();
+      expect(await screen.findByRole("alert")).toHaveTextContent("Network request failed");
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(api.loadSubmission).toHaveBeenNthCalledWith(1, "s1", true);
+      expect(api.loadSubmission).toHaveBeenNthCalledWith(2, "s1", true);
     });
 
     // Catches: the line staying beside the error panel when the load fails.

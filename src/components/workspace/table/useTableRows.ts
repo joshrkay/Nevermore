@@ -112,18 +112,12 @@ export function useTableViewCounts<K extends TableFields, Row, Context>(
   return useMemo(() => new Map((query.data ?? []).map((c) => [c.name, c.total])), [query.data]);
 }
 
-/** Asks again for everything the table's page shows (its rows, its tab counts and anything the page keyed under the table's `context` key). */
-export function useRefreshTable<K extends TableFields, Row, Context>(table: TableDefinition<K, Row, Context>) {
-  const client = useQueryClient();
-  const { firmId } = useFirmReady();
-  return () => void client.refetchQueries({ queryKey: tableKey(firmId, table), type: "active" });
-}
-
 /**
- * "Try again" on the slow-load line (CRM-S2.1): drops the request still on its way, which may be stuck, and asks again for everything the
- * table's page shows. Plain `refetch` would hand back the same stuck request while nothing has arrived yet.
+ * Asks again for everything the table's page shows (its rows, its tab counts and anything the page keyed under the table's `context` key).
+ * It drops a request still on its way first: a plain refetch of a query with no answer yet (or a stuck request for the next tab with rows
+ * on screen) hands back the same stuck request, so Refresh and the slow-load line's "Try again" would do nothing.
  */
-export function useRetryTable<K extends TableFields, Row, Context>(table: TableDefinition<K, Row, Context>) {
+export function useRefreshTable<K extends TableFields, Row, Context>(table: TableDefinition<K, Row, Context>) {
   const client = useQueryClient();
   const { firmId } = useFirmReady();
   return () => {

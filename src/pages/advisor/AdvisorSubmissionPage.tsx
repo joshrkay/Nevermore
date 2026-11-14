@@ -43,7 +43,9 @@ const AdvisorSubmissionPage = () => {
   const { id = "" } = useParams();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
-  // The submission whose opening the database has recorded, so a reload after a change is not another opening.
+  // The submission whose opening has been SENT to the database (not only answered), so neither a reload after a change nor "Try again" on
+  // a slow first answer is another opening: the database records an opening when it handles the call, and a second call a half minute
+  // later is a second entry in the firm's record. A failed call clears it, since a failed call recorded nothing.
   const openedRef = useRef<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
@@ -64,13 +66,13 @@ const AdvisorSubmissionPage = () => {
     setLoad((prev) => (prev.kind === "ready" && prev.detail.id === id ? prev : { kind: "loading" }));
     // The first load of a submission on screen is its opening, which the database records; a reload after a change is not.
     const opening = openedRef.current !== id;
+    if (opening) openedRef.current = id;
     loadSubmission(id, opening)
-      .then((detail) => {
-        openedRef.current = id;
-        return detail;
-      })
       .then((detail) => !cancelled && setLoad(detail ? { kind: "ready", detail } : { kind: "not_found" }))
-      .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
+      .catch((error: Error) => {
+        if (opening && openedRef.current === id) openedRef.current = null;
+        if (!cancelled) setLoad({ kind: "error", error });
+      });
     return () => { cancelled = true; };
   }, [id, attempt]);
 
@@ -123,9 +125,9 @@ const AdvisorSubmissionPage = () => {
 const SubmissionLoading = ({ slow, onTryAgain }: { slow: boolean; onTryAgain: () => void }) => (
   <RecordLoading name="submission">
     <div className="mb-6">
-      <div aria-hidden="true" className="flex h-9 items-center"><PlaceholderLine width="name" className="h-6 w-72" /></div>
-      <SlowLoadLine slow={slow} onTryAgain={onTryAgain} />
-      <div aria-hidden="true" className="mt-2 space-y-2">
+      <div aria-hidden="true" aria-busy="true" className="flex h-9 items-center"><PlaceholderLine width="name" className="h-6 w-72" /></div>
+      <SlowLoadLine loading slow={slow} onTryAgain={onTryAgain} />
+      <div aria-hidden="true" aria-busy="true" className="mt-2 space-y-2">
         <PlaceholderLine width="person" className="block" />
         <PlaceholderLine width="name" className="block w-96" />
         <PlaceholderLine width="text" className="block" />

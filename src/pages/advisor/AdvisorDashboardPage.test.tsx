@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { QueueRow } from "@/lib/queueApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
+import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { changeAddress, judgeAddress, OPERATORS, readAddress, sameAddress } from "@/components/workspace/table";
 
 // The submissions queue on the workspace's table frame (story CRM-S3.5a). The database cuts the pages and runs the filters (supabase/tests/
@@ -172,32 +173,44 @@ describe("AdvisorDashboardPage", () => {
       // Hidden from a screen reader, and one polite status says what is loading.
       expect(container.querySelector("tbody")).toHaveAttribute("aria-hidden", "true");
       expect(screen.queryAllByRole("row")).toHaveLength(1);
-      const statuses = screen.getAllByRole("status");
-      expect(statuses).toHaveLength(1);
-      expect(statuses[0]).toHaveTextContent("Loading submissions");
-      expect(statuses[0]).toHaveAttribute("aria-live", "polite");
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toHaveTextContent("Loading submissions");
+      expect(spoken()[0]).toHaveAttribute("aria-live", "polite");
+      // The slow-load line's status is already on the page, empty, ready to be filled; neither is inside a busy element.
+      expect(allStatuses()).toHaveLength(2);
+      expectStatusesOutsideBusy();
       expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
       expect(screen.queryByRole("link", { name: "Next" })).not.toBeInTheDocument();
     });
 
-    // Catches: the table changing shape when the rows arrive (different headers, no body, a second table), so the page jumps; and a
-    // status left behind after the data is there.
-    it("is the same table, with the same headers, once the rows arrive, and the placeholders and status are gone", async () => {
+    // Catches: the table being torn down and rebuilt when the rows arrive (a loading table and a real table as different elements), which loses
+    // a keyboard user's focus on the scroll box and the sideways scroll, so the page jumps; and a status left behind after the data is there.
+    it("is the very same table element when the rows arrive: focus and the scroll position stay, headers and columns stay, the status is gone", async () => {
       let arrive!: (v: unknown) => void;
       listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
       const { container } = renderAt();
+      const box = screen.getByRole("region", { name: /Submissions/ });
+      const table = screen.getByRole("table");
+      const head = container.querySelector("thead")!;
+      box.focus();
+      box.scrollLeft = 40;
+      expect(document.activeElement).toBe(box);
       const before = screen.getAllByRole("columnheader").map((h) => h.textContent);
       await act(async () => arrive([row(), row({ session_id: "s2", company_name: "Beta" })]));
       await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("region", { name: /Submissions/ })).toBe(box);
+      expect(screen.getByRole("table")).toBe(table);
+      expect(container.querySelector("thead")).toBe(head);
+      expect(document.activeElement).toBe(box);
+      expect(box.scrollLeft).toBe(40);
       expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(before);
-      expect(screen.getAllByRole("columnheader")).toHaveLength(HEADERS.length);
-      expect(screen.getAllByRole("table")).toHaveLength(1);
       expect(container.querySelectorAll("tbody")).toHaveLength(1);
       expect(placeholderRows(container)).toHaveLength(2);
-      expect(container.querySelector("[aria-hidden=true] .animate-pulse, tbody[aria-hidden=true]")).toBeNull();
-      expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(box).not.toHaveAttribute("aria-busy");
       // The only status left is the pager's range.
-      expect(screen.getAllByRole("status").map((e) => e.textContent)).toEqual(["1 to 2 of 2 submissions"]);
+      expect(spoken().map((e) => e.textContent)).toEqual(["1 to 2 of 2 submissions"]);
+      expect(allStatuses()).toHaveLength(1);
     });
 
     // Catches: a column's grey bar not following its alignment, so the headcount's bars sit on the left under a right-aligned header.
@@ -230,11 +243,11 @@ describe("AdvisorDashboardPage", () => {
     it("keeps the one status through a re-draw of the page while it waits", async () => {
       listQueue.mockReturnValue(new Promise(() => {}));
       renderAt();
-      const status = screen.getByRole("status");
+      const status = spoken()[0];
       fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
       await waitFor(() => expect(where()).toBe("?filter=waiting_on_peo:is:true"));
-      expect(screen.getAllByRole("status")).toHaveLength(1);
-      expect(screen.getByRole("status")).toBe(status);
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toBe(status);
       expect(status).toHaveTextContent("Loading submissions");
     });
 
@@ -248,7 +261,13 @@ describe("AdvisorDashboardPage", () => {
         expect(screen.getByLabelText("Needs advisor action only")).toBeEnabled();
         expect(screen.getByLabelText("Waiting on a PEO only")).toBeEnabled();
         expect(screen.getByLabelText("Sort")).toBeEnabled();
-        expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+        // Refresh stays in the tab order, says why it can't be used, and ignores the click.
+        const refresh = screen.getByRole("button", { name: "Refresh" });
+        expect(refresh).toHaveAttribute("aria-disabled", "true");
+        expect(refresh).toHaveAccessibleDescription("Available when the list has loaded");
+        const asked = listQueue.mock.calls.length;
+        fireEvent.click(refresh);
+        expect(listQueue.mock.calls.length).toBe(asked);
         expect(screen.queryByRole("navigation", { name: "Pages" })).not.toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "Next" })).not.toBeInTheDocument();
         fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "acme" } });
@@ -257,7 +276,7 @@ describe("AdvisorDashboardPage", () => {
         await waitFor(() => expect(where()).toBe("?view=won&q=acme"));
         // Asked again for the corrected question; still one status.
         expect(listQueue).toHaveBeenLastCalledWith(query({ search: "acme", filters: [pipeline("won")] }));
-        expect(screen.getAllByRole("status")).toHaveLength(1);
+        expect(spoken()).toHaveLength(1);
       });
     });
 
@@ -270,18 +289,24 @@ describe("AdvisorDashboardPage", () => {
         vi.useFakeTimers();
         listQueue.mockReturnValue(new Promise(() => {}));
         renderAt();
+        // The status is on the page from the first draw, empty, so that what fills it is announced.
+        const container = allStatuses().find((e) => !e.textContent)!;
+        expect(container).toBeDefined();
         await tick(9_000);
         expect(slowLine()).not.toBeInTheDocument();
+        expect(container).toBeEmptyDOMElement();
         await tick(1_000);
         const line = slowLine()!;
         expect(line).toBeInTheDocument();
+        expect(line).toBe(container);
         expect(line).toHaveAttribute("role", "status");
+        expectStatusesOutsideBusy();
         expect(within(line).getByRole("button", { name: "Try again" })).toBeInTheDocument();
         // Under the title, in the page's own frame, and now two statuses: the loading words and this line, each once.
         const title = screen.getByRole("heading", { name: "Submissions" });
         expect(title.parentElement).toContainElement(line);
-        expect(screen.getAllByRole("status").map((e) => e.textContent)).toEqual(expect.arrayContaining(["Loading submissions", "This is taking longer than usual. Try again"]));
-        expect(screen.getAllByRole("status")).toHaveLength(2);
+        expect(spoken().map((e) => e.textContent)).toEqual(expect.arrayContaining(["Loading submissions", "This is taking longer than usual. Try again"]));
+        expect(spoken()).toHaveLength(2);
       });
 
       // Catches: "Try again" doing nothing, or not starting the ten seconds over (so it comes straight back).
@@ -336,23 +361,62 @@ describe("AdvisorDashboardPage", () => {
       it("leaves no timer behind when the page is closed while waiting", async () => {
         vi.useFakeTimers();
         listQueue.mockReturnValue(new Promise(() => {}));
-        // The query library keeps its own timers; follow only the ten-second one.
-        const started: unknown[] = [];
-        const cleared = new Set<unknown>();
-        const realSet = globalThis.setTimeout;
-        const realClear = globalThis.clearTimeout;
-        vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
-          const id = realSet(fn, ms, ...rest);
-          if (ms === 10_000) started.push(id);
-          return id;
-        }) as typeof setTimeout);
-        vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+        const timers = watchSlowTimers();
         const { unmount } = renderAt();
         await tick(3_000);
-        expect(started.length).toBeGreaterThan(0);
         unmount();
-        for (const id of started) expect(cleared.has(id)).toBe(true);
-        vi.restoreAllMocks();
+        timers.expectAllCleared();
+        timers.restore();
+      });
+
+      // Catches: "Try again" offered where there is nothing it could ask again (the table is waiting on its definitions, so nothing has been asked).
+      it("says what it is waiting for, with no Try again, while the table's views are not known yet", async () => {
+        vi.useFakeTimers();
+        setTable({ ...QUEUE_TABLE, viewsStatus: "loading" });
+        renderAt("/advisor?view=saved-1");
+        await tick(10_000);
+        expect(screen.getByText(/This is taking longer than usual\. Still waiting for the table's views and fields/)).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+        expect(listQueue).not.toHaveBeenCalled();
+      });
+
+      // Catches: a stuck request for the next tab leaving the person no way out: with rows on screen there is (rightly) no slow line, and Refresh
+      // handed back the same stuck request instead of asking again.
+      it("lets Refresh ask again when a request for the next tab is stuck over rows on screen", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+        listQueue.mockImplementationOnce(async () => pageOf(1, 20));
+        renderAt();
+        await tick(0);
+        expect(screen.getByText("Company 1")).toBeInTheDocument();
+        listQueue.mockReturnValue(new Promise(() => {}));
+        fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
+        await tick(0);
+        const asked = listQueue.mock.calls.length;
+        // The rows of the tab just left stay, dimmed and marked busy, and there is no slow line over them.
+        expect(screen.getByText("Company 1")).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
+        await tick(30_000);
+        expect(slowLine()).not.toBeInTheDocument();
+        listQueue.mockResolvedValue([row({ company_name: "Won Co" })]);
+        fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+        await tick(0);
+        expect(listQueue.mock.calls.length).toBeGreaterThan(asked);
+        expect(screen.getByText("Won Co")).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
+      });
+
+      // Catches: a refresh of the question already on screen dimming the rows (dimming says "these answer another question"; a refresh changes nothing).
+      it("does not dim the rows for a refresh of the same question", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+        listQueue.mockImplementationOnce(async () => pageOf(1, 20));
+        renderAt();
+        await tick(0);
+        listQueue.mockReturnValue(new Promise(() => {}));
+        fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+        await tick(0);
+        expect(listQueue).toHaveBeenCalledTimes(2);
+        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
+        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveClass("opacity-70");
       });
 
       // Catches (D-49): a refresh that finds nothing to show but the rows already there counting as loading: grey rows over the list, or
@@ -1176,7 +1240,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       setTable(loadingViews());
       renderAt("/advisor?view=saved-1");
-      expect(await screen.findByRole("status")).toHaveTextContent("Loading submissions");
+      expect(await screen.findByText("Loading submissions")).toBeInTheDocument();
       await new Promise((r) => setTimeout(r, 80));
       expect(listQueue).not.toHaveBeenCalled();
       expect(countQueueViews).not.toHaveBeenCalled();
@@ -1194,7 +1258,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       setTable(loadingViews());
       renderAt("/advisor?view=gone");
-      await screen.findByRole("status");
+      await screen.findByText("Loading submissions");
       expect(where()).toBe("?view=gone");
       setTable(readyViews());
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
@@ -1212,7 +1276,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
       renderAt("/advisor?filter=a%5C:b:contains:acme&sort=-a:b&filter=needs_action:is:true");
-      await screen.findByRole("status");
+      await screen.findByText("Loading submissions");
       await new Promise((r) => setTimeout(r, 80));
       expect(listQueue).not.toHaveBeenCalled();
       expect(where()).toBe("?filter=a%5C:b:contains:acme&filter=needs_action:is:true&sort=-a:b");
@@ -1227,7 +1291,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
       renderAt("/advisor?filter=nope:contains:acme");
-      await screen.findByRole("status");
+      await screen.findByText("Loading submissions");
       setTable({ ...QUEUE_TABLE, fieldsStatus: "ready" });
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
       expect(listQueue).toHaveBeenLastCalledWith(query());
@@ -1445,7 +1509,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
       renderAt("/advisor?filter=a:contains:acme");
-      await screen.findByRole("status");
+      await screen.findByText("Loading submissions");
       expect(where()).toBe("?filter=a:contains:acme");
       fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
       await waitFor(() => expect(where()).toBe("?filter=waiting_on_peo:is:true"));

@@ -5,7 +5,8 @@ import { cn } from "@/lib/utils";
 // holds it: a loading state says what is loading once, in `LoadingStatus`, and never row by row. The shimmer is Tailwind's `pulse`, and
 // only for people who haven't asked for less motion (`motion-safe`).
 
-const BAR = "block rounded bg-muted motion-safe:animate-pulse";
+// A little stronger than the page's own muted tone, which is about 1.08:1 on a white card and half that again at the pulse's low point.
+const BAR = "block rounded bg-muted-foreground/30 motion-safe:animate-pulse";
 
 /** How wide a grey bar is, by what the cell will hold. */
 export type PlaceholderWidth = "name" | "text" | "person" | "date" | "number" | "badge";
@@ -48,7 +49,7 @@ export function PlaceholderPanel({ heading, children, className }: { heading: st
   return (
     <section className={cn("border border-border rounded-xl p-5", className)}>
       <h2 className="font-display text-lg font-bold mb-3">{heading}</h2>
-      <div aria-hidden="true">{children ?? <PlaceholderLines />}</div>
+      <div aria-hidden="true" aria-busy="true">{children ?? <PlaceholderLines />}</div>
     </section>
   );
 }

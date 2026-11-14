@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { OutboxEvent, OutboxSummaryRow } from "@/lib/advisorApi";
@@ -100,13 +101,42 @@ describe("AdvisorOutboxPage", () => {
       for (const r of Array.from(container.querySelectorAll("tbody tr"))) expect(r.children).toHaveLength(HEADERS.length);
       expect(container.querySelector("tbody")).toHaveAttribute("aria-hidden", "true");
       expect(screen.getAllByRole("row")).toHaveLength(1);
-      const statuses = screen.getAllByRole("status");
-      expect(statuses).toHaveLength(1);
-      expect(statuses[0]).toHaveTextContent("Loading the outbox");
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toHaveTextContent("Loading the outbox");
+      expect(allStatuses()).toHaveLength(2);
+      expectStatusesOutsideBusy();
       expect(container.querySelector("[class*='animate-pulse']")!.className).toContain("motion-safe:");
       // The filters change the question, so they stay usable; Refresh needs rows, so it waits.
       expect(screen.getByRole("button", { name: /^Dead/ })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+      const refresh = screen.getByRole("button", { name: "Refresh" });
+      expect(refresh).toHaveAttribute("aria-disabled", "true");
+      expect(refresh).toHaveAccessibleDescription("Available when the outbox has loaded");
+      const asked = listOutboxEvents.mock.calls.length;
+      fireEvent.click(refresh);
+      expect(listOutboxEvents.mock.calls.length).toBe(asked);
+    });
+
+    // Catches: the table moving down a line when the events arrive (the "N notifications" line was only above the real table), and the
+    // status buttons widening when their counts appear.
+    it("holds the line above the table and the room for the buttons' counts while loading, so nothing moves when the events arrive", async () => {
+      const arrive = hang();
+      const { container } = renderAt();
+      const table = container.querySelector("table")!.closest("div.border")!;
+      const reserved = table.previousElementSibling!;
+      expect(reserved).toHaveAttribute("aria-hidden", "true");
+      expect(reserved.className).toContain("h-4");
+      expect(reserved.className).toContain("mb-2");
+      const group = screen.getByRole("group", { name: "Filter by status" });
+      expect(within(group).getByRole("button", { name: "Dead" })).toBeInTheDocument();
+      const countRoom = (b: HTMLElement) => b.querySelector("span.inline-block")!.className;
+      const loadingRoom = within(group).getAllByRole("button").map(countRoom);
+      await arrive([event(), event({ id: "e2", company_name: "Beta" })]);
+      await screen.findByText("Beta");
+      const line = screen.getByText(/2 notifications, newest first/);
+      expect(line.nextElementSibling).toBe(container.querySelector("table")!.closest("div.border"));
+      expect(line.className).toContain("mb-2");
+      expect(within(screen.getByRole("group", { name: "Filter by status" })).getAllByRole("button").map(countRoom)).toEqual(loadingRoom);
+      expect(screen.getByRole("button", { name: "Dead (2)" })).toBeInTheDocument();
     });
 
     // Catches: a different table replacing the placeholders (other headers, a second table), so the page jumps; a status left behind.
@@ -130,7 +160,7 @@ describe("AdvisorOutboxPage", () => {
       renderAt();
       fireEvent.click(screen.getByRole("button", { name: /^Sent/ }));
       await waitFor(() => expect(listOutboxEvents).toHaveBeenLastCalledWith("sent"));
-      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(spoken()).toHaveLength(1);
     });
 
     // Catches: the slow line at nine seconds, or not a status, or Try again not asking again and not counting afresh.
@@ -138,13 +168,17 @@ describe("AdvisorOutboxPage", () => {
       vi.useFakeTimers();
       hang();
       renderAt();
+      const container = allStatuses().find((e) => !e.textContent)!;
+      expect(container).toBeDefined();
       await tick(9_000);
       expect(slowLine()).not.toBeInTheDocument();
       await tick(1_000);
+      expect(slowLine()).toBe(container);
       expect(slowLine()).toHaveAttribute("role", "status");
+      expectStatusesOutsideBusy();
       expect(screen.getByRole("heading", { name: "Outbox & Notifications" }).parentElement).toContainElement(slowLine());
-      expect(screen.getAllByRole("status")).toHaveLength(2);
-      expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+      expect(spoken()).toHaveLength(2);
+      expect(screen.getByRole("button", { name: "Refresh" })).toHaveAttribute("aria-disabled", "true");
       const asked = listOutboxEvents.mock.calls.length;
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await tick(0);
@@ -184,22 +218,12 @@ describe("AdvisorOutboxPage", () => {
     it("leaves no timer behind when the page is closed while waiting", async () => {
       vi.useFakeTimers();
       hang();
-      const started: unknown[] = [];
-      const cleared = new Set<unknown>();
-      const realSet = globalThis.setTimeout;
-      const realClear = globalThis.clearTimeout;
-      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
-        const id = realSet(fn, ms, ...rest);
-        if (ms === 10_000) started.push(id);
-        return id;
-      }) as typeof setTimeout);
-      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+      const timers = watchSlowTimers();
       const { unmount } = renderAt();
       await tick(3_000);
-      expect(started.length).toBeGreaterThan(0);
       unmount();
-      for (const id of started) expect(cleared.has(id)).toBe(true);
-      vi.restoreAllMocks();
+      timers.expectAllCleared();
+      timers.restore();
     });
 
     // Catches (D-49): Refresh, or a retry's reload, with events on screen blanking them into grey rows or raising the slow line.
@@ -219,16 +243,48 @@ describe("AdvisorOutboxPage", () => {
       expect(screen.queryByText(/Loading the outbox/)).not.toBeInTheDocument();
     });
 
-    // Catches: the rows of one status staying under another status's selected filter while the other's rows load.
-    it("draws grey rows, not the old status's events, when another status is chosen", async () => {
+    // Catches (D-144): a status change blanking the page: the summary empties, the stall alert vanishes and comes back (announced again on every
+    // click) and the page jumps. The events of the status just left stay, dimmed and marked busy, which is what says they are not the new one's.
+    it("keeps the events, the counts and the stall alert, dimmed and busy, while another status loads, and swaps when its events arrive", async () => {
+      ready([event()], summaryOf({ dead: 1, sent: 7 }, "2026-10-29T08:00:00Z"));
+      const { container } = renderAt();
+      await screen.findByText("Acme");
+      const alert = screen.getByRole("alert");
+      const box = container.querySelector("table")!.closest("div.border")!;
+      expect(box).not.toHaveAttribute("aria-busy");
+      let arrive!: (v: unknown) => void;
+      listOutboxEvents.mockReturnValue(new Promise((r) => { arrive = r; }));
+      fireEvent.click(screen.getByRole("button", { name: /^Sent/ }));
+      await waitFor(() => expect(listOutboxEvents).toHaveBeenLastCalledWith("sent"));
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(box).toHaveAttribute("aria-busy", "true");
+      expect(box).toHaveClass("opacity-70");
+      expect(screen.getByRole("button", { name: "Sent (7)" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Dead (1)" })).toBeInTheDocument();
+      // The alert is the same node, not removed and put back (which would announce it again).
+      expect(screen.getByRole("alert")).toBe(alert);
+      expect(allStatuses().filter((e) => e.textContent)).toHaveLength(0);
+      await act(async () => arrive([event({ id: "e9", company_name: "Sent Co", status: "sent", last_error: null })]));
+      expect(await screen.findByText("Sent Co")).toBeInTheDocument();
+      expect(screen.queryByText("Acme")).not.toBeInTheDocument();
+      expect(container.querySelector("table")!.closest("div.border")).toBe(box);
+      expect(box).not.toHaveAttribute("aria-busy");
+      expect(box).not.toHaveClass("opacity-70");
+      expect(screen.getByRole("alert")).toBe(alert);
+    });
+
+    // Catches: a refresh of the same status dimming the events (dimming says "these answer another status").
+    it("does not dim the events for a refresh of the same status", async () => {
       ready([event()]);
       const { container } = renderAt();
       await screen.findByText("Acme");
       listOutboxEvents.mockReturnValue(new Promise(() => {}));
-      fireEvent.click(screen.getByRole("button", { name: /^Sent/ }));
-      await waitFor(() => expect(container.querySelectorAll("tbody[aria-hidden=true] tr")).toHaveLength(8));
-      expect(screen.queryByText("Acme")).not.toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent("Loading the outbox");
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(listOutboxEvents).toHaveBeenCalledTimes(2));
+      const box = container.querySelector("table")!.closest("div.border")!;
+      expect(box).not.toHaveAttribute("aria-busy");
+      expect(box).not.toHaveClass("opacity-70");
     });
   });
 

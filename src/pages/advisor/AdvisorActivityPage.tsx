@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { LoadingStatus, PlaceholderBody, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { LoadingStatus, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
@@ -14,11 +14,12 @@ import {
 } from "@/lib/advisorApi";
 
 type Load =
-  | { kind: "loading" }
+  // `firms` is what the person could choose from before a change of firm cleared the entries: the choice stays on screen while the new firm loads.
+  | { kind: "loading"; firms?: OwnedFirm[] }
   | { kind: "error"; error: Error }
   | { kind: "not_allowed" }
   | { kind: "choose"; firms: OwnedFirm[] }
-  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse> };
+  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse>; asked: string };
 
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -30,6 +31,14 @@ const COLUMNS: (PlaceholderColumn & { header: string })[] = [
   { id: "what", header: "What", width: "text" },
   { id: "record", header: "Record", width: "name" },
 ];
+
+const ActivityHead = () => (
+  <thead className="text-left text-xs text-muted-foreground">
+    <tr>
+      {COLUMNS.map((c) => <th key={c.id} scope="col" className="px-4 py-2 font-medium">{c.header}</th>)}
+    </tr>
+  </thead>
+);
 
 /**
  * Who did it: Nevermore for a person at Nevermore (never their name, email or id, D-33), their email, the system for an
@@ -64,14 +73,6 @@ function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): st
  * address's firm is read and named, and no choice of firm is offered; on the bare domain an owner of one firm needn't name
  * it (?firm=<id> or the choice does) and an owner of several is asked. Anyone else is told it is for owners; the database refuses them anyway.
  */
-const ActivityHead = () => (
-  <thead className="text-left text-xs text-muted-foreground">
-    <tr>
-      {COLUMNS.map((c) => <th key={c.id} scope="col" className="px-4 py-2 font-medium">{c.header}</th>)}
-    </tr>
-  </thead>
-);
-
 const AdvisorActivityPage = () => {
   const [params, setParams] = useSearchParams();
   const { user, session } = useAuth();
@@ -89,10 +90,12 @@ const AdvisorActivityPage = () => {
   const [trail, setTrail] = useState<ActivityCursor[]>([]);
   const page = trail.length + 1;
   const after = trail.length > 0 ? trail[trail.length - 1] : null;
+  // What the page is asking for now, and (in `load.asked`) what the entries on screen answer: they differ while the next page or filter loads.
+  const asking = JSON.stringify([person, kind, after]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
+    setLoad((prev) => (prev.kind === "ready" || prev.kind === "loading" ? prev : { kind: "loading" }));
     (async (): Promise<Load> => {
       const owned = await loadOwnedFirms(userId, sessionKey);
       // The address's firm, as the person's own memberships name it; a firm they aren't in at all is no firm here.
@@ -107,7 +110,7 @@ const AdvisorActivityPage = () => {
       const [people, result, useList] = await Promise.all([
         listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, after }), fetchFirmSupportUses(firmId),
       ]);
-      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore, uses: new Map(useList.map((u) => [u.id, u])) };
+      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore, uses: new Map(useList.map((u) => [u.id, u])), asked: JSON.stringify([person, kind, after]) };
     })()
       .then((next) => !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad((error as Partial<AdvisorApiError>).forbidden ? { kind: "not_allowed" } : { kind: "error", error }));
@@ -117,6 +120,8 @@ const AdvisorActivityPage = () => {
   }, [attempt, person, kind, after, firmParam, address, userId, sessionKey]);
 
   const chooseFirm = (firmId: string) => {
+    // Another firm's entries and people are never "the same list, dimmed": clear them at once, and keep only the choice of firms.
+    setLoad((prev) => ({ kind: "loading", firms: prev.kind === "ready" || prev.kind === "choose" ? prev.firms : prev.kind === "loading" ? prev.firms : undefined }));
     setPerson(null);
     setKind(null);
     setTrail([]);
@@ -134,6 +139,9 @@ const AdvisorActivityPage = () => {
   const retryLoad = useCallback(() => setAttempt((n) => n + 1), []);
   const slowLoad = useSlowLoad(load.kind === "loading", retryLoad);
   const people = load.kind === "ready" ? load.people : null;
+  // The entries on screen answer a different question than the one now asked (the next page, another filter): dimmed and marked busy until the answer arrives.
+  const stale = load.kind === "ready" && load.asked !== asking;
+  const firmChoice = load.kind === "choose" || load.kind === "ready" || load.kind === "loading" ? load.firms : undefined;
 
   return (
     <div className="bg-background">
@@ -144,7 +152,7 @@ const AdvisorActivityPage = () => {
             What your firm's people did, newest first: signing in, opening a submission, downloading a file, recording a send and every change to who
             belongs to the firm. It says what happened and to which record, never what was in it. Only your firm's owners can read it, and no one can change it.
           </p>
-          <SlowLoadLine slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />
+          <SlowLoadLine loading={load.kind === "loading"} slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />
         </div>
 
         {load.kind === "loading" && <LoadingStatus name="the record of who did what" />}
@@ -158,14 +166,16 @@ const AdvisorActivityPage = () => {
             Firm: <span className="font-medium text-foreground">{load.firms.find((f) => f.firm_id === load.firmId)?.name}</span>
           </p>
         )}
+        {/* The line the firm's name will fill is held while it loads, so the filters and the table don't move down when it arrives. */}
+        {address !== null && load.kind === "loading" && <p aria-hidden="true" className="flex h-5 items-center"><PlaceholderLine width="person" /></p>}
 
         {/* The choice of firm is for the bare domain: at a firm's address that address's firm is the one shown, whatever a link names. */}
-        {address === null && (load.kind === "choose" || (load.kind === "ready" && load.firms.length > 1)) && (
+        {address === null && (load.kind === "choose" || ((load.kind === "ready" || load.kind === "loading") && (firmChoice?.length ?? 0) > 1)) && (
           <div>
             <label htmlFor="activity-firm" className="block text-xs text-muted-foreground">Firm</label>
             <select id="activity-firm" value={firmParam ?? ""} onChange={(e) => chooseFirm(e.target.value)} className={select}>
               {load.kind === "choose" && <option value="">Choose a firm</option>}
-              {load.firms.map((f) => <option key={f.firm_id} value={f.firm_id}>{f.name}</option>)}
+              {(firmChoice ?? []).map((f) => <option key={f.firm_id} value={f.firm_id}>{f.name}</option>)}
             </select>
           </div>
         )}
@@ -179,9 +189,11 @@ const AdvisorActivityPage = () => {
                 <select
                   id="activity-person"
                   value={person ?? ""}
-                  disabled={people === null}
-                  onChange={(e) => { setPerson(e.target.value || null); setTrail([]); }}
-                  className={`${select} disabled:opacity-50`}
+                  // Not usable until the people have arrived: it stays in the tab order, says why, and ignores a choice.
+                  aria-disabled={people === null || undefined}
+                  aria-describedby={people === null ? "activity-person-unavailable" : undefined}
+                  onChange={(e) => { if (people !== null) { setPerson(e.target.value || null); setTrail([]); } }}
+                  className={`${select} ${people === null ? "opacity-50" : ""}`}
                 >
                   <option value="">Everyone</option>
                   {(people ?? []).map((p) =>
@@ -189,6 +201,7 @@ const AdvisorActivityPage = () => {
                       ? <option key="nevermore" value={NEVERMORE_FILTER}>Nevermore</option>
                       : <option key={p.user_id} value={p.user_id ?? ""}>{p.email ?? "A former member"}</option>)}
                 </select>
+                {people === null && <span id="activity-person-unavailable" className="sr-only">Available when the record has loaded</span>}
               </div>
               <div>
                 <label htmlFor="activity-kind" className="block text-xs text-muted-foreground">Kind</label>
@@ -204,31 +217,30 @@ const AdvisorActivityPage = () => {
               </div>
             </div>
 
-            {load.kind === "loading" ? (
-              <div className="overflow-x-auto border border-border rounded-xl" aria-busy="true">
-                <table aria-label="Who did what" className="w-full text-sm">
-                  <ActivityHead />
-                  <PlaceholderBody columns={COLUMNS} />
-                </table>
-              </div>
-            ) : load.entries.length === 0 ? (
+            {load.kind === "ready" && load.entries.length === 0 ? (
               <p role="status" className="text-sm text-muted-foreground">
                 {filtered ? "No entries match these filters." : "Nothing has been recorded for your firm yet."}
               </p>
             ) : (
-              <div className="overflow-x-auto border border-border rounded-xl">
+              // One table, whether its rows are grey or real, so it is never rebuilt when they arrive. Real entries that answer another
+              // question than the one now asked are dimmed and marked busy until the answer comes.
+              <div className={`overflow-x-auto border border-border rounded-xl ${stale ? "opacity-70" : ""}`} aria-busy={load.kind === "loading" || stale || undefined}>
                 <table aria-label="Who did what" className="w-full text-sm">
                   <ActivityHead />
-                  <tbody>
-                    {load.entries.map((e) => (
-                      <tr key={e.entry_key} className="border-t border-border align-top">
-                        <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
-                        <td className="px-4 py-2">{who(e.by_nevermore, e.actor_id, e.actor_email)}</td>
-                        <td className="px-4 py-2">{entryLabel(e.kind, e.record_type)}</td>
-                        <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e, load.uses)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
+                  {load.kind === "loading" ? (
+                    <PlaceholderBody columns={COLUMNS} />
+                  ) : (
+                    <tbody>
+                      {load.kind === "ready" && load.entries.map((e) => (
+                        <tr key={e.entry_key} className="border-t border-border align-top">
+                          <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
+                          <td className="px-4 py-2">{who(e.by_nevermore, e.actor_id, e.actor_email)}</td>
+                          <td className="px-4 py-2">{entryLabel(e.kind, e.record_type)}</td>
+                          <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e, load.uses)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  )}
                 </table>
               </div>
             )}

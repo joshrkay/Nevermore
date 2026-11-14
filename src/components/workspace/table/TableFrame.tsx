@@ -3,13 +3,18 @@ import { Link } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
 import { hasHeld, type TableAddress } from "./address";
-import { TABLE_PAGE_SIZE, type TableDefinition } from "./columns";
+import { TABLE_PAGE_SIZE, type ColumnDefinition, type TableDefinition } from "./columns";
 import { DataTable } from "./DataTable";
 import { Pager } from "./Pager";
 import { refusedQueryReason } from "./refusal";
 import { tableIsLoading } from "./tableIsLoading";
 import type { useTableAddress } from "./useTableAddress";
-import type { useTableRows } from "./useTableRows";
+import { useFirmReady, useRefreshTable, type useTableRows } from "./useTableRows";
+import { LoadingStatus } from "../states/LoadingStatus";
+import { PlaceholderBody } from "../states/PlaceholderBody";
+import { placeholderColumns } from "../states/placeholderShapes";
+import { SlowLoadLine } from "../states/SlowLoadLine";
+import { useSlowLoad } from "../states/useSlowLoad";
 
 interface Props<K extends TableFields, Row, Context> {
   table: TableDefinition<K, Row, Context>;
@@ -19,18 +24,20 @@ interface Props<K extends TableFields, Row, Context> {
   context: Context;
   /** Names the table to a screen reader. */
   caption: string;
+  /** The columns to draw: the table's own (the default), or the person's visible and ordered ones (CRM-S3.1a). The grey loading rows use the same list. */
+  columns?: ColumnDefinition<Row, keyof K & string, Context>[];
   /**
    * Above the table: the search box and the controls that change the address. CRM-S3.3a's filter row and CRM-S3.1a's columns menu join
    * here. Given as a function, it is told whether the rows are still on their way (`loading`, CRM-S2.1), so it can disable what needs the
    * rows (Refresh, anything acting on rows); controls that change the QUERY (search, filters, tabs, sort) stay usable, so a person can
-   * correct a slow search. The pager is not in the toolbar: the frame draws none until there are rows.
+   * correct a slow search. The pager is not in the toolbar: the frame draws none until there are rows. `slowLine` is the frame's
+   * slow-load line ("This is taking longer than usual", "Try again"), for the page to place under its title; a toolbar that is not a
+   * function gets it after it.
    */
-  toolbar?: ReactNode | ((state: { loading: boolean }) => ReactNode);
+  toolbar?: ReactNode | ((state: { loading: boolean; slowLine: ReactNode }) => ReactNode);
   /** The tabs over the table: `ViewTabs`, which CRM-S3.4a extends into the saved-views bar. */
   views?: ReactNode;
   // CRM-S3.6 (D-47): the bar that appears when rows are selected goes here. Nothing selects rows yet.
-  /** What shows before the first rows arrive: `TableLoading` (CRM-S2.1), grey rows shaped like the columns. */
-  loading: ReactNode;
   /** What shows when nothing matches (nothing yet, or nothing matches the filters). CRM-S2.2 fills it. */
   empty: (address: TableAddress<K>) => ReactNode;
   /** What shows when the rows can't be loaded, with the way to try again. CRM-S2.3 fills it. A refused query is the frame's own panel, not this. */
@@ -54,7 +61,7 @@ const refusalHeading = (reason: string, plural: string): string =>
  * the address holds something the table can't judge yet, the loading slot shows and nothing is asked. When the database refuses the
  * query (a filter it doesn't take) the frame says why in the database's words and offers the way back, to the table's bare address (a refused sort or page is not undone by keeping it); it never offers "Try again".
  */
-export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, toolbar, views, loading, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, toolbar, views, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
   const { address, hrefFor, bareHref, change, notice } = location;
   const { page } = data;
   const pageSize = page?.pageSize ?? TABLE_PAGE_SIZE;
@@ -65,11 +72,26 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
     if (pastTheEnd) change({ page: lastPage }, { replace: true });
   }, [pastTheEnd, lastPage, change]);
 
+  // Nothing to show yet (CRM-S2.1): the real table is drawn with grey rows in its body, under its real headers, and the same element
+  // takes the rows when they arrive, so focus and the sideways scroll survive. The frame owns the slow-load line for this wait.
   const loadingNow = tableIsLoading(address, data);
+  const placeholdering = !page || pastTheEnd || hasHeld(address);
+  const { ready: firmReady } = useFirmReady();
+  const refresh = useRefreshTable(table);
+  const slowLoad = useSlowLoad(loadingNow, refresh);
+  const slowLine = (
+    <SlowLoadLine
+      loading={loadingNow}
+      slow={slowLoad.slow}
+      onTryAgain={slowLoad.tryAgain}
+      // While the address holds what the table can't judge yet, or the firm isn't known, nothing has been asked, so there is nothing to ask again.
+      waitingFor={!firmReady ? "Still waiting for your firm's details." : hasHeld(address) ? "Still waiting for the table's views and fields." : undefined}
+    />
+  );
   const refusal = data.error ? refusedQueryReason(data.error) : null;
   return (
     <div>
-      {typeof toolbar === "function" ? toolbar({ loading: loadingNow }) : toolbar}
+      {typeof toolbar === "function" ? toolbar({ loading: loadingNow, slowLine }) : <>{toolbar}{slowLine}</>}
       {views}
       {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
       {data.error ? (
@@ -83,15 +105,27 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
         ) : (
           error(data.error, data.retry, address)
         )
-      ) : !page || pastTheEnd || hasHeld(address) ? (
-        loading
-      ) : page.rows.length === 0 ? (
-        empty(address)
-      ) : (
+      ) : placeholdering || page.rows.length > 0 ? (
         <>
-          <DataTable table={table} context={context} rows={page.rows} caption={caption} sort={address.sort ?? table.defaultSort} busy={data.isPlaceholder} onOpenRow={onOpenRow} renderHeader={renderHeader} />
-          <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />
+          {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
+          <DataTable
+            table={table}
+            context={context}
+            columns={columns}
+            rows={placeholdering ? [] : page.rows}
+            placeholder={placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} /> : undefined}
+            caption={caption}
+            sort={address.sort ?? table.defaultSort}
+            // Rows on screen are dimmed and marked busy only while they answer a different question than the address now asks (the next page,
+            // tab or filter, D-144); a refresh of the same question changes nothing on screen.
+            busy={placeholdering || data.isPlaceholder}
+            onOpenRow={onOpenRow}
+            renderHeader={renderHeader}
+          />
+          {!placeholdering && <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />}
         </>
+      ) : (
+        empty(address)
       )}
     </div>
   );
