@@ -111,14 +111,14 @@ export async function saveView(input: {
     p_sort: input.sort as unknown as Json,
     p_columns: input.columns,
   });
-  if (error) throw refusal(error, { notAllowed: NOT_MEMBER, fallback: "Couldn't save the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: NOT_MEMBER, fallback: "Couldn't save the view. Try again.", locked: (why) => `${why}, so the view wasn't saved.` });
   return data as string;
 }
 
 /** Renames the person's own view. */
 export async function renameSavedView(viewId: string, name: string): Promise<void> {
   const { error } = await supabase.rpc("rename_saved_view", { p_view_id: viewId, p_name: name });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can rename it.", fallback: "Couldn't rename the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can rename it.", fallback: "Couldn't rename the view. Try again.", locked: (why) => `${why}, so the view wasn't renamed.` });
 }
 
 /** Replaces the person's own view's filters, sort and columns with what the page shows. */
@@ -129,25 +129,25 @@ export async function changeSavedView(viewId: string, view: { filters: ViewFilte
     p_sort: view.sort as unknown as Json,
     p_columns: view.columns,
   });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can change it.", fallback: "Couldn't change the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can change it.", fallback: "Couldn't change the view. Try again.", locked: (why) => `${why}, so the changes weren't saved.` });
 }
 
 /** Deletes the person's own view. Built-in views are not rows and are never deleted. */
 export async function deleteSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("delete_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can delete it.", fallback: "Couldn't delete the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can delete it.", fallback: "Couldn't delete the view. Try again.", locked: (why) => `${why}, so the view wasn't deleted.` });
 }
 
 /** Shares one of the owner's own views with the firm. Owners only. */
 export async function shareSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("share_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can share a view.", fallback: "Couldn't share the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can share a view.", fallback: "Couldn't share the view. Try again.", locked: (why) => `${why}, so the view wasn't shared.` });
 }
 
 /** Stops sharing a view; it goes back to being its saver's own. Owners only. */
 export async function unshareSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("unshare_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can stop sharing a view.", fallback: "Couldn't stop sharing the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can stop sharing a view.", fallback: "Couldn't stop sharing the view. Try again.", locked: (why) => `${why}, so the view is still shared.` });
 }
 
 const SOURCES: readonly ColumnsSource[] = ["mine_for_view", "view", "mine", "default"];

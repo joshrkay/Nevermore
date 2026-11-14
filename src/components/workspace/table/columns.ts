@@ -62,9 +62,26 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
 }
 
 /**
- * A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too.
- * CRM-S3.4a adds a view's own `sort` here (and makes `queryFor` and `sameAddress` apply it: today a view has no sort of its own, so the
- * address's sort is the only one); CRM-S3.1a added the view's own `columns`.
+ * What a person may do with a saved view, as the database says it for them (`list_saved_views`): whose it is, whether it is shared with the firm,
+ * and whether they may change, share or stop sharing it. A built-in view has none of this (it is written in code, so nothing can change it).
+ */
+export interface SavedViewRights {
+  /** Shared with the firm by an owner. */
+  shared: boolean;
+  /** Saved by the person looking. */
+  mine: boolean;
+  /** May rename, change and delete it. */
+  canChange: boolean;
+  /** May share it with the firm (an owner, on a view of their own not yet shared). */
+  canShare: boolean;
+  /** May stop sharing it (an owner, on any shared view). */
+  canUnshare: boolean;
+}
+
+/**
+ * A view of the table: a name, the filters it stands for, and (CRM-S3.4a) its own sort and columns. A built-in view is written in code and has
+ * only filters; a saved view (`saved`) has all of them. `queryFor` applies the view's sort whenever the address holds none, and the headers
+ * and the line over the table show it.
  *
  * How the table's limit of 20 filters is applied to the total: the view's filters count first and the address's take what is left
  * (`effectiveFilters`). The rows use the current view's room. A tab's count uses the room of ITS view, so a tab whose view has more
@@ -77,11 +94,18 @@ export interface TableView<K extends TableFields> {
   label: string;
   filters: TableFilter<K>[];
   /**
+   * The order the view was saved in (CRM-S3.4a): the table's order while the address holds no sort of its own. Absent, the view has none and the
+   * table's own order applies. A built-in view has none.
+   */
+  sort?: TableSort<keyof K & string>;
+  /**
    * The view's own columns, as column ids in order (CRM-S3.1a): what a person sees on it until they choose their own for it. A built-in view has none (its
    * columns are the person's choice for the table); a saved view (CRM-S3.4a) has the ones it was saved with. `useTableColumns` is given the saved view
    * that is open and reads and keeps the person's own choice on it by its `id`.
    */
   columns?: readonly string[];
+  /** Present on a saved view only: whose it is and what the person may do with it. */
+  saved?: SavedViewRights;
 }
 
 /**

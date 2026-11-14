@@ -69,3 +69,14 @@ export function useTableColumns<K extends TableFields, Row, Context>(table: Tabl
 }
 
 export type TableColumns<K extends TableFields, Row, Context> = ReturnType<typeof useTableColumns<K, Row, Context>>;
+
+/**
+ * What the person's column choice on a saved view is known to be, for the code that makes or changes a saved view (CRM-S3.4a): a view saved with the columns
+ * on screen is read back as exactly those, so opening it draws no grey rows while the database is asked what the person already knows. The key is the hook's own.
+ */
+export function usePrimeColumnChoice(table: { id: string }) {
+  const client = useQueryClient();
+  const key = useTableContextKey(table, "columns");
+  /** The view's own columns are these (the person is looking at them). */
+  return (viewId: string, columns: string[]) => client.setQueryData([...key, viewId], { columns, source: "view" } satisfies ColumnChoice);
+}

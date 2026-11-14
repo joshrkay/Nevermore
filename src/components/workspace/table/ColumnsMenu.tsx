@@ -3,8 +3,8 @@ import { ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { movedIds } from "./columnChoice";
-import type { TableDefinition } from "./columns";
+import { columnsFor, movedIds } from "./columnChoice";
+import type { TableDefinition, TableView } from "./columns";
 import type { TableColumns } from "./useTableColumns";
 
 // The Columns menu (story CRM-S3.1a): a button over the table that opens a small panel where a person shows, hides and reorders the table's columns. Generic:
@@ -23,13 +23,15 @@ import type { TableColumns } from "./useTableColumns";
 interface Props<K extends TableFields, Row, Context> {
   table: TableDefinition<K, Row, Context>;
   columns: TableColumns<K, Row, Context>;
+  /** The saved view that is open, if one is (CRM-S3.4a): the way back goes to its own columns, and says so. A built-in view or none passes nothing. */
+  view?: TableView<K> | null;
 }
 
 const MOVE_BUTTON = "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring";
 
 const shownWords = (count: number) => `${count} ${count === 1 ? "column" : "columns"} shown`;
 
-export function ColumnsMenu<K extends TableFields, Row, Context>({ table, columns }: Props<K, Row, Context>) {
+export function ColumnsMenu<K extends TableFields, Row, Context>({ table, columns, view = null }: Props<K, Row, Context>) {
   const limitId = useId();
   const defaultId = useId();
   const loadingId = useId();
@@ -65,9 +67,12 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, column
     columns.choose([...shown, id]);
     setSaid(`${header} shown as column ${shown.length + 1} of ${shown.length + 1}.`);
   };
+  // On a saved view the way back forgets the person's own choice on it, which lands on the view's own columns (the database's order, D-193), not the table's
+  // defaults: so it says so. Whether there is a choice to forget is the same question either way (D-198).
+  const viewColumns = view?.columns ? columnsFor(table.columns, view.columns) : null;
   const back = () => {
     columns.choose(null);
-    setSaid(`Default columns restored. ${shownWords(table.columns.length)}.`);
+    setSaid(viewColumns ? `This view's columns restored. ${shownWords(viewColumns.length)}.` : `Default columns restored. ${shownWords(table.columns.length)}.`);
   };
   return (
     <>
@@ -152,9 +157,9 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, column
             onClick={columns.hasChoice ? back : undefined}
             className={cn("mt-3 text-sm text-primary underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring", !columns.hasChoice && "opacity-50")}
           >
-            Back to default columns
+            {viewColumns ? "Back to this view's columns" : "Back to default columns"}
           </button>
-          <span id={defaultId} className="sr-only">These are the default columns already.</span>
+          <span id={defaultId} className="sr-only">{viewColumns ? "These are this view's columns already." : "These are the default columns already."}</span>
           <p role="status" aria-live="polite" className="sr-only">{said}</p>
         </PopoverContent>
       </Popover>

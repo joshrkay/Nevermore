@@ -84,6 +84,22 @@ describe("saved views", () => {
     await expect(deleteSavedView("v1")).rejects.toThrow("Only the person who saved this view can delete it.");
   });
 
+  // Catches: a person on a closing firm, or Nevermore support, told "Try again" (or nothing) for a change that can never work, which is how column choices
+  // went before CRM-S3.1a. The database refuses every write with PT423 and its own reason; each call says what was not done.
+  it("says, in the database's own words, that a closing firm or a support session can't change a view, and what was not done", async () => {
+    rpc.mockResolvedValue(refused("PT423", "This firm is closing and can't be changed"));
+    await expect(saveView({ firmId: "f1", table: "submissions", name: "Mine", filters: [], sort: null, columns: null })).rejects.toThrow("This firm is closing and can't be changed, so the view wasn't saved.");
+    await expect(renameSavedView("v1", "x")).rejects.toThrow("This firm is closing and can't be changed, so the view wasn't renamed.");
+    await expect(changeSavedView("v1", { filters: [], sort: null, columns: null })).rejects.toThrow("This firm is closing and can't be changed, so the changes weren't saved.");
+    await expect(deleteSavedView("v1")).rejects.toThrow("This firm is closing and can't be changed, so the view wasn't deleted.");
+    await expect(shareSavedView("v1")).rejects.toThrow("This firm is closing and can't be changed, so the view wasn't shared.");
+    await expect(unshareSavedView("v1")).rejects.toThrow("This firm is closing and can't be changed, so the view is still shared.");
+    rpc.mockResolvedValue(refused("PT423", "Nevermore support can look, not change"));
+    await expect(saveView({ firmId: "f1", table: "submissions", name: "Mine", filters: [], sort: null, columns: null })).rejects.toThrow("Nevermore support can look, not change, so the view wasn't saved.");
+    rpc.mockResolvedValue(refused("PT423", ""));
+    await expect(deleteSavedView("v1")).rejects.toThrow("This firm can't be changed, so the view wasn't deleted.");
+  });
+
   it("shares and unshares, and says only an owner can", async () => {
     rpc.mockResolvedValue(done);
     await shareSavedView("v1");
