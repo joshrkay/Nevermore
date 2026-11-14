@@ -29,11 +29,35 @@ import {
 import { listOutboxEvents, outboxSummary, requeueOutboxEvent, type OutboxEvent, type OutboxSummaryRow } from "@/lib/advisorApi";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
+import { LoadingStatus, PlaceholderBody, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
-  | { kind: "ready"; events: OutboxEvent[]; summary: OutboxSummaryRow[] };
+  | { kind: "ready"; events: OutboxEvent[]; summary: OutboxSummaryRow[]; status: OutboxStatus | null };
+
+// The table's columns, drawn the same for the real rows and the grey ones (story CRM-S2.1), so nothing jumps when the rows arrive.
+const COLUMNS: PlaceholderColumn[] = [
+  { id: "notification", width: "name", lines: 2 },
+  { id: "status", width: "badge" },
+  { id: "attempts", width: "number", align: "right" },
+  { id: "when", width: "date" },
+  { id: "error", width: "text", lines: 2 },
+  { id: "actions", width: "badge", align: "right" },
+];
+
+const OutboxHead = () => (
+  <TableHeader>
+    <TableRow>
+      <TableHead>Notification</TableHead>
+      <TableHead>Status</TableHead>
+      <TableHead className="text-right">Attempts</TableHead>
+      <TableHead>When</TableHead>
+      <TableHead>Last error</TableHead>
+      <TableHead><span className="sr-only">Actions</span></TableHead>
+    </TableRow>
+  </TableHeader>
+);
 
 const STATUS_CLASS: Record<OutboxStatus, string> = {
   dead: "bg-destructive/15 text-destructive",
@@ -75,14 +99,18 @@ const AdvisorOutboxPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading" });
+    // A reload (Refresh, or after a retry) keeps the events on screen while the next arrive (D-49); another status's events are not this
+    // one's, so a changed filter shows the grey rows until its own arrive.
+    setLoad((prev) => (prev.kind === "ready" && prev.status === status ? prev : { kind: "loading" }));
     Promise.all([listOutboxEvents(status), outboxSummary()])
-      .then(([events, summary]) => !cancelled && setLoad({ kind: "ready", events, summary }))
+      .then(([events, summary]) => !cancelled && setLoad({ kind: "ready", events, summary, status }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
   }, [status, attempt]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  // Ten seconds with nothing to show (not a reload over events already shown).
+  const slowLoad = useSlowLoad(load.kind === "loading", reload);
 
   // The filter lives in the URL, so a refresh or a shared link shows the same view.
   const setStatus = (next: OutboxStatus | null) => {
@@ -126,6 +154,7 @@ const AdvisorOutboxPage = () => {
               A failed send is retried automatically (after 1 minute, 5 minutes, 30 minutes and 2 hours); one that gives up is
               <strong className="font-medium"> Dead</strong> and waits here for a retry.
             </p>
+            <SlowLoadLine slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />
           </div>
           <button
             onClick={reload}
@@ -174,9 +203,15 @@ const AdvisorOutboxPage = () => {
         </div>
 
         {load.kind === "loading" && (
-          <div className="flex items-center justify-center py-24 text-muted-foreground" role="status">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading the outbox…
-          </div>
+          <>
+            <LoadingStatus name="the outbox" />
+            <div className="border border-border rounded-xl overflow-hidden" aria-busy="true">
+              <Table>
+                <OutboxHead />
+                <PlaceholderBody columns={COLUMNS} cellClassName="p-4 align-middle" />
+              </Table>
+            </div>
+          </>
         )}
 
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="the outbox" onRetry={reload} />}
@@ -204,16 +239,7 @@ const AdvisorOutboxPage = () => {
             </p>
             <div className="border border-border rounded-xl overflow-hidden">
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Notification</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Attempts</TableHead>
-                    <TableHead>When</TableHead>
-                    <TableHead>Last error</TableHead>
-                    <TableHead><span className="sr-only">Actions</span></TableHead>
-                  </TableRow>
-                </TableHeader>
+                <OutboxHead />
                 <TableBody>
                   {events.map((e) => {
                     const gloss = explainOutboxError(e.last_error);

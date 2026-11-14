@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
 // about which firms they own, so an answer given before the second factor is not handed out after it.
@@ -89,15 +89,148 @@ describe("AdvisorActivityPage", () => {
     expect(screen.queryByText(/You no longer have access to this firm's records/)).not.toBeInTheDocument();
   });
 
-  it("shows that it is loading until the record arrives", async () => {
-    let arrive: (v: unknown) => void = () => undefined;
-    api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
-    renderPage();
-    expect(await screen.findByRole("status")).toHaveTextContent("Loading");
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    arrive({ entries: [entry()], hasMore: false });
-    expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  describe("loading (CRM-S2.1)", () => {
+    const HEADERS = ["When", "Who", "What", "Record"];
+    const slowLine = () => screen.queryByText("This is taking longer than usual.");
+    const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    afterEach(() => { cleanup(); vi.useRealTimers(); });
+    const hang = () => {
+      let arrive: (v: unknown) => void = () => undefined;
+      api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+      return arrive;
+    };
+
+    // Catches: the title, the filters and the column headers waiting behind a spinner; grey rows not drawn under the real headers; the
+    // placeholders being read row by row; the person filter (which needs the list of people) being usable before the list is there.
+    it("shows the title, the filters and the column headers at once, with eight grey rows and one status", async () => {
+      hang();
+      const { container } = renderPage();
+      expect(screen.getByRole("heading", { name: "Who did what" })).toBeInTheDocument();
+      const table = screen.getByRole("table", { name: "Who did what" });
+      expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(HEADERS);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
+      for (const r of Array.from(container.querySelectorAll("tbody tr"))) expect(r.children).toHaveLength(HEADERS.length);
+      expect(container.querySelector("tbody")).toHaveAttribute("aria-hidden", "true");
+      expect(within(table).getAllByRole("row")).toHaveLength(1);
+      const statuses = screen.getAllByRole("status");
+      expect(statuses).toHaveLength(1);
+      expect(statuses[0]).toHaveTextContent("Loading the record of who did what");
+      // What changes the question stays usable; what needs the answer's own list does not.
+      expect(screen.getByLabelText("Kind")).toBeEnabled();
+      expect(screen.getByLabelText("Person")).toBeDisabled();
+      // No pager, and no placeholders are announced.
+      expect(screen.queryByRole("button", { name: "Older" })).not.toBeInTheDocument();
+      expect(container.querySelector("[class*='animate-pulse']")!.className).toContain("motion-safe:");
+    });
+
+    // Catches: a different table (other headers, a second table, no body) replacing the placeholders, so the page jumps.
+    it("is the same table with the same headers once the entries arrive, and the status is gone", async () => {
+      const arrive = hang();
+      const { container } = renderPage();
+      arrive({ entries: [entry(), entry({ entry_key: "k2" })], hasMore: false });
+      await waitFor(() => expect(container.querySelectorAll("tbody tr")).toHaveLength(2));
+      expect(screen.getAllByRole("table")).toHaveLength(1);
+      expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(HEADERS);
+      expect(container.querySelectorAll("tbody")).toHaveLength(1);
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Person")).toBeEnabled();
+    });
+
+    // Catches: the kind filter being locked while the first answer is slow, so a person can't correct it.
+    it("asks again for a corrected filter while the first answer is slow", async () => {
+      hang();
+      renderPage();
+      await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledTimes(1));
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledTimes(2));
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", after: null });
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+    });
+
+    // Catches: the slow line coming at nine seconds, or not as a status, or Try again not asking again and not starting the count over.
+    it("says it is taking longer than usual at ten seconds, not nine, under the title; Try again asks again", async () => {
+      vi.useFakeTimers();
+      hang();
+      renderPage();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toHaveAttribute("role", "status");
+      expect(screen.getByRole("heading", { name: "Who did what" }).parentElement).toContainElement(slowLine());
+      expect(screen.getAllByRole("status")).toHaveLength(2);
+      expect(screen.getByLabelText("Person")).toBeDisabled();
+      const asked = api.listFirmActivity.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(api.listFirmActivity.mock.calls.length).toBe(asked + 1);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toBeInTheDocument();
+    });
+
+    // Catches: the line staying once the entries have arrived or the load has failed.
+    it("takes the line away when the entries arrive, and when the load fails", async () => {
+      vi.useFakeTimers();
+      const arrive = hang();
+      renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => arrive({ entries: [entry()], hasMore: false }));
+      await tick(0);
+      expect(screen.getByRole("table")).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      cleanup();
+      let fail: (e: Error) => void = () => undefined;
+      api.listFirmActivity.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+      renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => fail(new Error("The network dropped")));
+      await tick(0);
+      expect(screen.getByText("The network dropped")).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+    });
+
+    // Catches: a ten-second timer left running after the page is closed.
+    it("leaves no timer behind when the page is closed while waiting", async () => {
+      vi.useFakeTimers();
+      hang();
+      const started: unknown[] = [];
+      const cleared = new Set<unknown>();
+      const realSet = globalThis.setTimeout;
+      const realClear = globalThis.clearTimeout;
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        const id = realSet(fn, ms, ...rest);
+        if (ms === 10_000) started.push(id);
+        return id;
+      }) as typeof setTimeout);
+      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+      const { unmount } = renderPage();
+      await tick(3_000);
+      expect(started.length).toBeGreaterThan(0);
+      unmount();
+      for (const id of started) expect(cleared.has(id)).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    // Catches (D-49): a changed filter or the next page, with entries on screen, bringing back grey rows or the slow line.
+    it("shows no placeholders and no slow line while a filter or the next page loads over entries already shown", async () => {
+      vi.useFakeTimers();
+      api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });
+      const { container } = renderPage();
+      await tick(0);
+      expect(screen.getByRole("table")).toBeInTheDocument();
+      api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      await tick(25_000);
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(screen.getByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
+    });
   });
 
   it("says when nothing has been recorded yet", async () => {

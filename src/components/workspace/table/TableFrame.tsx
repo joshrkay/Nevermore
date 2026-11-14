@@ -7,6 +7,7 @@ import { TABLE_PAGE_SIZE, type TableDefinition } from "./columns";
 import { DataTable } from "./DataTable";
 import { Pager } from "./Pager";
 import { refusedQueryReason } from "./refusal";
+import { tableIsLoading } from "./tableIsLoading";
 import type { useTableAddress } from "./useTableAddress";
 import type { useTableRows } from "./useTableRows";
 
@@ -18,12 +19,17 @@ interface Props<K extends TableFields, Row, Context> {
   context: Context;
   /** Names the table to a screen reader. */
   caption: string;
-  /** Above the table: the search box and the controls that change the address. CRM-S3.3a's filter row and CRM-S3.1a's columns menu join here. */
-  toolbar?: ReactNode;
+  /**
+   * Above the table: the search box and the controls that change the address. CRM-S3.3a's filter row and CRM-S3.1a's columns menu join
+   * here. Given as a function, it is told whether the rows are still on their way (`loading`, CRM-S2.1), so it can disable what needs the
+   * rows (Refresh, anything acting on rows); controls that change the QUERY (search, filters, tabs, sort) stay usable, so a person can
+   * correct a slow search. The pager is not in the toolbar: the frame draws none until there are rows.
+   */
+  toolbar?: ReactNode | ((state: { loading: boolean }) => ReactNode);
   /** The tabs over the table: `ViewTabs`, which CRM-S3.4a extends into the saved-views bar. */
   views?: ReactNode;
   // CRM-S3.6 (D-47): the bar that appears when rows are selected goes here. Nothing selects rows yet.
-  /** What shows before the first rows arrive. CRM-S2.1 fills it with grey rows shaped like the columns. */
+  /** What shows before the first rows arrive: `TableLoading` (CRM-S2.1), grey rows shaped like the columns. */
   loading: ReactNode;
   /** What shows when nothing matches (nothing yet, or nothing matches the filters). CRM-S2.2 fills it. */
   empty: (address: TableAddress<K>) => ReactNode;
@@ -59,10 +65,11 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
     if (pastTheEnd) change({ page: lastPage }, { replace: true });
   }, [pastTheEnd, lastPage, change]);
 
+  const loadingNow = tableIsLoading(address, data);
   const refusal = data.error ? refusedQueryReason(data.error) : null;
   return (
     <div>
-      {toolbar}
+      {typeof toolbar === "function" ? toolbar({ loading: loadingNow }) : toolbar}
       {views}
       {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
       {data.error ? (

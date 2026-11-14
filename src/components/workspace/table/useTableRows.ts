@@ -119,6 +119,19 @@ export function useRefreshTable<K extends TableFields, Row, Context>(table: Tabl
   return () => void client.refetchQueries({ queryKey: tableKey(firmId, table), type: "active" });
 }
 
+/**
+ * "Try again" on the slow-load line (CRM-S2.1): drops the request still on its way, which may be stuck, and asks again for everything the
+ * table's page shows. Plain `refetch` would hand back the same stuck request while nothing has arrived yet.
+ */
+export function useRetryTable<K extends TableFields, Row, Context>(table: TableDefinition<K, Row, Context>) {
+  const client = useQueryClient();
+  const { firmId } = useFirmReady();
+  return () => {
+    const filters = { queryKey: tableKey(firmId, table), type: "active" as const };
+    void client.cancelQueries(filters).then(() => client.refetchQueries(filters));
+  };
+}
+
 /** A key for a page's own query that belongs to the table (so "Refresh" asks it again too). */
 export function useTableContextKey<K extends TableFields, Row, Context>(table: TableDefinition<K, Row, Context>, name: string) {
   const { firmId } = useFirmReady();

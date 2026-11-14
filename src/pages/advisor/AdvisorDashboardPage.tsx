@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Inbox, Loader2, RefreshCw, SearchX } from "lucide-react";
+import { Inbox, RefreshCw, SearchX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { PIPELINE_LABELS, NEEDS_ACTION_LABEL, type PipelineStatus } from "@/data/advisor";
 import { emailProblemsBySession } from "@/data/outbox";
@@ -10,8 +10,9 @@ import {
   fetchQueuePage, NEEDS_ACTION_FILTER, NEW_PEO_MAIL_FILTER, QUEUE_SORTS, useQueueTable, WAITING_FILTER, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  SearchBox, TableFrame, tableIsLoading, useFirmReady, useRefreshTable, useRetryTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
+import { SlowLoadLine, TableLoading, useSlowLoad } from "@/components/workspace/states";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
 // holds the page, sort, filters, view and search; the database cuts the pages (listQueue, D-44). The Inbox link's mail=new is the
@@ -37,6 +38,9 @@ const AdvisorDashboardPage = () => {
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
   const refresh = useRefreshTable(table);
+  // Nothing to show yet (not a refresh, D-49). After ten seconds the line under the title offers "Try again", which drops the stuck request and asks for everything again.
+  const retryLoad = useRetryTable(table);
+  const slowLoad = useSlowLoad(tableIsLoading(address, data), retryLoad);
 
   const hasFilter = (filter: QueueFilter) => address.filters.some((f) => same(f, filter));
   const needsAction = hasFilter(NEEDS_ACTION_FILTER);
@@ -52,13 +56,16 @@ const AdvisorDashboardPage = () => {
   const otherFilters = address.filters.some((f) => !ownControls.some((o) => same(o, f)));
   const sortChoice = QUEUE_SORTS.findIndex((s) => (s.sort?.field ?? null) === (address.sort?.field ?? null) && (s.sort?.direction ?? null) === (address.sort?.direction ?? null));
 
-  const toolbar = (
+  // While the first rows are on their way, what changes the QUERY stays usable (search, the two checkboxes, Sort, the tabs: a person can
+  // correct a slow search); what needs the rows is not (Refresh, and the pager, which the frame draws only once there are rows).
+  const toolbar = ({ loading }: { loading: boolean }) => (
     <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
       <div>
         <h1 className="font-display text-3xl font-bold">Submissions</h1>
         <p className="text-sm text-muted-foreground">
           Certified submissions first, newest first; intakes not yet certified follow, most recently active first.
         </p>
+        <SlowLoadLine slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-6">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Company, contact or File ID" onSearch={(term) => change({ search: term })} />
@@ -82,7 +89,7 @@ const AdvisorDashboardPage = () => {
         </select>
         <button
           onClick={refresh}
-          disabled={data.isRefreshing && !data.page}
+          disabled={loading}
           className="p-2 rounded-md border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
           aria-label="Refresh"
         >
@@ -95,11 +102,7 @@ const AdvisorDashboardPage = () => {
   // Today's status tabs, as the queue's built-in views; CRM-S3.4a turns them into the full saved-views bar.
   const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} />;
 
-  const loading = (
-    <div className="flex items-center justify-center py-24 text-muted-foreground" role="status">
-      <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading submissions…
-    </div>
-  );
+  const loading = <TableLoading table={table} caption="Submissions" sort={address.sort ?? table.defaultSort} />;
 
   const empty = (a: typeof address) => {
     if (a.search) {

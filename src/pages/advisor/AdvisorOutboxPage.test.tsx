@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { OutboxEvent, OutboxSummaryRow } from "@/lib/advisorApi";
 
@@ -75,11 +75,161 @@ beforeEach(() => {
 });
 
 describe("AdvisorOutboxPage", () => {
-  it("shows a loading state", () => {
-    listOutboxEvents.mockReturnValue(new Promise(() => {}));
-    outboxSummary.mockReturnValue(new Promise(() => {}));
-    renderAt();
-    expect(screen.getByRole("status")).toHaveTextContent("Loading the outbox");
+  describe("loading (CRM-S2.1)", () => {
+    const HEADERS = ["Notification", "Status", "Attempts", "When", "Last error", "Actions"];
+    const slowLine = () => screen.queryByText("This is taking longer than usual.");
+    const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    afterEach(() => { cleanup(); vi.useRealTimers(); });
+    const hang = () => {
+      let arrive!: (v: unknown) => void;
+      let arriveSummary!: (v: unknown) => void;
+      listOutboxEvents.mockReturnValue(new Promise((r) => { arrive = r; }));
+      outboxSummary.mockReturnValue(new Promise((r) => { arriveSummary = r; }));
+      return (events: OutboxEvent[]) => act(async () => { arrive(events); arriveSummary(summaryOf({ dead: events.length })); });
+    };
+
+    // Catches: the title, the status filters and the column headers waiting behind a spinner; grey rows not drawn under the real
+    // headers; the placeholders read row by row; Refresh usable with nothing to refresh.
+    it("shows the title, the filters and the column headers at once, with eight grey rows and one status", () => {
+      hang();
+      const { container } = renderAt();
+      expect(screen.getByRole("heading", { name: "Outbox & Notifications" })).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Filter by status" })).toBeInTheDocument();
+      expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(HEADERS);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
+      for (const r of Array.from(container.querySelectorAll("tbody tr"))) expect(r.children).toHaveLength(HEADERS.length);
+      expect(container.querySelector("tbody")).toHaveAttribute("aria-hidden", "true");
+      expect(screen.getAllByRole("row")).toHaveLength(1);
+      const statuses = screen.getAllByRole("status");
+      expect(statuses).toHaveLength(1);
+      expect(statuses[0]).toHaveTextContent("Loading the outbox");
+      expect(container.querySelector("[class*='animate-pulse']")!.className).toContain("motion-safe:");
+      // The filters change the question, so they stay usable; Refresh needs rows, so it waits.
+      expect(screen.getByRole("button", { name: /^Dead/ })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+    });
+
+    // Catches: a different table replacing the placeholders (other headers, a second table), so the page jumps; a status left behind.
+    it("is the same table with the same headers once the events arrive, and the status is gone", async () => {
+      const arrive = hang();
+      const { container } = renderAt();
+      await arrive([event(), event({ id: "e2", company_name: "Beta" })]);
+      await screen.findByText("Beta");
+      expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(HEADERS);
+      expect(container.querySelectorAll("table")).toHaveLength(1);
+      expect(container.querySelectorAll("tbody")).toHaveLength(1);
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(2);
+      expect(screen.queryByText(/Loading the outbox/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    });
+
+    // Catches: the filters being locked while the first answer is slow, so a person can't ask for something else.
+    it("asks again for another status while the first answer is slow, with one status", async () => {
+      hang();
+      renderAt();
+      fireEvent.click(screen.getByRole("button", { name: /^Sent/ }));
+      await waitFor(() => expect(listOutboxEvents).toHaveBeenLastCalledWith("sent"));
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+    });
+
+    // Catches: the slow line at nine seconds, or not a status, or Try again not asking again and not counting afresh.
+    it("says it is taking longer than usual at ten seconds, not nine, under the title; Try again asks again", async () => {
+      vi.useFakeTimers();
+      hang();
+      renderAt();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toHaveAttribute("role", "status");
+      expect(screen.getByRole("heading", { name: "Outbox & Notifications" }).parentElement).toContainElement(slowLine());
+      expect(screen.getAllByRole("status")).toHaveLength(2);
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+      const asked = listOutboxEvents.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(listOutboxEvents.mock.calls.length).toBe(asked + 1);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toBeInTheDocument();
+    });
+
+    // Catches: the line staying once the events are there or the load has failed.
+    it("takes the line away when the events arrive, and when the load fails", async () => {
+      vi.useFakeTimers();
+      const arrive = hang();
+      renderAt();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await arrive([event()]);
+      await tick(0);
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      cleanup();
+      let fail!: (e: Error) => void;
+      listOutboxEvents.mockReturnValue(new Promise((_, r) => { fail = r; }));
+      outboxSummary.mockReturnValue(new Promise(() => {}));
+      renderAt();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => fail(new Error("Network request failed")));
+      await tick(0);
+      expect(screen.getByRole("alert")).toHaveTextContent("Network request failed");
+      expect(slowLine()).not.toBeInTheDocument();
+    });
+
+    // Catches: a ten-second timer left running after the page is closed.
+    it("leaves no timer behind when the page is closed while waiting", async () => {
+      vi.useFakeTimers();
+      hang();
+      const started: unknown[] = [];
+      const cleared = new Set<unknown>();
+      const realSet = globalThis.setTimeout;
+      const realClear = globalThis.clearTimeout;
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        const id = realSet(fn, ms, ...rest);
+        if (ms === 10_000) started.push(id);
+        return id;
+      }) as typeof setTimeout);
+      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+      const { unmount } = renderAt();
+      await tick(3_000);
+      expect(started.length).toBeGreaterThan(0);
+      unmount();
+      for (const id of started) expect(cleared.has(id)).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    // Catches (D-49): Refresh, or a retry's reload, with events on screen blanking them into grey rows or raising the slow line.
+    it("keeps the events on screen, with no placeholders and no slow line, while Refresh asks again", async () => {
+      vi.useFakeTimers();
+      ready([event()]);
+      const { container } = renderAt();
+      await tick(0);
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      listOutboxEvents.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await tick(25_000);
+      expect(listOutboxEvents).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading the outbox/)).not.toBeInTheDocument();
+    });
+
+    // Catches: the rows of one status staying under another status's selected filter while the other's rows load.
+    it("draws grey rows, not the old status's events, when another status is chosen", async () => {
+      ready([event()]);
+      const { container } = renderAt();
+      await screen.findByText("Acme");
+      listOutboxEvents.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("button", { name: /^Sent/ }));
+      await waitFor(() => expect(container.querySelectorAll("tbody[aria-hidden=true] tr")).toHaveLength(8));
+      expect(screen.queryByText("Acme")).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Loading the outbox");
+    });
   });
 
   it("lists each event's kind, company, reference, status, attempts and last error, with a plain reading of it", async () => {
@@ -89,7 +239,9 @@ describe("AdvisorOutboxPage", () => {
               next_attempt_at: "2099-01-01T00:00:00Z", resubmission: true }),
     ], summaryOf({ dead: 1, pending: 1 }));
     renderAt();
-    const rows = (await screen.findAllByRole("row")).slice(1);
+    // The table is on screen from the first draw (its rows are grey until the events arrive, CRM-S2.1), so wait for the events.
+    await screen.findByText("EAA-2026-ACME0001");
+    const rows = screen.getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
 
     const first = within(rows[0]);
@@ -170,7 +322,8 @@ describe("AdvisorOutboxPage", () => {
       summaryOf({ suppressed: 1 }),
     );
     renderAt("/advisor/outbox?status=suppressed");
-    const row = within((await screen.findAllByRole("row"))[1]);
+    await screen.findByText("Suppressed", { selector: "span" });
+    const row = within(screen.getAllByRole("row")[1]);
     expect(row.getByText("Suppressed")).toBeInTheDocument();
     expect(row.getByText(/this address bounced for good earlier, so it is not emailed again/)).toBeInTheDocument();
     expect(row.getByText("suppressed: bounced")).toBeInTheDocument();

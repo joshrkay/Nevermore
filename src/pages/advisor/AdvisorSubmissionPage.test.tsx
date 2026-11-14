@@ -138,6 +138,13 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
 
 // The page tells the menu's counts when it marks a thread read (story CRM-S1.1c), so it needs the app's query client.
 const queryClient = new QueryClient();
+// A panel's heading is on screen from the first draw (CRM-S2.1 draws each panel's frame at once, with grey lines inside), so a test that
+// wants the panel's real content first waits for the submission's own title, which only the loaded page has.
+const panelOf = async (heading: string) => {
+  await screen.findByRole("heading", { level: 1 });
+  return screen.getByRole("heading", { name: heading }).closest("section")!;
+};
+
 const renderPage = () =>
   render(
     <QueryClientProvider client={queryClient}>
@@ -222,6 +229,142 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockImplementation((id: string) => Promise.resolve(detail({ id })));
     fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2", true));
+  });
+
+  describe("loading (CRM-S2.1)", () => {
+    // The panels every submission has. "PEO threads" and "Changed since signing" appear only for a submission that has them, so they
+    // are not drawn in advance.
+    const PANELS = [
+      "What each PEO still needs", "Captured fields", "Transcript",
+      "Needs advisor action", "Ask the prospect", "Quote requests", "Status", "Advisor packet", "Uploaded documents", "Internal notes", "Review audit trail",
+    ];
+    const slowLine = () => screen.queryByText("This is taking longer than usual.");
+    const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    const pending = () => {
+      let arrive!: (v: unknown) => void;
+      api.loadSubmission.mockReturnValue(new Promise((r) => { arrive = r; }));
+      return (v: unknown) => act(async () => arrive(v));
+    };
+
+    // Catches: the back link and the panels' headings waiting behind a spinner, or grey lines read out one by one, or no single status.
+    it("shows the back link and each panel's heading at once, grey lines in the data areas, and one status", () => {
+      pending();
+      const { container } = renderPage();
+      expect(screen.getByRole("link", { name: /All submissions/ })).toHaveAttribute("href", "/advisor");
+      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(PANELS);
+      const statuses = screen.getAllByRole("status");
+      expect(statuses).toHaveLength(1);
+      expect(statuses[0]).toHaveTextContent("Loading submission");
+      expect(container.querySelectorAll(".animate-pulse, [class*='animate-pulse']").length).toBeGreaterThan(10);
+      // Nothing from a submission yet, and the grey lines are hidden from a screen reader.
+      expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+      for (const bar of Array.from(container.querySelectorAll("[class*='animate-pulse']"))) expect(bar.closest("[aria-hidden=true]")).not.toBeNull();
+    });
+
+    // Catches: the real page keeping the placeholders' panels as well (headings twice), or the status staying after the data is there.
+    it("is replaced by the same panels with their content once the submission arrives", async () => {
+      const arrive = pending();
+      const { container } = renderPage();
+      await arrive(detail());
+      expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(expect.arrayContaining(PANELS));
+      expect(screen.getAllByRole("heading", { name: "Status" })).toHaveLength(1);
+      expect(screen.getAllByRole("heading", { name: "Internal notes" })).toHaveLength(1);
+      expect(container.querySelector("[class*='animate-pulse']")).toBeNull();
+      expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
+
+    // Catches: the slow line arriving at nine seconds or not at all, or not as a status, or without a Try again that asks again.
+    it("says it is taking longer than usual at ten seconds, not nine, and Try again asks for the submission again", async () => {
+      vi.useFakeTimers();
+      pending();
+      renderPage();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toHaveAttribute("role", "status");
+      expect(screen.getAllByRole("status")).toHaveLength(2);
+      const asked = api.loadSubmission.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(api.loadSubmission.mock.calls.length).toBe(asked + 1);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toBeInTheDocument();
+    });
+
+    // Catches: the line staying once the submission is there; and a ten-second timer left after the page is closed.
+    it("takes the line away when the submission arrives, and leaves no timer behind when closed", async () => {
+      vi.useFakeTimers();
+      const arrive = pending();
+      const { unmount } = renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await arrive(detail());
+      await tick(0);
+      expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(30_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      unmount();
+    });
+
+    // Catches: a ten-second timer left running after the person leaves while waiting (it would set state on a page that is gone).
+    it("leaves no timer behind when the page is closed while waiting", async () => {
+      vi.useFakeTimers();
+      pending();
+      const started: unknown[] = [];
+      const cleared = new Set<unknown>();
+      const realSet = globalThis.setTimeout;
+      const realClear = globalThis.clearTimeout;
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        const id = realSet(fn, ms, ...rest);
+        if (ms === 10_000) started.push(id);
+        return id;
+      }) as typeof setTimeout);
+      vi.spyOn(globalThis, "clearTimeout").mockImplementation(((id: never) => { cleared.add(id); realClear(id); }) as typeof clearTimeout);
+      const { unmount } = renderPage();
+      await tick(3_000);
+      expect(started.length).toBeGreaterThan(0);
+      unmount();
+      for (const id of started) expect(cleared.has(id)).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    // Catches: the line staying beside the error panel when the load fails.
+    it("takes the line away when the load fails", async () => {
+      vi.useFakeTimers();
+      let fail!: (e: Error) => void;
+      api.loadSubmission.mockReturnValue(new Promise((_, r) => { fail = r; }));
+      renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => fail(new Error("Network request failed")));
+      await tick(0);
+      expect(screen.getByRole("alert")).toHaveTextContent("Network request failed");
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
+
+    // Catches (D-49): a reload after a change (a note added) putting grey lines over the submission a person is reading.
+    it("shows no placeholders and no slow line while a reload after a change is on its way", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      renderPage();
+      await tick(0);
+      expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      api.addNote.mockResolvedValue(undefined);
+      api.loadSubmission.mockReturnValue(new Promise(() => {}));
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "Called the CFO" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+      await tick(0);
+      await tick(25_000);
+      expect(api.loadSubmission).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
   });
 
   it("shows 'Submission not found.' for a submission it can't find, asking for it once as an opening", async () => {
@@ -339,7 +482,7 @@ describe("AdvisorSubmissionPage", () => {
 
   it("changes the status with a note and shows who changed it before", async () => {
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getAllByText(/^Prospect ·/).length).toBe(2);
     fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "information_requested" } });
     expect(within(panel).getByText(/The prospect will see/)).toBeInTheDocument();
@@ -367,7 +510,7 @@ describe("AdvisorSubmissionPage", () => {
       ],
     }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     // The follow-ups start selected, in Review's order (the census with Workforce, before Payroll).
     expect(within(within(panel).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent))
       .toEqual(["Employee census", "Pay frequency"]);
@@ -392,7 +535,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({ reviews: { pay_frequency: review("pay_frequency", "follow_up") } as SubmissionDetail["reviews"] }));
     api.reviewField.mockResolvedValue(undefined);
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     const chosen = () => within(within(panel).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
     fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Two things, please." } });
     fireEvent.change(within(panel).getByLabelText("Add an answer"), { target: { value: "payroll_vendor" } });
@@ -417,7 +560,7 @@ describe("AdvisorSubmissionPage", () => {
   it("says why a request can't be sent, and offers no form", async () => {
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "won" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     expect(within(panel).getByText("A submission at Won can't move to Information requested.")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "Send request" })).not.toBeInTheDocument();
   });
@@ -426,7 +569,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail());
     api.requestInformation.mockRejectedValue(new Error("The prospect's account has no email address to send this to"));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Send the register" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The prospect's account has no email address to send this to"));
@@ -436,7 +579,7 @@ describe("AdvisorSubmissionPage", () => {
   it("offers only Archived for an intake the prospect has never certified", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "draft" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     const select = within(panel).getByLabelText("Change status to");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Draft (current)", "Archived"]);
     expect(within(panel).getByText(/can only be archived\. They see no status until they certify/)).toBeInTheDocument();
@@ -450,7 +593,7 @@ describe("AdvisorSubmissionPage", () => {
   it("offers nothing for an archived intake the prospect never certified", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "archived" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getByLabelText("Change status to")).toBeDisabled();
     expect(within(panel).getByText("No status change is available.")).toBeInTheDocument();
     expect(within(panel).getByText(/returns as Submitted if they certify/)).toBeInTheDocument();
@@ -459,7 +602,7 @@ describe("AdvisorSubmissionPage", () => {
   it("says the prospect sees nothing while their certification is withdrawn", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "under_review" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getAllByRole("option").length).toBe(5);
     expect(within(panel).getByText(/sees no status while their certification is withdrawn; once they certify again/)).toBeInTheDocument();
   });
@@ -468,7 +611,7 @@ describe("AdvisorSubmissionPage", () => {
     const reviewing = { id: 3, session_id: "s1", from_status: "submitted", to_status: "under_review", note: null, changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-10-02T12:00:00Z" };
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "under_review", history: [reviewing, ...detail().history] }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     const select = within(panel).getByLabelText("Change status to");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Under review (current)", "Information requested", "Ready for market", "Lost", "Archived",
@@ -485,7 +628,7 @@ describe("AdvisorSubmissionPage", () => {
   it("reopens an archived file as submitted, never straight to under review", async () => {
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "archived" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     const select = within(panel).getByLabelText("Change status to");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Archived (current)", "Submitted (reopen)"]);
     expect(within(select).queryByRole("option", { name: "Under review" })).not.toBeInTheDocument();
@@ -494,7 +637,7 @@ describe("AdvisorSubmissionPage", () => {
   it("only archives a certification the prospect withdrew at Submitted, until they certify again", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "draft" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(within(panel).getByLabelText("Change status to")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Draft (current)", "Archived"]);
     expect(within(panel).getByText(/withdrew their certification by changing an answer, so it can only be archived/)).toBeInTheDocument();
   });
@@ -502,14 +645,14 @@ describe("AdvisorSubmissionPage", () => {
   it("says certifying again answers an open request for information", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "information_requested" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getByLabelText("Change status to")).toHaveValue("information_requested");
     expect(within(panel).getByText(/once they certify again: “Received\. An advisor will review your submission\.”/)).toBeInTheDocument();
   });
 
   it("marks the submission as needing advisor action, with a note", async () => {
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Needs advisor action" })).closest("section")!;
+    const panel = await panelOf("Needs advisor action");
     expect(within(panel).getByText(/the prospect never sees it/)).toBeInTheDocument();
     fireEvent.change(within(panel).getByLabelText("What needs doing (optional)"), { target: { value: "Call the CFO" } });
     api.setNeedsAction.mockResolvedValue(undefined);
@@ -957,7 +1100,7 @@ describe("AdvisorSubmissionPage", () => {
       detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} } }),
     );
     renderPage();
-    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    const section = await panelOf("Changed since signing");
     const rows = within(section).getAllByRole("row").slice(1).map((r) => r.textContent);
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r?.includes("Bi-weekly"))).toContain("Weekly");
@@ -970,7 +1113,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", data: signedData, extraAnswers: drives(false),
       signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: drives(true) } }));
     renderPage();
-    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    const section = await panelOf("Changed since signing");
     expect(section).toHaveTextContent("An answer to a PEO's own questions changed since signing. Each PEO's supplement keeps the certified answers.");
     expect(section).not.toHaveTextContent("No answer differs from the signed copy.");
   });
@@ -1164,7 +1307,7 @@ describe("AdvisorSubmissionPage", () => {
   it("tells the menu's counts to refresh as soon as the status is changed", async () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "lost" } });
     api.setStatus.mockResolvedValue(undefined);
     expect(invalidate).not.toHaveBeenCalled();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
+import { ArrowLeft, BellRing, MailWarning } from "lucide-react";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
@@ -15,6 +15,7 @@ import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
+import { PlaceholderBlock, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { MENU_COUNTS_KEY } from "@/lib/menuCountsApi";
 import StatusPanel from "@/components/advisor/StatusPanel";
@@ -80,6 +81,9 @@ const AdvisorSubmissionPage = () => {
     document.getElementById(messageAnchor(messageId))?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, []);
 
+  // Ten seconds with nothing to show (not a reload after a change, which keeps the submission on screen, D-49).
+  const slowLoad = useSlowLoad(load.kind === "loading", reload);
+
   const messageIds = useMemo(
     () => new Set(load.kind === "ready" ? load.detail.transcript.map((m) => m.id) : []),
     [load],
@@ -92,11 +96,7 @@ const AdvisorSubmissionPage = () => {
           <ArrowLeft className="w-4 h-4" /> All submissions
         </Link>
 
-        {load.kind === "loading" && (
-          <div className="flex items-center justify-center py-24 text-muted-foreground" role="status">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading submission…
-          </div>
-        )}
+        {load.kind === "loading" && <SubmissionLoading slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />}
 
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="this submission" onRetry={reload} />}
 
@@ -114,6 +114,42 @@ const AdvisorSubmissionPage = () => {
     </div>
   );
 };
+
+/**
+ * What the page shows while the submission is on its way (CRM-S2.1): the title area and each panel's own heading as the real page draws
+ * them, with grey lines where the company, the details and each panel's content will be. Only the panels every submission has are drawn
+ * (the PEO threads and what changed since signing appear when the submission has them). The slow-load line sits under the title.
+ */
+const SubmissionLoading = ({ slow, onTryAgain }: { slow: boolean; onTryAgain: () => void }) => (
+  <RecordLoading name="submission">
+    <div className="mb-6">
+      <div aria-hidden="true" className="flex h-9 items-center"><PlaceholderLine width="name" className="h-6 w-72" /></div>
+      <SlowLoadLine slow={slow} onTryAgain={onTryAgain} />
+      <div aria-hidden="true" className="mt-2 space-y-2">
+        <PlaceholderLine width="person" className="block" />
+        <PlaceholderLine width="name" className="block w-96" />
+        <PlaceholderLine width="text" className="block" />
+      </div>
+    </div>
+    <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+      <div className="space-y-6 min-w-0">
+        <PlaceholderPanel heading="What each PEO still needs"><PlaceholderLines count={3} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Captured fields"><PlaceholderLines count={6} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Transcript"><PlaceholderBlock className="h-40" /></PlaceholderPanel>
+      </div>
+      <div className="space-y-6">
+        <PlaceholderPanel heading="Needs advisor action"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Ask the prospect"><PlaceholderBlock className="h-24" /></PlaceholderPanel>
+        <PlaceholderPanel heading="Quote requests"><PlaceholderLines count={3} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Status"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Advisor packet"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Uploaded documents"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Internal notes"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Review audit trail"><PlaceholderLines count={2} /></PlaceholderPanel>
+      </div>
+    </div>
+  </RecordLoading>
+);
 
 const Detail = ({
   detail,

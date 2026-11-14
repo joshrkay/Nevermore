@@ -9,6 +9,13 @@ interface Props<K extends TableFields, Row, Context> {
   /** What the page hands every cell besides its row. */
   context: Context;
   rows: Row[];
+  /**
+   * The columns to draw, when not all of the definition's (CRM-S3.1a passes the person's visible and ordered ones; the loading state
+   * draws the same list so nothing jumps). Default: every column of the definition.
+   */
+  columns?: ColumnDefinition<Row, keyof K & string, Context>[];
+  /** Drawn in the body instead of the rows: the loading state's grey rows (CRM-S2.1), under these very headers. */
+  placeholder?: ReactNode;
   /** Names the table to a screen reader; not drawn. */
   caption: string;
   /** The sort the address holds, shown read-only in the header (CRM-S3.2a adds clicking). */
@@ -25,7 +32,7 @@ interface Props<K extends TableFields, Row, Context> {
 }
 
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
-export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, caption, sort, busy, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, busy, onOpenRow, renderHeader }: Props<K, Row, Context>) {
   const openRow = (e: MouseEvent, row: Row) => {
     if (!onOpenRow || (e.target as HTMLElement).closest("a, button, input, select, label")) return;
     onOpenRow(row);
@@ -42,7 +49,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
         <caption className="sr-only">{caption}</caption>
         <thead className="border-b border-border bg-muted/60">
           <tr>
-            {table.columns.map((column) => {
+            {columns.map((column) => {
               const sorted = sort && column.sortField === sort.field ? sort.direction : null;
               return (
                 <th
@@ -62,6 +69,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
             })}
           </tr>
         </thead>
+        {placeholder ?? (
         <tbody>
           {rows.map((row) => (
             <tr
@@ -70,7 +78,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
               className={cn("border-b border-border last:border-0 hover:bg-muted/50", onOpenRow && "cursor-pointer")}
             >
               {/* CRM-S3.6 (D-47): the row's checkbox goes here, before the first column. Nothing selects rows yet. */}
-              {table.columns.map((column, i) => {
+              {columns.map((column, i) => {
                 const cell = column.cell(row, context);
                 const className = cn("px-4 py-3 align-top", column.align === "right" && "text-right");
                 // The first column names the row, so a screen reader reading a cell can say whose it is.
@@ -83,6 +91,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
             </tr>
           ))}
         </tbody>
+        )}
       </table>
     </div>
   );

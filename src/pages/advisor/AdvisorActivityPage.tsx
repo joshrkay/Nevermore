@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Loader2 } from "lucide-react";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
+import { LoadingStatus, PlaceholderBody, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
@@ -22,6 +22,14 @@ type Load =
 
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
+
+// The record's columns, drawn the same for the real rows and for the grey ones (story CRM-S2.1), so nothing jumps when the rows arrive.
+const COLUMNS: (PlaceholderColumn & { header: string })[] = [
+  { id: "when", header: "When", width: "date" },
+  { id: "who", header: "Who", width: "person" },
+  { id: "what", header: "What", width: "text" },
+  { id: "record", header: "Record", width: "name" },
+];
 
 /**
  * Who did it: Nevermore for a person at Nevermore (never their name, email or id, D-33), their email, the system for an
@@ -56,6 +64,14 @@ function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): st
  * address's firm is read and named, and no choice of firm is offered; on the bare domain an owner of one firm needn't name
  * it (?firm=<id> or the choice does) and an owner of several is asked. Anyone else is told it is for owners; the database refuses them anyway.
  */
+const ActivityHead = () => (
+  <thead className="text-left text-xs text-muted-foreground">
+    <tr>
+      {COLUMNS.map((c) => <th key={c.id} scope="col" className="px-4 py-2 font-medium">{c.header}</th>)}
+    </tr>
+  </thead>
+);
+
 const AdvisorActivityPage = () => {
   const [params, setParams] = useSearchParams();
   const { user, session } = useAuth();
@@ -114,6 +130,10 @@ const AdvisorActivityPage = () => {
   };
 
   const filtered = person !== null || kind !== null;
+  // Ten seconds with nothing to show (not a changed filter or the next page, which keep the entries on screen, D-49).
+  const retryLoad = useCallback(() => setAttempt((n) => n + 1), []);
+  const slowLoad = useSlowLoad(load.kind === "loading", retryLoad);
+  const people = load.kind === "ready" ? load.people : null;
 
   return (
     <div className="bg-background">
@@ -124,13 +144,10 @@ const AdvisorActivityPage = () => {
             What your firm's people did, newest first: signing in, opening a submission, downloading a file, recording a send and every change to who
             belongs to the firm. It says what happened and to which record, never what was in it. Only your firm's owners can read it, and no one can change it.
           </p>
+          <SlowLoadLine slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />
         </div>
 
-        {load.kind === "loading" && (
-          <div className="flex items-center justify-center py-12 text-muted-foreground" role="status">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading…
-          </div>
-        )}
+        {load.kind === "loading" && <LoadingStatus name="the record of who did what" />}
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="the record of who did what" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_allowed" && (
           <p role="status" className="text-sm">Only a firm's owners can read its record of who did what.</p>
@@ -153,19 +170,21 @@ const AdvisorActivityPage = () => {
           </div>
         )}
 
-        {load.kind === "ready" && (
+        {(load.kind === "loading" || load.kind === "ready") && (
           <>
+            {/* The Kind list is the page's own, so it changes the question at once; the Person list comes with the answer, so it waits for it. */}
             <div className="flex flex-wrap gap-4 items-end">
               <div>
                 <label htmlFor="activity-person" className="block text-xs text-muted-foreground">Person</label>
                 <select
                   id="activity-person"
                   value={person ?? ""}
+                  disabled={people === null}
                   onChange={(e) => { setPerson(e.target.value || null); setTrail([]); }}
-                  className={select}
+                  className={`${select} disabled:opacity-50`}
                 >
                   <option value="">Everyone</option>
-                  {load.people.map((p) =>
+                  {(people ?? []).map((p) =>
                     p.is_nevermore
                       ? <option key="nevermore" value={NEVERMORE_FILTER}>Nevermore</option>
                       : <option key={p.user_id} value={p.user_id ?? ""}>{p.email ?? "A former member"}</option>)}
@@ -185,21 +204,21 @@ const AdvisorActivityPage = () => {
               </div>
             </div>
 
-            {load.entries.length === 0 ? (
+            {load.kind === "loading" ? (
+              <div className="overflow-x-auto border border-border rounded-xl" aria-busy="true">
+                <table aria-label="Who did what" className="w-full text-sm">
+                  <ActivityHead />
+                  <PlaceholderBody columns={COLUMNS} />
+                </table>
+              </div>
+            ) : load.entries.length === 0 ? (
               <p role="status" className="text-sm text-muted-foreground">
                 {filtered ? "No entries match these filters." : "Nothing has been recorded for your firm yet."}
               </p>
             ) : (
               <div className="overflow-x-auto border border-border rounded-xl">
                 <table aria-label="Who did what" className="w-full text-sm">
-                  <thead className="text-left text-xs text-muted-foreground">
-                    <tr>
-                      <th scope="col" className="px-4 py-2 font-medium">When</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Who</th>
-                      <th scope="col" className="px-4 py-2 font-medium">What</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Record</th>
-                    </tr>
-                  </thead>
+                  <ActivityHead />
                   <tbody>
                     {load.entries.map((e) => (
                       <tr key={e.entry_key} className="border-t border-border align-top">
@@ -214,7 +233,7 @@ const AdvisorActivityPage = () => {
               </div>
             )}
 
-            {(page > 1 || load.hasMore) && (
+            {load.kind === "ready" && (page > 1 || load.hasMore) && (
               <div className="flex items-center gap-3">
                 <button type="button" className={button} disabled={page <= 1} onClick={() => setTrail((t) => t.slice(0, -1))}>Newer</button>
                 <span className="text-sm text-muted-foreground">Page {page}</span>

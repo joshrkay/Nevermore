@@ -6,6 +6,7 @@ export { Pager } from "./Pager";
 export { refusedQueryReason } from "./refusal";
 export { SearchBox } from "./SearchBox";
 export { TableFrame } from "./TableFrame";
+export { tableIsLoading } from "./tableIsLoading";
 export { useTableAddress } from "./useTableAddress";
-export { useFirmReady, useRefreshTable, useTableContextKey, useTableRows, useTableViewCounts, TABLE_REFRESH_MS } from "./useTableRows";
+export { useFirmReady, useRefreshTable, useRetryTable, useTableContextKey, useTableRows, useTableViewCounts, TABLE_REFRESH_MS } from "./useTableRows";
 export { ViewTabs } from "./ViewTabs";
