@@ -75,10 +75,10 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
         </div>
       )}
       {tabBody(tab, data, kind, contactId, emptyWords(tab, page))}
-      {data.rows.length < data.count && (
+      {query.hasNextPage && (
         <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">
           <span>Showing {data.rows.length} of {data.count}.</span>
-          <button type="button" onClick={() => void query.fetchNextPage()} disabled={query.isFetching || !query.hasNextPage} className="min-h-9 text-primary underline underline-offset-2 disabled:opacity-50">
+          <button type="button" onClick={() => void query.fetchNextPage()} disabled={query.isFetching} className="min-h-9 text-primary underline underline-offset-2 disabled:opacity-50">
             Show more
           </button>
         </div>

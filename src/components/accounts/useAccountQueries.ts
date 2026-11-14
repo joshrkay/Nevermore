@@ -27,6 +27,15 @@ export function useAccountPageQuery(firmId: string | null, accountId: string) {
 /** How many rows a page of a tab holds. The database allows 100 at most, and the screen asks for fifty (D-44), each page starting after the rows already loaded. */
 export const TAB_STEP = 50;
 
+/** A row's own key: an entry of the history has an `entryKey`, every other row an `id`. */
+const keyOf = (row: unknown) => String((row as { entryKey?: string; id?: string | number }).entryKey ?? (row as { id: string | number }).id);
+
+/** The rows once each, the first time they appear: rows that shifted between two pages' reads are not shown twice. */
+const distinct = <R,>(rows: R[]): R[] => {
+  const seen = new Set<string>();
+  return rows.filter((row) => (seen.has(keyOf(row)) ? false : (seen.add(keyOf(row)), true)));
+};
+
 type TabAnswer<T extends AccountListTab | "files"> = TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile> | null;
 
 /**
@@ -53,6 +62,8 @@ export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: s
     retry: false,
   });
   const pages = query.data?.pages;
-  const data = pages === undefined ? undefined : pages[0] === null ? null : { count: pages[pages.length - 1]!.count, rows: pages.flatMap((page) => page?.rows ?? []) as TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile>["rows"] };
+  // Any page that comes back null says the account is gone, or not theirs any more, since the first page was read: the whole answer is null.
+  const gone = pages !== undefined && pages.some((page) => page === null);
+  const data = pages === undefined ? undefined : gone ? null : { count: (pages[pages.length - 1] as { count: number }).count, rows: distinct(pages.flatMap((page) => page?.rows ?? [])) as TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile>["rows"] };
   return { query, data };
 }

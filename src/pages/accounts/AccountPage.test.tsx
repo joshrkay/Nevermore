@@ -254,6 +254,50 @@ describe("AccountPage: a contact named in the address, when a page fails", () =>
   });
 });
 
+describe("AccountPage: paging when the list moves under the person", () => {
+  // Catches: a later page coming back null (the account removed, or no longer seen, between two pages) crashing the page.
+  it("says the account isn't available when a later page comes back null, and does not crash", async () => {
+    const user = userEvent.setup();
+    const all = Array.from({ length: 80 }, (_, i) => quote(i + 1));
+    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) => (o?.offset === 50 ? null : pageOf(all, o)));
+    renderPage("/accounts/a1?tab=quotes");
+    await user.click(await screen.findByRole("button", { name: "Show more" }, { timeout: 4000 }));
+    expect(await screen.findByText("This account isn't available.")).toBeInTheDocument();
+    expect(screen.queryByText("PEO 1")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Harborview Dental Group" })).toBeInTheDocument();
+  });
+
+  // Catches: a "Showing N of M" with a Show more that is disabled for ever, when a refresh shrank the list and the last page came back empty.
+  it("offers Show more only when there is a next page", async () => {
+    const user = userEvent.setup();
+    const all = Array.from({ length: 80 }, (_, i) => quote(i + 1));
+    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) =>
+      (o?.offset === 50 ? tabOf([], 80) : pageOf(all, o)));
+    renderPage("/accounts/a1?tab=quotes");
+    await user.click(await screen.findByRole("button", { name: "Show more" }, { timeout: 4000 }));
+    await waitFor(() => expect(client.listAccountTab).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Show more" })).toBeNull());
+    expect(screen.queryByText(/^Showing/)).toBeNull();
+    expect(screen.getByText("PEO 50")).toBeInTheDocument();
+  });
+
+  // Catches: the same row twice (and a repeated React key) when rows shifted between two pages.
+  it("shows a row once when the next page repeats one of the first", async () => {
+    const user = userEvent.setup();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const all = Array.from({ length: 80 }, (_, i) => contact(i + 1000));
+    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) =>
+      (o?.offset === 50 ? tabOf([all[49], ...all.slice(50, 79)], 80) : pageOf(all, o)));
+    renderPage("/accounts/a1?tab=contacts");
+    await user.click(await screen.findByRole("button", { name: "Show more" }, { timeout: 4000 }));
+    await screen.findByText("Person1078 Abel");
+    expect(screen.getAllByText("Person1049 Abel")).toHaveLength(1);
+    expect(screen.getAllByRole("row")).toHaveLength(1 + 79);
+    expect(errors.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    errors.mockRestore();
+  });
+});
+
 describe("AccountPage: the tabs' own lists", () => {
   // Catches: "Show more" asking again from the first row with a longer limit, which the database refuses past 100: the rows on screen swapped for a failure.
   it("shows the Quotes tab's rows with their dates, and Show more adds the next fifty after the rows already there, past a hundred rows", async () => {
