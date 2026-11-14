@@ -340,6 +340,36 @@ a table's address (page, sort, filters, view, search) so later stories only fill
 `src/components/workspace/form/`, S4.1. Each story's calls to the database go in a file of its own under
 `src/lib/`, not in `src/lib/advisorApi.ts`.
 
+## Epic 3 decisions (2026-11-14)
+
+These came from grilling Epic 3's stories against the glossary, the ADRs, the PRD and the code at Epic 2's tip
+(`main` at the merge of #139 and #140). The founder took every recommended answer. Nothing for Epic 3 existed:
+no table, page or function for accounts, contacts or opportunities. Four Epic 2 rows were never built (D-205).
+
+| # | Decision |
+|---|---|
+| D-185 | A **quote** on the workspace's screens is a quote request with the quote it returns (glossary). There is no new quotes table: the quote requests are the quotes |
+| D-186 | What a later epic builds stays off Epic 3's screens (D-24, D-38: no dead buttons): leads, renewals (the Renewal column and form field, the Renewals tab, "Renewing in 120 days"), custom fields, the opportunity's page, email (Email buttons, the emails panel), New opportunity, Home's tasks. Each later story adds its part where Epic 3 leaves the place for it |
+| D-187 | Until the opportunity's page (CRM-O1.1, Epic 4), an opportunity's name opens its submission's page when it has one, and is plain text when it has none |
+| D-188 | An opportunity made with a quote is named for its start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known |
+| D-189 | Builders (founder, 2026-11-14, replacing D-53 for Epic 3). Sonnet builds every Epic 3 story at high effort, database stories included. Opus reviews every story. A story that fails its review twice is rebuilt by Opus. The riskiest for Sonnet are named in the build order: CRM-Q1.1, CRM-Q1.3, CRM-S3.7, CRM-S4.3 |
+| D-190 | Branches as D-2 and D-3: `crm/epic-03-accounts-contacts`, cut from `main` (Epic 2 is merged there), and one `crm/03/<story id>` per story with its pull request into the epic branch |
+| D-191 | Epic 3's plan lives on this page, as Epics 1 and 2 did. No issue per story |
+| D-192 | An intake an employer started gets its account, contact and opportunity when it is first certified, in the same step. The database rule is that every submission and every quote request sits on one opportunity. Amends CRM-Q1.1's "every intake belongs to one opportunity" (ADR 0025) |
+| D-193 | The duplicate match is exact, never by likeness (as D-26): the web domain without `www.` and never a free-mail domain; the name in lower case, letters and digits only, a trailing LLC, Inc, Corp, Co, Ltd, LLP, PC or PLLC dropped, with the same state; or a contact's email, ignoring case (glossary) |
+| D-194 | A contact made from a prospect keeps a link to that prospect, so the same person is never added twice to an account; the name, email and phone are copied once and never kept in step |
+| D-195 | Bringing existing submissions in (CRM-Q1.3) gives each submission its own account. Where two match by D-193, the later one is marked "Possible duplicate of" the earlier for an agent to merge or keep. Nothing is merged by guesswork |
+| D-196 | An account made from a submission (CRM-Q1.1 and CRM-Q1.3) has its empty fields filled from the certified answers (legal name, address, states of operation, employees, industry, current provider), never the FEIN, the census or anything about an employee. CRM-Q1.2 (Epic 5) keeps the rest: filling again on each certification, and "The intake says 23" with "Use it" where the account differs. Once copied, a value is the firm's own field: shown, searched and exported as one |
+| D-197 | An account's status in Epic 3 is a prospect account or a client (once one of its submissions is won). A former client arrives with the placement record (CRM-O1.3, CRM-A2.4, Epic 4) |
+| D-198 | Labels are built in Epic 3: the firm's own list of words, made by typing one, any number on an account. With bulk edit (CRM-S3.7) and the Label column and filter on accounts. Renaming or deleting a word from the firm's list comes with Settings (Epic 9) |
+| D-199 | An account's Files tab lists its intakes' files that passed the virus check, each under its own access rule. Uploading a file to an account is a new story, CRM-A2.5, for later |
+| D-200 | A note can be edited only by the person who wrote it, for 24 hours; after that it is fixed and "Add to note" appends a dated addition. Calls and tasks stay editable. Anyone who may see a task's record can mark it done |
+| D-201 | An account's last activity is the newest of: its creation; a call, note or task logged or completed on it, its contacts or its opportunities; a quote request's status changing; and, from Epic 6, an email. Editing a field is not activity |
+| D-202 | Undoing a bulk change (ten minutes, or until the person leaves the page) puts back every row nobody has changed since, and skips and names the rest, as the dialog names skipped rows before the change |
+| D-203 | A merge is made by anyone allowed to change both records. The removed record is deleted; its history moves to the kept record marked as from the merged record; its address leads to the kept record. There is no unmerge |
+| D-204 | "Deleted by its owner" (CRM-A1.1) means the account's record owner or a firm owner. Its contacts, calls, notes and tasks are deleted with it |
+| D-205 | Epic 2's rows 16 to 19 were never built and come first in Epic 3, on the pages Epic 2 named: CRM-S3.1a (the columns menu, the first column kept in view), CRM-S3.4a (saved views on screen), CRM-S3.8b (export in the database, D-48, refusing a support session, D-128) and CRM-S3.8a (the Export button and the CSV). The database half of columns and saved views exists (`table_settings`); no screen uses it |
+
 ## Rules for building one story
 
 1. **Branch.** `crm/<epic number>/<story id in lower case>` (for example `crm/01/crm-p1.2`), cut from the epic's

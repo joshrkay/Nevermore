@@ -165,7 +165,7 @@ _Avoid_: follow-up, RFI, query
 
 **Quote request**:
 One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product: the product sends nothing to a PEO yet, and an advisor sends from their own mail. Counsel cleared the product sending (QP-D1) on 2026-11-11; it starts when Epic M's sending is built and counsel's wording is in. Each quote request has its own reply address and one **thread**. The prospect never sees it.
-_Avoid_: quote (a quote is what a PEO returns on a quote request), submission, RFP, deal
+_Avoid_: quote (a quote is what a PEO returns on a quote request; only the workspace's screens call the pair a quote, see **Quote** (on the workspace's screens)), submission, RFP, deal (an opportunity is the CRM's word)
 
 **Thread**:
 Every email sent and received about one quote request, read newest first on its timeline with its sends, status changes and quote request notes; corrections to the quote request's fields stay in its change log. A submission's threads can also be read together on one combined timeline, each entry naming its PEO. A message the product sends for a broker through their **connected mailbox** lists the reply address first in Reply-To and the broker's own address second, so a plain Reply reaches the thread and their inbox. Mail reaches a thread through the quote request's reply address: the File ID, the PEO's short name and an unguessable part, on a subdomain of nevermorepeo.com. The address keeps receiving after the quote request closes, until the intake is deleted or an advisor revokes and reissues it. A message to it joins the thread whoever sent it, with a sender not seen before marked as new, an automatic reply marked as one, and an advisor's own copied-in email marked as sent by hand. Mail a person at the PEO wrote sets a "new PEO mail" mark, one for the whole team, until any advisor opens the thread. Messages are shown as plain text, and an attachment that fails its malware scan is blocked while the rest of the message stays readable. An arriving message never changes the quote request status. Kept and deleted with the intake; the prospect never sees it.
@@ -481,6 +481,51 @@ _Avoid_: layout, column settings, preferences (on its own)
 
 **Entry kind** (code: `firm_activity.kind`):
 What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. Removing a member writes `member_removed`, suspending one `member_suspended` and lifting it `member_restored`, each with who did it and to whom (and instead of, not as well as, the `member_ended` or `owner_added` that ending and beginning a membership would write). A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
+
+### The broker's CRM
+
+**Account**:
+A business the firm quotes for: one of the firm's records, with a **Record owner**. Made by an agent, by bringing an existing submission in (CRM-Q1.3), or when an intake an employer started is first certified (ADR 0025); later also by New quote, by converting a lead and by an import. When it is made from a submission, its empty fields are filled from the certified answers (legal name, address, states of operation, employees, industry, current provider), never the FEIN, the census or anything about an employee (ADR 0006); once copied they are the firm's own fields. It is archived, never deleted, while it holds an intake; one with no intake, quote or email can be deleted by its record owner or a firm owner, and its contacts, calls, notes and tasks go with it. Its status is worked out, never set: a prospect account until one of its submissions is won, then a client (a former client arrives with the placement record in Epic 4).
+_Avoid_: company, customer, employer (the employer is the business; the account is the firm's record of it)
+
+**Contact**:
+A person at an account, on exactly one account, with a name and an email or a phone. Seen by whoever may see its account. An account has at most one main contact. The prospect of a submission becomes one when its chain is made: the contact keeps a link to that prospect so they are never added twice, and their name, email and phone are copied once and not kept in step, because the contact is the firm's record and the profile is the person's.
+_Avoid_: PEO contact (a person at a PEO), prospect (the person who certifies; a prospect becomes a contact and the two stay separate records), lead
+
+**Opportunity**:
+One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known.
+_Avoid_: deal, search (on its own), case
+
+**The chain**:
+A quote request's opportunity and that opportunity's account, with the account's contacts. No quote request without an opportunity, no opportunity without an account, and every submission on one opportunity: the database refuses anything else. It is made in the same step a quote starts, and the same step run twice makes one chain, not two. An intake an employer started that has not been certified yet has none (ADR 0025).
+_Avoid_: hierarchy, link, filing
+
+**Quote** (on the workspace's screens):
+One row of the Quotes list or of an account's Quotes tab: a **Quote request** together with the **Quote** it returns, if any (D-185). In code and in the entries above, the two keep their own names.
+
+**Duplicate match**:
+How the product decides that a business may already be an account, exactly and never by likeness: the same web domain (without `www.`, and never a free-mail domain such as gmail.com), the same name and state (the name in lower case, letters and digits only, with a trailing LLC, Inc, Corp, Co, Ltd, LLP, PC or PLLC dropped), or a contact with the same email, ignoring case. While a person creates a record, a match is a warning naming the record and its owner, with a link; one they may not see says only that one exists and who to ask. They can still save.
+_Avoid_: fuzzy match, similar record
+
+**Possible duplicate**:
+A mark on an account that the duplicate match found may be a business the firm already has, made when an employer's intake or the bringing-in of existing submissions created it. Nothing is merged by guesswork: an agent merges it or keeps it separate, which clears the mark. The employer is never asked.
+_Avoid_: duplicate (on its own: it is a question, not a finding)
+
+**Merge**:
+Two accounts, two contacts or two leads made one. For each field that differs the person picks the value to keep; everything attached to the one removed moves to the one kept; the one removed is deleted, its history moves to the kept record marked as from the merged record, its old address leads to the kept record, and the merge is recorded on the kept record. Anyone allowed to change both can merge them. There is no unmerge. Two accounts that each hold an intake can be merged: both intakes stay, each on its own opportunity.
+_Avoid_: combine, dedupe
+
+**Label**:
+A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records).
+_Avoid_: tag, category
+
+**Call**, **Note**, **Task**:
+What an agent logs on an account or a contact (later on a lead or an opportunity). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
+_Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
+
+**Last activity**:
+When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity.
+_Avoid_: last modified, updated
 
 ### Advisors
 
