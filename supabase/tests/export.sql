@@ -140,6 +140,7 @@
 \i supabase/migrations/20261118160500_record_version_fixes.sql
 \i supabase/migrations/20261118170000_export.sql
 \i supabase/migrations/20261118170500_export_fixes.sql
+\i supabase/migrations/20261118171000_export_fixes_again.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -687,4 +688,49 @@ BEGIN
   PERFORM pg_temp.is(waited, true, 'the second export waits for the first');
   PERFORM pg_temp.is(pg_temp.alerts(acme), 1::bigint, 'and, seeing it, is the third in the hour and tells the owners');
   RAISE NOTICE 'export: two at once passed';
+END $$;
+
+-- ---------- a partner added while an export runs: the count, the rows and the record agree ----------
+-- Break caught: the capped count, the visible count and the rows are read by separate statements, each with its own snapshot (READ
+-- COMMITTED), so a partner committed between them is returned but not counted: the recorded count is not the count returned (D-48), the
+-- whole-table decision is made on other rows than the ones returned (skipping the recent sign-in), and the cap and the alert judge a
+-- different export. The window is widened by making each filter check take 0.3 s (a test-only wrapper); a second connection commits a
+-- partner 0.45 s into the export.
+DO $$
+DECLARE huge uuid := pg_temp.id('huge');
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES
+    (huge, 'h-1', 'Alpha', 'other'), (huge, 'h-2', 'Bravo', 'other'), (huge, 'h-3', 'Charlie', 'other');
+  ALTER FUNCTION public.export_row_passes(text, jsonb, jsonb, text) RENAME TO export_row_passes_fast;
+  CREATE FUNCTION public.export_row_passes(p_table text, o jsonb, p_checked jsonb, p_time_zone text) RETURNS boolean LANGUAGE plpgsql STABLE
+    AS 'BEGIN PERFORM pg_sleep(0.3); RETURN public.export_row_passes_fast(p_table, o, p_checked, p_time_zone); END';
+END $$;
+DO $$
+DECLARE
+  huge uuid := pg_temp.id('huge');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  setup text := format('SET request.jwt.claims = %L; SET request.headers = %L; SET ROLE authenticated',
+    pg_temp.claims('huge_owner'), jsonb_build_object('x-firm-address', 'huge-group')::text);
+  r jsonb; recorded integer;
+BEGIN
+  PERFORM race.dblink_connect('ea', dsn);
+  PERFORM race.dblink_connect('eb', dsn);
+  PERFORM race.dblink_exec('ea', setup);
+  PERFORM race.dblink_send_query('ea', format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["other"]}]')::text$q$, huge));
+  PERFORM pg_sleep(0.45);
+  PERFORM race.dblink_exec('eb', format($q$INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (%L, 'h-4', 'Delta', 'other')$q$, huge));
+  SELECT t.r::jsonb INTO r FROM race.dblink_get_result('ea') AS t(r text);
+  PERFORM * FROM race.dblink_get_result('ea') AS t(r text);
+  PERFORM race.dblink_disconnect('ea');
+  PERFORM race.dblink_disconnect('eb');
+  SELECT a.row_count INTO recorded FROM public.firm_activity a WHERE a.firm_id = huge AND a.kind = 'export_made' ORDER BY a.at DESC LIMIT 1;
+  PERFORM pg_temp.is(concat_ws(',', jsonb_array_length(r -> 'rows'), r ->> 'row_count', recorded), '3,3,3',
+    'the rows returned, the count returned and the count recorded are of one moment: the partner added during it is in none');
+  PERFORM pg_temp.is(r ->> 'whole_table', 'true', 'and the whole-table decision is made on those same rows');
+  ALTER FUNCTION public.export_row_passes(text, jsonb, jsonb, text) RENAME TO export_row_passes_slow;
+  DROP FUNCTION public.export_row_passes_slow(text, jsonb, jsonb, text);
+  ALTER FUNCTION public.export_row_passes_fast(text, jsonb, jsonb, text) RENAME TO export_row_passes;
+  RAISE NOTICE 'export: one moment passed';
 END $$;
