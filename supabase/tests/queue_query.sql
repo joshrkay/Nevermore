@@ -434,6 +434,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
 
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,

@@ -201,6 +201,7 @@
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

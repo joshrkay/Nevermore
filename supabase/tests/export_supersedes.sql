@@ -293,6 +293,7 @@ END $$;
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried
