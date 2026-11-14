@@ -6,7 +6,7 @@ import type { Json } from "@/integrations/supabase/types";
 // it, the names and limits. These only put its answers and refusals into the page's shape and words.
 
 /** The tables whose columns and views are kept. A new table is added here when the database's list gains it. */
-export type WorkspaceTable = "submissions";
+export type WorkspaceTable = "submissions" | "accounts";
 
 /** One filter, as the table's query reads it: combined with "and". `value` is left out for operators that take none. */
 export interface ViewFilter {
