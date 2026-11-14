@@ -141,6 +141,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118110500_close_a_firm_fixes.sql
 \i supabase/migrations/20261118111000_close_a_firm_races.sql
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
+\i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -640,34 +641,70 @@ BEGIN
 END $$;
 
 -- ---------- nothing is exported ----------
--- Break caught: the refusal an export calls does not refuse a support session, or refuses someone else; a later story adds a function
--- named export_… that does not call it (CRM-S3.8b must: ADR 0024, BROKER_CRM_BUILD.md D-24); the detector itself stops finding one.
-CREATE FUNCTION pg_temp.export_functions_without_the_refusal() RETURNS text LANGUAGE sql AS $$
-  SELECT string_agg(p.proname, ', ' ORDER BY p.proname)
-  FROM pg_proc p
-  WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f' AND p.proname LIKE 'export\_%'
-    AND (has_function_privilege('authenticated', p.oid, 'EXECUTE') OR has_function_privilege('anon', p.oid, 'EXECUTE'))
-    AND p.prosrc NOT LIKE '%refuse_support_session%'
-$$;
+-- Break caught: the refusal an export calls does not refuse a support session, or refuses someone else, or lets a NULL firm through (a
+-- call that names no firm must refuse anyone who holds ANY open session, so a function that passes NULL fails closed); a function with
+-- "export" in its name that a support session can run (CRM-S3.8b must call refuse_support_session(firm) first: ADR 0024, BROKER_CRM_BUILD.md
+-- D-24); the detector itself goes soft again (it once only looked for the helper's name in the text, which a call with NULL passes).
+--
+-- The detector: every function the API roles can run whose name contains "export" is CALLED as the support session at that firm's address,
+-- with fixture arguments (a uuid is the firm's id, text is 'x', numbers 1 ...) and must raise PT423. Only a function whose arguments cannot
+-- be guessed (an array, a row type) falls back to its text, which must call the helper with an argument that is not NULL. A call with a
+-- literal NULL is refused in the text too: it tells the helper nothing about which firm, so it only works while the caller has a session.
+CREATE FUNCTION pg_temp.export_functions_that_do_not_refuse(firm uuid) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE p record; args text; guessable boolean; got text; bad text[] := '{}';
+BEGIN
+  FOR p IN
+    SELECT f.oid, f.proname, f.prosrc, f.proargtypes::oid[] AS types
+    FROM pg_proc f
+    WHERE f.pronamespace = 'public'::regnamespace AND f.prokind = 'f' AND f.proname LIKE '%export%'
+      AND (has_function_privilege('authenticated', f.oid, 'EXECUTE') OR has_function_privilege('anon', f.oid, 'EXECUTE'))
+    ORDER BY f.proname
+  LOOP
+    SELECT string_agg(CASE t.typname WHEN 'uuid' THEN format('%L::uuid', firm) WHEN 'text' THEN '''x''' WHEN 'varchar' THEN '''x''' WHEN 'int4' THEN '1' WHEN 'int8' THEN '1'
+                   WHEN 'bool' THEN 'false' WHEN 'jsonb' THEN '''{}''::jsonb' WHEN 'timestamptz' THEN 'now()' WHEN 'date' THEN 'current_date' END, ', ' ORDER BY a.n),
+           COALESCE(bool_and(t.typname IN ('uuid', 'text', 'varchar', 'int4', 'int8', 'bool', 'jsonb', 'timestamptz', 'date')), true)
+      INTO args, guessable
+    FROM unnest(p.types) WITH ORDINALITY a(oid, n) JOIN pg_type t ON t.oid = a.oid;
+    IF guessable THEN
+      got := pg_temp.refusal(format('SELECT public.%I(%s)', p.proname, COALESCE(args, '')));
+      IF got NOT LIKE 'PT423:%' THEN bad := bad || (p.proname || ' (' || left(got, 40) || ')'); END IF;
+    ELSIF p.prosrc !~* 'refuse_support_session\(\s*[^)[:space:]]' THEN
+      bad := bad || (p.proname || ' (never calls the refusal)');
+    END IF;
+    IF p.prosrc ~* 'refuse_support_session\(\s*null\M' THEN bad := bad || (p.proname || ' (calls the refusal with NULL)'); END IF;
+  END LOOP;
+  RETURN array_to_string(bad, ', ');
+END $$;
 DO $$
 DECLARE fa uuid := pg_temp.id('alpha');
 BEGIN
   PERFORM pg_temp.as_user('platform_admin', 'alpha-brokers');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.refuse_support_session(%L)$q$, fa)), 'PT423: Nevermore support can look, not change', 'the refusal an export calls refuses a support session');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.refuse_support_session(%L)$q$, pg_temp.id('zeta'))), 'ok', 'only for the firm it holds a session for');
+  PERFORM pg_temp.is(pg_temp.refusal('SELECT public.refuse_support_session(NULL)'), 'PT423: Nevermore support can look, not change', 'and a NULL refuses a caller who holds any open session, so passing NULL fails closed');
   PERFORM pg_temp.as_user('owner_a', 'alpha-brokers');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.refuse_support_session(%L)$q$, fa)), 'ok', 'and none for an owner');
+  PERFORM pg_temp.is(pg_temp.refusal('SELECT public.refuse_support_session(NULL)'), 'ok', 'nor a NULL for an owner');
   PERFORM pg_temp.as_user('agent_a', 'alpha-brokers');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.refuse_support_session(%L)$q$, fa)), 'ok', 'nor an agent');
+  PERFORM pg_temp.as_user('admin3', 'alpha-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal('SELECT public.refuse_support_session(NULL)'), 'ok', 'nor a NULL for an admin who holds no session');
+  PERFORM pg_temp.as_user('platform_admin', 'alpha-brokers');
+  PERFORM pg_temp.is(pg_temp.export_functions_that_do_not_refuse(fa), '', 'every export function refuses a support session (there are none yet)');
+  -- The detector finds the ones that do not, and passes the one that does.
   RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.export_functions_without_the_refusal(), NULL::text, 'every export function calls it (there are none yet)');
-  -- The detector finds one that does not.
-  CREATE FUNCTION public.export_probe() RETURNS integer LANGUAGE sql AS 'SELECT 1';
-  GRANT EXECUTE ON FUNCTION public.export_probe() TO authenticated;
-  PERFORM pg_temp.is(pg_temp.export_functions_without_the_refusal(), 'export_probe', 'a function named export_ that does not call it is found');
-  CREATE OR REPLACE FUNCTION public.export_probe() RETURNS integer LANGUAGE sql AS 'SELECT 1 FROM (SELECT public.refuse_support_session(NULL)) x';
-  PERFORM pg_temp.is(pg_temp.export_functions_without_the_refusal(), NULL::text, 'and one that does call it is not');
-  DROP FUNCTION public.export_probe();
+  CREATE FUNCTION public.export_never_refuses(p_firm uuid) RETURNS integer LANGUAGE sql AS 'SELECT 1';
+  CREATE FUNCTION public.export_refuses_nobody(p_firm uuid) RETURNS integer LANGUAGE plpgsql AS 'BEGIN PERFORM public.refuse_support_session(NULL); RETURN 1; END';
+  CREATE FUNCTION public.firm_data_export_ok(p_firm uuid) RETURNS integer LANGUAGE plpgsql AS 'BEGIN PERFORM public.refuse_support_session(p_firm); RETURN 1; END';
+  CREATE FUNCTION public.export_odd_arguments(p_firms uuid[]) RETURNS integer LANGUAGE plpgsql AS 'BEGIN PERFORM public.refuse_support_session(p_firms[1]); RETURN 1; END';
+  CREATE FUNCTION public.export_odd_never(p_firms uuid[]) RETURNS integer LANGUAGE sql AS 'SELECT 1';
+  GRANT EXECUTE ON FUNCTION public.export_never_refuses(uuid), public.export_refuses_nobody(uuid), public.firm_data_export_ok(uuid), public.export_odd_arguments(uuid[]), public.export_odd_never(uuid[]) TO authenticated;
+  PERFORM pg_temp.as_user('platform_admin', 'alpha-brokers');
+  PERFORM pg_temp.is(pg_temp.export_functions_that_do_not_refuse(fa),
+    'export_never_refuses (ok), export_odd_never (never calls the refusal), export_refuses_nobody (calls the refusal with NULL)',
+    'a function that never calls the refusal and one that calls it with NULL are found, wherever "export" is in the name; one that does call it, by call or by text, is not');
+  RESET ROLE;
+  DROP FUNCTION public.export_never_refuses(uuid), public.export_refuses_nobody(uuid), public.firm_data_export_ok(uuid), public.export_odd_arguments(uuid[]), public.export_odd_never(uuid[]);
   RAISE NOTICE 'help_from_nevermore: exports passed';
 END $$;
 
@@ -867,6 +904,102 @@ BEGIN
   RAISE NOTICE 'help_from_nevermore: the daily job passed';
 END $$;
 
+-- ---------- support sees a firm's records as an owner does ----------
+-- Break caught: can_see_firm_record gives 'support' less than an owner (once leads and accounts use it, the default visibility 'by_level'
+-- would show support none of them); or gives it more (a record at another firm's address, or with no session); or the fix widens what an
+-- agent or a lead sees. Cases: owner, lead (in no team), agent and support, a record owned by another agent, one the caller owns and one
+-- nobody owns, at both settings of the firm's visibility.
+DO $$
+DECLARE
+  fa uuid := pg_temp.id('alpha');
+  who text; vis text; r boolean; want boolean;
+  cases text[][] := ARRAY[
+    -- who, visibility, record owner, expected
+    ['owner_a', 'by_level', 'agent_a', 't'], ['owner_a', 'everyone', 'agent_a', 't'], ['owner_a', 'by_level', 'nobody', 't'],
+    ['lead_v', 'by_level', 'agent_a', 'f'], ['lead_v', 'everyone', 'agent_a', 't'], ['lead_v', 'by_level', 'lead_v', 't'],
+    ['agent_v', 'by_level', 'agent_a', 'f'], ['agent_v', 'everyone', 'agent_a', 't'], ['agent_v', 'by_level', 'agent_v', 't'],
+    ['agent_v', 'by_level', 'nobody', 'f'],
+    ['platform_admin', 'by_level', 'agent_a', 't'], ['platform_admin', 'everyone', 'agent_a', 't'], ['platform_admin', 'by_level', 'nobody', 't'],
+    ['platform_admin', 'by_level', 'platform_admin', 't']];
+  i integer;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.new_user('lead_v');
+  PERFORM pg_temp.new_user('agent_v');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (fa, pg_temp.id('lead_v'), 'lead'), (fa, pg_temp.id('agent_v'), 'agent');
+  FOR i IN 1 .. array_length(cases, 1) LOOP
+    who := cases[i][1]; vis := cases[i][2]; want := cases[i][4] = 't';
+    RESET ROLE;
+    UPDATE public.firms SET visibility = vis WHERE id = fa;
+    PERFORM pg_temp.as_user(who, 'alpha-brokers');
+    r := public.can_see_firm_record(fa, CASE cases[i][3] WHEN 'nobody' THEN NULL ELSE pg_temp.id(cases[i][3]) END);
+    PERFORM pg_temp.is(r, want, format('%s sees a record owned by %s at visibility %s', who, cases[i][3], vis));
+  END LOOP;
+  -- Not wider than the session: another firm's address, and no session at all.
+  PERFORM pg_temp.as_user('platform_admin', 'beta-benefits');
+  PERFORM pg_temp.is(public.can_see_firm_record(fa, pg_temp.id('agent_a')), false, 'a session at another firm''s address sees no record of this one');
+  PERFORM pg_temp.as_user('admin3', 'alpha-brokers');
+  PERFORM pg_temp.is(public.can_see_firm_record(fa, pg_temp.id('agent_a')), false, 'an admin with no session sees none');
+  RESET ROLE;
+  UPDATE public.firms SET visibility = 'by_level' WHERE id = fa;
+  RAISE NOTICE 'help_from_nevermore: records passed';
+END $$;
+
+-- ---------- becoming a member ends the session ----------
+-- Break caught: an admin who accepts an invitation to the firm during their own open session, or whom an owner approves from a request to join,
+-- holds 'owner' (or the role given) but every write is refused for the rest of the hour, because the guard refuses an open session first; the
+-- session is not recorded as ended, or not in the firm's record, or ends someone else's session, or one at another firm.
+DO $$
+DECLARE
+  fa uuid := pg_temp.id('alpha'); fb uuid := pg_temp.id('beta'); s_a uuid; s_b uuid; s_other uuid; req uuid; ended_before bigint;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.new_user('admin_inv');
+  PERFORM pg_temp.new_user('admin_req');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('admin_inv'), 'admin'), (pg_temp.id('admin_req'), 'admin');
+  INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at) VALUES (fa, 'admin_inv@example.test', 'owner', pg_temp.hash('invite-admin'), now() + interval '7 days');
+  PERFORM pg_temp.as_user('admin_inv');
+  SELECT x.session_id INTO s_a FROM public.start_support_session(fa, 'looking before joining') x;
+  SELECT x.session_id INTO s_other FROM public.start_support_session(fb, 'and at another firm') x;
+  PERFORM pg_temp.as_user('admin_inv', 'alpha-brokers');
+  PERFORM pg_temp.is(public.firm_role(fa), 'support', 'before accepting, the admin reads as support');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.start_support_session(%L, 'again')$q$, fa)), 'PT409: You already have support access open for that firm', 'with a session open');
+  RESET ROLE;
+  ended_before := (SELECT count(*) FROM public.firm_activity WHERE firm_id = fa AND record_type = 'support_session_end');
+  PERFORM pg_temp.as_user('admin_inv', 'alpha-brokers');
+  PERFORM public.accept_invitation(pg_temp.hash('invite-admin'), 'alpha-brokers');
+  PERFORM pg_temp.is(public.firm_role(fa), 'owner', 'accepting makes them an owner');
+  PERFORM pg_temp.is(public.is_support_session(fa), false, 'and the session is over in the same moment');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_add_referral_partner('joined', 'Joined', 'accounting', %L)$q$, fa)), 'ok', 'so a write is not refused for the rest of the hour');
+  PERFORM pg_temp.is(public.is_support_session(fb), true, 'while the session at another firm is untouched');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT ended_how FROM public.support_sessions WHERE id = s_a), 'became_member', 'the platform''s record says why it ended: they became a member');
+  PERFORM pg_temp.is((SELECT ended_at IS NOT NULL FROM public.support_sessions WHERE id = s_a), true, 'with the time');
+  PERFORM pg_temp.is((SELECT ended_at IS NULL FROM public.support_sessions WHERE id = s_other), true, 'and the other firm''s session stays open');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = fa AND record_type = 'support_session_end' AND record_id = s_a::text AND actor_is_staff AND kind = 'support_access'), 1::bigint,
+    'the end is in the firm''s record as Nevermore''s, once');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = fa AND record_type = 'support_session_end'), ended_before + 1, 'and nothing else was written');
+  -- An owner approves an admin's request to join, during that admin's own session.
+  PERFORM pg_temp.as_user('admin_req');
+  SELECT x.session_id INTO s_b FROM public.start_support_session(fa, 'looking before asking') x;
+  RESET ROLE;
+  INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label) VALUES (fa, pg_temp.id('admin_req'), 'google', 'alpha.example', 'Alpha') RETURNING id INTO req;
+  PERFORM pg_temp.as_user('owner_a', 'alpha-brokers');
+  PERFORM public.approve_join_request(req, 'agent');
+  PERFORM pg_temp.as_user('admin_req', 'alpha-brokers');
+  PERFORM pg_temp.is(public.firm_role(fa), 'agent', 'an approved request makes them an agent');
+  PERFORM pg_temp.is(public.is_support_session(fa), false, 'and ends their session at the same moment');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_add_referral_partner('approved', 'Approved', 'accounting', %L)$q$, fa)), 'ok', 'so their writes work');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT ended_how FROM public.support_sessions WHERE id = s_b), 'became_member', 'recorded as ended because they became a member');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE firm_id = fa AND record_type = 'support_session_end' AND record_id = s_b::text), 1::bigint, 'and in the firm''s record once');
+  -- Still refused to start one on a firm they belong to.
+  PERFORM pg_temp.as_user('admin_req');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.start_support_session(%L, 'now a member')$q$, fa)), '42501: An admin does not use support access on a firm they belong to', 'and a member still cannot start one');
+  RESET ROLE;
+  RAISE NOTICE 'help_from_nevermore: becoming a member passed';
+END $$;
+
 -- ---------- every function and policy that asks a membership helper is classified ----------
 -- Break caught: a function or policy that asks who is a member, the caller's role or the firm of a record is added (or restated) and
 -- nobody decides whether a support session may use it: it must be listed here as a read (support is let through, and only reads), a write
@@ -915,8 +1048,8 @@ BEGIN
   WHERE NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = w AND p.prosrc ~ '''owner''');
   PERFORM pg_temp.is(weak, NULL::text, 'every owner-only action still asks for the owner role by name');
   -- Nothing that asks for a role by name lets support in, and nothing hands the value out as one of the three roles.
-  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~ '''support''' AND p.proname NOT IN ('firm_role', 'can_read_firm_activity', 'firm_members')), 0::bigint,
-    'only firm_role, and the two reads that let it through as an owner does, say the word support: no other function lists it as a role');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~ '''support''' AND p.proname NOT IN ('firm_role', 'can_read_firm_activity', 'firm_members', 'can_see_firm_record')), 0::bigint,
+    'only firm_role, and the three reads that let it through as an owner does (the firm''s record, its members, and the records an owner sees), say the word support: no other function lists it as a role');
 
   -- Policies. Every one that asks a helper is a read, except the three that write; the file buckets refuse support.
   SELECT string_agg(p.schemaname || '.' || p.tablename || ' | ' || p.policyname || ' (' || p.cmd || ')', '; ' ORDER BY p.tablename, p.policyname) INTO unplaced

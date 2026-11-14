@@ -192,8 +192,7 @@ const AdvisorFirmsPage = () => {
               <div>
                 <h2 id="support-open-heading" className="font-display text-2xl font-bold mb-1">Support access</h2>
                 <p className="text-sm text-muted-foreground">
-                  Support access lets you read a firm's workspace, at its own address, for one hour. You can look and you can't change, export, send or
-                  download anything. Every use is written to the firm's record as Nevermore's, with the reason, and the firm's owners read it.
+                  Support access lets you read a firm's workspace, at its own address, for one hour. You can look. You can't change or send anything, no file opens, and no download or export is offered. Every use is written to the firm's record as Nevermore's, with the reason, and the firm's owners read it.
                 </p>
               </div>
               {load.sessions.filter((s) => s.isOpen).length === 0 ? (

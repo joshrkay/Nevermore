@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import AnswersJsonDownload from "@/components/AnswersJsonDownload";
+import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import type { PeoRecord } from "@/data/peoCatalog";
@@ -107,6 +108,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
     }
   };
 
+  const downloadsOff = useDownloadsOff();
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
@@ -207,21 +209,24 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
                 {v === latest && current(v) && <p className="text-xs text-success">Shared with the prospect as their final packet</p>}
                 {detail.certified && !current(v) && <p className="text-xs text-warning">Built from an earlier certification</p>}
               </div>
-              <button
-                onClick={() => void open(v)}
-                disabled={opening === v.id}
-                className="flex items-center gap-1 text-xs text-primary underline disabled:opacity-50"
-                aria-label={`Download v${v.version}`}
-              >
-                {opening === v.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                Download
-              </button>
+              {!downloadsOff && (
+                <button
+                  onClick={() => void open(v)}
+                  disabled={opening === v.id}
+                  className="flex items-center gap-1 text-xs text-primary underline disabled:opacity-50"
+                  aria-label={`Download v${v.version}`}
+                >
+                  {opening === v.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  Download
+                </button>
+              )}
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-xs text-muted-foreground">No versions generated yet.</p>
       )}
+      <DownloadsOffNotice />
     </section>
   );
 };

@@ -144,6 +144,24 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+// The workspace as a platform admin on a support session sees it (CRM-P2.4): read only, and no file leaves the product.
+const supportWorkspace = (isSupport: boolean) => ({
+  firm: { id: "f1", name: "Acme", address: "acme" }, role: isSupport ? "Nevermore support" : "Owner", isOwner: !isSupport, isSupport,
+  supportEndsAt: null, supportSessionId: null, isPlatformAdmin: isSupport, person: "Sam",
+}) as const;
+const renderAs = async (isSupport: boolean) => {
+  const { WorkspaceContext } = await import("@/components/workspace/useWorkspace");
+  return render(
+    <WorkspaceContext.Provider value={supportWorkspace(isSupport)}>
+      <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+        <Routes>
+          <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+        </Routes>
+      </MemoryRouter>
+    </WorkspaceContext.Provider>,
+  );
+};
+
 const GoTo = ({ id }: { id: string }) => {
   const navigate = useNavigate();
   return <button onClick={() => navigate(`/advisor/submissions/${id}`)}>go to {id}</button>;
@@ -1176,6 +1194,51 @@ describe("AdvisorSubmissionPage", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date(2026, 10, 11, 12));
       peoCatalogRows = catalog();
+    });
+
+    // Catches: a support session is offered a download the browser builds from rows it may read (the census, the answers as JSON, a PEO's
+    // files, the bundle, a stored packet) or a stored file that is refused with "Couldn't open that file", so a file leaves the product
+    // and the firm's record never shows it (record_member_activity refuses support); or the fix hides them for a member too.
+    describe("during Nevermore support", () => {
+      const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+      const version = {
+        id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
+        certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
+        sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
+      };
+      // TriNet also has questions of its own, so its card holds a supplement PDF as well as the census and the workers' comp data.
+      const withSupplement = () => {
+        const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+        peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [drives] } } : p));
+        api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census }, versions: [version] }));
+      };
+      const controls = () => screen.queryAllByRole("button").filter((b) => /^(Download|Open )/.test(b.getAttribute("aria-label") ?? b.textContent ?? ""));
+
+      it("offers no download or file link anywhere on the submission page, and says so once where the files were", async () => {
+        withSupplement();
+        await renderAs(true);
+        await screen.findByRole("region", { name: "What each PEO still needs" });
+        await screen.findByRole("heading", { name: "TriNet" });
+        expect(controls().map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual([]);
+        // Each place that held a group of them says so in one line: the packet, the census, each PEO's files, the documents.
+        for (const name of ["Advisor packet", "Employee census", "What each PEO still needs", "Uploaded documents"]) {
+          const region = screen.getByRole("region", { name });
+          expect(within(region).getAllByText("Downloads are off during Nevermore support.").length, name).toBeGreaterThan(0);
+        }
+        expect(screen.getByRole("region", { name: "Advisor packet" })).toHaveTextContent("v1");
+      });
+
+      it("keeps every one of them for a member", async () => {
+        withSupplement();
+        await renderAs(false);
+        await screen.findByRole("heading", { name: "TriNet" });
+        const names = controls().map((b) => b.getAttribute("aria-label") ?? b.textContent);
+        expect(names).toEqual(expect.arrayContaining([
+          "Download the answers as JSON", "Download the census", "Download v1", "Open census.xlsx", "Download bundle anyway",
+          "Download Workers' compensation application data", "Download Additional questions from TriNet",
+        ]));
+        expect(screen.queryByText("Downloads are off during Nevermore support.")).not.toBeInTheDocument();
+      });
     });
 
     it("gives no file from a page left open across a withdrawal: the JSON, the census and each PEO's files check at the click", async () => {

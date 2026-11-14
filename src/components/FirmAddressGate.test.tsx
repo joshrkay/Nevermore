@@ -457,6 +457,29 @@ describe("the firm address gate", () => {
       expect(recordFirmSignIn).not.toHaveBeenCalled();
     });
 
+    // Catches: my_firm_at_address answers yes for a support session, so the gate treats the admin as a member and writes a sign-in for
+    // them on every page change (it fails every time and is never marked done).
+    it("records no sign-in for an admin on an open session even where the database says they are a member here", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+      fetchMySupportSessionHere.mockResolvedValue(session());
+      auth.user = { id: "admin1", email: "admin@nevermore.example", last_sign_in_at: "t9" };
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      await act(async () => {});
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+      expect(fetchIsMySuspendedFirmAtAddress).not.toHaveBeenCalled();
+    });
+
+    // Catches: the fix that skips the sign-in for support also skips it for a member (a member's sign-in is still written once).
+    it("still records one sign-in for a member who holds no support session", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+      fetchMySupportSessionHere.mockResolvedValue(null);
+      auth.user = { id: "member1", email: "pat@acme.example", last_sign_in_at: "t10" };
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledTimes(1));
+    });
+
     // Catches: an expired session still opens the firm, or the admin is left on a blank "not a member" page with no way back.
     it("says the hour has ended once it is over, and links back to the firms page", async () => {
       fetchMySupportSessionHere.mockResolvedValue(session({ isOpen: false, endedAt: "2026-11-18T16:00:00Z" }));

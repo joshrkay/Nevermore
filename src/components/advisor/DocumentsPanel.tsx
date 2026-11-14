@@ -5,6 +5,7 @@ import type { ReviewedDocument } from "@/data/advisor";
 import { categoryInfo } from "@/data/documentCategories";
 import { advisorScanNotice } from "@/data/documentStatus";
 import { documentUrl, recordActivity, type DocumentEvent } from "@/lib/advisorApi";
+import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { actorName, formatDateTime } from "./format";
 
 interface DocumentsPanelProps {
@@ -17,6 +18,7 @@ interface DocumentsPanelProps {
 // Links are signed on demand and expire within a minute, so they can't be shared on.
 const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelProps) => {
   const [opening, setOpening] = useState<string | null>(null);
+  const downloadsOff = useDownloadsOff();
 
   const open = async (doc: ReviewedDocument) => {
     setOpening(doc.id);
@@ -72,19 +74,22 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
                 )}
                 {held && <p className="text-xs text-warning">{held}</p>}
               </div>
-              <button
-                onClick={() => void open(doc)}
-                disabled={opening === doc.id || held !== null}
-                className="text-xs text-primary underline flex items-center gap-1 disabled:opacity-50"
-                aria-label={`Open ${doc.file_name}`}
-              >
-                {opening === doc.id && <Loader2 className="w-3 h-3 animate-spin" />} Open
-              </button>
+              {!downloadsOff && (
+                <button
+                  onClick={() => void open(doc)}
+                  disabled={opening === doc.id || held !== null}
+                  className="text-xs text-primary underline flex items-center gap-1 disabled:opacity-50"
+                  aria-label={`Open ${doc.file_name}`}
+                >
+                  {opening === doc.id && <Loader2 className="w-3 h-3 animate-spin" />} Open
+                </button>
+              )}
             </li>
             );
           })}
         </ul>
       )}
+      {documents.length > 0 && <DownloadsOffNotice />}
     </section>
   );
 };

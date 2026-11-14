@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -13,7 +15,7 @@ import { downloadBlob } from "@/lib/downloadFile";
  * does. Offered only while the certification stands: the caller never renders it otherwise, and a tab left open
  * across a withdrawal or a new certification gives no file (`builtFrom`, checked at the click).
  */
-const AnswersJsonDownload = ({ source, builtFrom, onDownloaded }: { source: CertifiedAnswersSource; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
+const AnswersJsonDownloadControl = ({ source, builtFrom, onDownloaded }: { source: CertifiedAnswersSource; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
   const [busy, setBusy] = useState(false);
   const version = source.submission.version;
   const download = async () => {
@@ -49,5 +51,8 @@ const AnswersJsonDownload = ({ source, builtFrom, onDownloaded }: { source: Cert
     </div>
   );
 };
+
+/** Not offered during Nevermore support: a file built here from rows support may read would leave the product unrecorded (CRM-P2.4). */
+const AnswersJsonDownload = (props: ComponentProps<typeof AnswersJsonDownloadControl>) => (useDownloadsOff() ? null : <AnswersJsonDownloadControl {...props} />);
 
 export default AnswersJsonDownload;

@@ -63,10 +63,13 @@ test("an admin starts support access with a reason, reads a submission and can c
   const adminId = await newUser(request, adminEmail);
   const ownerId = await newUser(request, ownerEmail);
   const prospect = await newUser(request, `support-prospect-${stamp}@example.test`);
+  let intakeId = "";
   await withDb(async (client) => {
     const firm = await client.query("INSERT INTO public.firms (name, address, approved_at, decision, decided_at, visibility) VALUES ($1, $2, now(), 'approved', now(), 'everyone') RETURNING id", [NAME, FIRM]);
     await client.query("INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ($1, $2, 'owner')", [firm.rows[0].id, ownerId]);
-    await client.query("INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES ($1, $2, '{\"company_name\":\"Looked At Co\"}')", [prospect, firm.rows[0].id]);
+    const intake = await client.query("INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES ($1, $2, '{\"company_name\":\"Looked At Co\"}') RETURNING id", [prospect, firm.rows[0].id]);
+    intakeId = intake.rows[0].id;
+    await client.query("INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES ($1, $2, 'census-file.xlsx', '12 KB', $3)", [prospect, intakeId, `${prospect}/${intakeId}/census-file.xlsx`]);
     await client.query("INSERT INTO public.user_roles (user_id, role) VALUES ($1, 'admin')", [adminId]);
   });
 
@@ -99,6 +102,15 @@ test("an admin starts support access with a reason, reads a submission and can c
     await expect(adminPage.getByRole("heading", { name: "Submissions" })).toBeVisible();
     await expect(adminPage.getByText("Looked At Co")).toBeVisible();
     await expect(adminPage.getByText("Nevermore support", { exact: true })).toBeVisible();
+  });
+
+  await test.step("no download control is offered on the submission page: the file is listed, its button is not, and one plain line says why", async () => {
+    await adminPage.goto(`${firmUrl(FIRM)}/advisor/submissions/${intakeId}`);
+    const documents = adminPage.getByRole("region", { name: "Uploaded documents" });
+    await expect(documents).toContainText("census-file.xlsx");
+    await expect(documents).toContainText("Downloads are off during Nevermore support.");
+    await expect(adminPage.getByRole("button", { name: "Open census-file.xlsx" })).toHaveCount(0);
+    await expect(adminPage.getByRole("button", { name: /^Download/ })).toHaveCount(0);
   });
 
   await test.step("the admin cannot add a referral partner: the refusal is shown in plain words and nothing is written", async () => {
@@ -138,6 +150,12 @@ test("an admin starts support access with a reason, reads a submission and can c
     await expect(ownerPage.getByText(adminEmail)).toHaveCount(0);
     await expect(ownerPage.getByText(adminId)).toHaveCount(0);
     await expect(ownerPage.getByLabel("Person").locator("option", { hasText: "Nevermore" })).toHaveCount(1);
+  });
+
+  await test.step("the same page still offers the file to the firm's own owner", async () => {
+    await ownerPage.goto(`${firmUrl(FIRM)}/advisor/submissions/${intakeId}`);
+    await expect(ownerPage.getByRole("button", { name: "Open census-file.xlsx" })).toBeVisible();
+    await expect(ownerPage.getByText("Downloads are off during Nevermore support.")).toHaveCount(0);
   });
 
   await test.step("the platform keeps who, which firm, why and when; the firm's record holds the entries as Nevermore's; the monitoring table heard of the start", async () => {

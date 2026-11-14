@@ -183,6 +183,7 @@
 \i supabase/migrations/20261118110500_close_a_firm_fixes.sql
 \i supabase/migrations/20261118111000_close_a_firm_races.sql
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
+\i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -3393,6 +3394,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('refuse_support_session', 'own', 'raises for a caller who holds a support session for the firm: exports and sends call it'),
   ('settle_support_sessions', 'service_only', 'records the end of every support session that is over, as the daily job''s step'),
   ('support_activity_append', 'service_only', 'writes one entry of a support session into the firm''s record, always as Nevermore''s'),
+  ('end_support_session_for_new_member', 'service_only', 'ends a person''s open support session for a firm when they become a member of it (accepting an invitation, an approved request); no API role runs it'),
   ('my_suspended_firm_at_address', 'own', 'whether the caller''s own firm at an address is suspended'),
   ('request_firm_closure', 'own', 'a current owner of the firm asks to close it; acts only for the caller and the firm they own (supabase/tests/close_a_firm.sql)'),
   ('withdraw_firm_closure', 'own', 'a current owner of the firm withdraws its request to close; acts only for the caller and the firm they own'),

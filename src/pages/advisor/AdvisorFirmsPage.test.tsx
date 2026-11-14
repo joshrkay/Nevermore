@@ -284,6 +284,15 @@ describe("AdvisorFirmsPage", () => {
 
 
   // Help from Nevermore (story CRM-P2.4).
+  // Catches: the page promises "can't download anything" while a screen offers a download, or promises nothing about files at all.
+  it("says what support access can and can't do in words that are true: read only, no file opens, no download or export is offered", async () => {
+    firms.fetchFirmStates.mockResolvedValue([state()]);
+    renderPage();
+    const note = (await screen.findByRole("heading", { name: "Support access" })).parentElement!;
+    expect(note).toHaveTextContent("You can look. You can't change or send anything, no file opens, and no download or export is offered.");
+    expect(note).not.toHaveTextContent("can't change, export, send or download anything");
+  });
+
   // Catches: support access can be started with no reason, or without saying the firm's owners will read it and that it lasts an hour; it is offered for
   // a refused or a closed firm, where there is nothing to look at.
   it("asks for a reason, says the owners will read it and that it lasts one hour, and offers support access only where there is something to look at", async () => {

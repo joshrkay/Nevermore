@@ -13,6 +13,7 @@ import PeoNeedsPanel from "@/components/advisor/PeoNeedsPanel";
 import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
+import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
@@ -345,6 +346,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
         own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
+        <DownloadsOffNotice />
         <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} onDownloaded={() => recordSubmissionFileDownload(detail.id)} />
       </div>
     )}

@@ -19,6 +19,7 @@ import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import type { PipelineStatus } from "@/data/advisor";
 import type { ChamberSubmission } from "@/data/manuscript";
 import BundleDownload from "@/components/BundleDownload";
+import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
 import RecordSendPrompt from "./RecordSendPrompt";
 import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
@@ -145,6 +146,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
         {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} builtFrom={builtFrom} onDownloaded={() => recordSubmissionFileDownload(bundle.sessionId)} />}
         {supplement && <SupplementDownload supplement={supplement} builtFrom={builtFrom} onDownloaded={() => recordSubmissionFileDownload(bundle.sessionId)} />}
         <WorkersCompDownload application={application} builtFrom={builtFrom} onDownloaded={() => recordSubmissionFileDownload(bundle.sessionId)} />
+        <DownloadsOffNotice />
       </div>
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>

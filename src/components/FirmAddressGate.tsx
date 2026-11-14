@@ -88,6 +88,10 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
           if (support) return support.isOpen ? "support" : "support_ended";
           return (await askToJoinFirm(address)) === "asked" ? "asked" : "not_member";
         }
+        // The database answers "member" for a support session too (the role is `support`), so a person who holds an open one here is
+        // asked first: they are let in to read, and no sign-in is written for them (it would fail every time, and is never theirs).
+        const holding = await fetchMySupportSessionHere();
+        if (holding?.isOpen) return "support";
         return (await fetchIsMySuspendedFirmAtAddress(address)) ? "suspended" : "member";
       })
       .then(

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { BellRing, Loader2, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { actorName, formatDateTime } from "./format";
+import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteRequestStatus, QUOTE_REQUEST_LABELS, quoteNoteKindLabel } from "@/data/quoteRequests";
 import {
   buildTimeline, describeAttachment, hasNewMail, isThreadEvent, latestRecordedAt, splitQuotedText, type ThreadAttachment, type TimelineEntry,
@@ -33,6 +34,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
   const { message: m, attachments } = entry;
   const [showQuoted, setShowQuoted] = useState(false);
   const [opening, setOpening] = useState<number | null>(null);
+  const downloadsOff = useDownloadsOff();
   const [moving, setMoving] = useState<"closed" | "asking" | "busy">("closed");
   const [note, setNote] = useState("");
 
@@ -88,6 +90,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
           {showQuoted && <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words border-l-2 border-border pl-2">{quoted}</p>}
         </div>
       )}
+      {attachments.length > 0 && downloadsOff && <DownloadsOffNotice />}
       {attachments.length > 0 && (
         <ul aria-label="Attachments" className="space-y-1.5">
           {attachments.map((a) => {
@@ -97,7 +100,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
                 <Paperclip className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="font-medium text-sm break-all">{a.file_name}</span>
                 <span className="text-muted-foreground">{d.text}</span>
-                {d.openable && (
+                {d.openable && !downloadsOff && (
                   <button onClick={() => open(a)} disabled={opening === a.id} className="ml-auto text-primary underline py-1.5 px-1 disabled:opacity-50">
                     {opening === a.id ? <Loader2 className="w-3 h-3 animate-spin inline" aria-label="Opening" /> : "Open"}
                   </button>

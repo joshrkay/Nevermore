@@ -1,29 +1,14 @@
-import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
+import { createElement, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { useMyFirms, useMySupportSession } from "@/hooks/useOwnedFirms";
 import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
 import { currentFirm } from "@/lib/currentFirm";
+import { WorkspaceContext, type FirmRoleLabel, type Workspace } from "./workspaceContext";
 
-export type FirmRoleLabel = "Owner" | "Lead" | "Agent" | "Nevermore support";
+export { WorkspaceContext, type FirmRoleLabel, type Workspace };
+
 const ROLE_LABELS: Record<string, FirmRoleLabel> = { owner: "Owner", lead: "Lead", agent: "Agent", support: "Nevermore support" };
-
-export interface Workspace {
-  /** The firm the page is showing, or null until known (or when the person has none to show). */
-  firm: { id: string; name: string; address: string } | null;
-  role: FirmRoleLabel | null;
-  isOwner: boolean;
-  /** Whether the person is a platform admin looking at the firm on a support session (story CRM-P2.4): they can read and nothing else. */
-  isSupport: boolean;
-  /** When the support session ends, for the banner; null when the person is not on one. */
-  supportEndsAt: string | null;
-  /** The support session's id, for "End now"; null when the person is not on one. */
-  supportSessionId: string | null;
-  /** Whether the database says the person is a platform admin; false until known or when it can't be asked (D-37). */
-  isPlatformAdmin: boolean;
-  /** The person's name, or their email when they have no name (D-42). */
-  person: string;
-}
 
 /** The firm a person works in: the console's current firm (currentFirm, the one rule), or none. */
 function firmShown(firms: MyFirm[] | null, address: string | null): MyFirm | null {
@@ -59,8 +44,6 @@ function useLoadWorkspace(): Workspace {
     person: named?.trim() ?? user?.email ?? "",
   };
 }
-
-const WorkspaceContext = createContext<Workspace | null>(null);
 
 /** Loads the workspace state once for everything inside the shell (one platform-admin question, not one per reader). */
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
