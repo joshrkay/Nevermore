@@ -49,9 +49,10 @@ test("an owner removes a member, who then can't open the console at the firm's a
       await expect(memberPage.getByRole("heading", { name: "Submissions" })).toBeVisible();
     });
 
-    await test.step("the owner opens Members from the menu and sees both people", async () => {
+    await test.step("the owner opens Members from Settings and sees both people", async () => {
       await signInAndAddSecondFactor(page, `${firmUrl(ADDRESS)}/advisor`, ownerEmail);
-      await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Members" }).click();
+      await page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Settings" }).click();
+      await page.getByRole("link", { name: /^Members/ }).click();
       await expect(page.getByRole("heading", { name: "Members" })).toBeVisible();
       await expect(page.getByRole("row", { name: new RegExp(memberEmail) })).toContainText("Agent");
       await expect(page.getByRole("row", { name: new RegExp(ownerEmail) })).toContainText("You");
@@ -80,7 +81,8 @@ test("an owner removes a member, who then can't open the console at the firm's a
     });
 
     await test.step("the owner's record says who removed whom", async () => {
-      await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Activity" }).click();
+      await page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Settings" }).click();
+      await page.getByRole("link", { name: /^Activity/ }).click();
       const entry = page.getByRole("row", { name: /Removed a member/ });
       await expect(entry).toContainText(ownerEmail);
       await expect(entry).toContainText(memberEmail);
