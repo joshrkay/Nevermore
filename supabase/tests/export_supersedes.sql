@@ -233,13 +233,15 @@ END $$;
 -- is not copied, then loses its count with the column; Epic 3's rule then refuses the record (20261119090000 fails: "firm_activity_export_check
 -- ... is violated by some row"), leaving main's entries held and no export function. Two more real connections (dblink) each make an
 -- export and hold its transaction open while this connection runs the migration, which must wait for both and copy both: the other firm's
--- owner's third export in the hour (its entry and the owners' alert), committed two seconds on, and the acme owner's second (an entry and
--- no alert), committed three seconds on. The second is the one only the lock on the record waits for: an export that writes no alert
--- holds nothing in the outbox.
+-- owner's third export in the hour (its entry and the owners' alert), and the acme owner's second (an entry and no alert). The second is the
+-- one only the lock on the record waits for: an export that writes no alert holds nothing in the outbox.
+-- The exports commit at a barrier, not after a time: each connection watches pg_locks until this connection's migration is waiting for the
+-- record (a lock on firm_activity not yet granted), and only then commits. So both are still open when the migration starts, however slow
+-- the runner; a migration that never waits for them is a failure, said as one, within 30 seconds.
 CREATE SCHEMA race;
 CREATE EXTENSION dblink SCHEMA race;
--- Makes an export as `n` at the firm's address on connection `conn`, leaves it uncommitted, and has the connection commit `secs` later.
-CREATE FUNCTION pg_temp.export_held(conn text, n text, addr text, firm text, secs integer) RETURNS integer LANGUAGE plpgsql AS $$
+-- Makes an export as `n` at the firm's address on connection `conn` and leaves it uncommitted.
+CREATE FUNCTION pg_temp.export_held(conn text, n text, addr text, firm text) RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE
   dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'), split_part(current_setting('unix_socket_directories'), ',', 1));
   claims text := jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false, 'email', n || '@example.test',
@@ -252,15 +254,34 @@ BEGIN
   PERFORM race.dblink_exec(conn, format('SET LOCAL request.jwt.claims = %L', claims));
   PERFORM race.dblink_exec(conn, format('SET LOCAL request.headers = %L', jsonb_build_object('x-firm-address', addr)::text));
   SELECT r INTO answer FROM race.dblink(conn, format($q$SELECT public.export_table(%L, 'referral_partners', '["name"]')::text$q$, pg_temp.id(firm))) AS t(r text);
-  PERFORM race.dblink_send_query(conn, format('SELECT pg_sleep(%s); COMMIT', secs));
   RETURN (answer::jsonb ->> 'row_count')::integer;
+END $$;
+-- Has connection `conn` commit its export once the backend `migrating` waits for a lock on the record, or fail if it has not within 30
+-- seconds. Sent without waiting for an answer: this connection goes on to run the migration.
+CREATE FUNCTION pg_temp.commit_at_barrier(conn text, migrating integer) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM race.dblink_send_query(conn, format($q$
+    RESET ROLE;
+    DO $barrier$
+    DECLARE deadline constant timestamptz := clock_timestamp() + interval '30 seconds';
+    BEGIN
+      WHILE NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = %s AND l.locktype = 'relation' AND l.relation = 'public.firm_activity'::regclass AND NOT l.granted) LOOP
+        IF clock_timestamp() > deadline THEN
+          RAISE EXCEPTION 'FAIL: the upgrade never waited for the export on %s to commit (30 seconds): it did not lock the record first';
+        END IF;
+        PERFORM pg_sleep(0.01);
+      END LOOP;
+    END $barrier$;
+    COMMIT$q$, migrating, conn));
 END $$;
 DO $$
 BEGIN
-  PERFORM pg_temp.is(pg_temp.export_held('zenith_exporting', 'zenith_owner', 'zenith-benefits', 'zenith', 2), 1, 'the other firm''s concurrent export is made');
-  PERFORM pg_temp.is(pg_temp.export_held('acme_exporting', 'acme_owner', 'acme-brokers', 'acme', 3), 3, 'and the acme owner''s');
+  PERFORM pg_temp.is(pg_temp.export_held('zenith_exporting', 'zenith_owner', 'zenith-benefits', 'zenith'), 1, 'the other firm''s concurrent export is made');
+  PERFORM pg_temp.is(pg_temp.export_held('acme_exporting', 'acme_owner', 'acme-brokers', 'acme'), 3, 'and the acme owner''s');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), 6::bigint, 'neither committed: this connection sees neither');
   PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert'), 1::bigint, 'nor the alert');
+  PERFORM pg_temp.commit_at_barrier('zenith_exporting', pg_backend_pid());
+  PERFORM pg_temp.commit_at_barrier('acme_exporting', pg_backend_pid());
 END $$;
 
 -- ---------- the upgrade: the supersedes migration, Epic 3's export, the carried entries, and what follows ----------
@@ -269,7 +290,7 @@ END $$;
 DO $$
 DECLARE conn text;
 BEGIN
-  -- Each concurrent connection's two results (the sleep, the commit), then nothing.
+  -- Each concurrent connection's three results (the role, the barrier, the commit), then nothing. A barrier that failed raises its error here.
   FOREACH conn IN ARRAY ARRAY['zenith_exporting', 'acme_exporting'] LOOP
     WHILE (SELECT count(*) FROM race.dblink_get_result(conn) AS t(r text)) > 0 LOOP END LOOP;
     PERFORM race.dblink_disconnect(conn);
