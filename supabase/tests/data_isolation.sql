@@ -200,6 +200,7 @@
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1299,12 +1300,14 @@ INSERT INTO callable VALUES
 INSERT INTO callable VALUES
   ('export_rows(p_firm_id uuid, p_table text, p_filters jsonb, p_ids jsonb)', 'own', NULL,
    'a current member of the firm (an owner, for the firm''s record) takes the rows of a listed table that they may see and the same statement records the export; refuses a support session first (PT423), then every caller who is not a member of that firm at this address (42501); never an intake''s answers, a census or a FEIN');
--- CRM-A2.1a (20261119140000_account_page.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
+-- CRM-A2.1a (20261119140000_account_page.sql; CRM-A2.1b's account_tab, 20261119145000_account_tab.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
 INSERT INTO callable VALUES
   ('account_page(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) who may see the account, by level, reads its details and each tab''s count and first five rows; NULL, the same as for an account that is not there, for anyone else: another firm''s member, a platform admin, a former member, an agent whose level does not reach it'),
   ('account_files(p_firm_id uuid, p_account_id uuid, p_limit integer, p_offset integer)', 'own', NULL,
    'the same for an account''s files that passed the virus check: names and places, never what was read out of one; the link to a file is Storage''s own, under its own access rule'),
+  ('account_tab(p_firm_id uuid, p_account_id uuid, p_tab text, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for a page of one tab of an account (contacts, opportunities, quotes, activity or files), from any place: the rows the page holds the first five of; NULL for anyone who may not see the account'),
   ('submission_account(p_firm_id uuid, p_submission_id uuid)', 'own', NULL,
    'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
   ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
@@ -1862,6 +1865,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('account_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_page({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('account_files', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_files({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('account_tab', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_tab({firm}, {acct}, 'contacts'))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('submission_account', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.submission_account({firm}, {sid})) WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('update_account', 'advisor', 'by_id',
    $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$');
@@ -3527,6 +3531,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),
+  ('account_tab', 'firm_scoped', 'the same for a page of one tab of an account: the rows of its contacts, opportunities, quotes, history or files that passed, for someone who may see the account, and nothing for anyone else (4e)'),
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
