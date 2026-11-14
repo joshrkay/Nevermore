@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -61,6 +61,22 @@ export interface FirmClosing {
   firmName: string;
   /** When the firm closes, as `YYYY-MM-DDTHH:MM:SSZ` (UTC); only for a request just made. */
   closesAt: string | null;
+}
+
+/** The notice to a firm's owners of a large export, or of the third by one member within an hour (public.export_rows): who, which table, how many, when. Never a row. */
+export interface ExportAlert {
+  /** The address of the member who exported; null for a member whose account has none (the email then says "A member"). */
+  memberEmail: string | null;
+  firmName: string;
+  /** The table in words ("Referral partners"). */
+  tableLabel: string;
+  rowCount: number;
+  /** More than 500 rows. */
+  large: boolean;
+  /** This member's exports in the last hour, this one included. */
+  exportsInHour: number;
+  /** When the database took the rows, as `YYYY-MM-DDTHH:MM:SSZ` (UTC). */
+  exportedAt: string;
 }
 
 export interface ProspectConfirmation {
@@ -190,6 +206,22 @@ export function parseFirmClosing(raw: unknown): FirmClosing | null {
   if (!byEmail) return null;
   if (event === "asked" && (closesAt === null || !CERTIFIED_AT.test(closesAt) || !Number.isFinite(Date.parse(closesAt)))) return null;
   return { event, byEmail, firmName, closesAt: event === "asked" ? closesAt : null };
+}
+
+/** The export alert's fields, or null without all of them. Only these are ever read: no row, no name of anything exported. */
+export function parseExportAlert(raw: unknown): ExportAlert | null {
+  const p = asObject(raw);
+  // The member's email may be empty on the account: the database then writes null, and the owners are told all the same. A key that is missing, or text that is not an address, is no alert.
+  const memberEmail = p && p.member_email === null ? null : p && asEmail(p.member_email);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const tableLabel = p && oneLine(p.table_label, 80);
+  const exportedAt = p && oneLine(p.exported_at, 20);
+  if (!p || memberEmail === undefined || (p.member_email !== null && !memberEmail) || !firmName || !tableLabel || exportedAt === null || !CERTIFIED_AT.test(exportedAt) || !Number.isFinite(Date.parse(exportedAt))) return null;
+  const { row_count: rowCount, exports_in_hour: exportsInHour, large } = p;
+  if (typeof rowCount !== "number" || !Number.isInteger(rowCount) || rowCount < 0) return null;
+  if (typeof exportsInHour !== "number" || !Number.isInteger(exportsInHour) || exportsInHour < 1) return null;
+  if (typeof large !== "boolean") return null;
+  return { memberEmail, firmName, tableLabel, rowCount, large, exportsInHour, exportedAt };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -441,6 +473,28 @@ export function renderFirmClosing(n: FirmClosing): RenderedEmail {
     : "The firm can be changed again.";
   const text = [headline, "", detail, "", SIGN_OFF].join("\n");
   const html = layout(subject, headline, `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p><p style="margin:0;">${escapeHtml(detail)}</p>`);
+  return { subject, text, html };
+}
+
+/**
+ * The email to a firm's owners about an export: who took which table, how many rows, and why they are told (more than 500 rows, or the third
+ * export by that member within an hour). It says nothing of the rows and links nowhere into the firm's records.
+ */
+export function renderExportAlert(n: ExportAlert): RenderedEmail {
+  const rows = `${n.rowCount.toLocaleString("en-US")} ${n.rowCount === 1 ? "row" : "rows"}`;
+  const who = n.memberEmail ?? "A member";
+  // The reasons are the database's own rules, said as they are: more than 500 rows, or exactly the third export in an hour. Anything else is not a reason.
+  const large = n.large && n.rowCount > 500;
+  const third = n.exportsInHour === 3;
+  const subject = large || !third ? `${who} exported ${rows} from ${n.firmName}` : `${who} has made 3 exports from ${n.firmName} in an hour`;
+  const headline = `${who} exported ${n.tableLabel} (${rows}) from ${n.firmName} on ${utcStamp(n.exportedAt)}.`;
+  const why = [
+    large ? "You are told because it is more than 500 rows." : null,
+    third ? "You are told because it is their third export in an hour." : null,
+  ].filter((line): line is string => line !== null);
+  const detail = "Every export is in the firm's record of who did what, which an owner can read.";
+  const text = [headline, "", ...why, "", detail, "", SIGN_OFF].join("\n");
+  const html = layout(subject, headline, `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>${why.map((w) => `<p style="margin:0 0 16px;">${escapeHtml(w)}</p>`).join("")}<p style="margin:0;">${escapeHtml(detail)}</p>`);
   return { subject, text, html };
 }
 

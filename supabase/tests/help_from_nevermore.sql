@@ -149,6 +149,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261119090000_export.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -697,7 +698,7 @@ BEGIN
   PERFORM pg_temp.as_user('admin3', 'alpha-brokers');
   PERFORM pg_temp.is(pg_temp.refusal('SELECT public.refuse_support_session(NULL)'), 'ok', 'nor a NULL for an admin who holds no session');
   PERFORM pg_temp.as_user('platform_admin', 'alpha-brokers');
-  PERFORM pg_temp.is(pg_temp.export_functions_that_do_not_refuse(fa), '', 'every export function refuses a support session (there are none yet)');
+  PERFORM pg_temp.is(pg_temp.export_functions_that_do_not_refuse(fa), '', 'every export function refuses a support session (export_rows, which calls the refusal first)');
   -- The detector finds the ones that do not, and passes the one that does.
   RESET ROLE;
   CREATE FUNCTION public.export_never_refuses(p_firm uuid) RETURNS integer LANGUAGE sql AS 'SELECT 1';
@@ -1027,7 +1028,7 @@ DECLARE
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
-    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view'];
+    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1119,6 +1120,7 @@ DECLARE
     'archive_chamber_session', 'changes the caller''s own intake only (user_id is the caller); a support session has no intake of the firm''s prospects',
     'consume_ai_quota', 'the caller''s own allowance',
     'end_support_session', 'the doorway itself: the admin''s own session, in the platform''s table and the firm''s record of the use',
+    'export_rows', 'reads a table and records the export in the firm''s record (CRM-S3.8b); it calls refuse_support_session(firm) first, so a session can neither take rows nor write the entry (the exports block above and supabase/tests/export.sql)',
     'leave_firm', 'ends the caller''s own membership: a support session has none, so it answers "not a member"',
     'record_intake_consent', 'the caller''s own agreement as an employer; writes a row with the caller''s id',
     'report_client_event', 'the platform''s monitoring: a row with the caller''s own id, read by platform admins only',

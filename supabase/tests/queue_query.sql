@@ -424,6 +424,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261119090000_export.sql
 
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,
