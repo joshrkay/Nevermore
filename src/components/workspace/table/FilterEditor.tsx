@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useForm, type ControllerRenderProps } from "react-hook-form";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useForm, type Control, type ControllerRenderProps, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import type { TableFields, TableFilter } from "@/lib/tableQuery";
@@ -16,14 +16,15 @@ import { OPERATORS } from "./operators";
 // Cancelling is the popover's own (Escape or a click away), so it asks nothing: there is nothing to lose. Native selects and date inputs, as the
 // workspace form's own select is: they work with a phone's picker and a keyboard.
 
-const schemaFor = (fieldId: string, field: FieldDefinition) =>
+// The schema reads the values once and hands on the finished filter, so what is checked is what is applied (nothing is worked out twice).
+const schemaFor = <K extends TableFields>(fieldId: string, field: FieldDefinition) =>
   z
     .object({ op: z.string(), first: z.string(), second: z.string(), list: z.array(z.string()), yes: z.enum(["true", "false"]) })
-    .superRefine((form, ctx) => {
-      const result = filterFromForm(fieldId, field, form as FilterForm);
-      if ("errors" in result) {
-        for (const [path, message] of Object.entries(result.errors)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
-      }
+    .transform((form, ctx): TableFilter<K> => {
+      const result = filterFromForm<K>(fieldId, field, form as FilterForm);
+      if ("filter" in result) return result.filter;
+      for (const [path, message] of Object.entries(result.errors)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+      return z.NEVER;
     });
 
 interface Props<K extends TableFields> {
@@ -36,7 +37,13 @@ interface Props<K extends TableFields> {
 }
 
 /** A searchable list of the field's values with a checkbox each, by label. A value the table does not list but the filter holds stays in the list, shown in quotes as written, so changing the filter never drops it unseen. */
-function ChoiceList({ field, control }: { field: FieldDefinition; control: ControllerRenderProps<FilterForm, "list"> }) {
+function ChoiceList({ field, control, describedBy }: { field: FieldDefinition; control: ControllerRenderProps<FilterForm, "list">; describedBy?: string }) {
+  const group = useRef<HTMLDivElement | null>(null);
+  // When nothing is chosen, the form puts focus on the list's first choice (not the search box above it); the message is tied to the group.
+  const takeGroup = (el: HTMLDivElement | null) => {
+    group.current = el;
+    control.ref(el && { focus: () => el.querySelector<HTMLElement>("input[type=checkbox]")?.focus() });
+  };
   const [search, setSearch] = useState("");
   const listed = field.choices ?? [];
   const extra = control.value.filter((v) => !listed.some((c) => c.value.toLowerCase() === v.toLowerCase())).map((value) => ({ value, label: `“${value}”` }));
@@ -46,7 +53,6 @@ function ChoiceList({ field, control }: { field: FieldDefinition; control: Contr
   return (
     <div className="space-y-2">
       <Input
-        ref={control.ref}
         type="search"
         aria-label="Search choices"
         placeholder="Search"
@@ -55,7 +61,7 @@ function ChoiceList({ field, control }: { field: FieldDefinition; control: Contr
         // Enter in the search box searches; it must not apply a half-made choice.
         onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
       />
-      <div role="group" aria-label="Choices" className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border p-2">
+      <div ref={takeGroup} role="group" aria-label="Choices" aria-describedby={describedBy} className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border p-2">
         {options.length === 0 ? <p className="text-sm text-muted-foreground">Nothing matches that search.</p> : options.map((c) => (
           <label key={c.value} className="flex cursor-pointer items-center gap-2 text-sm">
             <input
@@ -74,8 +80,8 @@ function ChoiceList({ field, control }: { field: FieldDefinition; control: Contr
 }
 
 export function FilterEditor<K extends TableFields>({ fieldId, field, initial, onApply, onCancel }: Props<K>) {
-  const schema = useMemo(() => schemaFor(fieldId, field), [fieldId, field]);
-  const form = useForm<FilterForm>({
+  const schema = useMemo(() => schemaFor<K>(fieldId, field), [fieldId, field]);
+  const form = useForm<FilterForm, unknown, TableFilter<K>>({
     resolver: zodResolver(schema),
     defaultValues: formFor(field, initial as { op: string; value?: unknown } | undefined),
     // Errors show when a person tries to apply, then follow what they type.
@@ -83,6 +89,9 @@ export function FilterEditor<K extends TableFields>({ fieldId, field, initial, o
     reValidateMode: "onChange",
     shouldFocusError: true,
   });
+  const id = useId();
+  // The ui kit's form fields are typed for a form whose output is its input; this one's output is the finished filter.
+  const control = form.control as unknown as Control<FilterForm>;
   const ops = operatorsFor(field);
   const op = form.watch("op");
   const shape = OPERATORS[field.kind][op]?.shape ?? "none";
@@ -93,14 +102,11 @@ export function FilterEditor<K extends TableFields>({ fieldId, field, initial, o
   const inputType = shape === "day" || shape === "days" ? "date" : shape === "text" ? "text" : "number";
   const firstLabel = shape === "day" ? "Day" : shape === "count" ? "Number of days" : shape === "number" ? "Number" : "Text";
 
-  const apply = form.handleSubmit((values) => {
-    const result = filterFromForm<K>(fieldId, field, values);
-    if ("filter" in result) onApply(result.filter);
-  });
+  const apply = form.handleSubmit((filter) => onApply(filter));
 
   const input = (name: "first" | "second", label: string) => (
     <FormField
-      control={form.control}
+      control={control}
       name={name}
       render={({ field: f }) => (
         <FormItem className="space-y-1">
@@ -115,18 +121,25 @@ export function FilterEditor<K extends TableFields>({ fieldId, field, initial, o
   );
 
   return (
-    <Form {...form}>
+    <Form {...(form as unknown as UseFormReturn<FilterForm>)}>
       <form ref={root} noValidate onSubmit={(e) => void apply(e)} className="space-y-3" aria-label={`Filter on ${field.label}`}>
         <p className="text-sm font-medium">{field.label}</p>
         {ops.length > 1 && (
           <FormField
-            control={form.control}
+            control={control}
             name="op"
             render={({ field: f }) => (
               <FormItem className="space-y-1">
                 <FormLabel>Condition</FormLabel>
                 <FormControl>
-                  <SelectInput {...f} onChange={(e) => { form.clearErrors(); f.onChange(e); }}>
+                  <SelectInput {...f} onChange={(e) => {
+                    // A new condition that asks for something else starts with empty boxes: a value typed for the old one must not stay hidden and be applied.
+                    form.clearErrors();
+                    if (OPERATORS[field.kind][e.target.value]?.shape !== shape) {
+                      form.setValue("first", ""); form.setValue("second", ""); form.setValue("list", []);
+                    }
+                    f.onChange(e);
+                  }}>
                     {ops.map(([name, def]) => <option key={name} value={name}>{def.label}</option>)}
                   </SelectInput>
                 </FormControl>
@@ -136,7 +149,7 @@ export function FilterEditor<K extends TableFields>({ fieldId, field, initial, o
         )}
         {shape === "bool" && (
           <FormField
-            control={form.control}
+            control={control}
             name="yes"
             render={({ field: f }) => (
               <FormItem className="space-y-1">
@@ -155,19 +168,19 @@ export function FilterEditor<K extends TableFields>({ fieldId, field, initial, o
         {pair && <>{input("first", "From")}{input("second", "To")}</>}
         {shape === "list" && (choosesFromList(field) ? (
           <FormField
-            control={form.control}
+            control={control}
             name="list"
             render={({ field: f }) => (
               <FormItem className="space-y-1">
                 <p className="text-sm font-medium leading-none">Values</p>
-                <ChoiceList field={field} control={f} />
-                <FormMessage role="alert" className="text-sm" />
+                <ChoiceList field={field} control={f} describedBy={`${id}-list-message`} />
+                <FormMessage id={`${id}-list-message`} role="alert" className="text-sm" />
               </FormItem>
             )}
           />
         ) : (
           <FormField
-            control={form.control}
+            control={control}
             name="first"
             render={({ field: f }) => (
               <FormItem className="space-y-1">

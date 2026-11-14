@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Inbox, RefreshCw, SearchX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -38,6 +38,8 @@ const AdvisorDashboardPage = () => {
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
   const refresh = useRefreshTable(table);
+  // The row's "Add filter": where focus goes when filters are cleared, from the row or from the empty state (D-170).
+  const addFilterRef = useRef<HTMLButtonElement>(null);
 
   // While the first rows are on their way, what changes the QUERY stays usable (search, the filter row, the sort headers, the tabs: a person can
   // correct a slow search); what needs the rows is not (Refresh, and the pager, which the frame draws only once there are rows).
@@ -66,7 +68,7 @@ const AdvisorDashboardPage = () => {
         {loading && <span id="refresh-unavailable" className="sr-only">Available when the list has loaded</span>}
       </div>
     </div>
-    <FilterRow table={table} location={location} />
+    <FilterRow table={table} location={location} addFilterRef={addFilterRef} />
     </>
   );
 
@@ -98,7 +100,9 @@ const AdvisorDashboardPage = () => {
         // "Clear filters and search" clear those and KEEP the tab and the sort; when only the tab narrows the list the button is "Show all statuses" and leaves it.
         onClear={() => {
           change(by.search || by.filters ? { search: "", filters: [] } : { view: null }, { push: true });
-          focusTable();
+          // Clearing filters sends focus where the row's own "Clear filters" does; clearing a search or leaving a tab, which has no such button, goes to the table.
+          if (by.filters) addFilterRef.current?.focus();
+          else focusTable();
         }}
       />
     );

@@ -85,6 +85,8 @@ function splitOn(s: string, sep: ":" | ","): string[] {
 
 const isDay = (s: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  // Postgres takes 0001-01-01 to 9999-12-31 and refuses year 0000 (which JavaScript reads), so the address drops it rather than fail the whole table.
+  if (s.startsWith("0000-")) return false;
   const d = new Date(`${s}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 };
@@ -305,7 +307,7 @@ export function changeAddress<K extends TableFields>(address: TableAddress<K>, c
   // A view or sort a person chose replaces the one that was held.
   if ("view" in change) next.held.view = null;
   if ("sort" in change) next.held.sort = null;
-  // A caller that states the whole filter list (a checkbox, a removed chip, "Clear filters") replaces the held filters too.
+  // A caller that states the whole filter list replaces the held filters too, unless it says which stay (`heldFilters`, below: the filter row's way, D-169, which supersedes the old rule that a removed chip dropped them all).
   if ("filters" in change) next.held.filters = [];
   // The filter row keeps (or removes one of) the filters held for fields that have not loaded, by saying which ones are left.
   if (heldFilters) next.held.filters = [...heldFilters].sort();

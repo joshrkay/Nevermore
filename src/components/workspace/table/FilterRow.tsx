@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { Plus, X } from "lucide-react";
 import type { TableFields, TableFilter } from "@/lib/tableQuery";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -38,12 +38,17 @@ interface Props<K extends TableFields, Row, Context> {
   location: ReturnType<typeof useTableAddress<K, Row, Context>>;
   /** The words for the people of a person field (CRM-A1.1); an id is never shown. */
   names?: NamePeople;
+  /** Given the "Add filter" button, so the page's own "Clear filters" (in the empty state) can send focus to the same place the row's does (D-170). */
+  addFilterRef?: RefObject<HTMLButtonElement>;
 }
 
 /** What opened an editor: a chip (by its filter's text), a listed field's button, or the "Add filter" popover. */
 type Open = { kind: "chip"; key: string } | { kind: "listed"; field: string } | { kind: "add" } | null;
 
-export function FilterRow<K extends TableFields, Row, Context>({ table, location, names }: Props<K, Row, Context>) {
+/** One filter's text as the address writes it: its key, and how two are told apart. */
+const keyOf = <K extends TableFields>(filter: TableFilter<K>): string => writeFilter(filter as { field: string; op: string });
+
+export function FilterRow<K extends TableFields, Row, Context>({ table, location, names, addFilterRef }: Props<K, Row, Context>) {
   const { address, change } = location;
   const [open, setOpen] = useState<Open>(null);
   // For "Add filter": the field chosen from its list, which turns the same popover into that field's editor.
@@ -52,6 +57,10 @@ export function FilterRow<K extends TableFields, Row, Context>({ table, location
   // The chip (or "add") that takes focus once the address has changed. A ref read by an effect, so it is used exactly once.
   const focusNext = useRef<string | null>(null);
   const row = useRef<HTMLDivElement>(null);
+  const reasonId = useId();
+  // The last control in the row that had focus, so a chip that goes away under it (Back) can hand focus to "Add filter" instead of the page.
+  const lastFocus = useRef<HTMLElement | null>(null);
+  const addButton = useRef<HTMLButtonElement | null>(null);
 
   const fields = table.fields as Record<string, FieldDefinition>;
   const loading = table.fieldsStatus === "loading";
@@ -68,7 +77,15 @@ export function FilterRow<K extends TableFields, Row, Context>({ table, location
   // The address changed: put focus where the last action said, once the chips it names are on screen.
   useEffect(() => {
     const key = focusNext.current;
-    if (key === null) return;
+    if (key === null) {
+      // No action here said where focus goes. If the control that had it is gone (Back took its chip away), "Add filter" takes it, not the page (D-170).
+      const gone = lastFocus.current;
+      if (gone && !gone.isConnected && (document.activeElement === document.body || document.activeElement === null)) {
+        lastFocus.current = null;
+        addButton.current?.focus();
+      }
+      return;
+    }
     const target = [...(row.current?.querySelectorAll<HTMLElement>("[data-filter-key]") ?? [])].find((el) => el.dataset.filterKey === key);
     if (target) {
       focusNext.current = null;
@@ -83,28 +100,40 @@ export function FilterRow<K extends TableFields, Row, Context>({ table, location
   const closeAll = () => { setOpen(null); setAdding(null); setPickSearch(""); };
   const apply = (filter: TableFilter<K>, replacing?: TableFilter<K>) => {
     const next = replacing ? address.filters.map((f) => (f === replacing ? filter : f)) : [...address.filters, filter];
-    write(next, held, writeFilter(filter as { field: string; op: string }));
     closeAll();
+    // Applying what is already there changes nothing: no second history entry, and focus goes back to what opened the editor (the popover does it).
+    const texts = (list: TableFilter<K>[]) => [...new Set(list.map(keyOf))].sort().join("\n");
+    if (texts(next) === texts(address.filters)) return;
+    write(next, held, keyOf(filter));
   };
   const remove = (filter: TableFilter<K>) => {
     const index = address.filters.indexOf(filter);
     const rest = address.filters.filter((f) => f !== filter);
     // Next chip, else the one before, else "Add filter".
     const neighbour = rest[index] ?? rest[rest.length - 1];
-    write(rest, held, neighbour ? writeFilter(neighbour as { field: string; op: string }) : held[0] ? `held:${held[0]}` : "add");
+    write(rest, held, neighbour ? keyOf(neighbour) : held[0] ? `held:${held[0]}` : "add");
   };
   const removeHeld = (text: string) => {
     const rest = held.filter((h) => h !== text);
-    write(address.filters, rest, address.filters[0] ? writeFilter(address.filters[0] as { field: string; op: string }) : rest[0] ? `held:${rest[0]}` : "add");
+    write(address.filters, rest, address.filters[0] ? keyOf(address.filters[0]) : rest[0] ? `held:${rest[0]}` : "add");
   };
   const clear = () => write([], [], "add");
 
-  const describedBy = unavailable ? "filter-row-reason" : undefined;
+  const describedBy = unavailable ? reasonId : undefined;
   // Closing an editor returns focus to what opened it, unless an apply or a removal has said where focus goes.
   const keepFocusWhereSaid = (e: Event) => { if (focusNext.current !== null) e.preventDefault(); };
 
   return (
-    <div ref={row} role="group" aria-label="Filters" className="mb-4 flex flex-wrap items-center gap-2">
+    <div
+      ref={row}
+      role="group"
+      aria-label="Filters"
+      className="mb-4 flex flex-wrap items-center gap-2"
+      // Only the row's own controls count (an editor's fields are drawn elsewhere in the page but their events reach here).
+      onFocusCapture={(e) => { if (row.current?.contains(e.target as Node)) lastFocus.current = e.target as HTMLElement; }}
+      // Focus that moves to another control forgets the old one; focus that leaves with nowhere to go (the element was removed) keeps it.
+      onBlurCapture={(e) => { if (e.relatedTarget) lastFocus.current = null; }}
+    >
       {listed.map((id) => (
         <Popover
           key={id}
@@ -139,6 +168,7 @@ export function FilterRow<K extends TableFields, Row, Context>({ table, location
           <button
             type="button"
             data-filter-key="add"
+            ref={(el) => { addButton.current = el; if (addFilterRef) (addFilterRef as { current: HTMLButtonElement | null }).current = el; }}
             aria-disabled={unavailable ? true : undefined}
             aria-describedby={describedBy}
             onClick={unavailable ? (e) => e.preventDefault() : undefined}
@@ -173,12 +203,12 @@ export function FilterRow<K extends TableFields, Row, Context>({ table, location
           )}
         </PopoverContent>
       </Popover>
-      {unavailable && <span id="filter-row-reason" className="text-xs text-muted-foreground">{unavailable}</span>}
+      {unavailable && <span id={reasonId} className="text-xs text-muted-foreground">{unavailable}</span>}
 
       {address.filters.length > 0 && (
         <ul aria-label="Filters in force" className="contents">
           {address.filters.map((filter) => {
-            const key = writeFilter(filter as { field: string; op: string });
+            const key = keyOf(filter);
             const words = filterInWords(table.fields, filter, names);
             const field = fields[(filter as { field: string }).field];
             return (

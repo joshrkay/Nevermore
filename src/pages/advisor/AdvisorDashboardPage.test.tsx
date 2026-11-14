@@ -971,10 +971,10 @@ describe("AdvisorDashboardPage", () => {
         ["text, blank", "Company", "contains", [], "Enter some text."],
         ["text, over 200 characters", "Company", "contains", [["Text", "a".repeat(201)]], "Use 200 characters or fewer."],
         ["a number, blank", "Employees", "is", [], "Enter a number."],
-        ["a between with only one end", "Employees", "is between", [["From", "5"]], "Enter the larger number."],
-        ["a between with no ends", "Employees", "is between", [], "Enter the smaller number."],
+        ["a between with only one end", "Employees", "is between", [["From", "5"]], "Enter a number for the other end."],
+        ["a between with no ends", "Employees", "is between", [], "Enter a number for one end."],
         ["a day, blank", "Submitted", "is on", [], "Choose a day."],
-        ["a between of days with one end", "Submitted", "is between", [["From", "2026-11-01"]], "Choose the last day."],
+        ["a between of days with one end", "Submitted", "is between", [["From", "2026-11-01"]], "Choose a day for the other end."],
         ["days, blank", "Submitted", "is in the next N days", [], "Enter a number of days."],
         ["days over 3660", "Submitted", "is in the next N days", [["Number of days", "3661"]], "Enter a whole number of days from 0 to 3660."],
         ["days that are not whole", "Submitted", "is in the last N days", [["Number of days", "1.5"]], "Enter a whole number of days from 0 to 3660."],
@@ -1168,6 +1168,123 @@ describe("AdvisorDashboardPage", () => {
         expect(await screen.findByRole("button", { name: "A contains “acme”" })).toBeInTheDocument();
         expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "a", op: "contains", value: "acme" }] }));
       });
+    });
+
+    // Catches: an unchanged Apply writing a second, identical history entry, and leaving a pending focus that later steals it from the search box.
+    it("closes without writing or pushing when Apply leaves the filters as they were, keeps focus on the chip, and leaves a later keystroke in the search box alone", async () => {
+      const user = await mounted();
+      await setYes(user, "Needs advisor action");
+      await waitFor(() => expect(where()).toBe("?filter=needs_action:is:true"));
+      await user.click(chip("Needs advisor action: yes"));
+      await apply(user);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(chip("Needs advisor action: yes")).toHaveFocus());
+      expect(where()).toBe("?filter=needs_action:is:true");
+      // Escape from another editor still returns focus to its trigger.
+      screen.getByRole("button", { name: "Filter by Employees" }).focus();
+      await user.keyboard("{Enter}");
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Filter by Employees" })).toHaveFocus());
+      // Typing in the search box keeps focus there.
+      const search = screen.getByRole("searchbox", { name: "Search" });
+      await user.click(search);
+      await user.type(search, "acme");
+      await waitFor(() => expect(where()).toBe("?q=acme&filter=needs_action:is:true"));
+      expect(search).toHaveFocus();
+      // One Back goes to the address before the filter was added: the unchanged Apply made no entry of its own.
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe(""));
+    });
+
+    // Catches: a person's chip reading with the raw id when the table gives its people as choices (an id is never shown).
+    it("words a person's chip with the person's name from the field's choices", async () => {
+      withMoreKinds();
+      await mounted("/advisor?filter=owner:any_of:u1,u2");
+      expect(screen.getByRole("button", { name: "Owner is any of Pat Agent or Sam Agent" })).toBeInTheDocument();
+      expect(within(filterRow()).queryByText(/u1/)).not.toBeInTheDocument();
+    });
+
+    // Catches: a typed list splitting a value that holds a comma into two when the filter is changed.
+    it("keeps a typed value that holds a comma whole when the filter is changed", async () => {
+      withMoreKinds();
+      const user = await mounted("/advisor?filter=tags:any_of:a%5C,b,c");
+      await user.click(chip("Tags includes any of “a,b” or “c”"));
+      expect(screen.getByLabelText("Values, separated by commas")).toHaveValue("a\\,b, c");
+      type("Values, separated by commas", "a\\,b, d");
+      await apply(user);
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "tags", op: "any_of", value: ["a,b", "d"] }] })));
+    });
+
+    // Catches: a value typed under one condition staying hidden and being checked after the condition changes to one that has no such box.
+    it("clears what was typed when the condition changes to one that asks for something else", async () => {
+      const user = await mounted();
+      await openFor(user, "Submitted");
+      await user.selectOptions(screen.getByLabelText("Condition"), "is on");
+      type("Day", "2026-11-01");
+      await user.selectOptions(screen.getByLabelText("Condition"), "is in the next N days");
+      expect(screen.getByLabelText("Number of days")).toHaveValue(null);
+      await apply(user);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Enter a number of days.");
+      expect(where()).toBe("");
+    });
+
+    // Catches: year 0000, which the database refuses, getting into the address, and the person's day being kept while the database would fail the whole table.
+    it("drops a filter on year 0000 from the address, as the database refuses that day", async () => {
+      await mounted("/advisor?filter=submitted_at:on:0000-01-01");
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      await waitFor(() => expect(where()).toBe(""));
+    });
+
+    // Catches: the choice list's message not being tied to the list, and focus going to the search box when nothing was chosen.
+    it("ties the choice list's message to the list and puts focus on its first choice", async () => {
+      const user = await mounted();
+      await openFor(user, "Status");
+      await apply(user);
+      const alert = await screen.findByRole("alert");
+      const group = screen.getByRole("group", { name: "Choices" });
+      expect(group).toHaveAttribute("aria-describedby", alert.id);
+      await waitFor(() => expect(within(group).getAllByRole("checkbox")[0]).toHaveFocus());
+    });
+
+    // Catches: "Clear filters" in the row leaving a held filter behind (it would apply once its field arrives).
+    it("clears a held filter with Clear filters in the row", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
+      renderAt("/advisor?filter=a:contains:acme&filter=employee_count:is:5");
+      await screen.findByText("Loading submissions");
+      fireEvent.click(within(filterRow()).getByRole("button", { name: "Clear filters" }));
+      await waitFor(() => expect(where()).toBe(""));
+      expect(screen.queryByRole("list", { name: "Filters waiting for their fields" })).not.toBeInTheDocument();
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "ready", fields: { ...QUEUE_TABLE.fields, a: { label: "A", kind: "text" } } as never });
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+    });
+
+    // Catches: the two "Clear filters" buttons sending focus to different places, or the empty state's dropping it to the page.
+    it("sends focus to Add filter from either Clear filters, the row's and the empty state's", async () => {
+      listQueue.mockResolvedValue([]);
+      const user = await mounted("/advisor?filter=employee_count:is:5", []);
+      await screen.findByText("No submissions match these filters.");
+      expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(2);
+      await user.click(within(emptyState()).getByRole("button", { name: "Clear filters" }));
+      await waitFor(() => expect(where()).toBe(""));
+      expect(screen.getByRole("button", { name: "Add filter" })).toHaveFocus();
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:is:5"));
+      await user.click(within(filterRow()).getByRole("button", { name: "Clear filters" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Add filter" })).toHaveFocus());
+    });
+
+    // Catches: Back removing the chip that had focus and dropping focus to the page.
+    it("puts focus on Add filter when Back removes the chip that had it", async () => {
+      const user = await mounted();
+      await openFor(user, "Employees");
+      type("Number", "5");
+      await apply(user);
+      await waitFor(() => expect(chip("Employees is 5")).toHaveFocus());
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe(""));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Add filter" })).toHaveFocus());
     });
 
     // Catches: a refused filter taking the chips away with the table, so the person cannot remove or fix the one that was refused.
@@ -2118,7 +2235,7 @@ describe("AdvisorDashboardPage", () => {
       expect(within(nav).getByRole("link", { name: /^View 33 \d+/ })).toBeInTheDocument();
     });
 
-    // Catches: a filter held while custom fields load surviving "Clear filters", and applying once the fields arrive.
+    // Catches: a filter removed through its chip's remove button (not through "Clear filters") staying in force, or applying once the fields arrive.
     it("replaces a held filter when the filters are changed, so it never applies later", async () => {
       listQueue.mockResolvedValue([row()]);
       setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });

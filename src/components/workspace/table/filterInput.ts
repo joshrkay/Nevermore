@@ -40,7 +40,7 @@ export function formFor(field: FieldDefinition, filter?: { op: string; value?: u
   switch (OPERATORS[field.kind][filter.op].shape) {
     case "text": case "number": case "day": case "count": form.first = String(value ?? ""); break;
     case "numbers": case "days": { const [a, b] = (value as [unknown, unknown]) ?? []; form.first = String(a ?? ""); form.second = String(b ?? ""); break; }
-    case "list": form.list = [...((value as string[]) ?? [])]; if (!choosesFromList(field)) form.first = form.list.join(", "); break;
+    case "list": form.list = [...((value as string[]) ?? [])]; if (!choosesFromList(field)) form.first = form.list.map((v) => v.replace(/[\\,]/g, (c) => `\\${c}`)).join(", "); break;
     case "bool": form.yes = value === false ? "false" : "true"; break;
   }
   return form;
@@ -49,7 +49,18 @@ export function formFor(field: FieldDefinition, filter?: { op: string; value?: u
 type Result<K extends TableFields> = { filter: TableFilter<K> } | { errors: Partial<Record<FilterFormField, string>> };
 
 const length = (s: string) => Array.from(s).length;
-const typedList = (text: string) => text.split(",").map((v) => v.trim()).filter((v) => v !== "");
+/** A typed list: values separated by commas, where a backslash keeps a comma (or a backslash) inside its value ("a\\,b, c" is "a,b" and "c"). */
+const typedList = (text: string): string[] => {
+  const values: string[] = [];
+  let current = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\" && i + 1 < text.length && /[\\,]/.test(text[i + 1])) { current += text[i + 1]; i++; }
+    else if (text[i] === ",") { values.push(current); current = ""; }
+    else current += text[i];
+  }
+  values.push(current);
+  return values.map((v) => v.trim()).filter((v) => v !== "");
+};
 
 /**
  * The filter these values make, or what is wrong under which field, in plain words. Nothing is applied until this returns a filter. A pair may be
@@ -76,15 +87,15 @@ export function filterFromForm<K extends TableFields>(fieldId: string, field: Fi
     }
     case "number": case "numbers": {
       const bad = (s: string) => s.trim() === "" || !Number.isFinite(Number(s));
-      if (bad(form.first)) errors.first = shape === "numbers" ? "Enter the smaller number." : "Enter a number.";
-      if (shape === "numbers" && bad(form.second)) errors.second = "Enter the larger number.";
+      if (bad(form.first)) errors.first = shape === "numbers" ? "Enter a number for one end." : "Enter a number.";
+      if (shape === "numbers" && bad(form.second)) errors.second = "Enter a number for the other end.";
       raw = shape === "numbers" ? `${form.first},${form.second}` : form.first;
       break;
     }
     case "day": case "days": {
       const bad = (s: string) => readValue("day", s) === undefined;
-      if (bad(form.first)) errors.first = form.first.trim() === "" ? (shape === "days" ? "Choose the first day." : "Choose a day.") : "Enter a real day, like 2026-11-30.";
-      if (shape === "days" && bad(form.second)) errors.second = form.second.trim() === "" ? "Choose the last day." : "Enter a real day, like 2026-11-30.";
+      if (bad(form.first)) errors.first = form.first.trim() === "" ? (shape === "days" ? "Choose a day for one end." : "Choose a day.") : "Enter a real day, like 2026-11-30.";
+      if (shape === "days" && bad(form.second)) errors.second = form.second.trim() === "" ? "Choose a day for the other end." : "Enter a real day, like 2026-11-30.";
       raw = shape === "days" ? `${form.first},${form.second}` : form.first;
       break;
     }

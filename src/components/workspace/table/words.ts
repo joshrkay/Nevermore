@@ -26,7 +26,9 @@ export type NamePeople = (id: string) => string | undefined;
 const joinedWithOr = (items: string[]): string => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`);
 
 const choiceWords = (field: FieldDefinition | undefined, value: string, names?: NamePeople): string => {
-  if (field?.kind === "person") return names?.(value) ?? `“${value}”`;
+  // A person is named by the lookup, else by the label of the matching choice (a table may list its people as choices); an id is never shown bare.
+  const named = field?.kind === "person" ? names?.(value) : undefined;
+  if (named !== undefined) return named;
   // The database ignores case in a choice, so the words do too.
   return field?.choices?.find((c) => c.value.toLowerCase() === value.toLowerCase())?.label ?? `“${value}”`;
 };
