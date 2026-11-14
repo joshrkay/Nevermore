@@ -1,5 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blobBytes } from "@/test/blob";
@@ -9,7 +10,7 @@ import { blobBytes } from "@/test/blob";
 // page does with its answer, and what it asks. Nothing below reads the file from the page on screen.
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "adv@example.com" }, signOut }) }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }));
 let firmAddress: { status: string; address?: string; name?: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
@@ -69,6 +70,7 @@ describe("AdvisorPartnersPage: Export (CRM-S3.8a)", () => {
     for (const fn of Object.values(api)) fn.mockReset();
     exportTable.mockReset();
     signOut.mockReset();
+    vi.mocked(toast.message).mockReset();
     saved = [];
     lastBlob = null;
     firmAddress = { status: "none" };
@@ -139,6 +141,58 @@ describe("AdvisorPartnersPage: Export (CRM-S3.8a)", () => {
     await waitFor(() => expect(saved).toHaveLength(1));
     expect(saved[0].name).toBe("referral-partners-2026-03-01.csv");
     expect(exportTable).toHaveBeenCalledWith(DEFAULT_FIRM, "referral_partners", ["name", "kind", "code"], { filters: [], timeZone: "America/Los_Angeles" });
+  });
+
+  // Catches: a formula hidden behind a character the guard did not look past (any Unicode space, a zero-width character, a byte order mark, a vertical
+  // tab or form feed) or written in the fullwidth forms of the four characters; and a plain name or number swept up with them. Written as \u{...} codes,
+  // never as the invisible characters themselves.
+  it("also holds back a formula behind any kind of space or invisible character, or in fullwidth characters, and leaves ordinary text alone", async () => {
+    exportTable.mockResolvedValue(answer([
+      [" \t=1+1", "other", "a"],
+      ["\u{a0}=1+1", "other", "b"],
+      ["\u{3000}=1+1", "other", "c"],
+      ["\u{200b}=1+1", "other", "d"],
+      ["\u{feff}=1+1", "other", "e"],
+      ["\u{ff1d}1+1", "other", "f"],
+      ["\u{ff0b}1+1", "other", "g"],
+      ["\u{ff0d}1+1", "other", "h"],
+      ["\u{ff20}SUM(1)", "other", "i"],
+      ["\v=1+1", "other", "j"],
+      ["\f=1+1", "other", "k"],
+      ["\u{2028}@SUM(1)", "other", "l"],
+      ["\u{1}=1+1", "other", "q"],
+      ["\tplain", "other", "r"],
+      ["\nplain", "other", "s"],
+      ["A-B Partners", "other", "m"],
+      ["\u{a0}Bay Law", "other", "n"],
+      ["12.5", "other", "o"],
+      ["José", "other", "p"],
+    ]));
+    const user = await ready();
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect((await fileText(saved[0].blob)).text).toBe(
+      "Partner,Kind of partner,Their code\r\n" +
+      "' \t=1+1,Other,a\r\n" +
+      "'\u{a0}=1+1,Other,b\r\n" +
+      "'\u{3000}=1+1,Other,c\r\n" +
+      "'\u{200b}=1+1,Other,d\r\n" +
+      "'\u{feff}=1+1,Other,e\r\n" +
+      "'\u{ff1d}1+1,Other,f\r\n" +
+      "'\u{ff0b}1+1,Other,g\r\n" +
+      "'\u{ff0d}1+1,Other,h\r\n" +
+      "'\u{ff20}SUM(1),Other,i\r\n" +
+      "'\v=1+1,Other,j\r\n" +
+      "'\f=1+1,Other,k\r\n" +
+      "'\u{2028}@SUM(1),Other,l\r\n" +
+      "'\u{1}=1+1,Other,q\r\n" +
+      "'\tplain,Other,r\r\n" +
+      "\"'\nplain\",Other,s\r\n" +
+      "A-B Partners,Other,m\r\n" +
+      "\u{a0}Bay Law,Other,n\r\n" +
+      "12.5,Other,o\r\n" +
+      "José,Other,p\r\n",
+    );
   });
 
   // Catches: the file going out as a data: link or a request to some address (the rows would leave the product's own origin and the database), an
@@ -259,6 +313,31 @@ describe("AdvisorPartnersPage: Export (CRM-S3.8a)", () => {
       member.unmount();
     }
     expect(exportTable).not.toHaveBeenCalled();
+  });
+
+  // Catches: a file of one firm's partners saved while another firm's page is on screen, under a name that says nothing of the firm (D-235), so the
+  // person takes it for the firm they are looking at; and nothing said about an export they started that did not come to them.
+  it("saves nothing, and says why, when the export finishes after the person has moved to another firm", async () => {
+    api.listMyFirms.mockResolvedValue([alpha, { id: "firm-b", name: "Beta Brokers", address: "beta" }]);
+    api.listReferralPartners.mockImplementation(async (firm: string) => (firm === "firm-b" ? [{ ...acme, firm_id: "firm-b", name: "Beta's Acme" }] : [acme]));
+    let arrive: (v: unknown) => void = () => undefined;
+    exportTable.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+    renderPage(`/advisor/partners?firm=${DEFAULT_FIRM}`);
+    await screen.findByRole("row", { name: /Acme CFO Partners/ });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    expect(exportTable).toHaveBeenCalledWith(DEFAULT_FIRM, "referral_partners", ["name", "kind", "code"], expect.anything());
+
+    fireEvent.change(screen.getByLabelText("Firm"), { target: { value: "firm-b" } });
+    await screen.findByRole("row", { name: /Beta's Acme/ });
+    arrive(answer([["Bay Law", "law_firm", "bay-law"]]));
+    await waitFor(() => expect(toast.message).toHaveBeenCalledTimes(1));
+    expect(toast.message).toHaveBeenCalledWith("An export you started finished after the page changed, so its file was not saved.");
+    expect(saved).toHaveLength(0);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    // Beta's page says nothing of Alpha's export, and its own button is as it was.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
   });
 
   describe("when the export is refused or fails", () => {
