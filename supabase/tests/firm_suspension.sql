@@ -131,6 +131,7 @@
 \i supabase/migrations/20261118111000_close_a_firm_races.sql
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

@@ -184,6 +184,7 @@
 \i supabase/migrations/20261118111000_close_a_firm_races.sql
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -796,6 +797,12 @@ INSERT INTO matrix VALUES
   ('public.saved_views',                                '{}', NULL),
   ('public.table_preferences',                          '{}', NULL);
 
+-- ---- CRM-S5.2: the history of a record (20261118130000) ----
+-- Closed to the API, a member reads it through record_history_list() (supabase/tests/record_history.sql); the referral partners the
+-- fixtures make are what writes its rows, through the trigger.
+INSERT INTO matrix VALUES
+  ('public.record_history',                             '{}', NULL);
+
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
                'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'suspended_agent', 'advisor_pw', 'advisor_pw_mfa', 'service']
@@ -1230,6 +1237,10 @@ INSERT INTO callable VALUES
   ('unshare_saved_view(p_view_id uuid)', 'own', NULL, 'a current owner stops sharing a shared view of their firm; PT404 for a view the caller may not read, 42501 for a member who is no owner'),
   ('my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid)', 'own', NULL, 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else'),
   ('set_my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid, p_columns jsonb)', 'own', NULL, 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else');
+-- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
+INSERT INTO callable VALUES
+  ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
+   'a current member of the record''s firm (or a support session at its address) reads the history of a record they may see; PT404 for a record of another firm, one that does not exist and a caller who is no member, all the same; no actor id or email, staff shown as Nevermore');
 
 DO $$
 DECLARE
@@ -1758,6 +1769,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('unshare_saved_view', 'admin', 'by_id', $$SELECT public.unshare_saved_view({sview})::text$$),
   ('my_table_columns', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.my_table_columns({firm}, 'submissions', {sview})$$),
   ('set_my_table_columns', 'advisor', 'by_id', $$SELECT public.set_my_table_columns({firm}, 'submissions', {sview}, '["company_name"]')::text$$);
+-- CRM-S5.2: the history of a referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
+-- non-member are refused, the same as for a record that does not exist.
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('record_history_list', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.record_history_list({firm}, 'referral_partners', {partner})$$);
 
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
@@ -2767,6 +2782,14 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.table_preferences', 'firm', 'its own firm_id; closed to the API, a member reads their own columns through a function',
    $m$INSERT INTO public.table_preferences (firm_id, user_id, table_name, columns) VALUES ({firm}, {u}, 'submissions', '["probe"]') RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- CRM-S5.2: the history of a record (20261118130000) ----
+-- A record's history: its own firm_id. Closed to the API, so no member reads a row directly and there is no positive control here; a member
+-- reads it through record_history_list(). Nobody inserts, changes or deletes a row, so the probe's row is made by the superuser and, since
+-- the table's own trigger refuses its deletion, is left in place (it names a record that does not exist, so no function ever shows it).
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.record_history', 'firm', 'its own firm_id; closed to the API, a member reads a record''s history through a function',
+   $m$INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind) VALUES ({firm}, 'referral_partners', 'probe-{tag}', gen_random_uuid(), 'created') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -3368,6 +3391,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('unshare_saved_view', 'firm_scoped', 'a current owner stops sharing a shared view of their firm; refused for every other caller (4e)'),
   ('my_table_columns', 'firm_scoped', 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else (4e)'),
   ('set_my_table_columns', 'firm_scoped', 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else (4e)');
+
+-- CRM-S5.2 (20261118130000_record_history.sql; supabase/tests/record_history.sql).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('record_history_list', 'firm_scoped', 'a current member reads the history of a record of their own firm that they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
+  ('record_history_capture', 'trigger', 'writes a tracked record''s creation and each change of a field the trigger was told to track, inside the write that made it; no API role can run it or write the table'),
+  ('record_history_can_see', 'service_only', 'whether the caller may see a record of a firm, per table: the reading function asks it; no API role can call it'),
+  ('firm_actor_is_staff', 'service_only', 'whether an actor was Nevermore''s own person acting on a firm they were not a member of (D-33): the firm''s record and the history of a record stamp it; no API role can call it');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),

@@ -133,6 +133,7 @@
 \i supabase/migrations/20261118111000_close_a_firm_races.sql
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1012,7 +1013,7 @@ BEGIN
   PERFORM pg_temp.is(c.asked_by, pg_temp.id('owner_a'), 'it still says who asked');
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
-    'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'referral_partners', 1, 'firm_teams', 1,
+    'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 1, 'referral_partners', 1, 'firm_teams', 1,
     'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
@@ -1259,6 +1260,7 @@ DECLARE
     'end_support_session', 'a platform admin''s own support session (CRM-P2.4): no member''s change to the firm''s data, and a support session itself is refused every guarded write',
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',
+    'record_history_capture', 'the trigger that writes a record''s history (CRM-S5.2): it runs inside a write that already asked the guard (referral partners are written only by the two guarded partner functions) and no API role can run it or write the table; the history table has no write grant or policy for an API role at all',
         'report_client_event', 'the platform''s monitoring',
     'request_firm_closure', 'the closing''s own door',
         'sign_up_firm', 'a new firm',

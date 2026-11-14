@@ -445,6 +445,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included; an entry made by a platform admin from outside the firm reads as \"Nevermore\" (no name, email or id), D-33.",
   },
   {
+    id: "record_history",
+    label: "The history of a record",
+    sensitivity: "confidential",
+    examples: "For each record a firm keeps (today a referral partner), who created it and when, and every change to its own fields: who, when, the field, and the value before and after (a partner's name or kind). Only the fields a trigger was told to track; never an intake's answers.",
+    stored: { tables: ["record_history"], buckets: [], elsewhere: [] },
+    retention: "Kept as long as the record is (D-45). It starts when it shipped: changes before then were not kept.",
+    deletion: "Nobody can change or delete an entry, an admin included. Deleting a record removes its history in the same step, and closing a firm (CRM-P1.7) deletes the firm's histories with its other data. A firm reads it through one function, as a member of the record's firm; who at Nevermore acted reads as \"Nevermore\", with no name, email or id (D-33).",
+  },
+  {
     id: "table_settings",
     label: "Column choices and saved views",
     sensitivity: "internal",
