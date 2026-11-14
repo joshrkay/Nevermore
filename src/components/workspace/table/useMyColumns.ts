@@ -43,12 +43,13 @@ export function useMyColumns<K extends TableFields, Row, Context>(table: TableDe
   const keyFor = (view: string | null, rev: string | null) => ["table", firmId, table.id, "columns", view, rev] as const;
   const key = keyFor(savedViewId, revision);
   // What a view's writes are, per firm, table and view (a person can write on one view while another's write is still on its way): how many changes
-  // have been made, how many are not finished, the last choice the database confirmed, and the end of its line of writes.
-  const writes = useRef(new Map<string, { changes: number; unfinished: number; confirmed: Kept | undefined; line: Promise<void> }>());
+  // have been made, how many are not finished, and the end of its line of writes. The last choice the database confirmed is kept per FULL key, view
+  // and revision, beside the unfinished writes under that key: a view's revisions are different answers, so one's baseline is never another's.
+  const writes = useRef(new Map<string, { changes: number; unfinished: number; line: Promise<void>; keys: Map<string, { unfinished: number; confirmed: Kept | undefined }> }>());
   const writesOf = (view: string | null) => {
     const id = JSON.stringify([firmId, table.id, view]);
     let w = writes.current.get(id);
-    if (!w) writes.current.set(id, (w = { changes: 0, unfinished: 0, confirmed: undefined, line: Promise.resolve() }));
+    if (!w) writes.current.set(id, (w = { changes: 0, unfinished: 0, line: Promise.resolve(), keys: new Map() }));
     return w;
   };
 
@@ -73,7 +74,11 @@ export function useMyColumns<K extends TableFields, Row, Context>(table: TableDe
       if (firmId === null || client.getQueryState(key)?.status !== "success") return Promise.resolve();
       const view = savedViewId;
       const mine = writesOf(view);
-      if (mine.unfinished === 0) mine.confirmed = client.getQueryData<Kept>(key);
+      const fullKey = JSON.stringify(key);
+      let slot = mine.keys.get(fullKey);
+      if (!slot) mine.keys.set(fullKey, (slot = { unfinished: 0, confirmed: undefined }));
+      if (slot.unfinished === 0) slot.confirmed = client.getQueryData<Kept>(key);
+      slot.unfinished++;
       mine.unfinished++;
       mine.changes++;
       setSaveError(null);
@@ -85,18 +90,24 @@ export function useMyColumns<K extends TableFields, Row, Context>(table: TableDe
         let kept = false;
         try {
           await setMyColumns(firmId, table.id as WorkspaceTable, view, columns);
-          if (!forgettingOnAView) mine.confirmed = nowKept;
+          if (!forgettingOnAView) slot.confirmed = nowKept;
           kept = true;
         } catch (e) {
-          // Only the last change decides what the screen goes back to: a newer one still to be written has its own say.
-          if (mine.unfinished === 1) {
-            client.setQueryData<Kept>(key, mine.confirmed);
+          // Only the last change under this key decides what the screen goes back to: a newer one still to be written has its own say.
+          if (slot.unfinished === 1) {
+            client.setQueryData<Kept>(key, slot.confirmed);
             setSaveError({ view, text: e instanceof Error ? e.message : "Couldn't keep your columns. Try again." });
           }
         } finally {
+          slot.unfinished--;
           mine.unfinished--;
         }
-        if (kept && forgettingOnAView) await client.invalidateQueries({ queryKey: key });
+        // Whichever revision of the view is on screen by now, its answer may have been asked before this write landed: when a write settles, every answer
+        // kept for this firm, table and view (any revision) is asked for again. The key the write began under already holds what the database confirmed
+        // (or what it was rolled back to), so it is left alone, except after forgetting, where what applies next is the database's to say.
+        const prefix = keyFor(view, null).slice(0, 5);
+        const own = fullKey;
+        await client.invalidateQueries({ queryKey: prefix, predicate: (q) => (kept && forgettingOnAView) || JSON.stringify(q.queryKey) !== own });
       };
       mine.line = mine.line.then(write);
       return mine.line;
