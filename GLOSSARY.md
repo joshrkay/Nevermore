@@ -461,6 +461,18 @@ _Avoid_: fresh session, re-authentication, step-up
 The email to a firm's current owners that a member made an export of more than 500 rows, or their third export within an hour: who, which table, how many rows, when, and which of the two. It holds nothing that was exported. One email per export that calls for it, queued in the same step as the export, through the outbox like the firm's other emails.
 _Avoid_: export notification, security alert
 
+**Export button** (code: `ExportButton`, in `src/components/workspace/export/`; story CRM-S3.8a):
+The "Export" button over a table's rows: today the referral partners page (any current member) and the firm's record of who did what (its owners). It asks the database for every row that matches the filters in force, in the columns the page shows in the order it shows them, and saves them as an **Export file**. The file is built from what the database returns and from nothing on screen, so it holds every page, not the one in view. It sends no selection and no page cursor. While it works it says "Exporting…" and takes no second press; afterwards one polite status says "Exported 12 referral partners." with the number the database recorded. It is not there during Nevermore support (one plain line says downloads are off). A refusal is said in plain words beside it, with "Sign in again" when the database wants a **Recent sign-in**.
+_Avoid_: download button (a file of a submission is a download), export all
+
+**Export file**:
+The CSV an export is saved as. RFC 4180: a header line of the page's column names, then one line per row in the page's own words (a partner's kind as its label, an entry's kind as its label, a moment as the UTC ISO text the database wrote), cells in double quotes when they hold a comma, a double quote or a line break, lines ended CRLF. UTF-8 with a byte order mark, so a spreadsheet reads accents and other scripts as they were typed. Named for what it holds and the person's own day and for nothing else: `referral-partners-2026-11-14.csv`, `who-did-what-2026-11-14.csv`. Every cell passes the **Formula guard**.
+_Avoid_: report, dump, backup
+
+**Formula guard**:
+The rule that makes a cell of an export file plain text when a spreadsheet could run it as a formula: a cell that starts (after any spaces) with `=`, `+`, `-` or `@`, or starts with a tab, a carriage return or a line feed, gets one apostrophe in front. A partner named `=HYPERLINK(...)` is shown, not run. A cell that only contains one of those characters is left as it is. The apostrophe can show in some spreadsheets.
+_Avoid_: sanitising, escaping (that is the quoting of RFC 4180, a different step)
+
 **Conflict** (answered by `advisor_update_referral_partner` as `conflict: true`):
 What a save is answered with when the record's version is no longer the one the person started from: someone else changed it while they were editing. Nothing is saved. The answer carries the current version, the current values of the editable fields, and for each field whose value now differs from what the person started from, the value now, who changed it last and when. Who is named the way the record's history names people (a member's email, "Nevermore" for Nevermore's own people, "System" for the server), never an id (D-33). It is a normal answer, not an error, and it is only given to someone the save would have let through: a person who is refused (not a member, suspended, a support session, a closing firm) gets that refusal whatever version they send. The partners form opens the conflict dialog on it (see Conflict dialog).
 _Avoid_: collision, merge conflict, stale write, error
