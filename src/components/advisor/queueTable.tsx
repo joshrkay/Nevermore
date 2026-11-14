@@ -128,6 +128,8 @@ const submittedText = (row: QueueRow) =>
     ? formatDate(row.submitted_at)
     : CLOSED_INTAKE_LABELS[row.intake_status ?? ""] ?? (row.intake_status === "submitted" ? "Date not recorded" : row.signer_name ? "Needs re-certification" : "Not certified");
 
+// Each column's `id` is kept in the database in a person's column choice (CRM-S3.1a): never rename or reuse one once shipped. A new column is
+// hidden for a person who has a kept choice until they show it from the Columns menu.
 const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
   {
     id: "company",

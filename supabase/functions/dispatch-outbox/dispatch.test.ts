@@ -953,10 +953,10 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing"]);
-    // The emails that link to the intake need the app's address; the confirmation doesn't.
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert"]);
+    // The emails that link to the intake need the app's address; the confirmation and the firm's own notices (no link) don't.
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["member_left", "firm_closing", "export_alert", "prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
   });
 });
@@ -1185,6 +1185,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
       ["member_left", "EMAIL_FROM is not set to a valid sender address"],
       ["firm_closing", "EMAIL_FROM is not set to a valid sender address"],
+      ["export_alert", "EMAIL_FROM is not set to a valid sender address"],
       ["prospect_confirmation", "EMAIL_FROM is not set to a valid sender address"],
       ["information_request", "EMAIL_FROM is not set to a valid sender address"],
       ["draft_expiry_reminder", "EMAIL_FROM is not set to a valid sender address"],
@@ -1198,8 +1199,6 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blocked).toEqual([
       { kind: "advisor_notification", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
-      { kind: "member_left", problem: "APP_BASE_URL is not set to an https URL" },
-      { kind: "firm_closing", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
@@ -1212,11 +1211,12 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
       { kind: "member_left", problem: "RESEND_API_KEY is not set" },
       { kind: "firm_closing", problem: "RESEND_API_KEY is not set" },
+      { kind: "export_alert", problem: "RESEND_API_KEY is not set" },
       { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[4].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[5].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1232,7 +1232,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(7);
+    expect(note).toHaveBeenCalledTimes(8);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
@@ -1705,5 +1705,180 @@ describe("dispatching the email that Nevermore stopped a closing", () => {
     const summary = await dispatchEvents([closingRow({ payload: { event: "stopped" } })], deps);
     expect(sent).toHaveLength(0);
     expect(summary.dead).toBe(1);
+  });
+});
+
+// The email to a firm's owners when a member takes a large export or a third in an hour (story CRM-S3.8b). A firm's own email, like the
+// leaving notice: it goes to the firm's owners, asked for by the event's firm, with the same sender and retry rules.
+const exportAlertRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-export",
+  kind: "export_alert",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: {
+    member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 1234, exports_in_hour: 1, large: true,
+    exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers",
+  },
+  ...over,
+});
+
+describe("dispatching the email about a large or repeated export", () => {
+  // Catches: the owners are not the ones told (the intake members' list, or nobody), or the email names the wrong person, table or count.
+  it("tells the firm's owners who exported which table, how many rows and when", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    const summary = await dispatchEvents([exportAlertRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    const { message } = sent[0];
+    expect(message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(message.subject).toBe("sam@firm-a.example exported 1,234 rows from Acme Brokers");
+    expect(message.text).toContain("sam@firm-a.example exported Referral partners (1,234 rows) from Acme Brokers on 2026-11-19 14:05 UTC.");
+    expect(message.text).toContain("You are told because it is more than 500 rows.");
+    expect(message.text).not.toContain("in an hour");
+  });
+
+  // Catches: the third export in an hour is told as a large one, or not told why.
+  it("says a third export in an hour is why, and a large one that it is large", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportAlertRow({ payload: { member_email: "sam@firm-a.example", table_label: "The firm's record", row_count: 1, exports_in_hour: 3, large: false, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" } })], deps);
+    expect(sent[0].message.subject).toBe("sam@firm-a.example has made 3 exports from Acme Brokers in an hour");
+    expect(sent[0].message.text).toContain("(1 row)");
+    expect(sent[0].message.text).toContain("You are told because it is their third export in an hour.");
+    expect(sent[0].message.text).not.toContain("more than 500 rows");
+  });
+
+  // Catches: a name or a row of what was exported reaches the email, or markup in a firm's name reaches the HTML, or a link into the firm's records is added.
+  it("carries nothing but what it names, escapes the firm's name and links nowhere", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportAlertRow({ payload: { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 600, exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "<b>Evil</b> & Co", rows: [{ name: "Secret Partner" }], code: "secret-code" } })], deps);
+    const { message } = sent[0];
+    expect(message.html).toContain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co");
+    expect(message.html).not.toContain("<b>Evil</b>");
+    for (const leaked of ["Secret Partner", "secret-code"]) {
+      expect(message.text).not.toContain(leaked);
+      expect(message.html).not.toContain(leaked);
+    }
+    expect(message.html).not.toContain("href=");
+  });
+
+  // Catches: an event that cannot say who, what, how many or when is sent as an empty email, or retried for ever.
+  it.each([
+    ["no member", { table_label: "Referral partners", row_count: 600, exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["no table", { member_email: "sam@firm-a.example", row_count: 600, exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["no count", { member_email: "sam@firm-a.example", table_label: "Referral partners", exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["a count that is text", { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: "600", exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["a count below nothing", { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: -1, exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["no number of exports", { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 600, large: true, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["no size", { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 600, exports_in_hour: 1, exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["a time that is not one", { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 600, exports_in_hour: 1, large: true, exported_at: "just now", firm_name: "Acme Brokers" }],
+    ["no firm", { member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 600, exports_in_hour: 1, large: true, exported_at: "2026-11-19T14:05:09Z" }],
+  ])("gives up on a payload with %s, sending nothing", async (_why, payload) => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([exportAlertRow({ payload })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-export", "invalid_payload", null, 1, false);
+  });
+
+  // Catches: an event with no firm is looked up by a null id and told to nobody.
+  it("gives up on an event that names no firm", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([exportAlertRow({ firm_id: null })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.ownerRecipients).not.toHaveBeenCalled();
+  });
+
+  // D-35 for this kind: an owner who is no longer one is not sent it on a retry, and one who became an owner since is not added.
+  it("on a retry drops an owner who is no longer one, and adds nobody who became one since", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["stayer@firm-a.example", "gone@firm-a.example"] } });
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => ["stayer@firm-a.example", "new-owner@firm-a.example"]) });
+    await dispatchEvents([exportAlertRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+  });
+
+  // Catches: the kind is not sendable (it would wait for ever) or is sent when the sender isn't set up.
+  it("is sent whenever the advisor sender is set up, and waits with the reason when it is not", async () => {
+    expect(sendableKinds(config)).toContain("export_alert");
+    const { deps, sent } = harness({ config: configFrom({ ...env, EMAIL_FROM: "" }) });
+    await dispatchEvents([exportAlertRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-export", "not_configured", 60, 1, false);
+  });
+});
+
+// The firm's own notices (a member left, a request to close, an export) have no link, so they need a sender and nothing else.
+describe("the firm's own notices wait only for a sender", () => {
+  const FIRM_NOTICES = ["member_left", "firm_closing", "export_alert"];
+
+  // Catches: an owner's alert queued for ever because the app's address is not set, though the email has no link.
+  it("are sent without the app's address, which the emails that link into the app still need", () => {
+    const noUrl = configFrom({ ...env, APP_BASE_URL: "" });
+    expect(sendableKinds(noUrl)).toEqual(expect.arrayContaining(FIRM_NOTICES));
+    expect(sendableKinds(noUrl)).not.toContain("advisor_notification");
+    expect(blockedKinds(noUrl, null).map((b) => b.kind)).not.toEqual(expect.arrayContaining(FIRM_NOTICES.slice(0, 1)));
+    expect(blockedKinds(noUrl, null).map((b) => b.kind)).toContain("advisor_notification");
+  });
+
+  it("wait with the reason when there is no sender", () => {
+    const noSender = configFrom({ ...env, EMAIL_FROM: "" });
+    expect(sendableKinds(noSender)).not.toEqual(expect.arrayContaining(["member_left"]));
+    for (const kind of FIRM_NOTICES) {
+      expect(blockedKinds(noSender, null)).toContainEqual({ kind, problem: "EMAIL_FROM is not set to a valid sender address" });
+    }
+  });
+
+  it.each([
+    ["export_alert", () => exportAlertRow()],
+    ["member_left", () => memberLeftRow()],
+    ["firm_closing", () => closingRow()],
+  ])("sends %s with no app address set", async (_kind, row) => {
+    const { deps, sent } = harness({ config: configFrom({ ...env, APP_BASE_URL: "" }) });
+    const summary = await dispatchEvents([row()], deps);
+    expect(summary.sent).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+});
+
+describe("what an export alert says about why the owners are told", () => {
+  const payload = (over: Record<string, unknown>) => ({
+    member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 1234, exports_in_hour: 1, large: true,
+    exported_at: "2026-11-19T14:05:09Z", firm_name: "Acme Brokers", ...over,
+  });
+
+  // Catches: a large export that is also the member's fourth or later in the hour is worded as if the repeat were the reason, with an ordinal ("21th") that is wrong.
+  it("gives a repeat as the reason only for the third, and the size only when it is over 500 rows", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportAlertRow({ payload: payload({ exports_in_hour: 4 }) })], deps);
+    expect(sent[0].message.text).toContain("You are told because it is more than 500 rows.");
+    expect(sent[0].message.text).not.toContain("export in an hour");
+    expect(sent[0].message.text).not.toMatch(/\d(st|nd|rd|th) /);
+    await dispatchEvents([exportAlertRow({ id: "evt-21", payload: payload({ exports_in_hour: 21 }) })], deps);
+    expect(sent[1].message.text).not.toMatch(/21th|\dth export/);
+    await dispatchEvents([exportAlertRow({ id: "evt-3", payload: payload({ exports_in_hour: 3, large: false, row_count: 5 }) })], deps);
+    expect(sent[2].message.text).toContain("You are told because it is their third export in an hour.");
+    expect(sent[2].message.text).not.toContain("more than 500 rows");
+    await dispatchEvents([exportAlertRow({ id: "evt-3l", payload: payload({ exports_in_hour: 3 }) })], deps);
+    expect(sent[3].message.text).toContain("more than 500 rows");
+    expect(sent[3].message.text).toContain("third export in an hour");
+  });
+
+  it("gives the size as the reason only for more than 500 rows, whatever the payload's flag says", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportAlertRow({ payload: payload({ large: true, row_count: 500, exports_in_hour: 3 }) })], deps);
+    expect(sent[0].message.text).not.toContain("more than 500 rows");
+  });
+
+  // Catches: a member with no email address makes the alert unsendable, so the owners are never told (the alert must never be lost).
+  it("is sent for a member with no email address, naming them as a member", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([exportAlertRow({ payload: payload({ member_email: null }) })], deps);
+    expect(summary.sent).toBe(1);
+    expect(sent[0].message.subject).toBe("A member exported 1,234 rows from Acme Brokers");
+    expect(sent[0].message.text).toContain("A member exported Referral partners (1,234 rows) from Acme Brokers on 2026-11-19 14:05 UTC.");
   });
 });

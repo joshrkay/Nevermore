@@ -151,7 +151,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             // The grey rows while waiting; when no rows came back, one cell under the real headers with the empty state in it, so it is the same
             // table before and after. Rows that answer another question are dimmed here as elsewhere (no busy mark: the words do not change while it waits).
             placeholder={
-              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} />
+              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} pinFirst />
               : isEmpty ? (
                 <EmptyBody columns={columns.length} dimmed={data.isPlaceholder}>{empty(settled.current, { focusTable })}</EmptyBody>
               ) : undefined
