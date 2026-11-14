@@ -340,6 +340,9 @@ BEGIN
   PERFORM pg_temp.is(public.web_domain_of('http:///x.example.com/y'), 'x.example.com', 'and one with three');
   PERFORM pg_temp.is(public.web_domain_of('HTTPS:\\x.example.com\y'), 'x.example.com', 'and one with backslashes');
   PERFORM pg_temp.is(public.web_domain_of('example.com:8080'), 'example.com', 'a port on a bare domain is not taken for a scheme');
+  PERFORM pg_temp.is(public.web_domain_of('https:example.com'), 'example.com', 'a web scheme with no slash is a scheme');
+  PERFORM pg_temp.is(public.web_domain_of('HTTP:www.Example.com/x'), 'example.com', 'in capitals too');
+  PERFORM pg_temp.is(public.web_domain_of('localhost:8080'), 'localhost', 'but any other word before a colon is a host with a port');
   PERFORM pg_temp.is(public.web_domain_of('www.'), NULL, 'nothing left is no domain');
   PERFORM pg_temp.is(public.web_domain_of('   '), NULL, 'blank is no domain');
   PERFORM pg_temp.is(public.web_domain_of(NULL), NULL, 'nothing is no domain');
@@ -717,7 +720,8 @@ END $$;
 
 -- ---------- an opportunity's stage, worked out ----------
 -- Break caught: a stage is stored instead of worked out; a pipeline stage maps to the wrong stage (D-206); an opportunity with no intake is not
--- Qualifying; a stage nobody mapped is let through as nothing; the functions are open to the API roles.
+-- Qualifying; a stage nobody mapped is let through as nothing; the functions are open to the API roles; a submission archived from won reads Lost (D-216),
+-- also once "needs action" is marked or cleared on it (a history row from archived to archived taken for the move into archived).
 DO $$
 DECLARE s text; want text; got text; i uuid; o uuid;
 BEGIN
@@ -754,6 +758,22 @@ BEGIN
   PERFORM pg_temp.move('w1', 'archived');
   PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'a submission archived from won keeps its opportunity Won (D-216)');
   PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account a client');
+  -- Marking it as needing action, and clearing that, through the real function: each writes a history row from archived to archived, which is not a
+  -- move into archived (the move from won still decides).
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM public.set_submission_needs_action(pg_temp.id('w1'), true, 'Send the client the signed agreement');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT h.from_status || '>' || h.to_status FROM public.submission_status_history h WHERE h.session_id = pg_temp.id('w1') ORDER BY h.id DESC LIMIT 1),
+    'archived>archived', 'the fixture: marking it wrote a row from archived to archived');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'archived from won and marked as needing action is still Won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account still a client');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM public.set_submission_needs_action(pg_temp.id('w1'), false);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.submission_status_history h WHERE h.session_id = pg_temp.id('w1') AND h.from_status = 'archived' AND h.to_status = 'archived'),
+    2::bigint, 'the fixture: clearing it wrote a second');
+  PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'won', 'and cleared, still Won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'client', 'and its account still a client');
   PERFORM pg_temp.move('w1', 'submitted');
   PERFORM pg_temp.is(public.opportunity_stage(pg_temp.id('wo1')), 'intake_under_way', 'reopened, it is under way again');
   PERFORM pg_temp.is(public.account_status(pg_temp.id('s2')), 'prospect', 'and its account a prospect until it is won again');
@@ -849,7 +869,7 @@ BEGIN
 END $$;
 
 -- ---------- a key that is not a record's ----------
--- Break caught: a history key is compared as text (no index, a scan of every contact) or cast and raises for a key that is not an id.
+-- Break caught: a history key is cast to an id and raises for a key that is not one, instead of being a record that is not there.
 DO $$
 DECLARE acme uuid := pg_temp.id('acme'); a1 uuid := pg_temp.id('a1');
 BEGIN
@@ -862,12 +882,59 @@ BEGIN
   PERFORM pg_temp.is(public.record_history_record_exists(acme, 'accounts', 'not-an-id'), false, 'a key that is not an id is no record');
   PERFORM pg_temp.is(public.record_history_record_exists(acme, 'contacts', pg_temp.id('c1')::text), true, 'a contact');
   PERFORM pg_temp.is(public.record_history_record_exists(acme, 'opportunities', pg_temp.id('o1')::text), true, 'an opportunity');
-  -- Found by the primary key's index: the id is compared as an id (a text comparison reads every contact of the firm: 18 s to delete one account with
-  -- 2,000 contacts among 200,000). Row counts say nothing reliable about a plan, so this asks what the two functions' source compares, as
-  -- close_a_firm.sql asks whether a write still asks its guard.
-  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('record_history_can_see', 'record_history_record_exists')
-    AND (p.prosrc ~ 'id::text' OR p.prosrc !~ 'record_history_key_uuid')), 0::bigint, 'the history functions compare a record''s id as an id');
   RAISE NOTICE 'crm_records: keys passed';
+END $$;
+
+-- ---------- the history functions read a few rows, not the firm's ----------
+-- Break caught: a history key is compared with the record's id as text (id::text, id::varchar or any other cast of the id), which no index serves, so
+-- each lookup reads every record of the firm (deleting one account with 2,000 contacts among 200,000 took 18 s). Asked by what the lookup reads: with
+-- the tables' statistics fresh and a sequential scan priced out, looking up an id-shaped key that is no record must read no row of the table, through
+-- record_history_can_see (as a member, through record_history_list) and through record_history_record_exists. The firm has 300 of each. Planning a
+-- lookup reads the two ends of an index on the account to price the join (two rows, whatever the firm's size), so each lookup is planned once, as one
+-- plan for every key, by a first call with another key, and the second call is measured: what it reads is what the lookup reads.
+CREATE FUNCTION pg_temp.rows_read(t text) RETURNS bigint LANGUAGE sql AS $$
+  SELECT s.seq_tup_read + COALESCE(s.idx_tup_fetch, 0) FROM pg_stat_xact_user_tables s WHERE s.relid = ('public.' || t)::regclass
+$$;
+
+CREATE FUNCTION pg_temp.history_list_as_member(t text, k text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, %L, %L)$q$, pg_temp.id('acme'), t, k));
+  RESET ROLE;
+  RETURN r;
+END $$;
+
+DO $$
+BEGIN
+  PERFORM pg_temp.account('k1', 'acme', NULL);
+  INSERT INTO public.accounts (source, firm_id, name) SELECT 'added_by_hand', pg_temp.id('acme'), 'Lookup account ' || g FROM generate_series(1, 300) g;
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email)
+  SELECT pg_temp.id('acme'), pg_temp.id('k1'), 'Lookup ' || g, 'lookup' || g || '@example.test' FROM generate_series(1, 300) g;
+  INSERT INTO public.opportunities (firm_id, account_id, name) SELECT pg_temp.id('acme'), pg_temp.id('k1'), 'Lookup search ' || g FROM generate_series(1, 300) g;
+END $$;
+ANALYZE public.accounts, public.contacts, public.opportunities;
+
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); t text; missing text := gen_random_uuid()::text; before bigint;
+BEGIN
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  FOREACH t IN ARRAY ARRAY['accounts', 'contacts', 'opportunities'] LOOP
+    PERFORM pg_temp.is(pg_temp.history_list_as_member(t, gen_random_uuid()::text), 'PT404', 'planned: an id that is no record of ' || t || ' is not found');
+    before := pg_temp.rows_read(t);
+    PERFORM pg_temp.is(pg_temp.history_list_as_member(t, missing), 'PT404', 'an id that is no record of ' || t || ' is not found');
+    PERFORM pg_temp.is(pg_temp.rows_read(t) - before, 0::bigint, 'and the history''s reader (record_history_can_see, as a member) read no row of ' || t || ' to say so');
+    PERFORM pg_temp.is(public.record_history_record_exists(acme, t::public.record_history_table, gen_random_uuid()::text), false, 'planned: an id that is no record of ' || t || ' does not exist');
+    before := pg_temp.rows_read(t);
+    PERFORM pg_temp.is(public.record_history_record_exists(acme, t::public.record_history_table, missing), false, 'an id that is no record of ' || t || ' does not exist');
+    PERFORM pg_temp.is(pg_temp.rows_read(t) - before, 0::bigint, 'and record_history_record_exists read no row of ' || t || ' to say so');
+  END LOOP;
+  -- The measure can see a scan: the same lookup with the id compared as text reads the firm's contacts.
+  before := pg_temp.rows_read('contacts');
+  PERFORM count(*) FROM public.contacts c WHERE c.firm_id = acme AND c.id::text = missing;
+  PERFORM pg_temp.is(pg_temp.rows_read('contacts') - before >= 300, true, 'compared as text, the same lookup reads the firm''s contacts');
+  RAISE NOTICE 'crm_records: few rows read passed';
 END $$;
 
 -- ---------- closing a firm ----------
