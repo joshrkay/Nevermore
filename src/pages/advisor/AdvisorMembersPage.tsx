@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -11,12 +9,14 @@ import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms } from "@/hooks/useOwnedFirms";
 import { currentFirm } from "@/lib/currentFirm";
 import { fetchFirmMembers, liftSuspension, removeMember, suspendMember, type FirmMember, type MemberRole } from "@/lib/memberApi";
+import { LoadFailed } from "@/components/workspace/states";
+import { SaveFailed } from "@/components/workspace/form";
 
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
   | { kind: "not_allowed" }
-  | { kind: "ready"; firm: { id: string; name: string }; members: FirmMember[] };
+  | { kind: "ready"; firm: { id: string; name: string }; members: FirmMember[]; readOnly: boolean };
 
 type Change = { action: "remove" | "suspend" | "lift"; member: FirmMember };
 
@@ -70,9 +70,10 @@ const AdvisorMembersPage = () => {
 
   const refresh = useCallback(async (): Promise<Load> => {
     const here = currentFirm(await loadMyFirms(userId, sessionKey), address);
-    if (!("firm" in here) || here.firm.role !== "owner") return { kind: "not_allowed" };
+    // Nevermore support, on a support session, reads the list as an owner does and is offered none of the changes (story CRM-P2.4).
+    if (!("firm" in here) || (here.firm.role !== "owner" && here.firm.role !== "support")) return { kind: "not_allowed" };
     const firm = { id: here.firm.firm_id, name: here.firm.name };
-    return { kind: "ready", firm, members: await fetchFirmMembers(firm.id) };
+    return { kind: "ready", firm, members: await fetchFirmMembers(firm.id), readOnly: here.firm.role === "support" };
   }, [userId, sessionKey, address]);
 
   useEffect(() => {
@@ -126,8 +127,7 @@ const AdvisorMembersPage = () => {
   const others = load.kind === "ready" ? load.members.filter((m) => !m.isYou) : [];
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-5xl space-y-6">
         <div>
           <h1 className="font-display text-3xl font-bold mb-1">Members</h1>
@@ -142,9 +142,9 @@ const AdvisorMembersPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the members" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the members" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_allowed" && <p role="status" className="text-sm">Only a firm's owners can see and change its members.</p>}
-        {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
+        <SaveFailed message={problem} className="font-normal" />
         {done && !problem && <p role="status" className="text-sm">{done}</p>}
 
         {load.kind === "ready" && (
@@ -177,7 +177,7 @@ const AdvisorMembersPage = () => {
                         <td className="px-4 py-2">
                           {m.isYou ? (
                             <span className="text-muted-foreground">You</span>
-                          ) : (
+                          ) : load.readOnly ? null : (
                             <div className="flex flex-wrap gap-2">
                               {m.state === "suspended" ? (
                                 <button type="button" className={button} aria-label={`Lift the suspension of ${m.email}`} onClick={() => setAsking({ action: "lift", member: m })}>Lift suspension</button>

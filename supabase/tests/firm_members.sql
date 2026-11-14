@@ -1012,6 +1012,31 @@ CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURN
 $$;
 \i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
 \i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
+\i supabase/migrations/20261116230000_firm_suspension.sql
+\i supabase/migrations/20261116240000_held_mail_to_the_right_firm.sql
+\i supabase/migrations/20261117090000_one_firm_at_a_time.sql
+\i supabase/migrations/20261117090500_one_firm_at_a_time_fixes.sql
+\i supabase/migrations/20261117100000_queue_query.sql
+\i supabase/migrations/20261117100500_queue_query_fast_path.sql
+\i supabase/migrations/20261117120000_table_settings.sql
+\i supabase/migrations/20261117120500_table_settings_fixes.sql
+\i supabase/migrations/20261117160000_epics_reconciled.sql
+\i supabase/migrations/20261118090000_leave_a_firm.sql
+\i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
+\i supabase/migrations/20261118100000_join_by_organisation.sql
+\i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
+\i supabase/migrations/20261118110000_close_a_firm.sql
+\i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
+\i supabase/migrations/20261118120000_help_from_nevermore.sql
+\i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
+\i supabase/migrations/20261118140000_menu_counts.sql
+\i supabase/migrations/20261118140500_menu_counts_fixes.sql
+\i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
+\i supabase/migrations/20261118160500_record_version_fixes.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

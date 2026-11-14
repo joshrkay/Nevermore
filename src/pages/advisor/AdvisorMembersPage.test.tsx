@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The page is rendered through the real route guard (RequireFirm as an owner) and the real api modules; only the database is
 // replaced, by a small in-memory one that answers the way the functions do: a firm keeps its last owner, only an owner of the
@@ -16,6 +16,8 @@ const db = {
   firms: [] as { firm_id: string; name: string; address: string; role: string }[],
   members: [] as Member[],
   isAdmin: false,
+  /** The admin's support session for the firm at this address (story CRM-P2.4), as the database answers it, or none. */
+  support: null as null | Record<string, unknown>,
   /** What the next call of a function answers instead, as the database's error. */
   fail: {} as Record<string, { code?: string; message: string } | "pending">,
   calls: [] as [string, Record<string, unknown>][],
@@ -32,6 +34,7 @@ const rpc = vi.fn(async (fn: string, args: Record<string, unknown> = {}) => {
     case "my_firms": return { data: db.firms, error: null };
     case "has_role": return { data: db.isAdmin, error: null };
     case "advisor_needs_second_factor": return { data: false, error: null };
+    case "my_support_session_here": return { data: db.support ? [db.support] : [], error: null };
     case "firm_members": return { data: db.members.map((m) => ({ ...m, is_you: m.user_id === "u-owner" })), error: null };
     case "remove_member": db.members = db.members.filter((m) => m.user_id !== args.p_user_id); return { data: null, error: null };
     case "suspend_member": db.members = db.members.map((m) => (m.user_id === args.p_user_id ? { ...m, state: "suspended" as const } : m)); return { data: null, error: null };
@@ -52,7 +55,8 @@ const renderPage = () =>
   render(
     <MemoryRouter initialEntries={["/advisor/members"]}>
       <Routes>
-        <Route path="/advisor/members" element={<RequireFirm as="owner" ownersOnly="see and change its members"><AdvisorMembersPage /></RequireFirm>} />
+        <Route path="/advisor/members" element={<RequireFirm as="owner" allowSupport ownersOnly="see and change its members"><AdvisorMembersPage /></RequireFirm>} />
+        <Route path="/choose-firm" element={<p>Choose a firm page</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -69,6 +73,7 @@ describe("the members page", () => {
     db.onCall = {};
     auth.signOut.mockClear();
     db.isAdmin = false;
+    db.support = null;
     firmAddress = { status: "none" };
     auth.user = { id: "u-owner", email: "owner@acme.example" };
     db.firms = [{ firm_id: "f1", name: "Acme Brokers", address: "acme", role: "owner" }];
@@ -324,13 +329,42 @@ describe("the members page", () => {
       expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
     });
 
-    it("on the bare domain a member of several firms has no current firm, and is kept out", async () => {
+    it("on the bare domain a member of several firms has no current firm, and is sent to choose one (D-40)", async () => {
       db.firms = [
         { firm_id: "f1", name: "Acme Brokers", address: "acme", role: "owner" },
         { firm_id: "f2", name: "Zenith Benefits", address: "zenith", role: "owner" },
       ];
       renderPage();
-      expect(await screen.findByRole("heading", { name: /more than one firm|For a firm's owners/ })).toBeInTheDocument();
+      expect(await screen.findByText("Choose a firm page")).toBeInTheDocument();
+      expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
+    });
+  });
+
+  // Help from Nevermore (story CRM-P2.4): the page reads the list as an owner does and offers none of the changes, which the database
+  // would refuse. The session is held by an admin who belongs to no firm, at the firm's own address.
+  describe("for Nevermore support", () => {
+    const original = window.location;
+    beforeEach(() => {
+      Object.defineProperty(window, "location", { value: { ...original, hostname: "acme.localhost" }, configurable: true });
+      db.firms = [];
+      db.support = { session_id: "s1", firm_id: "f1", firm_name: "Acme Brokers", firm_address: "acme", ends_at: "2999-01-01T00:00:00Z", ended_at: null, is_open: true, second_factor_pending: false };
+      firmAddress = { status: "known", address: "acme", name: "Acme Brokers" };
+    });
+    afterEach(() => Object.defineProperty(window, "location", { value: original, configurable: true }));
+
+    // Catches: support is told "only owners" and cannot read the members, or is offered Remove and Suspend buttons for people it cannot change.
+    it("lists the members and offers no action beside any of them", async () => {
+      renderPage();
+      const table = await screen.findByRole("table", { name: "Members" });
+      expect(row("lead@acme.example")).toHaveTextContent(/Lead.*Member/);
+      expect(within(table).queryAllByRole("button")).toHaveLength(0);
+    });
+
+    // Catches: a session that has ended still lists the members (the page trusts what it loaded before).
+    it("lists nothing once the session is over", async () => {
+      db.support = { ...db.support, is_open: false, ended_at: "2026-11-18T16:00:00Z" };
+      renderPage();
+      expect(await screen.findByRole("heading", { name: "For a firm's owners" })).toBeInTheDocument();
       expect(db.calls.map(([fn]) => fn)).not.toContain("firm_members");
     });
   });

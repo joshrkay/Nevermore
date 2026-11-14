@@ -10,6 +10,7 @@ import { savePeoDraft } from "@/lib/advisorApi";
 import { listTemplateWorkbooks, TEMPLATE_WORKBOOK_STATUS_WORDS, templateWorkbookProblem, uploadTemplateWorkbook, type TemplateWorkbookRecord } from "@/lib/templateWorkbooks";
 import { buttonClass, columnLabel, inputClass, primaryClass, problemAt, sourceDraft, sourceFrom, suggestQuestionKey, type SectionKey, type SourceDraft } from "./shared";
 import { Field, SourceFields } from "./SourceFields";
+import { failureWords } from "@/components/workspace/form";
 
 /** The problems' paths that belong to a section (its parts' fields and sources), so its editor shows only its own. */
 const sectionPaths = (section: SectionKey) =>
@@ -65,7 +66,7 @@ const EditorShell = ({ section, peoId, basis, build, onSaved, onCancel, onReload
       onSaved();
     } catch (err) {
       if (isStaleDraftError(err)) setStale(true);
-      else setFailed(`${(err as Error).message} Nothing you typed is lost: try again.`);
+      else setFailed(`${failureWords(err, "That wasn't saved. Check your connection and try again.")} Nothing you typed is lost: try again.`);
     } finally {
       setSaving(false);
     }
@@ -376,7 +377,7 @@ const TemplatePicker = ({ peoId, value, onChange, problem }: { peoId: number; va
       await load();
       onChange({ templateId: String(added.id) });
     } catch (err) {
-      setUploadProblem((err as Error).message);
+      setUploadProblem(failureWords(err, "The file wasn't uploaded. Check your connection and try again."));
     } finally {
       setUploading(false);
     }

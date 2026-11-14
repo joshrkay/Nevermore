@@ -100,10 +100,11 @@ export function createPool({ log = () => {} } = {}) {
 }
 
 /**
- * Runs `fn(client)` in a transaction as the database role and JWT claims of one API request. Role and
- * claims are transaction-local, so a pooled connection can never carry them into the next request.
+ * Runs `fn(client)` in a transaction as the database role, JWT claims and request headers of one API request, as
+ * PostgREST sets them (request.headers is a JSON object of every header, names in lower case, as Node already gives
+ * them). All are transaction-local, so a pooled connection can never carry them into the next request.
  */
-export async function withRequest(pool, { role, claims, method }, fn) {
+export async function withRequest(pool, { role, claims, method, headers = {} }, fn) {
   const client = await pool.connect();
   let broken = false;
   try {
@@ -112,8 +113,9 @@ export async function withRequest(pool, { role, claims, method }, fn) {
       `SELECT set_config('role', $1, true),
               set_config('request.jwt.claims', $2, true),
               set_config('request.method', $3, true),
+              set_config('request.headers', $4, true),
               set_config('search_path', 'public, extensions', true)`,
-      [role, JSON.stringify(claims), method],
+      [role, JSON.stringify(claims), method, JSON.stringify(headers)],
     );
     const result = await fn(client);
     await client.query("COMMIT");

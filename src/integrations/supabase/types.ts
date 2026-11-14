@@ -430,8 +430,8 @@ export type Database = {
         Update: never
         Relationships: []
       }
-      // Organisations whose members get the advisor role without an admin (20261113100000). Admins read it; it is
-      // changed only through admin_add_allowed_organisation and admin_remove_allowed_organisation.
+      // The retired platform list of organisations whose members got the advisor role without an admin (20261113100000). Admins read it as
+      // history; nothing changes it since 20261118100000, which dropped the functions that did.
       allowed_organisations: {
         Row: {
           added_at: string
@@ -604,6 +604,8 @@ export type Database = {
           name: string
           updated_at: string
           updated_by_email: string | null
+          // Raised by a trigger by one whenever the name or the kind really changes; a save names the one it started from (20261118160000).
+          version: number
         }
         Insert: never
         Update: never
@@ -777,18 +779,6 @@ export type Database = {
         Args: { p_peo_id: number; p_template_id: number }
         Returns: string | null
       }
-      admin_add_allowed_organisation: {
-        Args: { p_provider: string; p_org_id: string; p_label: string }
-        Returns: Json
-      }
-      admin_remove_allowed_organisation: {
-        Args: { p_id: number }
-        Returns: Json
-      }
-      claim_advisor_role_by_organisation: {
-        Args: Record<PropertyKey, never>
-        Returns: Json
-      }
       // Whether the signed-in broker's own mailbox is connected, never the token (20261113090000).
       my_mailbox: {
         Args: Record<PropertyKey, never>
@@ -859,7 +849,7 @@ export type Database = {
       // The firms the caller currently belongs to, with their role in each, for a caller past the second factor.
       my_firms: {
         Args: Record<PropertyKey, never>
-        Returns: { firm_id: string; name: string; address: string; role: string }[]
+        Returns: { firm_id: string; name: string; address: string; role: string; refused: boolean }[]
       }
       // The firms the caller currently owns, by name.
       my_owner_firms: {
@@ -881,10 +871,11 @@ export type Database = {
         Args: { p_kind: string; p_record_id: string; p_record_type: string }
         Returns: undefined
       }
-      // Renames a referral partner or changes its kind; the code never changes.
+      // Renames a referral partner or changes its kind; the code never changes. A save names the version it started from (20261118160000):
+      // a save that names none is refused (22023). The answer is {conflict: false, record} or {conflict: true, currentVersion, current, changed}.
       advisor_update_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
-        Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
       }
       advisor_list_outbox_events: {
         Args: { p_limit?: number; p_status?: string | null }
@@ -1025,6 +1016,99 @@ export type Database = {
         Args: { p_name: string; p_address: string }
         Returns: string
       }
+      admin_firm_states: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          firm_id: string
+          name: string
+          address: string
+          state: string
+          signed_up_at: string
+          suspended: boolean
+          suspended_at: string | null
+          suspension_reason: string | null
+          closing_on: string | null
+          closed_on: string | null
+          closure_asked_at: string | null
+          closure_asked_by: string | null
+          closure_deleted: { [key: string]: number } | null
+        }[]
+      }
+      // Closing a firm (20261118110000).
+      request_firm_closure: {
+        Args: { p_firm_id: string; p_firm_name: string }
+        Returns: string
+      }
+      withdraw_firm_closure: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      my_firm_closure: {
+        Args: { p_firm_id: string }
+        Returns: { asked_at: string | null; closes_at: string | null; can_ask: boolean; cannot_ask_because: string | null }[]
+      }
+      admin_stop_firm_closure: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: undefined
+      }
+      // Help from Nevermore (20261118120000).
+      start_support_session: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: { session_id: string; firm_name: string; firm_address: string; ends_at: string }[]
+      }
+      end_support_session: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      my_support_session_here: {
+        Args: Record<PropertyKey, never>
+        Returns: { session_id: string; firm_id: string; firm_name: string; firm_address: string; ends_at: string; ended_at: string | null; is_open: boolean; second_factor_pending: boolean }[]
+      }
+      admin_support_sessions: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          session_id: string
+          firm_id: string
+          firm_name: string
+          firm_address: string
+          admin_email: string
+          reason: string
+          started_at: string
+          ends_at: string
+          ended_at: string | null
+          ended_how: string | null
+          is_open: boolean
+          is_mine: boolean
+        }[]
+      }
+      firm_support_sessions: {
+        Args: { p_firm_id: string }
+        Returns: { session_id: string; reason: string; started_at: string; ends_at: string; ended_at: string | null }[]
+      }
+      is_support_session: {
+        Args: { p_firm_id: string }
+        Returns: boolean
+      }
+      support_reads_firm: {
+        Args: { p_firm_id: string }
+        Returns: boolean
+      }
+      refuse_support_session: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      admin_suspend_firm: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: undefined
+      }
+      admin_lift_firm_suspension: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      my_suspended_firm_at_address: {
+        Args: { p_address: string }
+        Returns: boolean
+      }
       admin_waiting_firms: {
         Args: Record<PropertyKey, never>
         Returns: {
@@ -1062,6 +1146,41 @@ export type Database = {
       }
       cancel_invitation: {
         Args: { p_invitation_id: string }
+        Returns: undefined
+      }
+      // Join by organisation (20261118100000). The two tables are closed to the API; an owner reaches them through these.
+      add_firm_organisation: {
+        Args: { p_firm_id: string; p_provider: string; p_org_id: string; p_label: string }
+        Returns: Json
+      }
+      firm_organisations: {
+        Args: { p_firm_id: string }
+        Returns: { id: string; provider: string; org_id: string; label: string; added_at: string }[]
+      }
+      remove_firm_organisation: {
+        Args: { p_id: string }
+        Returns: undefined
+      }
+      // 'asked' or 'none': the same none for everyone who is not from an organisation the firm lists.
+      ask_to_join_firm: {
+        Args: { p_firm_address: string }
+        Returns: string
+      }
+      firm_join_requests: {
+        Args: { p_firm_id: string }
+        Returns: { request_id: string; email: string; asked_at: string; provider: string; org_label: string }[]
+      }
+      // Returns the role the person now holds.
+      approve_join_request: {
+        Args: { p_request_id: string; p_role: string }
+        Returns: string
+      }
+      decline_join_request: {
+        Args: { p_request_id: string }
+        Returns: undefined
+      }
+      leave_firm: {
+        Args: { p_firm_id: string }
         Returns: undefined
       }
       remove_member: {
@@ -1123,6 +1242,46 @@ export type Database = {
       prospect_final_manuscript: {
         Args: { p_session_id: string }
         Returns: { version: number; storage_path: string; generated_at: string; corrections_applied: number }[]
+      }
+      // CRM-S3.3b: the queue's query (20261117100000_queue_query.sql). The page's shape is typed in src/lib/queueApi.ts.
+      queue_list_submissions: {
+        Args: {
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      // The numbers on the menu (20261118140000): { quotes, inbox } for the caller's current firm. Later stories add keys.
+      menu_counts: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      queue_view_counts: {
+        Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
+      // The history of one record (20261118130000): newest first, for a current member of the record's firm (or a support session). The table is
+      // closed to the API; this is the only way in. No id at all: who is a member's email, "Nevermore" or "System" (D-33, D-45).
+      record_history_list: {
+        Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
+        Returns: {
+          at: string
+          change_id: string
+          entry_key: string
+          field: string | null
+          // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
+          from_value: Json | null
+          // 'created' (no field, no values) or 'changed' (one field).
+          kind: string
+          to_value: Json | null
+          who: string
+          // 'member', 'nevermore' or 'system'.
+          who_kind: string
+        }[]
       }
       record_intake_consent: {
         Args: { p_text: string; p_version: string }
@@ -1187,6 +1346,57 @@ export type Database = {
         Args: { p_note?: string | null; p_session_id: string; p_status: string; p_won_quote_request_id?: number | null }
         Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
+      // ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000_table_settings.sql) ----
+      // The tables saved_views and table_preferences are closed to the API; these functions are the only way in.
+      list_saved_views: {
+        Args: { p_firm_id: string; p_table: string }
+        Returns: {
+          view_id: string
+          name: string
+          filters: Json
+          sort: Json | null
+          columns: Json | null
+          shared: boolean
+          mine: boolean
+          can_change: boolean
+          can_share: boolean
+          can_unshare: boolean
+          updated_at: string
+        }[]
+      }
+      save_view: {
+        Args: { p_firm_id: string; p_table: string; p_name: string; p_filters: Json | null; p_sort: Json | null; p_columns: Json | null }
+        Returns: string
+      }
+      rename_saved_view: {
+        Args: { p_view_id: string; p_name: string }
+        Returns: undefined
+      }
+      change_saved_view: {
+        Args: { p_view_id: string; p_filters: Json | null; p_sort: Json | null; p_columns: Json | null }
+        Returns: undefined
+      }
+      delete_saved_view: {
+        Args: { p_view_id: string }
+        Returns: undefined
+      }
+      share_saved_view: {
+        Args: { p_view_id: string }
+        Returns: undefined
+      }
+      unshare_saved_view: {
+        Args: { p_view_id: string }
+        Returns: undefined
+      }
+      my_table_columns: {
+        Args: { p_firm_id: string; p_table: string; p_view_id?: string | null }
+        Returns: { columns: Json | null; source: string }[]
+      }
+      set_my_table_columns: {
+        Args: { p_firm_id: string; p_table: string; p_view_id: string | null; p_columns: Json | null }
+        Returns: undefined
+      }
+      // ---- end CRM-S3.1b with S3.4b ----
     }
     Enums: {
       app_role: "advisor" | "admin"

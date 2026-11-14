@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import pg from "pg";
-import { ANON_KEY, DATABASE, GATEWAY_URL, PG } from "./stack/config.mjs";
+import { ANON_KEY, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
+import { totpCode } from "./stack/totp.mjs";
 import { agreeToIntakeConsent, agreeToIntakeConsentOverRest } from "./support/consent";
 
 const SESSION_URL = /\/start\?session=([0-9a-f-]{36})$/;
@@ -148,4 +149,108 @@ test("a save from an old version updates nothing, and the version is the databas
 
   const current = await patch("&data_version=in.(2,3)", { chamber_data: { employee_count: 15 } });
   expect(await current.json()).toEqual([{ id, data_version: 3 }]);
+});
+
+// A broker's two tabs on one referral partner (stories CRM-S2.4a, CRM-S2.4b): the tab that is behind opens the conflict dialog instead of overwriting,
+// "Keep mine" saves its text over the other tab's change from the version that holds it, and with no connection a banner says so and Save says why it
+// can't be used. The partner is the first record with a version; later records' forms use the same dialog.
+test("a broker's second tab is told what the first changed, keeps its own words, and is told when the connection goes", async ({ browser, request }) => {
+  const stamp = Date.now();
+  const address = `twotabs-${stamp}`;
+  const email = `twotabs-${stamp}@example.test`;
+  const password = "correct-horse-battery-staple";
+  const signup = await request.post(`${GATEWAY_URL}/auth/v1/signup`, { headers: { apikey: ANON_KEY }, data: { email, password } });
+  expect(signup.status()).toBe(200);
+  const userId = ((await signup.json()) as { user: { id: string } }).user.id;
+  const withDb = async <T,>(run: (client: pg.Client) => Promise<T>): Promise<T> => {
+    const client = new pg.Client({ ...PG, database: DATABASE });
+    await client.connect();
+    try {
+      return await run(client);
+    } finally {
+      await client.end();
+    }
+  };
+  await withDb(async (client) => {
+    const firm = await client.query("INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Two Tabs Co', $1, now(), 'approved', now()) RETURNING id", [address]);
+    await client.query("INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ($1, $2, 'owner')", [firm.rows[0].id, userId]);
+  });
+  const partnerNow = () => withDb(async (client) => {
+    const { rows } = await client.query("SELECT name, version FROM public.referral_partners WHERE firm_id = (SELECT id FROM public.firms WHERE address = $1) AND code = 'twin'", [address]);
+    return rows[0] as { name: string; version: number };
+  });
+
+  const context = await browser.newContext();
+  const first = await context.newPage();
+  await test.step("the broker signs in and adds a partner", async () => {
+    await first.goto(`${firmUrl(address)}/advisor`);
+    await first.getByLabel("Email").fill(email);
+    await first.getByLabel("Password").fill(password);
+    await first.getByRole("button", { name: "Sign In" }).click();
+    await expect(first.getByRole("heading", { name: "Add a second step to your sign-in" })).toBeVisible();
+    const secret = (await first.locator("span.font-mono").innerText()).trim();
+    await first.getByLabel(/6-digit code/).fill(totpCode(secret));
+    await first.getByRole("button", { name: "Turn on and continue" }).click();
+    await expect(first.getByRole("heading", { name: "Submissions" })).toBeVisible();
+    await first.goto(`${firmUrl(address)}/advisor/partners`);
+    await first.getByLabel("Name").fill("Twin Partners");
+    await first.getByLabel("Kind of partner").selectOption({ index: 1 });
+    await first.getByLabel("Code in their link").fill("twin");
+    await first.getByRole("button", { name: "Add partner" }).click();
+    await expect(first.getByRole("cell", { name: "Twin Partners" })).toBeVisible();
+    expect(await partnerNow()).toEqual({ name: "Twin Partners", version: 1 });
+  });
+
+  // The same browser, so the same broker: two tabs.
+  const second = await context.newPage();
+  await second.goto(`${firmUrl(address)}/advisor/partners`);
+  await second.getByRole("button", { name: "Edit Twin Partners" }).click();
+  await second.getByRole("form", { name: /^Edit Twin Partners/ }).getByRole("textbox", { name: "Name" }).fill("Twin Partners Too");
+
+  await test.step("the first tab renames the partner", async () => {
+    await first.getByRole("button", { name: "Edit Twin Partners" }).click();
+    await first.getByRole("form", { name: /^Edit Twin Partners/ }).getByRole("textbox", { name: "Name" }).fill("Twin Partners First");
+    await first.getByRole("button", { name: "Save" }).click();
+    await expect(first.getByRole("cell", { name: "Twin Partners First" })).toBeVisible();
+    expect(await partnerNow()).toEqual({ name: "Twin Partners First", version: 2 });
+  });
+
+  await test.step("the second tab is refused, and the dialog shows both names and who changed it", async () => {
+    await second.getByRole("button", { name: "Save" }).click();
+    const dialog = second.getByRole("alertdialog", { name: "Someone else changed this partner" });
+    await expect(dialog).toBeVisible();
+    const name = dialog.getByRole("row", { name: /Name/ });
+    await expect(name).toContainText("Twin Partners Too");
+    await expect(name).toContainText("Twin Partners First");
+    await expect(name).toContainText(email);
+    await expect(dialog.getByRole("button", { name: "Keep editing" })).toBeFocused();
+    expect(await partnerNow()).toEqual({ name: "Twin Partners First", version: 2 });
+    // Keep editing changes nothing: the typing is still there, and the dialog is gone.
+    await dialog.getByRole("button", { name: "Keep editing" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(second.getByRole("form", { name: /^Edit Twin Partners/ }).getByRole("textbox", { name: "Name" })).toHaveValue("Twin Partners Too");
+    expect(await partnerNow()).toEqual({ name: "Twin Partners First", version: 2 });
+  });
+
+  await test.step("with no connection a banner says so and Save says why it can't be used", async () => {
+    await context.setOffline(true);
+    await expect(second.getByRole("status", { name: "Connection" })).toContainText("You're offline");
+    const save = second.getByRole("button", { name: "Save" });
+    await expect(save).toHaveAttribute("aria-disabled", "true");
+    await expect(save).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+    await save.click({ force: true }); // aria-disabled is not disabled: the click is made, and ignored
+    await expect(second.getByRole("form", { name: /^Edit Twin Partners/ }).getByRole("textbox", { name: "Name" })).toHaveValue("Twin Partners Too");
+    await context.setOffline(false);
+    await expect(second.getByRole("status", { name: "Connection" })).toHaveText("");
+    await expect(second.getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  await test.step("Keep mine saves the second tab's words over the first's, from the version that holds them", async () => {
+    await second.getByRole("button", { name: "Save" }).click();
+    await second.getByRole("alertdialog").getByRole("button", { name: "Keep mine" }).click();
+    await expect(second.getByRole("cell", { name: "Twin Partners Too" })).toBeVisible();
+    await expect(second.getByRole("alertdialog")).toHaveCount(0);
+    expect(await partnerNow()).toEqual({ name: "Twin Partners Too", version: 3 });
+    await expect(second.getByRole("button", { name: "Edit Twin Partners Too" })).toBeFocused();
+  });
 });

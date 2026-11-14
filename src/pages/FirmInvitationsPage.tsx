@@ -1,20 +1,66 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { BrandMark, Wordmark } from "@/components/BrandMark";
+import { z } from "zod";
+import { Input } from "@/components/ui/input";
+import { choiceRule, emailRule, Field, FormActions, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { formatDateTime } from "@/components/advisor/format";
-import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import {
   cancelInvitation, fetchMyFirm, fetchPendingInvitations, inviteMember, resendInvitation,
   type Delivery, type FirmRole, type PendingInvitation,
 } from "@/lib/invitationApi";
+import { LoadFailed, NothingYet } from "@/components/workspace/states";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
+import { AskedToJoinSection, OrganisationsSection } from "@/components/workspace/FirmJoinSections";
 
-const input = "w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 const ROLE_LABELS: Record<FirmRole, string> = { agent: "Agent", lead: "Lead", owner: "Owner" };
+const ROLES: readonly FirmRole[] = ["agent", "lead", "owner"];
+
+const inviteSchema = z.object({
+  email: emailRule("Enter the email address to invite.").pipe(z.string().max(254, "Use an email address of 254 characters or fewer.")),
+  role: choiceRule(ROLES, "Choose a role."),
+});
+
+/** The refusals about the address itself (already a member, already invited) belong to the email field; the rest to the form. */
+const explainInvite = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "";
+  return /already (a member|has a pending invitation)/i.test(message) ? { message, field: "email" } : undefined;
+};
+
+/** The form that invites someone: an email and a role (story CRM-S4.1 rules). It keeps what was typed when a send is refused. */
+const InviteForm = ({ firmId, onInvited }: { firmId: string; onInvited: () => Promise<void> }) => {
+  const api = useWorkspaceForm({
+    schema: inviteSchema,
+    defaultValues: { email: "", role: "agent" },
+    save: async (v) => {
+      const result = await inviteMember({ firmId, email: v.email, role: v.role as FirmRole });
+      tellDelivery(result.delivery, v.email, `Invitation sent to ${v.email}.`, "The invitation is saved but the email didn't go out. Resend it from the list.");
+    },
+    onSaved: () => void onInvited(),
+    explain: explainInvite,
+    failureMessage: "Couldn't send the invitation. Check your connection and try again.",
+  });
+  return (
+    <WorkspaceForm api={api} aria-label="Invite someone" className="border border-border rounded-xl p-4" actions={<FormActions submitLabel="Send invitation" savingLabel="Sending…" />}>
+      <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
+        <Field name="email" label="Email address" required>
+          {(field) => <Input {...field} className="h-11" type="email" maxLength={254} autoComplete="off" autoCapitalize="none" spellCheck={false} />}
+        </Field>
+        <Field name="role" label="Role">
+          {(field) => (
+            <SelectInput {...field} className="h-11">
+              {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+            </SelectInput>
+          )}
+        </Field>
+      </div>
+    </WorkspaceForm>
+  );
+};
 
 /**
  * What an owner is told once an invitation's email has been tried. "Unknown" is its own answer: the mail provider may have accepted
@@ -29,13 +75,13 @@ function tellDelivery(delivery: Delivery, email: string, sentWords: string, fail
 
 type Load =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
+  | { kind: "error"; error: Error }
   | { kind: "not_owner" }
   | { kind: "ready"; firm: { id: string; name: string }; invitations: PendingInvitation[] };
 
 /**
  * A firm's invitations (story CRM-P1.2): an owner invites an email address with a role, sees who is still pending and resends or
- * withdraws an invitation. A plain page in today's console look; the Settings screen that replaces it is Epic 9. Only what a
+ * withdraws an invitation. A page inside the workspace shell (reached from Settings); the Settings screen that replaces it is Epic 9. Only what a
  * person sees is decided here: the database lets only a current owner of the firm do any of it (D-18).
  */
 const FirmInvitationsPage = () => {
@@ -45,10 +91,8 @@ const FirmInvitationsPage = () => {
   const address = firm.status === "known" ? firm.address : null;
   const signedIn = Boolean(user) && !isAnonymous;
   const [load, setLoad] = useState<Load>({ kind: "loading" });
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<FirmRole>("agent");
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const inviteForm = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!address) return;
@@ -58,7 +102,7 @@ const FirmInvitationsPage = () => {
       const invitations = await fetchPendingInvitations(mine.id);
       setLoad({ kind: "ready", firm: { id: mine.id, name: mine.name }, invitations });
     } catch (err) {
-      setLoad({ kind: "error", message: (err as Error).message });
+      setLoad({ kind: "error", error: err as Error });
     }
   }, [address]);
 
@@ -71,23 +115,6 @@ const FirmInvitationsPage = () => {
   if (authLoading || firm.status === "checking") return <div className="min-h-screen bg-background" role="status" aria-label="Checking your sign-in" />;
   if (!signedIn) return <Navigate to="/login" replace state={{ from: location, reason: "account_needed" }} />;
 
-  const send = async (e: FormEvent) => {
-    e.preventDefault();
-    if (load.kind !== "ready") return;
-    setBusy("invite");
-    setError(null);
-    try {
-      const typed = email.trim();
-      const result = await inviteMember({ firmId: load.firm.id, email: typed, role });
-      tellDelivery(result.delivery, typed, `Invitation sent to ${typed}.`, "The invitation is saved but the email didn't go out. Resend it from the list.");
-      setEmail("");
-      await refresh();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-    setBusy(null);
-  };
-
   const resend = async (i: PendingInvitation) => {
     setBusy(i.id);
     try {
@@ -95,7 +122,7 @@ const FirmInvitationsPage = () => {
       tellDelivery(result.delivery, i.email, `Invitation sent again to ${i.email}.`, "The invitation is saved but the email didn't go out. Try again.");
       await refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -107,7 +134,7 @@ const FirmInvitationsPage = () => {
       toast.success(`Invitation to ${i.email} withdrawn.`);
       await refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -119,21 +146,13 @@ const FirmInvitationsPage = () => {
       : `Expires ${formatDateTime(i.expiresAt)}`;
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-6 min-h-14 py-2 flex items-center gap-2">
-          <Link to="/" className="flex items-center gap-2">
-            <BrandMark className="w-7 h-7 text-primary" />
-            <Wordmark className="text-xl whitespace-nowrap" />
-          </Link>
-          <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 ml-1">{firm.status === "known" ? firm.name : "Firm"}</span>
-        </div>
-      </header>
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-3xl space-y-6">
         <div>
           <h1 className="font-display text-3xl font-bold mb-1">Invitations</h1>
           <p className="text-sm text-muted-foreground">
-            Invite people by email. Each link works once, for seven days, and only for the person who signs in with that email address.
+            Invite people by email. Each link works once, for seven days, and only for the person who signs in with that email address. Or list
+            your firm's Google domain or Microsoft tenant, and approve the people who sign in from it.
           </p>
         </div>
         {!address && <p role="status" className="text-sm">Open this page at your firm's own address.</p>}
@@ -143,38 +162,19 @@ const FirmInvitationsPage = () => {
           </div>
         )}
         {address && load.kind === "error" && (
-          <div role="alert" className="text-sm space-y-2">
-            <p className="text-destructive">{load.message}</p>
-            <button className={button} onClick={() => { setLoad({ kind: "loading" }); void refresh(); }}>Try again</button>
-          </div>
+          <LoadFailed what="the invitations" error={load.error} onRetry={() => { setLoad({ kind: "loading" }); void refresh(); }} />
         )}
         {address && load.kind === "not_owner" && <p role="status" className="text-sm">Only an owner of the firm can invite people.</p>}
         {address && load.kind === "ready" && (
           <>
-            <form onSubmit={send} aria-label="Invite someone" className="border border-border rounded-xl p-4 space-y-4">
-              <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
-                <div>
-                  <label htmlFor="invite-email" className="text-xs text-muted-foreground">Email address</label>
-                  <input id="invite-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254}
-                    className={input} autoComplete="off" autoCapitalize="none" spellCheck={false} />
-                </div>
-                <div>
-                  <label htmlFor="invite-role" className="text-xs text-muted-foreground">Role</label>
-                  <select id="invite-role" value={role} onChange={(e) => setRole(e.target.value as FirmRole)} className={input}>
-                    <option value="agent">{ROLE_LABELS.agent}</option>
-                    <option value="lead">{ROLE_LABELS.lead}</option>
-                    <option value="owner">{ROLE_LABELS.owner}</option>
-                  </select>
-                </div>
-              </div>
-              {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-              <button type="submit" disabled={busy !== null || !email.trim()}
-                className={`${button} bg-primary text-primary-foreground border-primary hover:bg-primary/90`}>
-                {busy === "invite" ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Sending" /> : "Send invitation"}
-              </button>
-            </form>
+            <div ref={inviteForm}><InviteForm firmId={load.firm.id} onInvited={refresh} /></div>
             {load.invitations.length === 0 ? (
-              <p role="status" className="text-sm text-muted-foreground">No invitations are waiting.</p>
+              // Nothing yet (CRM-S2.2). The way to make the first one is the invite form just above, so the action takes the person to its first field.
+              <NothingYet
+                layout="line"
+                sentence="Invitations you send appear here until they are accepted."
+                primary={{ label: "Invite someone", onClick: () => inviteForm.current?.querySelector<HTMLElement>("input, select")?.focus() }}
+              />
             ) : (
               <ul aria-label="Pending invitations" className="space-y-3">
                 {load.invitations.map((i) => (
@@ -190,10 +190,11 @@ const FirmInvitationsPage = () => {
                 ))}
               </ul>
             )}
+            <OrganisationsSection firmId={load.firm.id} />
+            <AskedToJoinSection firmId={load.firm.id} firmName={load.firm.name} />
           </>
         )}
       </main>
-      <div className="pb-8 flex justify-center"><LegalLinks compact /></div>
     </div>
   );
 };

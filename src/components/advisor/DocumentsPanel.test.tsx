@@ -19,6 +19,7 @@ const toastError = vi.fn();
 vi.mock("sonner", () => ({ toast: { error: (m: string) => toastError(m), success: vi.fn() } }));
 
 const { default: DocumentsPanel } = await import("./DocumentsPanel");
+const { WorkspaceContext } = await import("@/components/workspace/workspaceContext");
 
 const doc: ReviewedDocument = {
   id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "census", status: "ready",
@@ -81,5 +82,21 @@ describe("opening an uploaded document", () => {
     render(<DocumentsPanel documents={[{ ...doc, scan_verdict: "pending" }]} events={[]} prospectUserId="u1" />);
     expect(screen.getByRole("button", { name: "Open census.xlsx" })).toBeDisabled();
     expect(createSignedUrl).not.toHaveBeenCalled();
+  });
+});
+
+// Catches: a support session is shown "Open" on a file and meets "Couldn't open that file", or the fix takes the button from a member.
+describe("during Nevermore support", () => {
+  const workspace = (isSupport: boolean) => ({ firm: null, role: null, isOwner: false, isSupport, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: isSupport, person: "Sam" });
+  it("offers no way to open a file and says so in one line, while the row says the file is there", () => {
+    render(<WorkspaceContext.Provider value={workspace(true)}><DocumentsPanel documents={[doc]} events={[]} prospectUserId="u1" /></WorkspaceContext.Provider>);
+    expect(screen.queryByRole("button", { name: "Open census.xlsx" })).not.toBeInTheDocument();
+    expect(screen.getByText("census.xlsx")).toBeInTheDocument();
+    expect(screen.getAllByText("Downloads are off during Nevermore support.")).toHaveLength(1);
+  });
+  it("still offers it to a member", () => {
+    render(<WorkspaceContext.Provider value={workspace(false)}><DocumentsPanel documents={[doc]} events={[]} prospectUserId="u1" /></WorkspaceContext.Provider>);
+    expect(screen.getByRole("button", { name: "Open census.xlsx" })).toBeInTheDocument();
+    expect(screen.queryByText("Downloads are off during Nevermore support.")).not.toBeInTheDocument();
   });
 });

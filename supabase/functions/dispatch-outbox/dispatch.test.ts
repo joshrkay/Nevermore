@@ -67,6 +67,9 @@ const prospectRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
 
 /** The current members of the firm the intake belongs to, as the database answers for it. */
 const FIRM_MEMBERS = ["advisors@example.com"];
+/** The current owners of the firm a "member left" email is about, as the database answers for it. */
+const FIRM_OWNERS = ["owner@firm-a.example"];
+const FIRM = "99999999-8888-7777-6666-555555555555";
 
 const PII = ["jo@acme.example", "Joanna", "Jo Doe", "Acme", "advisors@example.com", "support@example.com"];
 
@@ -105,6 +108,7 @@ function harness(over: Partial<DispatchDeps> = {}, sendResult: SendResult = { ok
     complete: vi.fn(async () => {}),
     fail: vi.fn(async () => {}),
     advisorRecipients: vi.fn(async () => FIRM_MEMBERS),
+    ownerRecipients: vi.fn(async () => FIRM_OWNERS),
     log: (line) => logs.push(line),
     ...over,
   };
@@ -949,8 +953,8 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing"]);
     // The emails that link to the intake need the app's address; the confirmation doesn't.
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
@@ -1179,6 +1183,8 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blockedKinds(noSender, null).map((b) => [b.kind, b.problem])).toEqual([
       ["advisor_notification", "EMAIL_FROM is not set to a valid sender address"],
       ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
+      ["member_left", "EMAIL_FROM is not set to a valid sender address"],
+      ["firm_closing", "EMAIL_FROM is not set to a valid sender address"],
       ["prospect_confirmation", "EMAIL_FROM is not set to a valid sender address"],
       ["information_request", "EMAIL_FROM is not set to a valid sender address"],
       ["draft_expiry_reminder", "EMAIL_FROM is not set to a valid sender address"],
@@ -1192,6 +1198,8 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blocked).toEqual([
       { kind: "advisor_notification", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "member_left", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "firm_closing", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
@@ -1202,11 +1210,13 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blockedKinds(config, "RESEND_API_KEY is not set")).toEqual([
       { kind: "advisor_notification", problem: "RESEND_API_KEY is not set" },
       { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
+      { kind: "member_left", problem: "RESEND_API_KEY is not set" },
+      { kind: "firm_closing", problem: "RESEND_API_KEY is not set" },
       { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[2].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[4].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1222,7 +1232,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(5);
+    expect(note).toHaveBeenCalledTimes(7);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
@@ -1480,5 +1490,220 @@ describe("who an advisor alert goes to", () => {
       expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
       expect(deps.freeze).not.toHaveBeenCalled();
     });
+  });
+});
+
+// The email to a firm's owners when a member leaves (story CRM-P1.6). It belongs to the firm, not to an intake, and goes through the
+// same dispatcher as the firm's other alerts: the same sender, the same retry, and the same rule about who is told on a retry (D-35).
+const memberLeftRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-left",
+  kind: "member_left",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z", firm_name: "Acme Brokers" },
+  ...over,
+});
+
+describe("dispatching the email that a member left", () => {
+  // Catches: the owners are asked for by the wrong thing (the intake's members, or nobody, since the event has no intake), or a
+  // platform-wide list is used.
+  it("goes to the firm's owners, asked for by the event's firm, and never to the intake members' list", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    const summary = await dispatchEvents([memberLeftRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    expect(sent[0].message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(JSON.stringify(sent[0])).not.toContain("platform-list@example.com");
+  });
+
+  // Catches: the email names someone else, omits when they left, says more than who and when (a role, a reason, a link into the
+  // firm's records), or lets a name carry markup into the HTML.
+  it("names who left and when, and nothing else", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents(
+      [memberLeftRow({ payload: { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z", firm_name: "Acme Brokers", role: "owner", reason: "new job", leads: ["Zelda Co"] } })],
+      deps,
+    );
+    const { message } = sent[0];
+    expect(message.subject).toBe("sam@firm-a.example left Acme Brokers");
+    expect(message.text).toContain("sam@firm-a.example left Acme Brokers on 2026-11-18 14:05 UTC.");
+    expect(message.html).toContain("sam@firm-a.example left Acme Brokers on 2026-11-18 14:05 UTC.");
+    for (const leaked of ["owner", "new job", "Zelda", "http"]) {
+      expect(message.text).not.toContain(leaked);
+      expect(message.html).not.toContain(leaked.startsWith("http") ? "href=" : leaked);
+    }
+  });
+
+  it("escapes a firm's name in the HTML", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([memberLeftRow({ payload: { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z", firm_name: "<b>Evil</b> & Co" } })], deps);
+    expect(sent[0].message.html).toContain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co");
+    expect(sent[0].message.html).not.toContain("<b>Evil</b>");
+  });
+
+  // Catches: a payload without who or when is sent as an empty email, or retried for ever.
+  it.each([
+    ["no member", { left_at: "2026-11-18T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["no time", { member_email: "sam@firm-a.example", firm_name: "Acme Brokers" }],
+    ["no firm", { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z" }],
+    ["a time that is not one", { member_email: "sam@firm-a.example", left_at: "yesterday", firm_name: "Acme Brokers" }],
+  ])("gives up on a payload with %s, sending nothing", async (_why, payload) => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([memberLeftRow({ payload })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-left", "invalid_payload", null, 1, false);
+  });
+
+  // Catches: an event with no firm is looked up by a null id and told to nobody, or sent to the wrong people.
+  it("gives up on an event that names no firm", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([memberLeftRow({ firm_id: null })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.ownerRecipients).not.toHaveBeenCalled();
+  });
+
+  // Catches: an email with nobody to send to is sent anyway, or is dropped for good when the owners can't be looked up.
+  it("holds back, sending nothing, when the firm has no owner to tell or the owners can't be looked up, and tries again", async () => {
+    const none = harness({ ownerRecipients: vi.fn(async () => []) });
+    const a = await dispatchEvents([memberLeftRow()], none.deps);
+    expect(none.sent).toHaveLength(0);
+    expect(a.retrying).toBe(1);
+    expect(none.deps.fail).toHaveBeenCalledWith("evt-left", "no_recipients", 60, 1, false);
+    const down = harness({ ownerRecipients: vi.fn(async () => { throw new Error("db down"); }) });
+    const b = await dispatchEvents([memberLeftRow()], down.deps);
+    expect(down.sent).toHaveLength(0);
+    expect(b.retrying).toBe(1);
+    expect(down.deps.fail).toHaveBeenCalledWith("evt-left", "recipients_failed", 60, 1, false);
+  });
+
+  // D-35: an owner who has since left the firm, or stopped being an owner, is not sent the email on a retry; one who became an owner
+  // since the first preparation is not added (that would change the key for everyone who already has it).
+  it("on a retry drops an owner who is no longer one, and adds nobody who became one since", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["stayer@firm-a.example", "gone@firm-a.example"] } });
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => ["stayer@firm-a.example", "new-owner@firm-a.example"]) });
+    await dispatchEvents([memberLeftRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    expect(sent[0].key).not.toBe(stored.key);
+  });
+
+  it("resends a stored message as it is while every owner it names is still an owner", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["owner@firm-a.example"] } });
+    const { deps, sent } = harness();
+    await dispatchEvents([memberLeftRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(deps.freeze).not.toHaveBeenCalled();
+    expect(sent[0].key).toBe(stored.key);
+  });
+
+  // Catches: the kind is not sendable (it would wait for ever) or is sent when the sender isn't set up.
+  it("is sent whenever the advisor sender is set up, and waits with the reason when it is not", async () => {
+    expect(sendableKinds(config)).toContain("member_left");
+    const { deps, sent } = harness({ config: configFrom({ ...env, EMAIL_FROM: "" }) });
+    await dispatchEvents([memberLeftRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-left", "not_configured", 60, 1, false);
+  });
+});
+
+// The email to a firm's owners when an owner asks to close the firm, or withdraws the request (story CRM-P1.7). A firm's own email, like
+// the leaving notice: it goes to the firm's owners, asked for by the event's firm, with the same sender and retry rules.
+const closingRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-closing",
+  kind: "firm_closing",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: { event: "asked", by_email: "sam@firm-a.example", firm_name: "Acme Brokers", closes_at: "2026-12-18T14:05:09Z" },
+  ...over,
+});
+
+describe("dispatching the email that a request to close the firm was made or withdrawn", () => {
+  // Catches: the owners are not the ones told (the intake members' list, or nobody), or the date or the way back is left out.
+  it("tells the firm's owners who asked, which firm and when it closes", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    await dispatchEvents([closingRow()], deps);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    expect(sent[0].message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(sent[0].message.subject).toBe("sam@firm-a.example asked to close Acme Brokers");
+    expect(sent[0].message.text).toContain("It closes on 2026-12-18 unless an owner withdraws the request first.");
+    expect(sent[0].message.text).toContain("withdraw the request in Settings");
+  });
+
+  // Catches: a withdrawal reads like a request, or still names a closing date.
+  it("says a withdrawal leaves the firm open and nothing deleted", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([closingRow({ payload: { event: "withdrawn", by_email: "sam@firm-a.example", firm_name: "Acme Brokers" } })], deps);
+    expect(sent[0].message.subject).toBe("sam@firm-a.example withdrew the request to close Acme Brokers");
+    expect(sent[0].message.text).toContain("The firm stays open and nothing was deleted.");
+    expect(sent[0].message.text).not.toContain("closes on");
+  });
+
+  it("escapes a firm's name in the HTML and carries nothing else the payload held", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([closingRow({ payload: { event: "asked", by_email: "sam@firm-a.example", firm_name: "<b>Evil</b> & Co", closes_at: "2026-12-18T14:05:09Z", reason: "secret reason" } })], deps);
+    expect(sent[0].message.html).toContain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co");
+    expect(sent[0].message.html).not.toContain("<b>Evil</b>");
+    expect(sent[0].message.text).not.toContain("secret reason");
+  });
+
+  // Catches: an event that cannot say who, what or when is sent as an empty email, or retried for ever.
+  it.each([
+    ["no event", { by_email: "sam@firm-a.example", firm_name: "Acme Brokers", closes_at: "2026-12-18T14:05:09Z" }],
+    ["no person", { event: "asked", firm_name: "Acme Brokers", closes_at: "2026-12-18T14:05:09Z" }],
+    ["a request with no date", { event: "asked", by_email: "sam@firm-a.example", firm_name: "Acme Brokers" }],
+    ["a date that is not one", { event: "asked", by_email: "sam@firm-a.example", firm_name: "Acme Brokers", closes_at: "soon" }],
+  ])("gives up on a payload with %s, sending nothing", async (_why, payload) => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([closingRow({ payload })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-closing", "invalid_payload", null, 1, false);
+  });
+
+  // D-35 for this kind: an owner who is no longer one is not sent it on a retry.
+  it("on a retry drops an owner who is no longer one", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["stayer@firm-a.example", "gone@firm-a.example"] } });
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => ["stayer@firm-a.example"]) });
+    await dispatchEvents([closingRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+  });
+
+  it("is sent whenever the advisor sender is set up, and waits with the reason when it is not", async () => {
+    expect(sendableKinds(config)).toContain("firm_closing");
+    const { deps, sent } = harness({ config: configFrom({ ...env, EMAIL_FROM: "" }) });
+    await dispatchEvents([closingRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-closing", "not_configured", 60, 1, false);
+  });
+});
+
+describe("dispatching the email that Nevermore stopped a closing", () => {
+  // Catches: the firm learns who at Nevermore stopped it or why (D-33), or the email reads like an owner's withdrawal.
+  it("says Nevermore stopped it and names no person, whatever the payload held", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([closingRow({ payload: { event: "stopped", firm_name: "Acme Brokers", by_email: "staff@nevermore.example", reason: "under investigation" } })], deps);
+    const { message } = sent[0];
+    expect(message.subject).toBe("Nevermore stopped the request to close Acme Brokers");
+    expect(message.text).toContain("The firm stays open and nothing was deleted.");
+    for (const leaked of ["staff@nevermore.example", "investigation"]) {
+      expect(message.text).not.toContain(leaked);
+      expect(message.html).not.toContain(leaked);
+    }
+  });
+
+  it("gives up on a stop that names no firm", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([closingRow({ payload: { event: "stopped" } })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
   });
 });

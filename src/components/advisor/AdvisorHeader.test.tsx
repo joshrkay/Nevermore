@@ -52,6 +52,13 @@ describe("the advisor header's Activity link", () => {
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
   });
 
+  it("is offered at the address of the firm they own to an owner who is an agent of another firm too (D-40)", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), { ...betaFirm, role: "agent" }]);
+    renderHeader();
+    expect(await screen.findByRole("link", { name: "Activity" })).toBeInTheDocument();
+  });
+
   it("is offered to an owner of two firms at the address of one of them, as the real route lets them in there", async () => {
     firmAddress = { status: "known", address: "beta", name: "Beta" };
     api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), owner(betaFirm)]);
@@ -69,7 +76,7 @@ describe("the advisor header's Activity link", () => {
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
   });
 
-  it("is not offered on the bare domain to an owner of several firms, as the console is closed to a member of several", async () => {
+  it("is not offered on the bare domain to an owner of several firms, who chooses a firm first (D-40)", async () => {
     api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), owner(betaFirm)]);
     renderHeader();
     await settle();
@@ -170,7 +177,7 @@ describe("the console header's menu", () => {
     for (const name of ["Submissions", "Outbox & Notifications", "Funnel", "Partners", "PEOs", "Mailbox"]) {
       expect(await screen.findByRole("link", { name })).toBeInTheDocument();
     }
-    for (const name of ["Held mail", "Firms", "Organisations"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    for (const name of ["Held mail", "Firms", "Organisations"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument(); // Organisations moved into each firm (CRM-P1.4)
   });
 
   it("offers a platform admin who belongs to no firm the platform's pages and none of a firm's (D-16)", async () => {
@@ -178,7 +185,9 @@ describe("the console header's menu", () => {
     api.fetchIsAdmin.mockResolvedValue(true);
     renderHeader();
     await settle();
-    for (const name of ["Held mail", "Firms", "Organisations"]) expect(await screen.findByRole("link", { name })).toBeInTheDocument();
+    for (const name of ["Held mail", "Firms"]) expect(await screen.findByRole("link", { name })).toBeInTheDocument();
+    // The platform's own list of organisations is retired (CRM-P1.4, D-23): each firm keeps its own on its Invitations page.
+    expect(screen.queryByRole("link", { name: "Organisations" })).not.toBeInTheDocument();
     for (const name of ["Submissions", "Outbox & Notifications", "Funnel", "Partners", "PEOs", "Mailbox", "Activity"]) {
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }
@@ -192,7 +201,7 @@ describe("the console header's menu", () => {
     expect(screen.getByRole("link", { name: "Submissions" })).toBeInTheDocument();
   });
 
-  it("names no firm when the person belongs to several, since the console can't show them together", async () => {
+  it("names no firm on the bare domain when the person belongs to several: they choose one first (D-40)", async () => {
     api.fetchMyFirms.mockResolvedValue([alpha, beta]);
     renderHeader();
     await settle();

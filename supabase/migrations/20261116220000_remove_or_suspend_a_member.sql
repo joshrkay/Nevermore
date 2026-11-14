@@ -11,7 +11,10 @@ ALTER TABLE public.firm_activity ADD CONSTRAINT firm_activity_kind_check CHECK (
     'member_added', 'member_ended', 'owner_added', 'owner_ended',
     'export_made', 'invitation_sent', 'member_removed', 'support_access',
     'firm_signed_up', 'firm_approved', 'firm_refused', 'invitation_withdrawn',
-    'member_suspended', 'member_restored'
+    'member_suspended', 'member_restored',
+    -- Also the kinds of 20261116230000 (suspending a firm), which was written beside this file: either may be applied to a
+    -- database that already holds the other's entries, and a check that left them out would be refused.
+    'firm_suspended', 'firm_restored'
     -- sync:end firm_activity_kinds
   ));
 

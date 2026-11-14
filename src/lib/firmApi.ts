@@ -11,6 +11,17 @@ export async function fetchFirmName(address: string): Promise<string | null> {
   return typeof data === "string" ? data : null;
 }
 
+/**
+ * Whether the firm at this address is suspended and the signed-in caller is a current member of it (story CRM-P1.8). The
+ * database answers true to no one else, so a stranger learns nothing. Only chooses what to show; the database refuses the
+ * firm's data to a member of a suspended firm anyway.
+ */
+export async function fetchIsMySuspendedFirmAtAddress(address: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("my_suspended_firm_at_address", { p_address: address });
+  if (error) throw new Error("Couldn't check whether this firm is suspended.");
+  return data === true;
+}
+
 /** Whether the signed-in caller is a current member of the firm at this address. */
 export async function fetchIsMemberOfFirmAddress(address: string): Promise<boolean> {
   const { data, error } = await supabase.rpc("is_member_of_firm_address", { p_address: address });
@@ -90,4 +101,69 @@ export async function decideFirm(firmId: string, approve: boolean, note?: string
   throw classifyApiError(error, error.code === "42501"
     ? "Only a platform admin who isn't a member of the firm can decide on it."
     : "Couldn't record the decision. Try again.");
+}
+
+/** A firm as a platform admin sees it: its approval state, and whether it is suspended now and why. */
+export interface FirmState {
+  id: string;
+  name: string;
+  address: string;
+  /** The approval decision (CRM-P1.1): waiting for it, approved, or refused. Suspension is separate from it. */
+  state: "waiting" | "approved" | "refused";
+  signedUpAt: string;
+  suspended: boolean;
+  suspendedAt: string | null;
+  suspensionReason: string | null;
+  /** When the firm closes, while its owner's request is waiting out its 30 days (story CRM-P1.7); null otherwise. */
+  closingOn: string | null;
+  /** When the firm closed; null while it has not. A closed firm is shown at the address it held. */
+  closedOn: string | null;
+  /** A count per table of what closing deleted: numbers only, no names and no content. */
+  closureDeleted: Record<string, number> | null;
+}
+
+/** Every firm with its state, by name. Platform admins only. */
+export async function fetchFirmStates(): Promise<FirmState[]> {
+  const { data, error } = await supabase.rpc("admin_firm_states");
+  if (error) throw classifyApiError(error, error.code === "42501" ? "You don't have admin access." : "Couldn't load the firms.");
+  return (data ?? []).map((f) => ({
+    id: f.firm_id, name: f.name, address: f.address, state: f.state as FirmState["state"], signedUpAt: f.signed_up_at,
+    suspended: f.suspended, suspendedAt: f.suspended_at, suspensionReason: f.suspension_reason,
+    closingOn: f.closing_on, closedOn: f.closed_on, closureDeleted: f.closure_deleted,
+  }));
+}
+
+/** Suspends a firm with a reason (story CRM-P1.8). Its people are told it is suspended; nothing is deleted. */
+export async function suspendFirm(firmId: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_suspend_firm", { p_firm_id: firmId, p_reason: reason });
+  if (!error) return;
+  if (error.code === "PT409") throw new Error("That firm is suspended already.");
+  if (error.code === "PT404") throw new Error("That firm no longer exists.");
+  if (error.code === "22023") throw new Error("Give a reason of 1 to 500 characters.");
+  throw classifyApiError(error, error.code === "42501"
+    ? "Only a platform admin who isn't a member of the firm can suspend it."
+    : "Couldn't suspend the firm. Try again.");
+}
+
+/** Stops a firm's closing with a reason (story CRM-P1.7): the request ends, the firm stays open, and its owners are told. A platform admin cannot ask to close a firm. */
+export async function stopFirmClosure(firmId: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_stop_firm_closure", { p_firm_id: firmId, p_reason: reason });
+  if (!error) return;
+  if (error.code === "PT409") throw new Error("That firm is not waiting to close.");
+  if (error.code === "PT404") throw new Error("That firm no longer exists.");
+  if (error.code === "22023") throw new Error("Give a reason of 1 to 500 characters.");
+  throw classifyApiError(error, error.code === "42501"
+    ? "Only a platform admin who isn't a member of the firm can stop its closing."
+    : "Couldn't stop the closing. Try again.");
+}
+
+/** Lifts a firm's suspension: everything is as it was. */
+export async function liftFirmSuspension(firmId: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_lift_firm_suspension", { p_firm_id: firmId });
+  if (!error) return;
+  if (error.code === "PT409") throw new Error("That firm is not suspended.");
+  if (error.code === "PT404") throw new Error("That firm no longer exists.");
+  throw classifyApiError(error, error.code === "42501"
+    ? "Only a platform admin who isn't a member of the firm can lift its suspension."
+    : "Couldn't lift the suspension. Try again.");
 }

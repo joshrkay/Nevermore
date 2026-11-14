@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import PeoPanel from "@/components/advisor/peos/PeoPanel";
 import { peoStatusLine } from "@/data/peoEditor";
 import { localToday } from "@/data/peoProfiles";
 import { fetchHasPlatformRole, fetchIsAdmin, loadPeoCatalogDirectory, loadPeoDirectory, type PeoDirectoryEntry } from "@/lib/advisorApi";
 import AddPeoForm from "@/components/advisor/peos/AddPeoForm";
+import { LoadFailed } from "@/components/workspace/states";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean; catalogue: boolean };
 
@@ -47,8 +46,7 @@ const AdvisorPeosPage = () => {
   const selected = load.kind === "ready" ? load.peos.find((p) => String(p.id) === params.get("peo")) ?? load.peos[0] : undefined;
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-4 sm:px-6 py-8 max-w-6xl">
         <h1 className="font-display text-3xl font-bold mb-1">PEOs</h1>
         <p className="text-sm text-muted-foreground mb-6">
@@ -62,7 +60,7 @@ const AdvisorPeosPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading the PEOs…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the PEOs" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the PEOs" onRetry={reload} />}
         {load.kind === "ready" && (
           <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
             <div className="space-y-4 min-w-0">

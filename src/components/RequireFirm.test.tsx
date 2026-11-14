@@ -53,6 +53,7 @@ const renderGuarded = (guard: "member" | "owner" | "admin" = "member") =>
           }
         />
         <Route path="/login" element={<Login />} />
+        <Route path="/choose-firm" element={<p>Choose a firm page</p>} />
         <Route path="/advisor/second-factor" element={<SecondFactor />} />
       </Routes>
     </MemoryRouter>,
@@ -171,11 +172,20 @@ describe("RequireFirm (a current member of a firm)", () => {
       expect(screen.queryByText("Firm console")).not.toBeInTheDocument();
     });
 
-    it("keeps a member of this firm who belongs to another too out of the member pages: they do not filter by the address and the database answers for both firms (D-18)", async () => {
-      fetchMyFirms.mockResolvedValue([alpha, beta]);
+    it("lets in a member of this firm who belongs to another too: at a firm's address the database answers for this firm only (D-40)", async () => {
+      fetchMyFirms.mockResolvedValue([beta, alpha]);
       renderGuarded();
-      expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
+      expect(await screen.findByText("Firm console")).toBeInTheDocument();
+      expect(screen.queryByText("Choose a firm page")).not.toBeInTheDocument();
+      expect(reportOpsEvent).not.toHaveBeenCalled();
+    });
+
+    it("keeps out a member of two other firms, and says it's this firm they aren't a member of", async () => {
+      fetchMyFirms.mockResolvedValue([beta, { ...beta, firm_id: "f3", name: "Gamma", address: "gamma" }]);
+      renderGuarded();
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
       expect(screen.queryByText("Firm console")).not.toBeInTheDocument();
+      expect(screen.queryByText("Choose a firm page")).not.toBeInTheDocument();
     });
   });
 
@@ -186,11 +196,13 @@ describe("RequireFirm (a current member of a firm)", () => {
       expect(await screen.findByText("Firm console")).toBeInTheDocument();
     });
 
-    it("keeps a member of several firms out, naming them, rather than showing one firm's records mixed with another's", async () => {
+    it("sends a member of several firms to choose one, rather than showing one firm's records mixed with another's (D-40)", async () => {
       fetchMyFirms.mockResolvedValue([alpha, beta]);
       renderGuarded();
-      expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
+      expect(await screen.findByText("Choose a firm page")).toBeInTheDocument();
       expect(screen.queryByText("Firm console")).not.toBeInTheDocument();
+      // Choosing is not a refusal: nothing is reported as access denied.
+      expect(reportOpsEvent).not.toHaveBeenCalled();
     });
   });
 });
@@ -235,12 +247,11 @@ describe("RequireFirm as an owner (the owner of the firm at this address)", () =
     expect(screen.queryByText("The record")).not.toBeInTheDocument();
   });
 
-  it("keeps that same person out of the member pages, which are not narrowed to one firm", async () => {
+  it("lets that same person into the member pages at Alpha's address, where the database answers for Alpha alone (D-40)", async () => {
     firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
     fetchMyFirms.mockResolvedValue([{ ...beta, role: "owner" }, alpha]);
     renderGuarded();
-    expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
-    expect(screen.queryByText("Firm console")).not.toBeInTheDocument();
+    expect(await screen.findByText("Firm console")).toBeInTheDocument();
   });
 
   it("refuses an owner of one firm at the address of a firm they do not belong to", async () => {
@@ -251,11 +262,19 @@ describe("RequireFirm as an owner (the owner of the firm at this address)", () =
     expect(screen.queryByText("The record")).not.toBeInTheDocument();
   });
 
-  it("treats an owner of two firms on the bare domain as it treats a member of two: kept out, told why", async () => {
+  it("treats an owner of two firms on the bare domain as it treats a member of two: sent to choose a firm (D-40)", async () => {
     fetchMyFirms.mockResolvedValue([ownerOf(alpha), ownerOf(beta)]);
     renderGuarded("owner");
-    expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
+    expect(await screen.findByText("Choose a firm page")).toBeInTheDocument();
     expect(screen.queryByText("The record")).not.toBeInTheDocument();
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("lets in the owner of the firm at this address who is also an agent of another firm (D-40)", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta Brokers" };
+    fetchMyFirms.mockResolvedValue([alpha, ownerOf(beta)]);
+    renderGuarded("owner");
+    expect(await screen.findByText("The record")).toBeInTheDocument();
   });
 
   it("sends an owner held back for the second factor to add or enter one", async () => {

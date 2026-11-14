@@ -63,8 +63,9 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
   await test.step("the member signs in at firm B's address and reaches the console, with no platform role", async () => {
     await signInAndAddSecondFactor(page, `${firmUrl(FIRM_B)}/advisor`, member);
     await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Console" })).toBeVisible();
-    await expect(page.getByText("Bravo Brokers")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
+    await expect(page.getByText("Bravo Brokers").first()).toBeVisible();
+    await expect(page.getByText(`${FIRM_B}.nevermorepeo.com`)).toBeVisible();
   });
 
   await test.step("the list holds firm B's submission and none of firm A's", async () => {
@@ -72,24 +73,50 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
     await expect(page.getByText("Alpha Secret Co")).toHaveCount(0);
   });
 
-  await test.step("firm A's submission, opened by its address, is not found: not an error and not a spinner", async () => {
+  await test.step("firm A's submission, opened by its address, isn't available: not an error and not a spinner, with the way back to the list (CRM-S2.3)", async () => {
     await page.goto(`${firmUrl(FIRM_B)}/advisor/submissions/${alphaIntake}`);
-    await expect(page.getByText("Submission not found.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "This submission isn't available." })).toBeFocused();
     await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.getByRole("status")).toHaveCount(0);
+    // No status says anything (the shell's connection region is on every page and empty until the connection goes, CRM-S2.4a).
+    await expect(page.getByRole("status").filter({ hasText: /\S/ })).toHaveCount(0);
     await expect(page.getByText("Alpha Secret Co")).toHaveCount(0);
+    // The same words for an id that was never a submission, so nothing tells a person which of the two it was.
+    await page.goto(`${firmUrl(FIRM_B)}/advisor/submissions/not-a-submission`);
+    await expect(page.getByRole("heading", { name: "This submission isn't available." })).toBeVisible();
+    await page.getByRole("link", { name: "Back to all submissions" }).click();
+    await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
+  });
+
+  await test.step("a list that can't be loaded says so in plain words, keeps the filters, and Try again loads it (CRM-S2.3)", async () => {
+    await page.goto(`${firmUrl(FIRM_B)}/advisor?filter=needs_action:is:false`);
+    await expect(page.getByText("Bravo Own Co")).toBeVisible();
+    await page.route("**/rest/v1/rpc/queue_list_submissions", (route) => route.abort());
+    await page.reload();
+    const alert = page.getByRole("alert");
+    await expect(alert).toContainText("We couldn't load the submissions.");
+    await expect(alert).not.toContainText(/fetch|network|rpc|queue_list/i);
+    await expect(page).toHaveURL(/filter=needs_action(:|%3A)is(:|%3A)false/);
+    await page.unroute("**/rest/v1/rpc/queue_list_submissions");
+    await alert.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByText("Bravo Own Co")).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
   });
 
   await test.step("the menu offers the firm's pages and none of the platform's", async () => {
     await page.goto(`${firmUrl(FIRM_B)}/advisor`);
-    const nav = page.getByRole("navigation", { name: "Console" });
-    await expect(nav.getByRole("link", { name: "Submissions" })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "Workspace" });
+    await expect(nav.getByRole("link", { name: "Quotes" })).toHaveAttribute("aria-current", "page");
     await expect(nav.getByRole("link", { name: "Held mail" })).toHaveCount(0);
     await expect(nav.getByRole("link", { name: "Firms" })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "Nevermore admin" })).toHaveCount(0);
+    // The section links, and the firm's address as the firm's menu title, stay inside this firm.
+    await nav.getByRole("link", { name: "Settings" }).click();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${FIRM_B}.*/settings$`));
   });
 
   await test.step("the platform's pages are not the member's", async () => {
-    for (const path of ["firms", "organisations", "held"]) {
+    for (const path of ["firms", "held"]) {
       await page.goto(`${firmUrl(FIRM_B)}/advisor/${path}`);
       await expect(page.getByRole("heading", { name: "For Nevermore's platform admins" })).toBeVisible();
     }

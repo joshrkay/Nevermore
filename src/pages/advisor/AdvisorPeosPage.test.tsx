@@ -118,12 +118,6 @@ describe("AdvisorPeosPage", () => {
     expect(within(profile).getByRole("region", { name: "Contacts · advisors only" })).toHaveTextContent("dana@trinet.example");
   });
 
-  it("is in the console's navigation", async () => {
-    renderPage();
-    const nav = await screen.findByRole("navigation", { name: "Console" });
-    expect(await within(nav).findByRole("link", { name: "PEOs" })).toHaveAttribute("href", "/advisor/peos");
-  });
-
   it("shows an advisor who isn't an admin the version in use, whatever an admin is drafting", async () => {
     api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 } }));
     renderPage("/advisor/peos?peo=5");
@@ -234,6 +228,18 @@ describe("AdvisorPeosPage", () => {
       fireEvent.change(screen.getByLabelText("Its name"), { target: { value: "trinet" } });
       fireEvent.click(screen.getByRole("button", { name: "Add a PEO" }));
       expect(await screen.findByText("TriNet is already listed")).toBeInTheDocument();
+      expect(screen.getByLabelText("Its name")).toHaveValue("trinet");
+    });
+
+    // Catches (D-178): a dropped network or a constraint message shown as the reason a PEO was not added.
+    it("says in plain words, never the network's, when adding a PEO fails for a reason that is not the database's rule", async () => {
+      api.addPeo.mockRejectedValue(new Error("TypeError: Failed to fetch"));
+      renderPage();
+      await screen.findByRole("list", { name: "PEOs" });
+      fireEvent.change(screen.getByLabelText("Its name"), { target: { value: "trinet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add a PEO" }));
+      expect(await screen.findByText("The PEO wasn't added. Check your connection and try again.")).toBeInTheDocument();
+      expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
       expect(screen.getByLabelText("Its name")).toHaveValue("trinet");
     });
 

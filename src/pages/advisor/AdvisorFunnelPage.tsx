@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import {
   DEFAULT_FUNNEL_PERIOD,
   formatDuration,
@@ -17,6 +15,7 @@ import {
 } from "@/data/funnel";
 import { sourceRows, sourceTitle, type SourceRow } from "@/data/referralPartners";
 import { loadFunnel, loadIntakeSourcesOfMyFirms, type MemberFirm } from "@/lib/advisorApi";
+import { LoadFailed } from "@/components/workspace/states";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[]; firms: MemberFirm[] };
 
@@ -46,8 +45,7 @@ const AdvisorFunnelPage = () => {
   const choose = (key: FunnelPeriodKey) => setParams(key === DEFAULT_FUNNEL_PERIOD ? {} : { period: key });
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-4xl">
         <h1 className="font-display text-3xl font-bold mb-1">Intake funnel</h1>
         <p className="text-sm text-muted-foreground mb-6">
@@ -78,7 +76,7 @@ const AdvisorFunnelPage = () => {
           </div>
         )}
 
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the funnel" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the funnel" onRetry={() => setAttempt((n) => n + 1)} />}
 
         {load.kind === "ready" && (load.rows[0].intakes === 0 ? (
           <div className="border border-dashed border-border rounded-xl p-12 text-center">

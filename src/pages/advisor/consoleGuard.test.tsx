@@ -39,6 +39,7 @@ const renderRoute = (path: string) =>
       <Routes>
         <Route path="/advisor/funnel" element={<RequireFirm><AdvisorFunnelPage /></RequireFirm>} />
         <Route path="/advisor/partners" element={<RequireFirm><AdvisorPartnersPage /></RequireFirm>} />
+        <Route path="/choose-firm" element={<p>Choose a firm page</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -53,20 +54,24 @@ describe("the funnel and partners routes for a member of two firms", () => {
     api.fetchMyFirms.mockResolvedValue([alpha, beta]);
   });
 
-  it.each(["/advisor/funnel", "/advisor/partners"])("%s keeps them out of the console and loads no firm's records (ADR 0014)", async (path) => {
+  it.each(["/advisor/funnel", "/advisor/partners"])("%s sends them to Choose a firm on the bare domain and loads no firm's records (D-40, ADR 0016)", async (path) => {
     renderRoute(path);
-    expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
+    expect(await screen.findByText("Choose a firm page")).toBeInTheDocument();
     expect(api.loadFunnel).not.toHaveBeenCalled();
     expect(api.loadIntakeSourcesOfMyFirms).not.toHaveBeenCalled();
     expect(api.listReferralPartners).not.toHaveBeenCalled();
   });
 
-  it.each(["/advisor/funnel", "/advisor/partners"])("%s keeps them out at one of their firms' own address too: member pages are not narrowed to it (ADR 0015)", async (path) => {
+  it.each([["/advisor/funnel", "Funnel"], ["/advisor/partners", "Referral partners"]])("%s lets them in at one of their firms' own address, where the database answers for that firm alone (ADR 0016)", async (path, heading) => {
     firmAddress = { status: "known", address: "alpha" };
+    api.listMyFirms.mockResolvedValue([{ id: "f1", name: "Alpha Advisory", address: "alpha" }, { id: "f2", name: "Beta Brokers", address: "beta" }]);
+    api.listReferralPartners.mockResolvedValue([]);
+    api.loadIntakeSources.mockResolvedValue([]);
+    api.loadFunnel.mockResolvedValue([]);
+    api.loadIntakeSourcesOfMyFirms.mockResolvedValue([]);
     renderRoute(path);
-    expect(await screen.findByRole("heading", { name: "You're a member of more than one firm" })).toBeInTheDocument();
-    expect(api.loadFunnel).not.toHaveBeenCalled();
-    expect(api.loadIntakeSourcesOfMyFirms).not.toHaveBeenCalled();
-    expect(api.listReferralPartners).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { level: 1, name: new RegExp(heading, "i") })).toBeInTheDocument();
+    expect(screen.queryByText("Choose a firm page")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "You're a member of more than one firm" })).not.toBeInTheDocument();
   });
 });

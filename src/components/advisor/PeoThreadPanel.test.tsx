@@ -10,6 +10,7 @@ const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveM
 vi.mock("@/lib/advisorApi", () => api);
 
 const { default: PeoThreadPanel } = await import("./PeoThreadPanel");
+const { WorkspaceContext } = await import("@/components/workspace/workspaceContext");
 
 const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 3, sent_on: "2026-11-07", quote_received_on: null,
@@ -252,6 +253,20 @@ describe("PeoThreadPanel", () => {
       expect(api.mailAttachmentUrl).toHaveBeenCalledWith(expect.objectContaining({ id: 1, storage_path: "s1/1/1-proposal.pdf" }));
       // The firm's record names the quote request the file came in on, once the link is in hand.
       expect(api.recordActivity).toHaveBeenCalledWith("document_downloaded", "quote_request", "7");
+    });
+
+    // Catches: a support session is offered "Open" on a PEO's attachment and meets "Couldn't open that file" (the storage policy refuses it).
+    it("offers support no way to open an attachment, says so in one line and still lists the file", async () => {
+      const workspace = { firm: null, role: null, isOwner: false, isSupport: true, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: true, person: "Sam" };
+      render(
+        <WorkspaceContext.Provider value={workspace}>
+          <PeoThreadPanel prospectUserId="p1" requests={[request()]} messages={[message()]} attachments={[attachment()]} notes={[]} events={[]} reads={[]} />
+        </WorkspaceContext.Provider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));
+      expect(await screen.findByText("proposal.pdf")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
+      expect(screen.getAllByText("Downloads are off during Nevermore support.")).toHaveLength(1);
     });
 
     it("says so when a file can't be opened", async () => {
