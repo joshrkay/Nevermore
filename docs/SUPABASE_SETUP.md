@@ -428,6 +428,41 @@ pushing (`20261104100000` stays recorded); it only replaces functions, so it is 
 `src/data/migrations.test.ts` fails CI when two files share a number, or when a migration is in the folder
 twice, under one name or with the same SQL.
 
+### Epic 3's export (2026-11-14)
+
+Export was built twice: on `main` (`20261118170000_export.sql` to `20261118171000_export_fixes_again.sql`, which
+production may have) and on the Epic 3 branch (`20261119090000_export.sql`). Epic 3's wins. When the Epic 3
+branch took in `main` (#161, 2026-11-14), migrations were added between the two that move a database from
+`main`'s export to Epic 3's, keeping every export `main` recorded: `20261118180000_epic3_export_supersedes.sql`
+to `20261119090600_epic3_export_pause_end.sql`. Before pushing the Epic 3 branch:
+
+- **Deploy `dispatch-outbox` first, then push.** The script pushes before it deploys, so deploy that one
+  function alone, then run the script (it deploys it again, unchanged):
+
+  ```sh
+  supabase functions deploy dispatch-outbox --remote=<ref> --yes   # CLI 2: --project-ref <ref>
+  ```
+
+  `20261118180000` rewrites every queued owners' export alert from `main`'s shape (the table by its name) into
+  Epic 3's (the table in words). `main`'s dispatcher marks a rewritten alert dead; Epic 3's reads both shapes, so
+  deployed first it sends every alert, whether it was queued, claimed or rewritten before, during or after the
+  push. Both use the same secrets and database calls. If the push went first, retry the dead export alerts at
+  `/advisor/outbox` once Epic 3's dispatcher is deployed.
+- **Exports pause for the few seconds of the push.** From `20261118180500` to `20261119090500`, while `main`'s
+  exports are set aside, an export is refused and records nothing; the person sees "Couldn't export. Try
+  again." `20261119090600` takes the pause out.
+- **A database that had the Epic 3 branch pushed before 2026-11-14 is reset, not pushed.** It records
+  `20261119090000` and not `20261118180000` (`supabase migration list --linked`); the founder's check of which
+  databases these are is in #141. Production runs `main` and never had it. A push stops before changing anything: without
+  `--include-all` the CLI won't apply the older files, and with it `20261118170000` fails on `column "row_count"
+  of relation "firm_activity" already exists`. Reset it (`supabase db reset --linked`), which deletes all of its
+  data and applies every migration in order. **Never `supabase migration repair` `main`'s export files as
+  applied to get past it:** `20261118180000` would then drop Epic 3's own `row_count` column and its rule, which
+  the recorded `20261119090000` never adds back, so Epic 3's export and the record's counts break.
+- **A database that already records `20261119090500`** (the Epic 3 branch pushed after #161, before the pause
+  existed) pushes once with `supabase db push --include-all --linked`: `20261118180500` is older than what is
+  recorded. Its holding table is gone, so the pause does nothing there, and `20261119090600` takes it out.
+
 ## If a step fails
 
 - **`supabase link` or `db push`:** usually the database password. A failed `db push` stops
