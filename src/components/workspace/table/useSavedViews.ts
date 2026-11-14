@@ -5,7 +5,7 @@ import {
   type SavedView, type ViewFilter, type WorkspaceTable,
 } from "@/lib/tableSettingsApi";
 import type { TableFields } from "@/lib/tableQuery";
-import { effectiveFilters, sameAddress, viewSort, type TableAddress } from "./address";
+import { effectiveFilters, sameQuestion, viewSort, type TableAddress } from "./address";
 import type { Readiness, TableDefinition } from "./columns";
 import type { useTableAddress } from "./useTableAddress";
 import { TABLE_REFRESH_MS, useFirmReady } from "./useTableRows";
@@ -130,7 +130,7 @@ export function useSavedViewsControl<K extends TableFields, Row, Context>(
       // The chips and the sort are the new view's own now, so the address holds none of them. A view the list doesn't hold yet would be dropped, and a
       // person who has gone somewhere else meanwhile is left there.
       const now = latest.current;
-      if (listed(id) && sameAddress(table, from, now.address)) now.change({ view: id, filters: [], sort: null }, { push: true });
+      if (listed(id) && sameQuestion(table, from, now.address)) now.change({ view: id, filters: [], sort: null }, { push: true });
     },
     async rename(viewId, name) {
       await renameSavedView(viewId, name);
@@ -157,7 +157,7 @@ export function useSavedViewsControl<K extends TableFields, Row, Context>(
       await changeSavedView(viewId, { ...screenAsView(table, from), columns: table.views.find((v) => v.id === viewId)?.columns ?? null });
       await refresh();
       const now = latest.current;
-      if (now.address.view === viewId && sameAddress(table, from, now.address)) now.change({ filters: [], sort: null }, { replace: true });
+      if (now.address.view === viewId && sameQuestion(table, from, now.address)) now.change({ filters: [], sort: null }, { replace: true });
     },
   };
 }

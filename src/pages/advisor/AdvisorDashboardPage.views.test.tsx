@@ -659,6 +659,36 @@ describe("a change that is still on its way when the person moves on", () => {
     expect(where()).toBe("?view=won&filter=waiting_on_peo:is:true");
   });
 
+  // Catches: keeping the changes finishing while the person only searched meanwhile, and so leaving the kept filters in the address ("Changed on screen" stays, and keeping again would add them twice).
+  it("clears what was kept from the address even when the person only searched while keeping was on its way", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search" }), "acme");
+    await waitFor(() => expect(where()).toContain("q=acme"));
+    api.listSavedViews.mockResolvedValue([view({ filters: [yes("needs_action"), yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=v1&q=acme"));
+    await waitFor(() => expect(screen.queryByText("Changed on screen, not kept.")).toBeNull());
+  });
+
+  // Catches: the same when the person only went to another page of the rows.
+  it("clears what was kept from the address even when the person only went to another page while keeping was on its way", async () => {
+    listQueue.mockResolvedValue({ rows: [row()], total: 120 });
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(await screen.findByRole("link", { name: /^Next/ }));
+    await waitFor(() => expect(where()).toContain("page=2"));
+    api.listSavedViews.mockResolvedValue([view({ filters: [yes("needs_action"), yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=v1"));
+  });
+
   // Catches: a save finishing by moving the person from wherever they went to the new view.
   it("stays where the person went when a save finishes after they moved on", async () => {
     const pending = later();
