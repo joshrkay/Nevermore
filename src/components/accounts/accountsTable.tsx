@@ -91,12 +91,12 @@ export const startWords = (day: string | null): string => (monthOf(day) ? `${mon
 export const quotesWords = (row: Pick<AccountRow, "open_opportunities" | "quote_requests_sent" | "quotes_received">): string =>
   row.open_opportunities === 0 ? "None open" : row.quote_requests_sent === 0 ? "None sent" : `${row.quotes_received} of ${row.quote_requests_sent} back`;
 
-/** When the nearest quote expires, in words: "Expires in 4 days" while it is near, else the day. `soon` marks one that is near or past. */
+/** When the nearest quote expires, in words: "One expires in 4 days" while it is near (screen 16), else the day. `soon` marks one that is near or past. */
 export const expiryWords = (day: string, now: Date = new Date()): { text: string; soon: boolean } => {
   const left = -daysSince(day, now);
   if (left < 0) return { text: `Expired ${formatDay(day)}`, soon: true };
   if (left === 0) return { text: "Expires today", soon: true };
-  if (left <= 14) return { text: `Expires in ${left} day${left === 1 ? "" : "s"}`, soon: left <= 7 };
+  if (left <= 14) return { text: `One expires in ${left} day${left === 1 ? "" : "s"}`, soon: left <= 7 };
   return { text: `Expires ${formatDay(day)}`, soon: false };
 };
 
@@ -167,7 +167,6 @@ const accountColumns: ColumnDefinition<AccountRow, keyof Fields>[] = [
         <div className="text-sm">
           <p className={none ? "text-muted-foreground" : undefined}>{quotesWords(row)}</p>
           {expiry && <p className={`text-xs ${expiry.soon ? "font-medium text-warning" : "text-muted-foreground"}`}>{expiry.text}</p>}
-          {row.waiting_on_peo && <p className="text-xs text-muted-foreground">Waiting on a PEO</p>}
         </div>
       );
     },

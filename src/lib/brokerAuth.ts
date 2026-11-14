@@ -22,12 +22,12 @@ function pkceClient(): SupabaseClient {
   return client;
 }
 
-// A page of the advisor console, then optionally its query string (a page's filters and its firm). The query takes the characters a query string is
+// A page of the advisor console, or the Accounts page or one account's page, then optionally its query string (a page's filters and its firm). The query takes the characters a query string is
 // written with and no backslash, space, control character, `<`, `>` or `#`.
-const NEXT_PATTERN = /^\/advisor(\/[A-Za-z0-9._~\-/]*)?(\?[A-Za-z0-9._~\-%=&+,:;@!$'()*/]*)?$/;
+const NEXT_PATTERN = /^(?:\/advisor(?:\/[A-Za-z0-9._~\-/]*)?|\/accounts(?:\/[A-Za-z0-9._~-]+)?)(\?[A-Za-z0-9._~\-%=&+,:;@!$'()*/]*)?$/;
 
 /**
- * Where to go after signing in: a page of the advisor console with its query string if it has one (a broker asked to sign in again for an export comes
+ * Where to go after signing in: a page of the advisor console, the Accounts page or an account's page, with its query string if it has one (a broker asked to sign in again for an export comes
  * back to the page they were on, with its filters and its firm), never anywhere else on or off this site: no other path, no `//` anywhere (which a
  * browser reads as another site), no `..`, no scheme, backslash, fragment or control character.
  */

@@ -1,8 +1,7 @@
 import { BarChart3, Building2, FileText, Mail, Settings, type LucideIcon } from "lucide-react";
 
-// The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: New quote, Home,
-// Leads is not listed until the stories that build them (CRM-Q2.1, CRM-H1, CRM-L1.1), so the menu
-// has no dead buttons.
+// The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: the sections not built yet (New quote,
+// Home, Leads) are not listed until the stories that build them (CRM-Q2.1, CRM-H1, CRM-L1.1), so the menu has no dead buttons.
 
 /** The numbers the menu shows beside an item (story CRM-S1.1c, D-39). Leads has none until CRM-L1.1. */
 export type MenuCountKey = "quotes" | "inbox";

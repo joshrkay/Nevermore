@@ -3,14 +3,14 @@
 // These are the rules about it, with no screen and no database in them.
 //   - The name column (`isName`) is always shown and always first. A kept list that leaves it out or puts it later still has it first.
 //   - A kept id the table doesn't have (a column renamed or removed since, or a custom field that has not loaded: CRM-X3.1) is not drawn.
-//     A choice with none of its ids known is not a choice any more, so the table's own columns show.
+//     A choice with none of its ids known is not a choice any more, so the table's usual columns show.
 
 type Defined = { columns: readonly { id: string; isName?: boolean }[] };
 
 /** The column that names the row, or undefined for a table that has none. */
 const nameOf = (table: Defined) => table.columns.find((c) => c.isName);
 
-/** The columns to draw: the kept choice, or every column of the table when nothing is kept (or nothing kept is known). */
+/** The columns to draw: the kept choice, or the table's usual columns (its `usual` list, else every column) when nothing is kept (or nothing kept is known). */
 export function shownColumns<C extends { id: string; isName?: boolean }>(table: { columns: C[]; usual?: readonly string[] }, kept: readonly string[] | null): C[] {
   // The columns shown when nothing is kept: the ones the table lists as its usual ones, in that order (the name column first), else every column.
   const usual = (): C[] => {

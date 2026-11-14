@@ -630,6 +630,14 @@ describe("AccountPage: the states", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "Harborview Dental Group" })).not.toBeInTheDocument();
   });
 
+  // Catches: the breadcrumb under the archived note (screen 17 puts it first).
+  it("puts the breadcrumb above the archived note", async () => {
+    client.getAccountPage.mockResolvedValue(page({ account: { ...account, archivedAt: "2026-11-10T10:00:00+00:00" } }));
+    renderPage();
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(crumbs.compareDocumentPosition(screen.getByRole("note")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   // Catches: an account that isn't there leaving the person a link to the submissions, not the list it was opened from.
   it("offers the way back to all accounts when an account isn't available", async () => {
     client.getAccountPage.mockResolvedValue(null);

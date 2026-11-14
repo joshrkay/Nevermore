@@ -62,6 +62,11 @@ const AccountPage = () => {
   };
   return (
     <Frame>
+      <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
+        <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
+        <span aria-hidden="true"> / </span>
+        <span aria-current="page">{account.name}</span>
+      </nav>
       {account.archivedAt !== null && (
         // A Restore button comes with CRM-A1.1c; until then the account says it is archived and nothing can be added.
         <div role="note" className="mb-6 flex items-center gap-3 rounded-xl border border-border bg-muted/40 p-4 text-sm">
@@ -69,11 +74,6 @@ const AccountPage = () => {
           <p><strong className="font-medium">This account is archived.</strong> Nothing can be added to it.</p>
         </div>
       )}
-      <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
-        <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
-        <span aria-hidden="true"> / </span>
-        <span aria-current="page">{account.name}</span>
-      </nav>
       <AccountHeader account={account} />
       <Tabs value={tab} onValueChange={go}>
         <TabsList aria-label="The account" className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0">

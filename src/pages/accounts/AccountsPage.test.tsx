@@ -120,7 +120,6 @@ describe("the Accounts page: the table", () => {
     expect(first).toHaveTextContent("In market");
     expect(first).toHaveTextContent("Jan 2027 start");
     expect(first).toHaveTextContent("1 of 3 back");
-    expect(first).toHaveTextContent("Waiting on a PEO");
     expect(first).toHaveTextContent("45");
     expect(first).toHaveTextContent("Dana Reyes");
     expect(first).toHaveTextContent("Nov 11, 2026");
@@ -139,7 +138,7 @@ describe("the Accounts page: the table", () => {
     renderAt();
     const first = (await within(await screen.findByRole("table")).findAllByRole("row"))[1];
     expect(first).toHaveTextContent("+1 more");
-    expect(first).toHaveTextContent("Expires in 4 days");
+    expect(first).toHaveTextContent("One expires in 4 days");
   });
 
   // Catches: Main contact offering a sort the database refuses (CRM-A1.1: no sort on Main contact), and a sortable header that doesn't sort.
@@ -243,7 +242,19 @@ describe("the Accounts page: views and filters", () => {
     expect(await screen.findByLabelText("Condition")).toBeInTheDocument();
   });
 
-  // Catches: a State filter that sends text the database refuses, or a Employees filter that doesn't send a number.
+  // Catches: a State filter that sends the state's name or the wrong field, instead of the code the database takes.
+  it("filters by state, sending its code", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "Filter by State" }));
+    await user.click(await screen.findByLabelText("OR"));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(asked().filters).toEqual([{ field: "state", op: "any_of", value: ["OR"] }]));
+    expect(await screen.findByRole("button", { name: /Remove filter: State.*OR/ })).toBeInTheDocument();
+  });
+
+  // Catches: an Employees filter that doesn't send a number.
   it("filters by employees", async () => {
     const user = userEvent.setup();
     renderAt();
@@ -438,6 +449,7 @@ describe("the Accounts page: Export", () => {
     renderAt("/accounts", workspace({ isSupport: true }));
     await screen.findByRole("link", { name: "Harborview Dental Group" });
     expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Downloads are off during Nevermore support.")).toBeInTheDocument();
     expect(exportRows).not.toHaveBeenCalled();
   });
 });

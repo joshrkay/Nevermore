@@ -44,7 +44,6 @@ const AccountsPage = () => {
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
         <div>
           <h1 className="font-display text-3xl font-bold">Accounts</h1>
-          <p className="text-sm text-muted-foreground">{accountsTableWords.subtitle}</p>
           {slowLine}
         </div>
         {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns)} filters={exportFilters} />}
