@@ -131,6 +131,7 @@
 \i supabase/migrations/20261118110000_close_a_firm.sql
 \i supabase/migrations/20261118110500_close_a_firm_fixes.sql
 \i supabase/migrations/20261118111000_close_a_firm_races.sql
+\i supabase/migrations/20261118120000_help_from_nevermore.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1254,11 +1255,13 @@ DECLARE
     'advisor_open_quote_request_thread', 'marks a thread read, which is what reading is; allowed while a firm is closing',
     'archive_chamber_session', 'the employer''s own intake: not the firm''s to freeze',
     'consume_ai_quota', 'the caller''s own allowance',
+    'end_support_session', 'a platform admin''s own support session (CRM-P2.4): no member''s change to the firm''s data, and a support session itself is refused every guarded write',
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',
         'report_client_event', 'the platform''s monitoring',
     'request_firm_closure', 'the closing''s own door',
         'sign_up_firm', 'a new firm',
+    'start_support_session', 'a platform admin''s doorway to read a firm (CRM-P2.4), who is no member of it; what it opens is read-only (supabase/tests/help_from_nevermore.sql)',
     'withdraw_firm_closure', 'the closing''s own way back');
   lost text; unplaced text; stale text;
 BEGIN

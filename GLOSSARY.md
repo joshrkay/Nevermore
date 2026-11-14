@@ -299,6 +299,16 @@ _Avoid_: audit log, deletion log
 The one list of what closing a firm does with every table that holds a firm's data: delete it (and by which column and in what order) or keep it, with the reason. A story that adds a table that holds a firm's data (leads, accounts, contacts, opportunities, custom fields, imports, conversations) adds one line to it, and `supabase/tests/data_isolation.sql` fails until it does.
 _Avoid_: retention list, purge list
 
+**Support access** (code: `support_sessions`, `start_support_session`, `end_support_session`, `firm_role` = `support`, CRM-P2.4):
+One hour in which a platform admin, who is no member of any firm, can read one firm's workspace at its own address, after giving a reason the firm's owners will read. They read what an owner reads, and no secret an owner is not shown (no mailbox token, no invitation's hash); they can change nothing, export nothing, send nothing and open no file link. It starts and ends by the server's clock, one open session per admin per firm, ends when the firm is closed or refused, and the admin can end it early. A suspended firm can be looked at. Each use is in the firm's record as Nevermore's, with the reason and the times, and never who. Not a membership: nobody mistakes it for an owner, lead or agent.
+_Avoid_: impersonation, login as, god mode, support login
+
+**Support session** (code: `support_sessions`):
+The platform's record of one use of support access: which Nevermore person (id and email, for the platform alone), which firm, why, when it started, when it was to end, and when and how it did end (`ended`, `ran_out`, `firm_ended`). Closed to the API: platform admins read it through the Firms page, and the firm's owners read the reason and the times, never who, in Activity.
+
+**Nevermore support** (the role shown in the workspace menu while a session is open):
+What the workspace calls the person on a support session, in the place of Owner, Lead or Agent. The workspace shows a banner on every page: "Nevermore support: you are looking at <firm>. You can't change anything. Ends at <time>.", with "End now".
+
 **Suspended screen** (code: `FirmAddressGate`, `my_suspended_firm_at_address`):
 What a current member of a suspended firm sees at the firm's address: "<Firm name> is suspended", to contact Nevermore, and a working sign-out, and nothing of the firm. The firm's name and sign-in still show before sign-in, as for a waiting firm (D-27). `my_suspended_firm_at_address` answers true only for a current member of that firm, so no one else learns a firm is suspended.
 

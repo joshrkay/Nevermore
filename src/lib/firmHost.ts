@@ -51,3 +51,21 @@ export function firmUrlFrom(
 export function openFirmAddress(url: string): void {
   window.location.replace(url);
 }
+
+/**
+ * Where a path of the bare domain is reached from the page the person is on (the platform's own pages, such as the firms page, live
+ * there and not at a firm's address): on `localhost` and `<address>.localhost` the `localhost` of this page's scheme and port; anywhere
+ * else the site's domain.
+ */
+export function bareDomainUrlFrom(
+  path: string,
+  here: { protocol: string; hostname: string; port: string } = window.location,
+  siteDomain: string = SITE_DOMAIN,
+): string {
+  const host = here.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) return `${here.protocol}//localhost${here.port ? `:${here.port}` : ""}${path}`;
+  return `https://${siteDomain}${path}`;
+}
+
+/** Where the platform's firms page is: on the bare domain, never at a firm's address (story CRM-P2.4: where a support session starts and where it returns to). */
+export const platformFirmsUrl = (): string => bareDomainUrlFrom("/advisor/firms");

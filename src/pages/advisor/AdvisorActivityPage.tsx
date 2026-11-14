@@ -6,7 +6,8 @@ import { formatDateTime } from "@/components/advisor/format";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
-import { ENTRY_KINDS, kindLabel, recordLabel } from "@/data/firmActivity";
+import { endTime, fetchFirmSupportUses, type FirmSupportUse } from "@/lib/supportApi";
+import { ENTRY_KINDS, entryLabel, recordLabel } from "@/data/firmActivity";
 import {
   listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
@@ -17,7 +18,7 @@ type Load =
   | { kind: "error"; error: Error }
   | { kind: "not_allowed" }
   | { kind: "choose"; firms: OwnedFirm[] }
-  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean };
+  | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse> };
 
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -29,8 +30,19 @@ const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-m
 const who = (byNevermore: boolean, actorId: string | null, email: string | null) =>
   byNevermore ? "Nevermore" : (email ?? (actorId ? "A former member" : "System"));
 
-/** The record an entry was about: what it is and its id, for a membership the person it was about and their role, and for an invitation the role it offered. */
-function recordText(e: FirmActivityEntry): string {
+/**
+ * The record an entry was about: what it is and its id, for a membership the person it was about and their role, and for an invitation the role it offered.
+ * A use of Nevermore support (CRM-P2.4) says why and when, in the words the admin wrote for the firm's owners, never who.
+ */
+function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): string {
+  if (e.record_type === "support_session" || e.record_type === "support_session_end") {
+    const use = uses.get(e.record_id);
+    if (!use) return recordLabel(e.record_type);
+    const until = use.endedAt ?? use.endsAt;
+    return e.record_type === "support_session"
+      ? `Reason: ${use.reason} · ${formatDateTime(use.startedAt)} to ${endTime(until)}${use.endedAt === null ? " (open)" : ""}`
+      : `Ended ${formatDateTime(until)} · Reason: ${use.reason}`;
+  }
   const base = `${recordLabel(e.record_type)} ${e.record_id}`;
   // An invitation sent, sent again or withdrawn is about the firm and records the role it offered.
   if ((e.kind === "invitation_sent" || e.kind === "invitation_withdrawn") && e.role) return `${base} · as ${e.role}`;
@@ -66,14 +78,20 @@ const AdvisorActivityPage = () => {
     let cancelled = false;
     setLoad((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
     (async (): Promise<Load> => {
-      const firms = await loadOwnedFirms(userId, sessionKey);
+      const owned = await loadOwnedFirms(userId, sessionKey);
       // The address's firm, as the person's own memberships name it; a firm they aren't in at all is no firm here.
-      const atAddress = address === null ? null : (await loadMyFirms(userId, sessionKey)).find((f) => f.address === address)?.firm_id ?? "none";
+      const here = address === null ? null : (await loadMyFirms(userId, sessionKey)).find((f) => f.address === address);
+      const atAddress = address === null ? null : here?.firm_id ?? "none";
+      // Nevermore support, on a support session, reads the record as an owner does (story CRM-P2.4).
+      const supporting = here?.role === "support";
+      const firms = supporting && here ? [...owned, { firm_id: here.firm_id, name: here.name }] : owned;
       const firmId = atAddress ?? firmParam ?? (firms.length === 1 ? firms[0].firm_id : null);
       if (firmId === null) return firms.length > 1 ? { kind: "choose", firms } : { kind: "not_allowed" };
       if (!firms.some((f) => f.firm_id === firmId)) return { kind: "not_allowed" };
-      const [people, result] = await Promise.all([listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, after })]);
-      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore };
+      const [people, result, useList] = await Promise.all([
+        listFirmActivityPeople(firmId), listFirmActivity(firmId, { person, kind, after }), fetchFirmSupportUses(firmId),
+      ]);
+      return { kind: "ready", firms, firmId, people, entries: result.entries, hasMore: result.hasMore, uses: new Map(useList.map((u) => [u.id, u])) };
     })()
       .then((next) => !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad((error as Partial<AdvisorApiError>).forbidden ? { kind: "not_allowed" } : { kind: "error", error }));
@@ -187,8 +205,8 @@ const AdvisorActivityPage = () => {
                       <tr key={e.entry_key} className="border-t border-border align-top">
                         <td className="px-4 py-2 whitespace-nowrap">{formatDateTime(e.at)}</td>
                         <td className="px-4 py-2">{who(e.by_nevermore, e.actor_id, e.actor_email)}</td>
-                        <td className="px-4 py-2">{kindLabel(e.kind)}</td>
-                        <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e)}</td>
+                        <td className="px-4 py-2">{entryLabel(e.kind, e.record_type)}</td>
+                        <td className="px-4 py-2 font-mono text-xs break-all">{recordText(e, load.uses)}</td>
                       </tr>
                     ))}
                   </tbody>

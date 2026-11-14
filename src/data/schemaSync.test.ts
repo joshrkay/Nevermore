@@ -281,7 +281,7 @@ describe("server and client intake rules agree", () => {
   });
 
   it("holds the same kinds of record in a firm's record as the page labels", () => {
-    expect(quoted(blocks("firm_activity_record_types").join("\n"))).toEqual(RECORD_TYPE_VALUES);
+    expect(quoted(latestBlock("firm_activity_record_types"))).toEqual(RECORD_TYPE_VALUES);
   });
 
   // Quote request notes (20261111090000): the kinds the note form offers, and how long a note can be.

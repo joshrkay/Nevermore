@@ -6,13 +6,14 @@ import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { fetchIsAdmin } from "@/lib/advisorApi";
 import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, stopFirmClosure, suspendFirm, type FirmState, type WaitingFirm } from "@/lib/firmApi";
-import { firmHostname } from "@/lib/firmHost";
+import { firmHostname, firmUrlFrom } from "@/lib/firmHost";
+import { endSupportSession, endTime, fetchSupportSessions, startSupportSession, SUPPORT_REASON_MAX, type SupportSession } from "@/lib/supportApi";
 
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
   | { kind: "not_admin" }
-  | { kind: "ready"; firms: WaitingFirm[]; states: FirmState[] };
+  | { kind: "ready"; firms: WaitingFirm[]; states: FirmState[]; sessions: SupportSession[] };
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 
@@ -34,6 +35,9 @@ const AdvisorFirmsPage = () => {
   // The suspension being asked for or lifted: which firm, and (to suspend) the reason typed.
   const [changing, setChanging] = useState<{ id: string; lift: boolean; stop?: boolean } | null>(null);
   const [reason, setReason] = useState("");
+  // Support access being asked for (story CRM-P2.4): which firm, and the reason typed. The firm's owners read it.
+  const [supporting, setSupporting] = useState<string | null>(null);
+  const [supportReason, setSupportReason] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -41,7 +45,7 @@ const AdvisorFirmsPage = () => {
     fetchIsAdmin()
       .then((admin) =>
         admin
-          ? Promise.all([fetchWaitingFirms(), fetchFirmStates()]).then(([firms, states]): Load => ({ kind: "ready", firms, states }))
+          ? Promise.all([fetchWaitingFirms(), fetchFirmStates(), fetchSupportSessions()]).then(([firms, states, sessions]): Load => ({ kind: "ready", firms, states, sessions }))
           : ({ kind: "not_admin" } as Load),
       )
       .then((next) => !cancelled && setLoad(next))
@@ -75,6 +79,35 @@ const AdvisorFirmsPage = () => {
       toast.success(firm.suspended ? `The suspension of ${firm.name} is lifted.` : `${firm.name} is suspended.`);
       setChanging(null);
       setReason("");
+      setAttempt((n) => n + 1);
+    } catch (err) {
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error((err as Error).message);
+    }
+    setBusy(null);
+  };
+
+  // One hour of read-only access to a firm's workspace, with the reason its owners will read.
+  const startSupport = async (firm: FirmState) => {
+    setBusy(firm.id);
+    try {
+      await startSupportSession(firm.id, supportReason.trim());
+      toast.success(`Support access to ${firm.name} is open for one hour.`);
+      setSupporting(null);
+      setSupportReason("");
+      setAttempt((n) => n + 1);
+    } catch (err) {
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error((err as Error).message);
+    }
+    setBusy(null);
+  };
+
+  const endSupport = async (session: SupportSession) => {
+    setBusy(session.id);
+    try {
+      await endSupportSession(session.id);
+      toast.success(`Support access to ${session.firmName} is ended.`);
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
@@ -155,6 +188,36 @@ const AdvisorFirmsPage = () => {
               ))}
               </ul>
             )}
+            <section aria-labelledby="support-open-heading" className="space-y-3 pt-4">
+              <div>
+                <h2 id="support-open-heading" className="font-display text-2xl font-bold mb-1">Support access</h2>
+                <p className="text-sm text-muted-foreground">
+                  Support access lets you read a firm's workspace, at its own address, for one hour. You can look and you can't change, export, send or
+                  download anything. Every use is written to the firm's record as Nevermore's, with the reason, and the firm's owners read it.
+                </p>
+              </div>
+              {load.sessions.filter((s) => s.isOpen).length === 0 ? (
+                <p role="status" className="text-sm text-muted-foreground">No support access is open.</p>
+              ) : (
+                <ul aria-label="Open support access" className="space-y-2">
+                  {load.sessions.filter((s) => s.isOpen).map((s) => (
+                    <li key={s.id} className="border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <span className="font-semibold">{s.firmName}</span>
+                      <span className="text-sm text-muted-foreground">{`Ends at ${endTime(s.endsAt)} · ${s.adminEmail}${s.isMine ? " (you)" : ""} · ${s.reason}`}</span>
+                      {s.isMine && (
+                        <span className="ml-auto flex flex-wrap items-center gap-2">
+                          <a href={`${firmUrlFrom(s.firmAddress)}/advisor`} target="_blank" rel="noopener noreferrer" className={`${button} inline-flex items-center`}
+                            aria-label={`Open ${s.firmName}`}>Open the workspace</a>
+                          <button onClick={() => void endSupport(s)} disabled={busy !== null} className={button} aria-label={`End support access to ${s.firmName} now`}>
+                            {busy === s.id ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Saving" /> : "End now"}
+                          </button>
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
             <section className="space-y-3 pt-4">
               <div>
                 <h2 className="font-display text-2xl font-bold mb-1">Every firm</h2>
@@ -234,6 +297,24 @@ const AdvisorFirmsPage = () => {
                           {f.suspended ? "Lift suspension" : "Suspend"}
                         </button>
                       )}
+                      {f.state !== "refused" && !f.closedOn && (supporting === f.id ? (
+                        <div className="space-y-2">
+                          <p className="text-sm">You can read {f.name} for one hour and change nothing. The firm's owners will see this reason.</p>
+                          <label htmlFor={`support-${f.id}`} className="text-xs text-muted-foreground">{`Reason for support access to ${f.name}`}</label>
+                          <input id={`support-${f.id}`} value={supportReason} maxLength={SUPPORT_REASON_MAX} onChange={(e) => setSupportReason(e.target.value)}
+                            className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm" />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => void startSupport(f)} disabled={busy !== null || supportReason.trim() === ""}
+                              className={`${button} bg-primary text-primary-foreground border-primary hover:bg-primary/90`}>
+                              {busy === f.id ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Saving" /> : "Start support access"}
+                            </button>
+                            <button onClick={() => { setSupporting(null); setSupportReason(""); }} disabled={busy !== null} className={button}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setSupporting(f.id); setSupportReason(""); }} disabled={busy !== null} className={button}
+                          aria-label={`Support access to ${f.name}`}>Support access</button>
+                      ))}
                     </li>
                   ))}
                 </ul>

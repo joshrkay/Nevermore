@@ -15,7 +15,7 @@ type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
   | { kind: "not_allowed" }
-  | { kind: "ready"; firm: { id: string; name: string }; members: FirmMember[] };
+  | { kind: "ready"; firm: { id: string; name: string }; members: FirmMember[]; readOnly: boolean };
 
 type Change = { action: "remove" | "suspend" | "lift"; member: FirmMember };
 
@@ -69,9 +69,10 @@ const AdvisorMembersPage = () => {
 
   const refresh = useCallback(async (): Promise<Load> => {
     const here = currentFirm(await loadMyFirms(userId, sessionKey), address);
-    if (!("firm" in here) || here.firm.role !== "owner") return { kind: "not_allowed" };
+    // Nevermore support, on a support session, reads the list as an owner does and is offered none of the changes (story CRM-P2.4).
+    if (!("firm" in here) || (here.firm.role !== "owner" && here.firm.role !== "support")) return { kind: "not_allowed" };
     const firm = { id: here.firm.firm_id, name: here.firm.name };
-    return { kind: "ready", firm, members: await fetchFirmMembers(firm.id) };
+    return { kind: "ready", firm, members: await fetchFirmMembers(firm.id), readOnly: here.firm.role === "support" };
   }, [userId, sessionKey, address]);
 
   useEffect(() => {
@@ -175,7 +176,7 @@ const AdvisorMembersPage = () => {
                         <td className="px-4 py-2">
                           {m.isYou ? (
                             <span className="text-muted-foreground">You</span>
-                          ) : (
+                          ) : load.readOnly ? null : (
                             <div className="flex flex-wrap gap-2">
                               {m.state === "suspended" ? (
                                 <button type="button" className={button} aria-label={`Lift the suspension of ${m.email}`} onClick={() => setAsking({ action: "lift", member: m })}>Lift suspension</button>

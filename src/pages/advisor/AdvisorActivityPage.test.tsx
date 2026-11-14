@@ -10,6 +10,9 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+// The uses of Nevermore support (story CRM-P2.4): the reason and times the database gives an owner, never who.
+const supportApi = { fetchFirmSupportUses: vi.fn(), fetchMySupportSessionHere: vi.fn() };
+vi.mock("@/lib/supportApi", async () => ({ ...(await vi.importActual<object>("@/lib/supportApi")), ...supportApi }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
@@ -32,6 +35,8 @@ describe("AdvisorActivityPage", () => {
     firmAddress = { status: "none" };
     auth.session = { access_token: "tok-1" };
     for (const fn of Object.values(api)) fn.mockReset();
+    supportApi.fetchFirmSupportUses.mockReset().mockResolvedValue([]);
+    supportApi.fetchMySupportSessionHere.mockReset().mockResolvedValue(null);
     api.fetchMyFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" }]);
     api.fetchIsAdmin.mockResolvedValue(false);
     api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
@@ -396,5 +401,44 @@ describe("AdvisorActivityPage", () => {
     const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
     expect(within(row).getAllByRole("cell")[2]).toHaveTextContent("something_new");
     expect(row).toHaveTextContent("report r1");
+  });
+
+  // Help from Nevermore (story CRM-P2.4, D-33).
+  // Catches: the owners see a use of support without its reason or its times, see it under a name or an email, or the end of a use reads as a start.
+  it("shows each use of Nevermore support as Nevermore, with the reason and when it started and ended", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [
+        entry({ entry_key: "e2", at: "2026-11-12T16:00:00Z", actor_id: null, actor_email: null, by_nevermore: true, kind: "support_access", record_type: "support_session_end", record_id: "s1" }),
+        entry({ entry_key: "e1", at: "2026-11-12T15:00:00Z", actor_id: null, actor_email: null, by_nevermore: true, kind: "support_access", record_type: "support_session", record_id: "s1" }),
+      ],
+      hasMore: false,
+    });
+    supportApi.fetchFirmSupportUses.mockResolvedValue([{ id: "s1", reason: "Customer asked about a stuck quote", startedAt: "2026-11-12T15:00:00Z", endsAt: "2026-11-12T16:00:00Z", endedAt: "2026-11-12T16:00:00Z" }]);
+    renderPage();
+    const rows = within(await screen.findByRole("table", { name: "Who did what" })).getAllByRole("row").slice(1);
+    expect(rows[1]).toHaveTextContent("Nevermore");
+    expect(rows[1]).toHaveTextContent("Nevermore support opened your firm's console");
+    expect(rows[1]).toHaveTextContent("Reason: Customer asked about a stuck quote");
+    expect(rows[0]).toHaveTextContent("Nevermore");
+    expect(rows[0]).toHaveTextContent("Nevermore support's access ended");
+    expect(rows[0]).toHaveTextContent("Reason: Customer asked about a stuck quote");
+    expect(supportApi.fetchFirmSupportUses).toHaveBeenCalledWith("firm-1");
+  });
+
+  // Catches: Nevermore support, which is no owner, is told "only owners" and cannot read the record the story promised it.
+  it("lets a support session read the record at the firm's address, as an owner does", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+    api.fetchMyFirms.mockResolvedValue([]);
+    supportApi.fetchMySupportSessionHere.mockResolvedValue({ id: "s1", firmId: "firm-1", firmName: "Alpha Advisory", firmAddress: "alpha", endsAt: "2999-01-01T00:00:00Z", endedAt: null, isOpen: true, secondFactorPending: false });
+    api.fetchOwnedFirms.mockResolvedValue([]);
+    const original = window.location;
+    Object.defineProperty(window, "location", { value: { ...original, hostname: "alpha.localhost" }, configurable: true });
+    try {
+      renderPage();
+      expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
+      expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: null, kind: null, after: null });
+    } finally {
+      Object.defineProperty(window, "location", { value: original, configurable: true });
+    }
   });
 });

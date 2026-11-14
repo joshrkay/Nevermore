@@ -21,6 +21,9 @@ vi.mock("@/lib/firmApi", () => ({
   recordFirmSignIn: (...a: unknown[]) => recordFirmSignIn(...a),
 }));
 
+const fetchMySupportSessionHere = vi.fn();
+vi.mock("@/lib/supportApi", () => ({ fetchMySupportSessionHere: (...a: unknown[]) => fetchMySupportSessionHere(...a) }));
+
 const askToJoinFirm = vi.fn();
 vi.mock("@/lib/joinByOrganisationApi", () => ({ askToJoinFirm: (...a: unknown[]) => askToJoinFirm(...a) }));
 
@@ -52,6 +55,7 @@ describe("the firm address gate", () => {
     recordFirmSignIn.mockReset().mockResolvedValue(true);
     fetchIsMySuspendedFirmAtAddress.mockReset().mockResolvedValue(false);
     askToJoinFirm.mockReset().mockResolvedValue("none");
+    fetchMySupportSessionHere.mockReset().mockResolvedValue(null);
     try { window.localStorage.clear(); } catch { /* no storage here */ }
   });
 
@@ -435,6 +439,49 @@ describe("the firm address gate", () => {
       expect(recordFirmSignIn).not.toHaveBeenCalled();
     });
   });
+  // Help from Nevermore (story CRM-P2.4): a platform admin is no member, and is let in only while their own support session for this
+  // firm is open; once the hour is over the page says so, and links back to the platform's firms page.
+  describe("a platform admin on a support session", () => {
+    const session = (over: Record<string, unknown> = {}) => ({ id: "s1", firmId: "f1", firmName: "Acme Brokers", firmAddress: "acme-brokers", endsAt: "2026-11-18T16:00:00Z", endedAt: null, isOpen: true, secondFactorPending: false, ...over });
+    beforeEach(() => {
+      auth.user = { id: "admin1", email: "admin@nevermore.example" };
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    });
+
+    // Catches: an admin with an open session is told "You aren't a member", or is let in as a member (their sign-in written to the firm's record as theirs).
+    it("lets an admin with an open session through, as support, and records no sign-in for them", async () => {
+      fetchMySupportSessionHere.mockResolvedValue(session());
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      expect(askToJoinFirm).not.toHaveBeenCalled();
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+    });
+
+    // Catches: an expired session still opens the firm, or the admin is left on a blank "not a member" page with no way back.
+    it("says the hour has ended once it is over, and links back to the firms page", async () => {
+      fetchMySupportSessionHere.mockResolvedValue(session({ isOpen: false, endedAt: "2026-11-18T16:00:00Z" }));
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByRole("heading", { name: "The support hour has ended" })).toBeInTheDocument();
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Back to the firms page" })).toHaveAttribute("href", expect.stringMatching(/\/advisor\/firms$/));
+    });
+
+    // Catches: an admin whose password sign-in still owes its second step is told they are no member and can never reach the step that would let them in.
+    it("lets an admin whose password sign-in owes its second step through to that step, with a session held", async () => {
+      fetchMySupportSessionHere.mockResolvedValue(session({ secondFactorPending: true }));
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "You aren't a member of this firm" })).not.toBeInTheDocument();
+    });
+
+    // Catches: a person with no session is told anything about support, or never asked to join where their sign-in lists the firm.
+    it("treats an admin with no session as any other person who is not a member", async () => {
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
+      expect(askToJoinFirm).toHaveBeenCalledWith("acme-brokers");
+    });
+  });
+
   // A suspended firm (story CRM-P1.8): its members can still sign in at its address and are told it is suspended, with a way to
   // sign out, and nothing of the firm: no console, no lists, no counts. The firm's name still shows (D-27) before sign-in.
   describe("a suspended firm", () => {

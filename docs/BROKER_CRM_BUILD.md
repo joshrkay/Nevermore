@@ -196,6 +196,8 @@ CRM-A2.2, "an opportunity needs its account" to CRM-A2.3, the phone, state and d
 place on a record's page to CRM-A2.1. S5.2: history on each of the five records to the story that creates its
 table; a screen that shows history to CRM-A2.1 and CRM-L2.1.
 
+**What CRM-P2.4 leaves to a later story (D-24).** "Can't export a firm's tables": exports do not exist until CRM-S3.8b (D-48), so P2.4 builds the refusal and tests that one will call it. CRM-S3.8b's export function must call `refuse_support_session(firm)` before it reads or records anything, and `supabase/tests/help_from_nevermore.sql` fails on a function named `export_…` that does not. Likewise every later story that adds a way to send as a member or to change a firm's data asks the guard (`assert_firm_writable`, or `refuse_support_session` where it has no firm write) and adds itself to the guarded list of `supabase/tests/close_a_firm.sql` and to the tables of `supabase/tests/help_from_nevermore.sql`. The two bulk actions of CRM-S3.8a (the Export button) hide themselves for the role `support`.
+
 **Shared pieces, one owner each.** The shell, the menu's list and the theme class: S1.1a
 (`src/components/workspace/`). Sending the firm address and the "Choose a firm" page: S1.1b. The table's column
 type, address codec, table and pager: S3.5a (`src/components/workspace/table/`), which fixes the whole shape of

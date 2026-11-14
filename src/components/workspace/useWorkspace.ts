@@ -1,18 +1,24 @@
 import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
-import { useMyFirms } from "@/hooks/useOwnedFirms";
+import { useMyFirms, useMySupportSession } from "@/hooks/useOwnedFirms";
 import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
 import { currentFirm } from "@/lib/currentFirm";
 
-export type FirmRoleLabel = "Owner" | "Lead" | "Agent";
-const ROLE_LABELS: Record<string, FirmRoleLabel> = { owner: "Owner", lead: "Lead", agent: "Agent" };
+export type FirmRoleLabel = "Owner" | "Lead" | "Agent" | "Nevermore support";
+const ROLE_LABELS: Record<string, FirmRoleLabel> = { owner: "Owner", lead: "Lead", agent: "Agent", support: "Nevermore support" };
 
 export interface Workspace {
   /** The firm the page is showing, or null until known (or when the person has none to show). */
   firm: { id: string; name: string; address: string } | null;
   role: FirmRoleLabel | null;
   isOwner: boolean;
+  /** Whether the person is a platform admin looking at the firm on a support session (story CRM-P2.4): they can read and nothing else. */
+  isSupport: boolean;
+  /** When the support session ends, for the banner; null when the person is not on one. */
+  supportEndsAt: string | null;
+  /** The support session's id, for "End now"; null when the person is not on one. */
+  supportSessionId: string | null;
   /** Whether the database says the person is a platform admin; false until known or when it can't be asked (D-37). */
   isPlatformAdmin: boolean;
   /** The person's name, or their email when they have no name (D-42). */
@@ -31,6 +37,7 @@ function useLoadWorkspace(): Workspace {
   const { user } = useAuth();
   const firmAddress = useFirmAddress();
   const mine = useMyFirms();
+  const supportSession = useMySupportSession();
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +52,9 @@ function useLoadWorkspace(): Workspace {
     firm: shown ? { id: shown.firm_id, name: shown.name, address: shown.address } : null,
     role: shown ? ROLE_LABELS[shown.role] ?? null : null,
     isOwner: shown?.role === "owner",
+    isSupport: shown?.role === "support",
+    supportEndsAt: shown?.role === "support" && supportSession?.isOpen ? supportSession.endsAt : null,
+    supportSessionId: shown?.role === "support" && supportSession?.isOpen ? supportSession.id : null,
     isPlatformAdmin,
     person: named?.trim() ?? user?.email ?? "",
   };

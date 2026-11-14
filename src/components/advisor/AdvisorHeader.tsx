@@ -20,7 +20,8 @@ const AdvisorHeader = () => {
   // The members and the record of who did what are for the owners of the firm the console is showing (the same firm the guard and the page
   // use), not for anyone who owns some firm: until the database says so, or if it can't be asked, the link isn't shown.
   const here = mine ? currentFirm(mine, address) : null;
-  const ownsThisFirm = here !== null && "firm" in here && here.firm.role === "owner";
+  // Nevermore support, on a support session, reads them as an owner does (story CRM-P2.4).
+  const ownsThisFirm = here !== null && "firm" in here && (here.firm.role === "owner" || here.firm.role === "support");
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;

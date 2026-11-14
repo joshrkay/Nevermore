@@ -1048,6 +1048,52 @@ export type Database = {
         Args: { p_firm_id: string; p_reason: string }
         Returns: undefined
       }
+      // Help from Nevermore (20261118120000).
+      start_support_session: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: { session_id: string; firm_name: string; firm_address: string; ends_at: string }[]
+      }
+      end_support_session: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      my_support_session_here: {
+        Args: Record<PropertyKey, never>
+        Returns: { session_id: string; firm_id: string; firm_name: string; firm_address: string; ends_at: string; ended_at: string | null; is_open: boolean; second_factor_pending: boolean }[]
+      }
+      admin_support_sessions: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          session_id: string
+          firm_id: string
+          firm_name: string
+          firm_address: string
+          admin_email: string
+          reason: string
+          started_at: string
+          ends_at: string
+          ended_at: string | null
+          ended_how: string | null
+          is_open: boolean
+          is_mine: boolean
+        }[]
+      }
+      firm_support_sessions: {
+        Args: { p_firm_id: string }
+        Returns: { session_id: string; reason: string; started_at: string; ends_at: string; ended_at: string | null }[]
+      }
+      is_support_session: {
+        Args: { p_firm_id: string }
+        Returns: boolean
+      }
+      support_reads_firm: {
+        Args: { p_firm_id: string }
+        Returns: boolean
+      }
+      refuse_support_session: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
       admin_suspend_firm: {
         Args: { p_firm_id: string; p_reason: string }
         Returns: undefined

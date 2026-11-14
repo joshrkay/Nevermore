@@ -10,6 +10,8 @@ import {
 import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
 import ClosingBanner from "./ClosingBanner";
+import SupportBanner, { SupportEnded } from "./SupportBanner";
+import { useSupportOver } from "./useSupportOver";
 import { MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
 import { useWorkspace, WorkspaceProvider } from "./useWorkspace";
 
@@ -129,6 +131,22 @@ const PhoneBar = () => {
   );
 };
 
+// The part of the frame that needs the workspace's answer (so it sits inside the provider): the banners and the page, or, once a support
+// session's hour is over, the page that says so in the page's place.
+const Frame = () => {
+  const { supportEndsAt } = useWorkspace();
+  const supportOver = useSupportOver(supportEndsAt);
+  return (
+    <>
+      <PhoneBar />
+      <SupportBanner />
+      <ClosingBanner />
+      {supportOver ? <SupportEnded /> : <Outlet />}
+      <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
+    </>
+  );
+};
+
 /**
  * The frame of every member page (story CRM-S1.1a, D-37 to D-42): the menu down the left, which at phone width is a
  * button that opens it over the page, and the page itself beside it. It is a layout route: the guard sits around it in
@@ -156,10 +174,7 @@ const WorkspaceShell = () => {
         <MenuBody />
       </Sidebar>
       <div className="min-w-0 flex-1 bg-background text-foreground">
-        <PhoneBar />
-        <ClosingBanner />
-        <Outlet />
-        <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
+        <Frame />
       </div>
     </SidebarProvider>
     </WorkspaceProvider>

@@ -34,9 +34,10 @@ const EnterOrChoose = ({ seen, children }: { seen: MutableRefObject<{ refusal: R
  * A page of the firm's console. By default the person must be a current member of the firm, at a firm's address that
  * address's firm; `as="owner"` asks for a firm's owner, and `ownersOnly` finishes the sentence "Only a firm's owners can …" that
  * tells anyone else what the page is for (the firm's record of who did what, its members). Whether they hold a platform role
- * is never asked.
+ * is never asked. `allowSupport` lets a platform admin on a support session through a page of owners, where the page only reads what
+ * an owner reads (the record, the members; story CRM-P2.4): the database refuses it every change.
  */
-const RequireFirm = ({ children, as = "member", ownersOnly = "read its record of who did what" }: { children: ReactNode; as?: "member" | "owner"; ownersOnly?: string }) => {
+const RequireFirm = ({ children, as = "member", ownersOnly = "read its record of who did what", allowSupport = false }: { children: ReactNode; as?: "member" | "owner"; ownersOnly?: string; allowSupport?: boolean }) => {
   const { user, session } = useAuth();
   const firmAddress = useFirmAddress();
   const address = firmAddress.status === "known" ? firmAddress.address : null;
@@ -52,7 +53,7 @@ const RequireFirm = ({ children, as = "member", ownersOnly = "read its record of
           const firms = await loadMyFirms(userId, sessionKey);
           const here = currentFirm(firms, address);
           seen.current = { refusal: "firm" in here ? null : here.refusal };
-          return ("firm" in here && here.firm.role === "owner") || seen.current.refusal === "several";
+          return ("firm" in here && (here.firm.role === "owner" || (allowSupport && here.firm.role === "support"))) || seen.current.refusal === "several";
         }}
         deniedCode="firm_owner_route"
         denied={() => {

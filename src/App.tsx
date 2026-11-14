@@ -86,8 +86,8 @@ const AppRoutes = () => (
                   <Route path="/advisor/partners" element={<AdvisorPartnersPage />} />
                   <Route path="/advisor/peos" element={<AdvisorPeosPage />} />
                   <Route path="/advisor/mailbox" element={<AdvisorMailboxPage />} />
-                  <Route path="/advisor/activity" element={<RequireFirm as="owner"><AdvisorActivityPage /></RequireFirm>} />
-                  <Route path="/advisor/members" element={<RequireFirm as="owner" ownersOnly="see and change its members"><AdvisorMembersPage /></RequireFirm>} />
+                  <Route path="/advisor/activity" element={<RequireFirm as="owner" allowSupport><AdvisorActivityPage /></RequireFirm>} />
+                  <Route path="/advisor/members" element={<RequireFirm as="owner" allowSupport ownersOnly="see and change its members"><AdvisorMembersPage /></RequireFirm>} />
                   <Route path="/firm/invitations" element={<FirmInvitationsPage />} />
                   <Route path="/settings" element={<AdvisorSettingsPage />} />
                 </Route>
