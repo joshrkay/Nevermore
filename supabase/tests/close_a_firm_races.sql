@@ -143,11 +143,14 @@
 \i supabase/migrations/20261118170500_export_fixes.sql
 \i supabase/migrations/20261118171000_export_fixes_again.sql
 \i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;

@@ -208,13 +208,32 @@ export function parseFirmClosing(raw: unknown): FirmClosing | null {
   return { event, byEmail, firmName, closesAt: event === "asked" ? closesAt : null };
 }
 
+/**
+ * The words for each table main's export_table could name (20261118170000_export.sql), the same words 20261118180000_epic3_export_supersedes.sql
+ * writes when it rewrites main's alerts and export_table_registry() gives them. Only these two tables were ever exported on main.
+ */
+const MAIN_EXPORT_TABLE_LABELS: ReadonlyMap<string, string> = new Map([
+  ["referral_partners", "Referral partners"],
+  ["firm_activity", "The firm's record"],
+]);
+
+/**
+ * The table in words. Epic 3's alert carries them (`table_label`). main's carries the table's name (`table`) and no words: one queued before
+ * 20261118180000 rewrote it and claimed by this dispatcher, or one still waiting when this dispatcher is deployed ahead of the migrations. A
+ * payload is main's on the rule 20261118180000 uses: it has no `table_label` key. A name of any other table is no alert.
+ */
+function exportTableLabel(p: Record<string, unknown>): string | null {
+  if (Object.prototype.hasOwnProperty.call(p, "table_label")) return oneLine(p.table_label, 80);
+  return typeof p.table === "string" ? MAIN_EXPORT_TABLE_LABELS.get(p.table) ?? null : null;
+}
+
 /** The export alert's fields, or null without all of them. Only these are ever read: no row, no name of anything exported. */
 export function parseExportAlert(raw: unknown): ExportAlert | null {
   const p = asObject(raw);
   // The member's email may be empty on the account: the database then writes null, and the owners are told all the same. A key that is missing, or text that is not an address, is no alert.
   const memberEmail = p && p.member_email === null ? null : p && asEmail(p.member_email);
   const firmName = p && oneLine(p.firm_name, 200);
-  const tableLabel = p && oneLine(p.table_label, 80);
+  const tableLabel = p && exportTableLabel(p);
   const exportedAt = p && oneLine(p.exported_at, 20);
   if (!p || memberEmail === undefined || (p.member_email !== null && !memberEmail) || !firmName || !tableLabel || exportedAt === null || !CERTIFIED_AT.test(exportedAt) || !Number.isFinite(Date.parse(exportedAt))) return null;
   const { row_count: rowCount, exports_in_hour: exportsInHour, large } = p;

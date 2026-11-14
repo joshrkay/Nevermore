@@ -195,11 +195,14 @@
 \i supabase/migrations/20261118170500_export_fixes.sql
 \i supabase/migrations/20261118171000_export_fixes_again.sql
 \i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
@@ -1310,6 +1313,14 @@ INSERT INTO callable VALUES
 INSERT INTO callable VALUES
   ('export_rows(p_firm_id uuid, p_table text, p_filters jsonb, p_ids jsonb)', 'own', NULL,
    'a current member of the firm (an owner, for the firm''s record) takes the rows of a listed table that they may see and the same statement records the export; refuses a support session first (PT423), then every caller who is not a member of that firm at this address (42501); never an intake''s answers, a census or a FEIN');
+-- CRM-A1.1b (20261119130000_accounts_table_query.sql): the accounts table's query, and the firm's members for the Owner filter (supabase/tests/accounts_query.sql).
+INSERT INTO callable VALUES
+  ('accounts_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads one page of the accounts they may see, by their level, in that firm only; 42501 for every caller who is not a member of that firm at this address; archived accounts only when a filter asks'),
+  ('accounts_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
+   'the count behind each view tab, for the accounts the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
+  ('firm_member_choices(p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads the firm''s current members by id and name, for the Owner filter; 42501 for every other caller');
 -- CRM-A2.1a (20261119140000_account_page.sql; CRM-A2.1b's account_tab, 20261119145000_account_tab.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
 INSERT INTO callable VALUES
   ('account_page(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
@@ -1863,6 +1874,12 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 -- Another firm's member, a platform admin, a former member and a non-member are refused; the members of the firm under test are given the row.
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('export_rows', 'advisor', 'by_id', $$SELECT (public.export_rows({firm}, 'referral_partners', '{}', jsonb_build_array({partner}))->>'count')$$);
+-- CRM-A1.1b: the accounts table's query and the firm's members, asked for the firm under test: a member of the other firm, a platform admin, a former member
+-- and a non-member are refused (the page asks for the firm it is at); the firm's own members, an agent who owns none included, are served.
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('accounts_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.accounts_list({firm}) -> 'rows')::text$$),
+  ('accounts_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.accounts_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
+  ('firm_member_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.firm_member_choices({firm})$$);
 -- CRM-S5.2: the history of a referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
 -- non-member are refused, the same as for a record that does not exist.
 INSERT INTO fprobe (fn, who, shape, call) VALUES
@@ -1999,6 +2016,41 @@ BEGIN
   DELETE FROM public.user_roles WHERE user_id = pg_temp.id('owner_b') AND role = 'admin';
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
+END $$;
+
+-- CRM-A1.1b: what the accounts table's list gives each person (the matrix above: each firm has an owned account and an unowned one). The first firm shows
+-- everyone everything; the second sees by level, so its agent reads only the owned account and its owner both. Asked for either firm by id, the other
+-- firm's people get nothing and are not told of it.
+CREATE FUNCTION pg_temp.same(got text, want text, label text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF got IS DISTINCT FROM want THEN RAISE EXCEPTION 'FAIL: % gave %, expected %', label, got, want; END IF;
+END $$;
+DO $$
+DECLARE
+  names text;
+  who text;
+  f text;
+BEGIN
+  names := $q$SELECT COALESCE(string_agg(r ->> 'name', ',' ORDER BY r ->> 'name'), '') FROM jsonb_array_elements(public.accounts_list(%L) -> 'rows') r$q$;
+  FOREACH who IN ARRAY ARRAY['advisor', 'admin', 'agent_2', 'lead_1'] LOOP
+    PERFORM pg_temp.same(pg_temp.call_as(who, format(names, pg_temp.id('firm_a'))), 'ok:Fixture owned a,Fixture unowned a', who || ' sees both of the first firm''s accounts');
+    PERFORM pg_temp.same(pg_temp.call_as(who, format(names, pg_temp.id('firm_b'))), '42501', who || ' is refused the second firm''s');
+  END LOOP;
+  PERFORM pg_temp.same(pg_temp.call_as('agent_b', format(names, pg_temp.id('firm_b'))), 'ok:Fixture owned b', 'the second firm''s agent sees the account they own and not the one with no owner');
+  PERFORM pg_temp.same(pg_temp.call_as('owner_b', format(names, pg_temp.id('firm_b'))), 'ok:Fixture owned b,Fixture unowned b', 'its owner sees both');
+  FOREACH who IN ARRAY ARRAY['agent_b', 'owner_b'] LOOP
+    PERFORM pg_temp.same(pg_temp.call_as(who, format(names, pg_temp.id('firm_a'))), '42501', who || ' is refused the first firm''s');
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent', 'prospect_a', 'guest_a', 'advisor_as_guest', 'signed_out'] LOOP
+    FOREACH f IN ARRAY ARRAY['firm_a', 'firm_b'] LOOP
+      PERFORM pg_temp.same(pg_temp.call_as(who, format(names, pg_temp.id(f))), '42501', who || ' is refused ' || f || '''s accounts');
+    END LOOP;
+  END LOOP;
+  PERFORM pg_temp.same(pg_temp.call_as('agent_b', format($q$SELECT public.accounts_view_counts(%L, '[{"name":"All"}]')::text$q$, pg_temp.id('firm_b'))), 'ok:(All,1)', 'the second firm''s agent''s tab counts only what they see');
+  PERFORM pg_temp.same(pg_temp.call_as('owner_b', format($q$SELECT public.accounts_view_counts(%L, '[{"name":"All"}]')::text$q$, pg_temp.id('firm_b'))), 'ok:(All,2)', 'its owner''s counts both');
+  PERFORM pg_temp.same(pg_temp.call_as('agent_b', format($q$SELECT count(*)::text FROM public.firm_member_choices(%L)$q$, pg_temp.id('firm_b'))), 'ok:2', 'the second firm''s members are its agent and its owner');
+  RESET ROLE;
+  RAISE NOTICE 'data_isolation: accounts list cases passed';
 END $$;
 
 -- ---------- 4j. functions at a firm's address (CRM-S1.1b, D-40) ----------
@@ -3673,7 +3725,7 @@ SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
   'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'guard_invitation_mail_rate', 'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
-  'export_source_firm_activity', 'export_source_referral_partners',
+  'export_source_accounts', 'export_source_firm_activity', 'export_source_referral_partners',
   'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'prune_firm_outbox_events', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
@@ -3700,7 +3752,10 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why) VALUES
   ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
   ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
-  ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)');
+  ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)'),
+  ('accounts_list', 'firm_scoped', 'one page of the accounts table: the firm named (a current member of it at this address), the accounts they may see by level, never another firm''s (4e; supabase/tests/accounts_query.sql)'),
+  ('accounts_view_counts', 'firm_scoped', 'the count of each view of the accounts table: the same firm and the same accounts as the list (4e; supabase/tests/accounts_query.sql)'),
+  ('firm_member_choices', 'firm_scoped', 'the firm''s current members by id and name, to a member of that firm at this address (4e; supabase/tests/accounts_query.sql)');
 
 -- Everything wrong between the registry and the catalogue, one per line, or NULL. It reads which functions exist and who may
 -- execute them, never what a function says.
