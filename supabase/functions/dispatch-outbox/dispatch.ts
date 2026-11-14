@@ -12,6 +12,7 @@ import { fieldLabels } from "./fieldLabels.ts";
 import {
   parseAdvisorNotification,
   parsePeoMailArrived,
+  parseExportAlert,
   parseFirmClosing,
   parseMemberLeft,
   parseDraftExpiryReminder,
@@ -19,6 +20,7 @@ import {
   parseProspectConfirmation,
   renderAdvisorNotification,
   renderPeoMailArrived,
+  renderExportAlert,
   renderFirmClosing,
   renderMemberLeft,
   renderDraftExpiryReminder,
@@ -142,16 +144,22 @@ type Built = { ok: true; message: EmailMessage } | { ok: false; reason: string; 
 /** The email for an event, or why there is none. A bad payload can never succeed, so it is final. */
 function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[]): Built {
   if (row.kind === "member_left") {
-    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    if (!config.firmNotice.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseMemberLeft(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderMemberLeft(n) } };
+    return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderMemberLeft(n) } };
   }
   if (row.kind === "firm_closing") {
-    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    if (!config.firmNotice.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseFirmClosing(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderFirmClosing(n) } };
+    return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderFirmClosing(n) } };
+  }
+  if (row.kind === "export_alert") {
+    if (!config.firmNotice.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseExportAlert(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderExportAlert(n) } };
   }
   // Every other kind is about an intake. An event with none can never be built.
   const sessionId = row.session_id;
@@ -237,7 +245,7 @@ function firstRecipients(value: unknown): string[] | null {
 }
 
 /** The kinds sent to people of a firm, whose recipients are looked up at each send and fixed at the first preparation (D-35, D-102). */
-const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing";
+const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert";
 
 /** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
@@ -261,8 +269,8 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   let advisorTo: string[] = [];
   if (isAdvisorKind(row.kind)) {
     try {
-      // A firm's own email (a member left, a request to close) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
-      if (row.kind === "member_left" || row.kind === "firm_closing") {
+      // A firm's own email (a member left, a request to close, a large export) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
+      if (row.kind === "member_left" || row.kind === "firm_closing" || row.kind === "export_alert") {
         // An event that names no firm has no one to tell and never will: it is not looked up by a null id.
         if (!row.firm_id) return { outcome: "fail", reason: "invalid_payload", final: true };
         advisorTo = await deps.ownerRecipients(row.firm_id);
@@ -392,7 +400,8 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "member_left", "firm_closing");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived");
+  if (config.firmNotice.ok) kinds.push("member_left", "firm_closing", "export_alert");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
   if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
   return kinds;
