@@ -167,6 +167,7 @@
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
+\i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
 SET client_min_messages = notice;
 
