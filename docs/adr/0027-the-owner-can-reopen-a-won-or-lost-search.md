@@ -10,6 +10,8 @@ CRM-O1.3 says a won or lost opportunity "can be reopened by the owner". Today a 
 
 `opportunity_reopen` is the only way to reopen a won or lost search. Won goes back to quoted: the quote is no longer chosen, and the placement and the renewal made with the win are deleted. Lost goes back to the stage it was lost from, read from the submission's status history. Quotes the win or loss closed stay closed. The opportunity's record owner or a firm owner may reopen. `set_submission_status` still refuses won to quoted and lost to any earlier stage, and refuses won and lost for a submission on an opportunity, so winning, losing and reopening each go one way.
 
+A submission archived straight from won or from lost is a closed search too: `set_submission_status` refuses to restore it from archived, and `opportunity_reopen` restores it with the same rules. A submission archived from any other stage is restored to submitted as today.
+
 Reopening a win is refused while its renewal is being worked by an opportunity, or while its placement has commission payments, so no later work or money record is deleted with it.
 
 ## Consequences
