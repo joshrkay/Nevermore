@@ -173,15 +173,6 @@ export function completenessOf(row: { missing_required: string[]; open_fields: n
 /** The fewest characters the queue searches on (F-2.2); a shorter search would match nearly every row. */
 export const QUEUE_SEARCH_MIN_CHARS = 3;
 
-/**
- * What the queue searches for, given what's typed: the trimmed text once it holds at least
- * QUEUE_SEARCH_MIN_CHARS characters other than spaces, otherwise nothing.
- */
-export function queueSearchTerm(typed: string): string {
-  const text = typed.trim();
-  return text.replace(/\s+/g, "").length >= QUEUE_SEARCH_MIN_CHARS ? text : "";
-}
-
 /** What the dashboard lists for an intake; a subset of the database's list row. */
 export interface QueueRow {
   session_id: string;

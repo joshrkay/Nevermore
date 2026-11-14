@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { useMemo, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,7 +36,7 @@ const noDocuments = async (): Promise<Blob> => { throw new Error("No document is
  * are said before the click. The builder loads on the click; it checks the certification again first, fetches the
  * documents with progress, and when a file couldn't go in, says which before anything is saved.
  */
-const BundleDownload = ({ source, builtFrom, label, primary = false, fetchDocument = noDocuments, readTemplate = readFromStorage, onSaved }: BundleDownloadProps) => {
+const BundleDownloadControl = ({ source, builtFrom, label, primary = false, fetchDocument = noDocuments, readTemplate = readFromStorage, onSaved }: BundleDownloadProps) => {
   const plan = useMemo(() => planBundle(source), [source]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -115,5 +117,8 @@ const BundleDownload = ({ source, builtFrom, label, primary = false, fetchDocume
     </div>
   );
 };
+
+/** Not offered during Nevermore support: a file built here from rows support may read would leave the product unrecorded (CRM-P2.4). */
+const BundleDownload = (props: ComponentProps<typeof BundleDownloadControl>) => (useDownloadsOff() ? null : <BundleDownloadControl {...props} />);
 
 export default BundleDownload;

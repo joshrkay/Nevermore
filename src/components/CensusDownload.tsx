@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { useEffect, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import type { CensusEmployee } from "@/data/census";
@@ -44,7 +46,7 @@ const readFromStorage = async (peoId: number, templateId: number) => (await impo
  * file is, which certified version it comes from, the columns it leaves blank, and why a template workbook can't take
  * this census (its headers don't match, or an employee would go over what it holds) are said before the click.
  */
-const CensusDownload = ({ census, fileId, version, peo, catalog, builtFrom, readTemplate = readFromStorage, onDownloaded }: CensusDownloadProps) => {
+const CensusDownloadControl = ({ census, fileId, version, peo, catalog, builtFrom, readTemplate = readFromStorage, onDownloaded }: CensusDownloadProps) => {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // A template workbook is read and checked as soon as the download is shown, so a refusal comes before the click.
@@ -130,5 +132,8 @@ const CensusDownload = ({ census, fileId, version, peo, catalog, builtFrom, read
     </div>
   );
 };
+
+/** Not offered during Nevermore support: a file built here from rows support may read would leave the product unrecorded (CRM-P2.4). */
+const CensusDownload = (props: ComponentProps<typeof CensusDownloadControl>) => (useDownloadsOff() ? null : <CensusDownloadControl {...props} />);
 
 export default CensusDownload;

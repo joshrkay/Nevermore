@@ -2,17 +2,19 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { fetchIsAdmin } from "@/lib/advisorApi";
-import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, suspendFirm, type FirmState, type WaitingFirm } from "@/lib/firmApi";
-import { firmHostname } from "@/lib/firmHost";
+import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, stopFirmClosure, suspendFirm, type FirmState, type WaitingFirm } from "@/lib/firmApi";
+import { firmHostname, firmUrlFrom } from "@/lib/firmHost";
+import { endSupportSession, endTime, fetchSupportSessions, startSupportSession, SUPPORT_REASON_MAX, type SupportSession } from "@/lib/supportApi";
+import { LoadFailed } from "@/components/workspace/states";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
   | { kind: "not_admin" }
-  | { kind: "ready"; firms: WaitingFirm[]; states: FirmState[] };
+  | { kind: "ready"; firms: WaitingFirm[]; states: FirmState[]; sessions: SupportSession[] };
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 
@@ -32,8 +34,11 @@ const AdvisorFirmsPage = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   // The suspension being asked for or lifted: which firm, and (to suspend) the reason typed.
-  const [changing, setChanging] = useState<{ id: string; lift: boolean } | null>(null);
+  const [changing, setChanging] = useState<{ id: string; lift: boolean; stop?: boolean } | null>(null);
   const [reason, setReason] = useState("");
+  // Support access being asked for (story CRM-P2.4): which firm, and the reason typed. The firm's owners read it.
+  const [supporting, setSupporting] = useState<string | null>(null);
+  const [supportReason, setSupportReason] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -41,7 +46,7 @@ const AdvisorFirmsPage = () => {
     fetchIsAdmin()
       .then((admin) =>
         admin
-          ? Promise.all([fetchWaitingFirms(), fetchFirmStates()]).then(([firms, states]): Load => ({ kind: "ready", firms, states }))
+          ? Promise.all([fetchWaitingFirms(), fetchFirmStates(), fetchSupportSessions()]).then(([firms, states, sessions]): Load => ({ kind: "ready", firms, states, sessions }))
           : ({ kind: "not_admin" } as Load),
       )
       .then((next) => !cancelled && setLoad(next))
@@ -59,10 +64,10 @@ const AdvisorFirmsPage = () => {
       setConfirming(null);
       setAttempt((n) => n + 1);
     } catch (err) {
-      // An ended session is no failure to retry: AdvisorLoadError signs the person out. A refusal (42501) stays a message,
+      // An ended session is no failure to retry: LoadFailed signs the person out. A refusal (42501) stays a message,
       // since it can also mean the admin belongs to this firm, and the person can still use the page.
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -78,7 +83,52 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
+    }
+    setBusy(null);
+  };
+
+  // One hour of read-only access to a firm's workspace, with the reason its owners will read.
+  const startSupport = async (firm: FirmState) => {
+    setBusy(firm.id);
+    try {
+      await startSupportSession(firm.id, supportReason.trim());
+      toast.success(`Support access to ${firm.name} is open for one hour.`);
+      setSupporting(null);
+      setSupportReason("");
+      setAttempt((n) => n + 1);
+    } catch (err) {
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
+    }
+    setBusy(null);
+  };
+
+  const endSupport = async (session: SupportSession) => {
+    setBusy(session.id);
+    try {
+      await endSupportSession(session.id);
+      toast.success(`Support access to ${session.firmName} is ended.`);
+      setAttempt((n) => n + 1);
+    } catch (err) {
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
+    }
+    setBusy(null);
+  };
+
+  // Stopping a firm's closing, with a reason: its owners are emailed, and the firm stays open.
+  const stopClosing = async (firm: FirmState) => {
+    setBusy(firm.id);
+    try {
+      await stopFirmClosure(firm.id, reason.trim());
+      toast.success(`The closing of ${firm.name} is stopped.`);
+      setChanging(null);
+      setReason("");
+      setAttempt((n) => n + 1);
+    } catch (err) {
+      if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -99,7 +149,7 @@ const AdvisorFirmsPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the firms" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the firms" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_admin" && <p role="status" className="text-sm">Only an admin can approve or suspend firms.</p>}
         {load.kind === "ready" && (
           <>
@@ -139,6 +189,35 @@ const AdvisorFirmsPage = () => {
               ))}
               </ul>
             )}
+            <section aria-labelledby="support-open-heading" className="space-y-3 pt-4">
+              <div>
+                <h2 id="support-open-heading" className="font-display text-2xl font-bold mb-1">Support access</h2>
+                <p className="text-sm text-muted-foreground">
+                  Support access lets you read a firm's workspace, at its own address, for one hour. You can look. You can't change or send anything, no file opens, and no download or export is offered. Every use is written to the firm's record as Nevermore's, with the reason, and the firm's owners read it.
+                </p>
+              </div>
+              {load.sessions.filter((s) => s.isOpen).length === 0 ? (
+                <p role="status" className="text-sm text-muted-foreground">No support access is open.</p>
+              ) : (
+                <ul aria-label="Open support access" className="space-y-2">
+                  {load.sessions.filter((s) => s.isOpen).map((s) => (
+                    <li key={s.id} className="border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <span className="font-semibold">{s.firmName}</span>
+                      <span className="text-sm text-muted-foreground">{`Ends at ${endTime(s.endsAt)} · ${s.adminEmail}${s.isMine ? " (you)" : ""} · ${s.reason}`}</span>
+                      {s.isMine && (
+                        <span className="ml-auto flex flex-wrap items-center gap-2">
+                          <a href={`${firmUrlFrom(s.firmAddress)}/advisor`} target="_blank" rel="noopener noreferrer" className={`${button} inline-flex items-center`}
+                            aria-label={`Open ${s.firmName}`}>Open the workspace</a>
+                          <button onClick={() => void endSupport(s)} disabled={busy !== null} className={button} aria-label={`End support access to ${s.firmName} now`}>
+                            {busy === s.id ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Saving" /> : "End now"}
+                          </button>
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
             <section className="space-y-3 pt-4">
               <div>
                 <h2 className="font-display text-2xl font-bold mb-1">Every firm</h2>
@@ -174,7 +253,23 @@ const AdvisorFirmsPage = () => {
                           {`Suspended${f.suspendedAt ? ` ${formatDateTime(f.suspendedAt)}` : ""}: ${f.suspensionReason ?? ""}`}
                         </p>
                       )}
-                      {f.closedOn ? null : changing?.id === f.id ? (
+                      {f.closingOn && (changing?.id === f.id && changing.stop ? (
+                        <div className="space-y-2">
+                          <p className="text-sm">Its owners are told the closing was stopped, and the firm stays open. They are not told your reason.</p>
+                          <label htmlFor={`stop-${f.id}`} className="text-xs text-muted-foreground">{`Reason for stopping the closing of ${f.name}`}</label>
+                          <input id={`stop-${f.id}`} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)}
+                            className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm" />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => void stopClosing(f)} disabled={busy !== null || reason.trim() === ""}
+                              className={`${button} bg-primary text-primary-foreground border-primary hover:bg-primary/90`}>Yes, stop it</button>
+                            <button onClick={() => { setChanging(null); setReason(""); }} disabled={busy !== null} className={button}>Let it run</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setChanging({ id: f.id, lift: false, stop: true }); setReason(""); }} disabled={busy !== null} className={button}
+                          aria-label={`Stop the closing of ${f.name}`}>Stop the closing</button>
+                      ))}
+                      {f.closedOn || (changing?.id === f.id && changing.stop) ? null : changing?.id === f.id ? (
                         <div className="space-y-2">
                           {f.suspended ? (
                             <p className="text-sm">Lift the suspension? Its members get everything back as it was.</p>
@@ -202,6 +297,24 @@ const AdvisorFirmsPage = () => {
                           {f.suspended ? "Lift suspension" : "Suspend"}
                         </button>
                       )}
+                      {f.state !== "refused" && !f.closedOn && (supporting === f.id ? (
+                        <div className="space-y-2">
+                          <p className="text-sm">You can read {f.name} for one hour and change nothing. The firm's owners will see this reason.</p>
+                          <label htmlFor={`support-${f.id}`} className="text-xs text-muted-foreground">{`Reason for support access to ${f.name}`}</label>
+                          <input id={`support-${f.id}`} value={supportReason} maxLength={SUPPORT_REASON_MAX} onChange={(e) => setSupportReason(e.target.value)}
+                            className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm" />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => void startSupport(f)} disabled={busy !== null || supportReason.trim() === ""}
+                              className={`${button} bg-primary text-primary-foreground border-primary hover:bg-primary/90`}>
+                              {busy === f.id ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Saving" /> : "Start support access"}
+                            </button>
+                            <button onClick={() => { setSupporting(null); setSupportReason(""); }} disabled={busy !== null} className={button}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setSupporting(f.id); setSupportReason(""); }} disabled={busy !== null} className={button}
+                          aria-label={`Support access to ${f.name}`}>Support access</button>
+                      ))}
                     </li>
                   ))}
                 </ul>

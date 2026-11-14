@@ -7,8 +7,10 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "admin@exam
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const advisor = { fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => advisor);
-const firms = { fetchWaitingFirms: vi.fn(), decideFirm: vi.fn(), fetchFirmStates: vi.fn(), suspendFirm: vi.fn(), liftFirmSuspension: vi.fn() };
+const firms = { fetchWaitingFirms: vi.fn(), decideFirm: vi.fn(), fetchFirmStates: vi.fn(), suspendFirm: vi.fn(), liftFirmSuspension: vi.fn(), stopFirmClosure: vi.fn() };
 vi.mock("@/lib/firmApi", () => firms);
+const support = { fetchSupportSessions: vi.fn(), startSupportSession: vi.fn(), endSupportSession: vi.fn(), endTime: (iso: string) => `at ${iso.slice(11, 16)}`, SUPPORT_REASON_MAX: 500 };
+vi.mock("@/lib/supportApi", () => support);
 
 const { default: AdvisorFirmsPage } = await import("./AdvisorFirmsPage");
 
@@ -30,6 +32,10 @@ describe("AdvisorFirmsPage", () => {
     firms.fetchFirmStates.mockReset().mockResolvedValue([state()]);
     firms.suspendFirm.mockReset().mockResolvedValue(undefined);
     firms.liftFirmSuspension.mockReset().mockResolvedValue(undefined);
+    firms.stopFirmClosure.mockReset().mockResolvedValue(undefined);
+    support.fetchSupportSessions.mockReset().mockResolvedValue([]);
+    support.startSupportSession.mockReset().mockResolvedValue({ id: "n1", firmName: "Harbor Benefits", firmAddress: "harbor-benefits", endsAt: "2026-11-18T16:00:00Z" });
+    support.endSupportSession.mockReset().mockResolvedValue(undefined);
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();
   });
@@ -47,6 +53,22 @@ describe("AdvisorFirmsPage", () => {
     expect(items[1]).toHaveTextContent("Closed on November 1, 2026");
     expect(items[1]).toHaveTextContent("Deleted, by table: saved views 2, referral partners 1, memberships ended 3.");
     expect(within(items[1]).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // Catches: a platform admin has no way to stop a closing (a firm suspended for investigation would be deleted), or can stop one without a
+  // reason, or is offered it for a firm that is not closing.
+  it("stops a firm's closing with a reason, offered only beside a firm that is closing", async () => {
+    firms.fetchFirmStates.mockResolvedValue([state({ id: "c1", name: "Closing Co", address: "closing-co", closingOn: "2026-12-18T12:00:00Z" }), state()]);
+    renderPage();
+    const items = within(await screen.findByRole("list", { name: "Every firm" })).getAllByRole("listitem");
+    expect(within(items[1]).queryByRole("button", { name: /Stop the closing/ })).not.toBeInTheDocument();
+    fireEvent.click(within(items[0]).getByRole("button", { name: "Stop the closing of Closing Co" }));
+    const yes = within(items[0]).getByRole("button", { name: "Yes, stop it" });
+    expect(yes).toBeDisabled();
+    fireEvent.change(within(items[0]).getByLabelText("Reason for stopping the closing of Closing Co"), { target: { value: " Under investigation " } });
+    fireEvent.click(yes);
+    await waitFor(() => expect(firms.stopFirmClosure).toHaveBeenCalledWith("c1", "Under investigation"));
+    expect(toast.success).toHaveBeenCalledWith("The closing of Closing Co is stopped.");
   });
 
   it("is for admins, and loads nothing for anyone else", async () => {
@@ -260,4 +282,67 @@ describe("AdvisorFirmsPage", () => {
     });
   });
 
+
+  // Help from Nevermore (story CRM-P2.4).
+  // Catches: the page promises "can't download anything" while a screen offers a download, or promises nothing about files at all.
+  it("says what support access can and can't do in words that are true: read only, no file opens, no download or export is offered", async () => {
+    firms.fetchFirmStates.mockResolvedValue([state()]);
+    renderPage();
+    const note = (await screen.findByRole("heading", { name: "Support access" })).parentElement!;
+    expect(note).toHaveTextContent("You can look. You can't change or send anything, no file opens, and no download or export is offered.");
+    expect(note).not.toHaveTextContent("can't change, export, send or download anything");
+  });
+
+  // Catches: support access can be started with no reason, or without saying the firm's owners will read it and that it lasts an hour; it is offered for
+  // a refused or a closed firm, where there is nothing to look at.
+  it("asks for a reason, says the owners will read it and that it lasts one hour, and offers support access only where there is something to look at", async () => {
+    firms.fetchFirmStates.mockResolvedValue([
+      state(),
+      state({ id: "r1", name: "Refused Co", address: "refused-co", state: "refused" }),
+      state({ id: "c1", name: "Closed Co", address: "closed-co", closedOn: "2026-11-01T12:00:00Z" }),
+    ]);
+    renderPage();
+    const items = within(await screen.findByRole("list", { name: "Every firm" })).getAllByRole("listitem");
+    expect(within(items[1]).queryByRole("button", { name: /Support access/ })).not.toBeInTheDocument();
+    expect(within(items[2]).queryByRole("button", { name: /Support access/ })).not.toBeInTheDocument();
+    fireEvent.click(within(items[0]).getByRole("button", { name: "Support access to Harbor Benefits" }));
+    expect(items[0]).toHaveTextContent("for one hour");
+    expect(items[0]).toHaveTextContent("The firm's owners will see this reason");
+    const start = within(items[0]).getByRole("button", { name: "Start support access" });
+    expect(start).toBeDisabled();
+    fireEvent.change(within(items[0]).getByLabelText("Reason for support access to Harbor Benefits"), { target: { value: " Stuck quote " } });
+    fireEvent.click(start);
+    await waitFor(() => expect(support.startSupportSession).toHaveBeenCalledWith("s1", "Stuck quote"));
+    expect(toast.success).toHaveBeenCalledWith("Support access to Harbor Benefits is open for one hour.");
+  });
+
+  // Catches: an open session shows no end time or no way to end it, or an admin is offered "End now" or the firm's link on another admin's session.
+  it("lists open sessions with their end time, and offers the link and End now on the admin's own only", async () => {
+    support.fetchSupportSessions.mockResolvedValue([
+      { id: "a", firmId: "s1", firmName: "Harbor Benefits", firmAddress: "harbor-benefits", adminEmail: "me@nevermore.example", reason: "Stuck quote", startedAt: "2026-11-18T15:00:00Z", endsAt: "2026-11-18T16:00:00Z", endedAt: null, isOpen: true, isMine: true },
+      { id: "b", firmId: "s2", firmName: "Capital Brokers", firmAddress: "capital-brokers", adminEmail: "other@nevermore.example", reason: "Login help", startedAt: "2026-11-18T15:00:00Z", endsAt: "2026-11-18T16:00:00Z", endedAt: null, isOpen: true, isMine: false },
+      { id: "c", firmId: "s3", firmName: "Old Co", firmAddress: "old-co", adminEmail: "me@nevermore.example", reason: "Done", startedAt: "2026-11-18T10:00:00Z", endsAt: "2026-11-18T11:00:00Z", endedAt: "2026-11-18T10:30:00Z", isOpen: false, isMine: true },
+    ]);
+    renderPage();
+    const items = within(await screen.findByRole("list", { name: "Open support access" })).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("Harbor Benefits");
+    expect(items[0]).toHaveTextContent("Ends at at 16:00");
+    expect(within(items[0]).getByRole("link", { name: "Open Harbor Benefits" })).toHaveAttribute("href", expect.stringContaining("harbor-benefits"));
+    expect(within(items[1]).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(items[1]).queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(within(items[0]).getByRole("button", { name: "End support access to Harbor Benefits now" }));
+    await waitFor(() => expect(support.endSupportSession).toHaveBeenCalledWith("a"));
+  });
+
+  // Catches: a refusal from the database (an admin who belongs to the firm, a firm gone) is swallowed and the admin is left wondering.
+  it("shows the database's refusal in words", async () => {
+    support.startSupportSession.mockRejectedValue(new Error("You already have support access open for that firm."));
+    renderPage();
+    const item = within(await screen.findByRole("list", { name: "Every firm" })).getAllByRole("listitem")[0];
+    fireEvent.click(within(item).getByRole("button", { name: "Support access to Harbor Benefits" }));
+    fireEvent.change(within(item).getByLabelText("Reason for support access to Harbor Benefits"), { target: { value: "x" } });
+    fireEvent.click(within(item).getByRole("button", { name: "Start support access" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("You already have support access open for that firm."));
+  });
 });

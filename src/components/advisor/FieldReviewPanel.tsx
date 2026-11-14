@@ -2,9 +2,9 @@ import { fieldApplies } from "@/data/followUp";
 import RowsField from "@/components/chamber/workspace/RowsField";
 import { isRowListField } from "@/data/rowColumns";
 import { formatAnswer } from "@/data/answerFormat";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Loader2, PencilLine, UserCheck } from "lucide-react";
-import { toast } from "sonner";
+import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
 import type { ChamberData } from "@/data/chamberTypes";
 import {
   AUDIT_BADGE_LABELS,
@@ -177,6 +177,9 @@ const FieldRow = ({
   const review: FieldReview | undefined = reviews[field];
   const prov = provenance[field];
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The review wasn't saved. Check your connection and try again. What you typed is still here.");
+  // The button the person pressed, so focus can come back to it: it was disabled while the save ran, and a browser drops the focus of a disabled button.
+  const pressed = useRef<HTMLElement | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [reason, setReason] = useState("");
@@ -188,12 +191,13 @@ const FieldRow = ({
 
   const save = async (state: ReviewState | null, correction: CorrectionChange, why = "") => {
     setSaving(true);
+    failure.clear();
     try {
       await reviewField(sessionId, field, state, correction, why, storedAnswers[field]);
       setEditing(false);
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
       // The prospect changed this answer after the page loaded: reload to show the advisor the current one.
       if (isStaleRefusal(err)) onChanged();
     } finally {
@@ -204,11 +208,11 @@ const FieldRow = ({
   const submitCorrection = () => {
     const parsed = parseCorrection(field, draft);
     if (!parsed) {
-      toast.error(`That isn't a valid value for ${label.toLowerCase()}.`);
+      failure.say(`That isn't a valid value for ${label.toLowerCase()}.`);
       return;
     }
     if (!reason.trim()) {
-      toast.error("Give a reason for the correction.");
+      failure.say("Give a reason for the correction.");
       return;
     }
     // A fresh correction needs verifying before it's used, unless the advisor already marked it.
@@ -296,7 +300,7 @@ const FieldRow = ({
             </label>
             <div className="flex gap-2">
               <button
-                onClick={submitCorrection}
+                onClick={(e) => { pressed.current = e.currentTarget; submitCorrection(); }}
                 disabled={saving}
                 className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md disabled:opacity-50"
               >
@@ -306,6 +310,7 @@ const FieldRow = ({
             </div>
           </div>
         )}
+        <SaveFailed message={failure.message} returnFocusTo={pressed as RefObject<HTMLElement>} className="text-xs mt-2" />
       </div>
 
       <div className="flex flex-wrap md:flex-col gap-1.5 md:items-end">
@@ -317,7 +322,7 @@ const FieldRow = ({
                 key={state}
                 aria-pressed={active}
                 disabled={saving}
-                onClick={() => void save(active ? null : state, { kind: "keep" })}
+                onClick={(e) => { pressed.current = e.currentTarget; void save(active ? null : state, { kind: "keep" }); }}
                 className={`text-xs px-2 py-1 rounded-md border transition-colors disabled:opacity-50 ${
                   active ? REVIEW_CLASS[state] : "border-border text-muted-foreground hover:text-foreground"
                 }`}

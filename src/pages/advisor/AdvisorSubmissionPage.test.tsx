@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { Supplement } from "@/data/peoSupplement";
@@ -8,6 +9,7 @@ import { workersCompFilename, type WorkersCompApplication } from "@/data/workers
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
 import { blobBytes, blobText } from "@/test/blob";
+import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { unzip } from "@/test/zip";
 
 const signOut = vi.fn();
@@ -135,14 +137,45 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   ...over,
 });
 
+// The page tells the menu's counts when it marks a thread read (story CRM-S1.1c), so it needs the app's query client.
+const queryClient = new QueryClient();
+// A panel's heading is on screen from the first draw (CRM-S2.1 draws each panel's frame at once, with grey lines inside), so a test that
+// wants the panel's real content first waits for the submission's own title, which only the loaded page has.
+const panelOf = async (heading: string) => {
+  await screen.findByRole("heading", { level: 1 });
+  return screen.getByRole("heading", { name: heading }).closest("section")!;
+};
+
 const renderPage = () =>
   render(
-    <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
-      <Routes>
-        <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+        <Routes>
+          <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+
+// The workspace as a platform admin on a support session sees it (CRM-P2.4): read only, and no file leaves the product.
+const supportWorkspace = (isSupport: boolean) => ({
+  firm: { id: "f1", name: "Acme", address: "acme" }, role: isSupport ? "Nevermore support" : "Owner", isOwner: !isSupport, isSupport,
+  supportEndsAt: null, supportSessionId: null, isPlatformAdmin: isSupport, person: "Sam",
+}) as const;
+const renderAs = async (isSupport: boolean) => {
+  const { WorkspaceContext } = await import("@/components/workspace/useWorkspace");
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <WorkspaceContext.Provider value={supportWorkspace(isSupport)}>
+        <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+          <Routes>
+            <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </WorkspaceContext.Provider>
+    </QueryClientProvider>,
+  );
+};
 
 const GoTo = ({ id }: { id: string }) => {
   const navigate = useNavigate();
@@ -150,13 +183,15 @@ const GoTo = ({ id }: { id: string }) => {
 };
 const renderWithNavigation = () =>
   render(
-    <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
-      <GoTo id="s2" />
-      <GoTo id="s1" />
-      <Routes>
-        <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+        <GoTo id="s2" />
+        <GoTo id="s1" />
+        <Routes>
+          <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 
 // The request being drafted lives in Ask the prospect. Role queries over the whole page cost seconds each in a page this
@@ -197,12 +232,188 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2", true));
   });
 
-  it("shows 'Submission not found.' for a submission it can't find, asking for it once as an opening", async () => {
+  describe("loading (CRM-S2.1)", () => {
+    // The panels every submission has. "PEO threads" and "Changed since signing" appear only for a submission that has them, so they
+    // are not drawn in advance.
+    const PANELS = [
+      "What each PEO still needs", "Captured fields", "Transcript",
+      "Needs advisor action", "Ask the prospect", "Quote requests", "Status", "Advisor packet", "Uploaded documents", "Internal notes", "Review audit trail",
+    ];
+    const slowLine = () => screen.queryByText("This is taking longer than usual.");
+    const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    const pending = () => {
+      let arrive!: (v: unknown) => void;
+      api.loadSubmission.mockReturnValue(new Promise((r) => { arrive = r; }));
+      return (v: unknown) => act(async () => arrive(v));
+    };
+
+    // Catches: the back link and the panels' headings waiting behind a spinner, or grey lines read out one by one, or no single status.
+    it("shows the back link and each panel's heading at once, grey lines in the data areas, and one status", () => {
+      pending();
+      const { container } = renderPage();
+      expect(screen.getByRole("link", { name: /All submissions/ })).toHaveAttribute("href", "/advisor");
+      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(PANELS);
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toHaveTextContent("Loading submission");
+      // Both statuses are on the page already (the slow line's still empty) and neither sits inside an element marked busy.
+      expect(allStatuses()).toHaveLength(2);
+      expectStatusesOutsideBusy();
+      expect(container.querySelectorAll(".animate-pulse, [class*='animate-pulse']").length).toBeGreaterThan(10);
+      // Nothing from a submission yet, and the grey lines are hidden from a screen reader.
+      expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+      for (const bar of Array.from(container.querySelectorAll("[class*='animate-pulse']"))) expect(bar.closest("[aria-hidden=true]")).not.toBeNull();
+    });
+
+    // Catches: the real page keeping the placeholders' panels as well (headings twice), or the status staying after the data is there.
+    it("is replaced by the same panels with their content once the submission arrives", async () => {
+      const arrive = pending();
+      const { container } = renderPage();
+      await arrive(detail());
+      expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual(expect.arrayContaining(PANELS));
+      expect(screen.getAllByRole("heading", { name: "Status" })).toHaveLength(1);
+      expect(screen.getAllByRole("heading", { name: "Internal notes" })).toHaveLength(1);
+      expect(container.querySelector("[class*='animate-pulse']")).toBeNull();
+      expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
+
+    // Catches: the slow line arriving at nine seconds or not at all, or not as a status, or without a Try again that asks again.
+    it("says it is taking longer than usual at ten seconds, not nine, and Try again asks for the submission again", async () => {
+      vi.useFakeTimers();
+      pending();
+      renderPage();
+      const container = allStatuses().find((e) => !e.textContent)!;
+      expect(container).toBeDefined();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      // The words arrive inside the container that was already there, which is outside any busy element.
+      expect(slowLine()).toBe(container);
+      expect(slowLine()).toHaveAttribute("role", "status");
+      expectStatusesOutsideBusy();
+      expect(spoken()).toHaveLength(2);
+      const asked = api.loadSubmission.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(api.loadSubmission.mock.calls.length).toBe(asked + 1);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toBeInTheDocument();
+    });
+
+    // Catches: the line staying once the submission is there; and a ten-second timer left after the page is closed.
+    it("takes the line away when the submission arrives, and leaves no timer behind when closed", async () => {
+      vi.useFakeTimers();
+      const arrive = pending();
+      const { unmount } = renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await arrive(detail());
+      await tick(0);
+      expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(30_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      unmount();
+    });
+
+    // Catches: a ten-second timer left running after the person leaves while waiting (it would set state on a page that is gone).
+    it("leaves no timer behind when the page is closed while waiting", async () => {
+      vi.useFakeTimers();
+      pending();
+      const timers = watchSlowTimers();
+      const { unmount } = renderPage();
+      await tick(3_000);
+      unmount();
+      timers.expectAllCleared();
+      timers.restore();
+    });
+
+    // Catches: "Try again" on a slow first answer sending a second opening: the database records an opening when it handles the call, and a
+    // second one more than half a minute later is a second "opened a submission" entry in the firm's record.
+    it("asks for the submission again without another opening when the first answer is only slow", async () => {
+      vi.useFakeTimers();
+      pending();
+      renderPage();
+      await tick(10_000);
+      expect(api.loadSubmission).toHaveBeenCalledTimes(1);
+      expect(api.loadSubmission).toHaveBeenLastCalledWith("s1", true);
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(api.loadSubmission).toHaveBeenCalledTimes(2);
+      expect(api.loadSubmission).toHaveBeenLastCalledWith("s1", false);
+    });
+
+    // Catches: a failed opening (which recorded nothing) being retried as a plain read, so the opening is never recorded at all.
+    it("retries as an opening after a failed one", async () => {
+      api.loadSubmission.mockRejectedValueOnce(new Error("Network request failed"));
+      renderPage();
+      expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load this submission.");
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(api.loadSubmission).toHaveBeenNthCalledWith(1, "s1", true);
+      expect(api.loadSubmission).toHaveBeenNthCalledWith(2, "s1", true);
+    });
+
+    // Catches: the line staying beside the error panel when the load fails.
+    it("takes the line away when the load fails", async () => {
+      vi.useFakeTimers();
+      let fail!: (e: Error) => void;
+      api.loadSubmission.mockReturnValue(new Promise((_, r) => { fail = r; }));
+      renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => fail(new Error("Network request failed")));
+      await tick(0);
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load this submission.");
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
+
+    // Catches (D-49): a reload after a change (a note added) putting grey lines over the submission a person is reading.
+    it("shows no placeholders and no slow line while a reload after a change is on its way", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      renderPage();
+      await tick(0);
+      expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      api.addNote.mockResolvedValue(undefined);
+      api.loadSubmission.mockReturnValue(new Promise(() => {}));
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "Called the CFO" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+      await tick(0);
+      await tick(25_000);
+      expect(api.loadSubmission).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
+  });
+
+  // Catches: "Submission not found" and an error page for what is one case to a person (gone, or not theirs), no way back to the list, and focus left on the
+  // page behind a heading nobody is told about.
+  it("says 'This submission isn't available.' for a submission it can't find, with a way back to the list, focus on it, and asks for it once as an opening", async () => {
     api.loadSubmission.mockResolvedValue(null);
     renderPage();
-    expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
+    const heading = await screen.findByRole("heading", { name: "This submission isn't available." });
+    expect(document.activeElement).toBe(heading);
+    expect(screen.getByRole("link", { name: "Back to all submissions" })).toHaveAttribute("href", "/advisor");
+    // The same words for a submission that was removed and one the person may not see: the page cannot tell them apart, and says nothing that would.
+    expect(heading.closest("section")).toHaveTextContent(/removed, or you may not be able to open it/);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
     expect(api.loadSubmission).toHaveBeenCalledTimes(1);
     expect(api.loadSubmission).toHaveBeenCalledWith("s1", true);
+  });
+
+  // Catches: a link with an id that is no id at all (the database refuses it, 22P02) reading as a failed load that "Try again" can never fix.
+  it("says the same for an address whose id is not a submission's, and offers no Try again", async () => {
+    api.loadSubmission.mockRejectedValue(Object.assign(new Error('invalid input syntax for type uuid: "nonsense"'), { code: "22P02" }));
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "This submission isn't available." })).toBeInTheDocument();
+    expect(screen.queryByText(/invalid input syntax/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   it("records a document opened", async () => {
@@ -312,7 +523,7 @@ describe("AdvisorSubmissionPage", () => {
 
   it("changes the status with a note and shows who changed it before", async () => {
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getAllByText(/^Prospect ·/).length).toBe(2);
     fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "information_requested" } });
     expect(within(panel).getByText(/The prospect will see/)).toBeInTheDocument();
@@ -340,7 +551,7 @@ describe("AdvisorSubmissionPage", () => {
       ],
     }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     // The follow-ups start selected, in Review's order (the census with Workforce, before Payroll).
     expect(within(within(panel).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent))
       .toEqual(["Employee census", "Pay frequency"]);
@@ -365,7 +576,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({ reviews: { pay_frequency: review("pay_frequency", "follow_up") } as SubmissionDetail["reviews"] }));
     api.reviewField.mockResolvedValue(undefined);
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     const chosen = () => within(within(panel).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
     fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Two things, please." } });
     fireEvent.change(within(panel).getByLabelText("Add an answer"), { target: { value: "payroll_vendor" } });
@@ -390,7 +601,7 @@ describe("AdvisorSubmissionPage", () => {
   it("says why a request can't be sent, and offers no form", async () => {
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "won" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     expect(within(panel).getByText("A submission at Won can't move to Information requested.")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "Send request" })).not.toBeInTheDocument();
   });
@@ -399,17 +610,19 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail());
     api.requestInformation.mockRejectedValue(new Error("The prospect's account has no email address to send this to"));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const panel = await panelOf("Ask the prospect");
     fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Send the register" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Send request" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The prospect's account has no email address to send this to"));
+    // Beside the button, not in a toast that is gone in seconds (CRM-S2.3, D-178).
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("The prospect's account has no email address to send this to");
+    expect(toast.error).not.toHaveBeenCalled();
     expect(within(panel).getByLabelText("What do you need from them?")).toHaveValue("Send the register");
   });
 
   it("offers only Archived for an intake the prospect has never certified", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "draft" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     const select = within(panel).getByLabelText("Change status to");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Draft (current)", "Archived"]);
     expect(within(panel).getByText(/can only be archived\. They see no status until they certify/)).toBeInTheDocument();
@@ -423,7 +636,7 @@ describe("AdvisorSubmissionPage", () => {
   it("offers nothing for an archived intake the prospect never certified", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "archived" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getByLabelText("Change status to")).toBeDisabled();
     expect(within(panel).getByText("No status change is available.")).toBeInTheDocument();
     expect(within(panel).getByText(/returns as Submitted if they certify/)).toBeInTheDocument();
@@ -432,7 +645,7 @@ describe("AdvisorSubmissionPage", () => {
   it("says the prospect sees nothing while their certification is withdrawn", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "under_review" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getAllByRole("option").length).toBe(5);
     expect(within(panel).getByText(/sees no status while their certification is withdrawn; once they certify again/)).toBeInTheDocument();
   });
@@ -441,7 +654,7 @@ describe("AdvisorSubmissionPage", () => {
     const reviewing = { id: 3, session_id: "s1", from_status: "submitted", to_status: "under_review", note: null, changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-10-02T12:00:00Z" };
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "under_review", history: [reviewing, ...detail().history] }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     const select = within(panel).getByLabelText("Change status to");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Under review (current)", "Information requested", "Ready for market", "Lost", "Archived",
@@ -458,7 +671,7 @@ describe("AdvisorSubmissionPage", () => {
   it("reopens an archived file as submitted, never straight to under review", async () => {
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "archived" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     const select = within(panel).getByLabelText("Change status to");
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Archived (current)", "Submitted (reopen)"]);
     expect(within(select).queryByRole("option", { name: "Under review" })).not.toBeInTheDocument();
@@ -467,7 +680,7 @@ describe("AdvisorSubmissionPage", () => {
   it("only archives a certification the prospect withdrew at Submitted, until they certify again", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "draft" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(within(panel).getByLabelText("Change status to")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Draft (current)", "Archived"]);
     expect(within(panel).getByText(/withdrew their certification by changing an answer, so it can only be archived/)).toBeInTheDocument();
   });
@@ -475,14 +688,14 @@ describe("AdvisorSubmissionPage", () => {
   it("says certifying again answers an open request for information", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "information_requested" }));
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const panel = await panelOf("Status");
     expect(within(panel).getByLabelText("Change status to")).toHaveValue("information_requested");
     expect(within(panel).getByText(/once they certify again: “Received\. An advisor will review your submission\.”/)).toBeInTheDocument();
   });
 
   it("marks the submission as needing advisor action, with a note", async () => {
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: "Needs advisor action" })).closest("section")!;
+    const panel = await panelOf("Needs advisor action");
     expect(within(panel).getByText(/the prospect never sees it/)).toBeInTheDocument();
     fireEvent.change(within(panel).getByLabelText("What needs doing (optional)"), { target: { value: "Call the CFO" } });
     api.setNeedsAction.mockResolvedValue(undefined);
@@ -596,6 +809,79 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.addNote).toHaveBeenCalledWith("s1", "Called the CFO"));
   });
 
+  describe("a save that fails (CRM-S2.3)", () => {
+    // Catches: a failed save that says nothing beside the button (a toast that is gone in seconds), says the network's own words, clears what the person typed, or
+    // leaves focus on the page where the button was.
+    it("keeps a note's text, says in plain words beside its button that it was not saved, and puts focus back on the button", async () => {
+      renderPage();
+      await screen.findByRole("heading", { name: "Signed Co" });
+      api.addNote.mockRejectedValueOnce(new Error("Network request failed"));
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "Called the CFO" } });
+      const add = screen.getByRole("button", { name: "Add note" });
+      fireEvent.click(add);
+      const panel = screen.getByRole("heading", { name: "Internal notes" }).closest("section")!;
+      const alert = await within(panel).findByRole("alert");
+      expect(alert).toHaveTextContent("The note wasn't saved. Check your connection and try again. What you typed is still here.");
+      expect(alert).not.toHaveTextContent("Network request failed");
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("New note")).toHaveValue("Called the CFO");
+      await waitFor(() => expect(add).toHaveFocus());
+      // The next try starts clean, and the words go when it works.
+      api.addNote.mockResolvedValue(undefined);
+      fireEvent.click(add);
+      await waitFor(() => expect(within(panel).queryByRole("alert")).not.toBeInTheDocument());
+      expect(screen.getByLabelText("New note")).toHaveValue("");
+    });
+
+    // Catches (D-178): the rule for "is this text meant for a person" hiding a refusal the product raised on purpose (55000, P0002, P0001 and the 23xxx and 40001 it raises with
+    // its own sentence) behind "check your connection", or showing the database's own text (constraint names, "invalid input syntax", the edge function's status line).
+    const FALLBACK = "The note wasn't saved. Check your connection and try again. What you typed is still here.";
+    it.each([
+      ["55000", "This PEO has a draft. Publish or discard it before recording a re-check", "shown"],
+      ["P0002", "Submission not found", "shown"],
+      ["P0001", "That submission can't be changed now", "shown"],
+      ["23514", "A note can't be empty.", "shown"],
+      ["23505", "That code is already taken.", "shown"],
+      ["40001", "Another version was generated meanwhile; generate it again", "shown"],
+      ["PT409", "Someone changed this first.", "shown"],
+      ["23505", 'duplicate key value violates unique constraint "advisor_notes_pkey"', "hidden"],
+      ["23503", 'insert or update on table "advisor_notes" violates foreign key constraint "x"', "hidden"],
+      ["23514", 'new row for relation "advisor_notes" violates check constraint "body_len"', "hidden"],
+      ["23502", 'null value in column "body" of relation "advisor_notes" violates not-null constraint', "hidden"],
+      ["22P02", 'invalid input syntax for type uuid: "nonsense"', "hidden"],
+      ["22001", "value too long for type character varying(5)", "hidden"],
+      ["40001", "could not serialize access due to concurrent update", "hidden"],
+      ["40P01", "deadlock detected", "hidden"],
+      ["42883", "function public.nope(uuid) does not exist", "hidden"],
+      ["42P01", 'relation "advisor_notes2" does not exist', "hidden"],
+      ["57014", "canceling statement due to statement timeout", "hidden"],
+      ["PGRST301", "JWT expired", "hidden"],
+      [undefined, "Edge Function returned a non-2xx status code", "hidden"],
+      [undefined, "Failed to send a request to the Edge Function", "hidden"],
+      [undefined, "TypeError: Failed to fetch", "hidden"],
+    ])("a failed save with code %s says %j: %s", async (code, text, outcome) => {
+      renderPage();
+      await screen.findByRole("heading", { name: "Signed Co" });
+      api.addNote.mockRejectedValueOnce(Object.assign(new Error(text), code ? { code } : {}));
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "x" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+      const alert = await within(screen.getByRole("heading", { name: "Internal notes" }).closest("section")!).findByRole("alert");
+      expect(alert).toHaveTextContent(outcome === "shown" ? text : FALLBACK);
+      if (outcome === "hidden") expect(alert).not.toHaveTextContent(text);
+    });
+
+    // Catches: the database's own sentence (a rule the product raises, with its own words) being lost: it is for a person and is shown, as the form already does.
+    it("shows a refusal's own words when they are meant for a person", async () => {
+      renderPage();
+      const panel = await panelOf("Needs advisor action");
+      api.setNeedsAction.mockRejectedValueOnce(Object.assign(new Error("A firm that is closing can't be changed."), { code: "PT423" }));
+      fireEvent.change(within(panel).getByLabelText("What needs doing (optional)"), { target: { value: "Call the CFO" } });
+      fireEvent.click(within(panel).getByRole("button", { name: "Mark as needing advisor action" }));
+      expect(await within(panel).findByRole("alert")).toHaveTextContent("A firm that is closing can't be changed.");
+      expect(within(panel).getByLabelText("What needs doing (optional)")).toHaveValue("Call the CFO");
+    });
+  });
+
   it("marks a field verified, and records a correction with its reason beside the prospect's value", async () => {
     renderPage();
     const row = await screen.findByTestId("field-employee_count");
@@ -609,6 +895,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.change(within(row).getByLabelText(/^Reason/), { target: { value: "Payroll register" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save correction" }));
     expect(api.reviewField).toHaveBeenCalledTimes(1); // "lots" isn't a number
+    expect(within(row).getByRole("alert")).toHaveTextContent("isn't a valid value");
 
     fireEvent.change(within(row).getByLabelText("Corrected value"), { target: { value: "14" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save correction" }));
@@ -632,7 +919,7 @@ describe("AdvisorSubmissionPage", () => {
       Object.assign(new Error("The prospect changed this answer after the page was loaded; review the current answer"), { code: "PT409" }),
     );
     fireEvent.click(within(row).getByRole("button", { name: "Verified" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/changed this answer/)));
+    expect(await within(row).findByRole("alert")).toHaveTextContent(/changed this answer/);
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
   });
 
@@ -641,7 +928,11 @@ describe("AdvisorSubmissionPage", () => {
     const row = await screen.findByTestId("field-employee_count");
     api.reviewField.mockRejectedValue(Object.assign(new Error("Network request failed"), { code: undefined }));
     fireEvent.click(within(row).getByRole("button", { name: "Verified" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Network request failed"));
+    const alert = await within(row).findByRole("alert");
+    expect(alert).toHaveTextContent("The review wasn't saved. Check your connection and try again.");
+    expect(alert).not.toHaveTextContent("Network request failed");
+    // Focus is back on the button that was pressed, which was disabled while the save ran.
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Verified" })).toHaveFocus());
     expect(api.loadSubmission).toHaveBeenCalledTimes(1);
   });
 
@@ -803,7 +1094,13 @@ describe("AdvisorSubmissionPage", () => {
     await screen.findByRole("heading", { name: "Signed Co" });
     const generate = screen.getByRole("button", { name: /Generate packet/ });
     expect(generate).toBeDisabled();
-    expect(screen.getByText("Loading the PEOs' profiles. You can generate the packet once they're in.")).toBeInTheDocument();
+    // The shared loading pieces: one status for a screen reader, grey lines (hidden from it) where the checks will be, and why Generate waits.
+    const packet = screen.getByRole("region", { name: "Advisor packet" });
+    // Two panels wait on the one read: the page says so ONCE (D-146), from the first panel; the second shows its grey lines and its reason silently.
+    await waitFor(() => expect(screen.getAllByRole("status").filter((e) => /Loading the PEOs' profiles/.test(e.textContent ?? ""))).toHaveLength(1));
+    expect(within(packet).queryByRole("status")).not.toBeInTheDocument();
+    expect(packet.querySelector("[aria-busy='true'][aria-hidden='true']")).not.toBeNull();
+    expect(within(packet).getByText("You can generate the packet once they're in.")).toBeInTheDocument();
     fireEvent.click(generate);
     expect(api.saveManuscriptVersion).not.toHaveBeenCalled();
   });
@@ -815,15 +1112,34 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Signed Co" });
     const panel = screen.getByRole("region", { name: "Advisor packet" });
-    expect(await within(panel).findByRole("alert")).toHaveTextContent(
-      "We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.",
-    );
+    // One read failed for two panels: ONE alert (the first panel's), and the packet panel says the same in words that are not a live region.
+    await waitFor(() => expect(screen.getAllByRole("alert").filter((e) => /load the PEOs' profiles/.test(e.textContent ?? ""))).toHaveLength(1));
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+    expect(panel).toHaveTextContent("We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.");
     expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeDisabled();
+    // The rest of the page is untouched by the failure: the other panels still show their content.
+    expect(screen.getByRole("heading", { name: "Internal notes" })).toBeInTheDocument();
     fireEvent.click(within(panel).getByRole("button", { name: "Try again" }));
+    // The button went with the failure: focus stays with the panel (CRM-S2.3, D-177), not the page.
+    await waitFor(() => expect(panel).toHaveFocus());
     await waitFor(() => expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeEnabled());
     expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(within(panel).getByRole("button", { name: /Generate packet/ }));
     await waitFor(() => expect(api.saveManuscriptVersion).toHaveBeenCalled());
+  });
+
+  // Catches (D-175): the retry that fails again moving focus to the OTHER panel's button (both panels wait on one read), which is off screen.
+  it("puts focus on the Try again of the panel that was pressed when the profiles fail again", async () => {
+    peoCatalogReads.push(() => Promise.reject(new Error("down")), () => Promise.reject(new Error("down")));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const packet = screen.getByRole("region", { name: "Advisor packet" });
+    const needs = screen.getByRole("heading", { name: "What each PEO still needs" }).closest("section")!;
+    fireEvent.click(await within(packet).findByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(peoCatalogReads).toHaveLength(0));
+    await waitFor(() => expect(within(packet).getByRole("button", { name: "Try again" })).toHaveFocus());
+    expect(within(needs).getByRole("button", { name: "Try again" })).not.toHaveFocus();
   });
 
   it("reloads, and keeps no file, when the prospect certified again while the packet was being generated", async () => {
@@ -835,9 +1151,7 @@ describe("AdvisorSubmissionPage", () => {
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
-    await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/certified their intake again.*The page now shows the latest answers/)),
-    );
+    expect(await within(screen.getByRole("region", { name: "Advisor packet" })).findByRole("alert")).toHaveTextContent(/certified their intake again.*The page now shows the latest answers/);
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(downloadBlob).not.toHaveBeenCalled();
   });
@@ -930,7 +1244,7 @@ describe("AdvisorSubmissionPage", () => {
       detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} } }),
     );
     renderPage();
-    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    const section = await panelOf("Changed since signing");
     const rows = within(section).getAllByRole("row").slice(1).map((r) => r.textContent);
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r?.includes("Bi-weekly"))).toContain("Weekly");
@@ -943,7 +1257,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", data: signedData, extraAnswers: drives(false),
       signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: drives(true) } }));
     renderPage();
-    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    const section = await panelOf("Changed since signing");
     expect(section).toHaveTextContent("An answer to a PEO's own questions changed since signing. Each PEO's supplement keeps the certified answers.");
     expect(section).not.toHaveTextContent("No answer differs from the signed copy.");
   });
@@ -962,16 +1276,10 @@ describe("AdvisorSubmissionPage", () => {
     expect(screen.queryByRole("button", { name: /Generate packet/ })).not.toBeInTheDocument();
   });
 
-  it("says when the submission can't be found", async () => {
-    api.loadSubmission.mockResolvedValue(null);
-    renderPage();
-    expect(await screen.findByText("Submission not found.")).toBeInTheDocument();
-  });
-
   it("shows an error and retries", async () => {
     api.loadSubmission.mockRejectedValueOnce(new Error("Network request failed"));
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Network request failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load this submission.");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
   });
@@ -1132,6 +1440,43 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.loadSubmission.mock.calls.length).toBeGreaterThan(loads));
   });
 
+  // Catches: the Quotes count in the menu keeping its old number for up to a minute after the person's own change to a quote request or status
+  // (a status of Won or Lost closes the submission's other quote requests).
+  it("tells the menu's counts to refresh as soon as the status is changed", async () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    renderPage();
+    const panel = await panelOf("Status");
+    fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "lost" } });
+    api.setStatus.mockResolvedValue(undefined);
+    expect(invalidate).not.toHaveBeenCalled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(api.setStatus).toHaveBeenCalled());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
+    invalidate.mockRestore();
+  });
+
+  // Catches: the Inbox count in the menu staying as it was for up to a minute after the member opened the thread that cleared its mark.
+  it("tells the menu's counts to refresh as soon as a thread is marked read, so Inbox and the queue's mark stay in step", async () => {
+    const request = { id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+      quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null };
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      quoteRequests: [request],
+      quoteRequestMessages: [{ id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null,
+        direction: "received", is_automatic: false, new_sender: true, from_address: "dana@trinet.example", from_name: "Dana", to_addresses: [], cc_addresses: [],
+        subject: "Proposal", body_text: "Proposal attached.", body_truncated: false, headers: {}, sent_at: "2026-11-10T15:00:00Z", recorded_at: "2026-11-10T15:00:05.5+00:00" }],
+    }));
+    api.openQuoteRequestThread.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    renderPage();
+    const threads = await screen.findByRole("region", { name: "PEO threads" });
+    expect(invalidate).not.toHaveBeenCalled();
+    fireEvent.click(within(threads).getByRole("button", { name: /TriNet/ }));
+    await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalled());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
+    invalidate.mockRestore();
+  });
+
   it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {
     api.loadSubmission.mockResolvedValue(detail({
       pipelineStatus: "sent_to_carrier",
@@ -1176,6 +1521,51 @@ describe("AdvisorSubmissionPage", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date(2026, 10, 11, 12));
       peoCatalogRows = catalog();
+    });
+
+    // Catches: a support session is offered a download the browser builds from rows it may read (the census, the answers as JSON, a PEO's
+    // files, the bundle, a stored packet) or a stored file that is refused with "Couldn't open that file", so a file leaves the product
+    // and the firm's record never shows it (record_member_activity refuses support); or the fix hides them for a member too.
+    describe("during Nevermore support", () => {
+      const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+      const version = {
+        id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
+        certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
+        sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
+      };
+      // TriNet also has questions of its own, so its card holds a supplement PDF as well as the census and the workers' comp data.
+      const withSupplement = () => {
+        const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+        peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [drives] } } : p));
+        api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census }, versions: [version] }));
+      };
+      const controls = () => screen.queryAllByRole("button").filter((b) => /^(Download|Open )/.test(b.getAttribute("aria-label") ?? b.textContent ?? ""));
+
+      it("offers no download or file link anywhere on the submission page, and says so once where the files were", async () => {
+        withSupplement();
+        await renderAs(true);
+        await screen.findByRole("region", { name: "What each PEO still needs" });
+        await screen.findByRole("heading", { name: "TriNet" });
+        expect(controls().map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual([]);
+        // Each place that held a group of them says so in one line: the packet, the census, each PEO's files, the documents.
+        for (const name of ["Advisor packet", "Employee census", "What each PEO still needs", "Uploaded documents"]) {
+          const region = screen.getByRole("region", { name });
+          expect(within(region).getAllByText("Downloads are off during Nevermore support.").length, name).toBeGreaterThan(0);
+        }
+        expect(screen.getByRole("region", { name: "Advisor packet" })).toHaveTextContent("v1");
+      });
+
+      it("keeps every one of them for a member", async () => {
+        withSupplement();
+        await renderAs(false);
+        await screen.findByRole("heading", { name: "TriNet" });
+        const names = controls().map((b) => b.getAttribute("aria-label") ?? b.textContent);
+        expect(names).toEqual(expect.arrayContaining([
+          "Download the answers as JSON", "Download the census", "Download v1", "Open census.xlsx", "Download bundle anyway",
+          "Download Workers' compensation application data", "Download Additional questions from TriNet",
+        ]));
+        expect(screen.queryByText("Downloads are off during Nevermore support.")).not.toBeInTheDocument();
+      });
     });
 
     it("gives no file from a page left open across a withdrawal: the JSON, the census and each PEO's files check at the click", async () => {
@@ -1499,10 +1889,14 @@ describe("AdvisorSubmissionPage", () => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       renderPage();
       const needs = await panel();
-      expect(needs).toHaveTextContent("Loading the PEOs' profiles to see what each still needs.");
+      expect(within(needs).getByRole("status")).toHaveTextContent("Loading the PEOs' profiles");
+      expect(needs.querySelector("[aria-busy='true'][aria-hidden='true']")).not.toBeNull();
       await act(async () => fail(new Error("offline")));
-      expect(await within(needs).findByRole("alert")).toHaveTextContent("We couldn't load the PEOs' profiles, so we can't say what each still needs.");
-      fireEvent.click(within(needs).getByRole("button", { name: "Load the profiles again" }));
+      const alert = await within(needs).findByRole("alert");
+      expect(alert).toHaveTextContent("We couldn't load the PEOs' profiles, so we can't say what each still needs.");
+      expect(alert).not.toHaveTextContent("offline");
+      expect(within(needs).queryByRole("status")).not.toBeInTheDocument();
+      fireEvent.click(within(needs).getByRole("button", { name: "Try again" }));
       expect(await within(needs).findByRole("heading", { name: "Complete · 1" })).toBeInTheDocument();
     });
 
@@ -1615,6 +2009,22 @@ describe("AdvisorSubmissionPage", () => {
         await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
         expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
         await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      // Catches: a send recorded from the bundle's "Sent this to ...?" question leaving the Quotes count one short for a minute.
+      it("tells the menu's counts to refresh as soon as a send is recorded", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.recordQuoteSend.mockResolvedValue(undefined);
+        const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        await zipOf();
+        expect(invalidate).not.toHaveBeenCalled();
+        fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
+        await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalled());
+        await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
+        invalidate.mockRestore();
       });
 
       it("records no send once the certification has changed since the bundle was made", async () => {

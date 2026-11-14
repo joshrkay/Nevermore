@@ -604,6 +604,8 @@ export type Database = {
           name: string
           updated_at: string
           updated_by_email: string | null
+          // Raised by a trigger by one whenever the name or the kind really changes; a save names the one it started from (20261118160000).
+          version: number
         }
         Insert: never
         Update: never
@@ -869,10 +871,11 @@ export type Database = {
         Args: { p_kind: string; p_record_id: string; p_record_type: string }
         Returns: undefined
       }
-      // Renames a referral partner or changes its kind; the code never changes.
+      // Renames a referral partner or changes its kind; the code never changes. A save names the version it started from (20261118160000):
+      // a save that names none is refused (22023). The answer is {conflict: false, record} or {conflict: true, currentVersion, current, changed}.
       advisor_update_referral_partner: {
-        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null }
-        Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+        Args: { p_code: string; p_name: string; p_kind: string; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
       }
       advisor_list_outbox_events: {
         Args: { p_limit?: number; p_status?: string | null }
@@ -1042,7 +1045,57 @@ export type Database = {
       }
       my_firm_closure: {
         Args: { p_firm_id: string }
-        Returns: { asked_at: string; closes_at: string }[]
+        Returns: { asked_at: string | null; closes_at: string | null; can_ask: boolean; cannot_ask_because: string | null }[]
+      }
+      admin_stop_firm_closure: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: undefined
+      }
+      // Help from Nevermore (20261118120000).
+      start_support_session: {
+        Args: { p_firm_id: string; p_reason: string }
+        Returns: { session_id: string; firm_name: string; firm_address: string; ends_at: string }[]
+      }
+      end_support_session: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
+      my_support_session_here: {
+        Args: Record<PropertyKey, never>
+        Returns: { session_id: string; firm_id: string; firm_name: string; firm_address: string; ends_at: string; ended_at: string | null; is_open: boolean; second_factor_pending: boolean }[]
+      }
+      admin_support_sessions: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          session_id: string
+          firm_id: string
+          firm_name: string
+          firm_address: string
+          admin_email: string
+          reason: string
+          started_at: string
+          ends_at: string
+          ended_at: string | null
+          ended_how: string | null
+          is_open: boolean
+          is_mine: boolean
+        }[]
+      }
+      firm_support_sessions: {
+        Args: { p_firm_id: string }
+        Returns: { session_id: string; reason: string; started_at: string; ends_at: string; ended_at: string | null }[]
+      }
+      is_support_session: {
+        Args: { p_firm_id: string }
+        Returns: boolean
+      }
+      support_reads_firm: {
+        Args: { p_firm_id: string }
+        Returns: boolean
+      }
+      refuse_support_session: {
+        Args: { p_firm_id: string }
+        Returns: undefined
       }
       admin_suspend_firm: {
         Args: { p_firm_id: string; p_reason: string }
@@ -1202,9 +1255,33 @@ export type Database = {
         }
         Returns: Json
       }
+      // The numbers on the menu (20261118140000): { quotes, inbox } for the caller's current firm. Later stories add keys.
+      menu_counts: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       queue_view_counts: {
         Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
+      }
+      // The history of one record (20261118130000): newest first, for a current member of the record's firm (or a support session). The table is
+      // closed to the API; this is the only way in. No id at all: who is a member's email, "Nevermore" or "System" (D-33, D-45).
+      record_history_list: {
+        Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
+        Returns: {
+          at: string
+          change_id: string
+          entry_key: string
+          field: string | null
+          // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
+          from_value: Json | null
+          // 'created' (no field, no values) or 'changed' (one field).
+          kind: string
+          to_value: Json | null
+          who: string
+          // 'member', 'nevermore' or 'system'.
+          who_kind: string
+        }[]
       }
       record_intake_consent: {
         Args: { p_text: string; p_version: string }

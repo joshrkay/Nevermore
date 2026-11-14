@@ -5,9 +5,8 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
 import {
-  choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
+  choiceRule, Field, FormActions, nameRule, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
 } from "@/components/workspace/form";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { funnelRange } from "@/data/funnel";
 import { SOURCE_CODE_PATTERN } from "@/data/intakeSource";
@@ -32,6 +31,7 @@ import {
   type MemberFirm,
   type ReferralPartner,
 } from "@/lib/advisorApi";
+import { LoadFailed } from "@/components/workspace/states";
 
 type Counts = Map<string, { started: number; certified: number }>;
 type Load =
@@ -144,7 +144,7 @@ const AdvisorPartnersPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading partners…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the referral partners" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the referral partners" onRetry={reload} />}
         {load.kind === "no_firm" && <p role="status" className="text-sm">You aren't a member of a firm, so there are no referral partners to show.</p>}
         {load.kind === "ready" && !referralLinksWork(load.firmId) && (
           <p role="note" className="text-sm text-muted-foreground mt-6">
@@ -277,24 +277,58 @@ const PartnerTable = ({ partners, counts, links, onChanged }: { partners: Referr
   </div>
 );
 
-const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
+type SavedPartner = ReferralPartner;
+
+/** How the conflict dialog names a partner's editable fields and words their values (a kind's code is shown as its label). */
+const CONFLICT_FIELDS = {
+  name: { label: "Name" },
+  kind: { label: "Kind of partner", format: (v: unknown) => partnerKindLabel(String(v)) },
+};
+
+const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
   const [editing, setEditing] = useState(false);
+  // A save closes the row, and the Save button that had focus goes with it: focus goes to the row's Edit button, which is what takes its place.
+  const editButton = useRef<HTMLButtonElement>(null);
+  const [focusEdit, setFocusEdit] = useState(false);
+  useEffect(() => {
+    if (focusEdit && !editing) {
+      editButton.current?.focus();
+      setFocusEdit(false);
+    }
+  }, [focusEdit, editing]);
+  // What this row's own last save answered, shown (and edited from) at once; the list reload that follows confirms it and takes over.
+  const [saved, setSaved] = useState<ReferralPartner | null>(null);
+  const partner = saved && saved.version >= listed.version ? saved : listed;
   const link = partnerLink(partner.code);
   const api = useWorkspaceForm({
     schema: partnerSchema,
     defaultValues: { name: partner.name, kind: partner.kind },
-    save: async (v) => {
-      await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind);
+    version: partner.version,
+    versionOf: (answer: SavedPartner) => answer.version,
+    save: async (v, started): Promise<SavedPartner> => {
+      // The version the person started editing from, never the row's live one (a reload may have brought a newer one).
+      if (started.version === undefined) throw new SaveRefused("Couldn't save the partner. Reload the page and try again.");
+      const answer = await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind, started.version);
+      // Nothing was saved: the form opens the conflict dialog (what was typed beside what is there now), and the person chooses.
+      if (!("partner" in answer)) throw new SaveConflict(answer);
       toast.success("Partner saved");
+      return answer.partner;
     },
+    conflictDialog: { noun: "partner", fields: CONFLICT_FIELDS },
     savedValues: (_, v) => v,
-    onSaved: () => {
+    onSaved: (answer) => {
+      setSaved(answer);
       setEditing(false);
+      setFocusEdit(true);
       onChanged();
     },
     failureMessage: "Couldn't save the partner. Check your connection and try again.",
     onCancel: () => setEditing(false),
   });
+  const startEditing = () => {
+    api.begin({ name: partner.name, kind: partner.kind }, partner.version);
+    setEditing(true);
+  };
 
   return (
     <WorkspaceFormProvider api={api}>
@@ -340,7 +374,7 @@ const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPa
         {editing ? (
           <FormActions className="min-w-44" />
         ) : (
-          <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
+          <button ref={editButton} type="button" onClick={startEditing} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
             Edit
           </button>
         )}

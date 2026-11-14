@@ -59,10 +59,12 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
   });
 
   // Catches: a firm with nothing listed is left with a blank where the section should explain itself.
-  it("says plainly that no organisation is listed and what listing one does", async () => {
+  it("says plainly that no organisation is listed and what listing one does, and takes the owner to the form", async () => {
     join.fetchOrganisations.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText(/No organisation is listed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Organisations you list appear here; until you list one, nobody can ask to join/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "List an organisation" }));
+    expect(screen.getByLabelText("Provider")).toHaveFocus();
   });
 
   // Catches: listing sends the wrong provider, the wrong field or untrimmed words, or the list does not refresh.
@@ -126,7 +128,9 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
   it("says plainly when nobody has asked", async () => {
     join.fetchJoinRequests.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText("Nobody is waiting to join.")).toBeInTheDocument();
+    expect(await screen.findByText("People who ask to join from a listed organisation appear here.")).toBeInTheDocument();
+    // Nobody can make a request on another's behalf, so the empty list has no action.
+    expect(within(screen.getByRole("heading", { name: "Asked to join" }).closest("section")!).queryAllByRole("button")).toHaveLength(0);
   });
 
   // Catches: approving makes the person a member with a role the owner did not choose (the default must be the least access), or
@@ -173,6 +177,37 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Someone has already decided that request."));
     expect(toast.success).not.toHaveBeenCalled();
     await waitFor(() => expect(join.fetchJoinRequests).toHaveBeenCalledTimes(2));
+  });
+
+  // Catches: a section that cannot load showing the database's own words in red, or taking the whole page down with it, or its Try again being the page's.
+  it.each([
+    ["Organisations", "fetchOrganisations", "We couldn't load the organisations."],
+    ["Asked to join", "fetchJoinRequests", "We couldn't load the people who asked to join."],
+  ] as const)("says in plain words when %s can't be loaded, keeps the rest of the page, and tries that section again on its own button", async (heading, call, words) => {
+    join[call].mockRejectedValueOnce(new Error("relation \"join_requests\" does not exist"));
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: heading })).closest("section")!;
+    const alert = await within(section).findByRole("alert");
+    expect(alert).toHaveTextContent(words);
+    expect(alert).not.toHaveTextContent("does not exist");
+    expect(screen.getByRole("heading", { name: "Invitations" })).toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(section).queryByRole("alert")).not.toBeInTheDocument());
+    expect(join[call]).toHaveBeenCalledTimes(2);
+    // The button went with the failure: focus is on its panel, not dropped to the page.
+    await waitFor(() => expect(section).toHaveFocus());
+  });
+
+  // Catches: a "Try again" offered where it can never work (the role is gone, or the session ended), and the refusal's sentence lost.
+  it.each([
+    ["a refused role", { forbidden: true }, /no longer have access to this firm's records/],
+    ["an ended session", { unauthenticated: true }, /session has expired/],
+  ] as const)("offers no Try again in a section whose load failed for %s", async (_name, flags, words) => {
+    join.fetchOrganisations.mockRejectedValueOnce(Object.assign(new Error("x"), flags));
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: "Organisations" })).closest("section")!;
+    expect(await within(section).findByRole("alert")).toHaveTextContent(words);
+    expect(within(section).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   // Catches: a lead or an agent is shown the owners' lists, or the page asks the database for them.

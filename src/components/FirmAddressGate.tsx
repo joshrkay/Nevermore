@@ -10,6 +10,8 @@ import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
 import { JOIN_PATH } from "@/lib/invitationLink";
 import { onMembershipChanged } from "@/lib/membershipChanged";
 import { askToJoinFirm } from "@/lib/joinByOrganisationApi";
+import { fetchMySupportSessionHere } from "@/lib/supportApi";
+import { platformFirmsUrl } from "@/lib/firmHost";
 
 // The pages a sign-in lands on hold no data and finish by redirecting. At an existing firm's address they are left
 // alone: hiding one while the new session is checked would unmount it half-way, and its one-time code would be spent
@@ -17,8 +19,9 @@ import { askToJoinFirm } from "@/lib/joinByOrganisationApi";
 const SIGN_IN_LANDING_PATHS: readonly string[] = [AUTH_CALLBACK_PATH, BROKER_CALLBACK_PATH];
 
 // "suspended": a current member of a firm that Nevermore has suspended (story CRM-P1.8). "asked": not a member, but signed in from an
-// organisation the firm lists, so an owner now has their request to join (story CRM-P1.4).
-type Membership = "checking" | "member" | "suspended" | "asked" | "not_member" | "error";
+// organisation the firm lists, so an owner now has their request to join (story CRM-P1.4). "support": a platform admin with an open support
+// session for this firm, let in to read it (CRM-P2.4); "support_ended": the same admin once the hour is over.
+type Membership = "checking" | "member" | "suspended" | "asked" | "support" | "support_ended" | "not_member" | "error";
 
 // Which sign-ins have been written to the firm's record (CRM-P2.3), so a person is recorded once for each sign-in and not
 // once for each page they open. A convenience only: where the browser keeps nothing, the answer lasts until the page is
@@ -79,7 +82,16 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
       .then(async (ok): Promise<Exclude<Membership, "checking">> => {
         // Someone who is not a member is asked about once: the database answers "asked" only for a person whose own sign-in comes from an
         // organisation this firm lists, and "none" for everyone else, so what the rest see is what they saw before.
-        if (!ok) return (await askToJoinFirm(address)) === "asked" ? "asked" : "not_member";
+        if (!ok) {
+          // A platform admin is no member; the database tells only them whether they hold a support session here, open or just over.
+          const support = await fetchMySupportSessionHere();
+          if (support) return support.isOpen ? "support" : "support_ended";
+          return (await askToJoinFirm(address)) === "asked" ? "asked" : "not_member";
+        }
+        // The database answers "member" for a support session too (the role is `support`), so a person who holds an open one here is
+        // asked first: they are let in to read, and no sign-in is written for them (it would fail every time, and is never theirs).
+        const holding = await fetchMySupportSessionHere();
+        if (holding?.isOpen) return "support";
         return (await fetchIsMySuspendedFirmAtAddress(address)) ? "suspended" : "member";
       })
       .then(
@@ -142,6 +154,14 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     return (
       <Message title="You aren't a member of this firm">
         <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
+      </Message>
+    );
+  }
+  if (membership === "support_ended") {
+    return (
+      <Message title="The support hour has ended">
+        <p className="text-muted-foreground mb-4">Nevermore support access to {firm.name} has ended, so there is nothing more to see here. Start another from the firms page if you need to.</p>
+        <a href={platformFirmsUrl()} className="text-primary underline hover:text-primary/90">Back to the firms page</a>
       </Message>
     );
   }

@@ -127,6 +127,17 @@
 \i supabase/migrations/20261118100000_join_by_organisation.sql
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
+\i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
+\i supabase/migrations/20261118120000_help_from_nevermore.sql
+\i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
+\i supabase/migrations/20261118140000_menu_counts.sql
+\i supabase/migrations/20261118140500_menu_counts_fixes.sql
+\i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
+\i supabase/migrations/20261118160500_record_version_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

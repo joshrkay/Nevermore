@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import PeoPanel from "@/components/advisor/peos/PeoPanel";
 import { peoStatusLine } from "@/data/peoEditor";
 import { localToday } from "@/data/peoProfiles";
 import { fetchHasPlatformRole, fetchIsAdmin, loadPeoCatalogDirectory, loadPeoDirectory, type PeoDirectoryEntry } from "@/lib/advisorApi";
 import AddPeoForm from "@/components/advisor/peos/AddPeoForm";
+import { LoadFailed } from "@/components/workspace/states";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean; catalogue: boolean };
 
@@ -60,7 +60,7 @@ const AdvisorPeosPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading the PEOs…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the PEOs" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the PEOs" onRetry={reload} />}
         {load.kind === "ready" && (
           <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
             <div className="space-y-4 min-w-0">

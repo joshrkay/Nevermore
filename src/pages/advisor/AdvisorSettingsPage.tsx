@@ -12,6 +12,8 @@ import { useWorkspace } from "@/components/workspace/useWorkspace";
 import { afterLeavingFirm, leaveFirm } from "@/lib/leaveFirmApi";
 import { closingDate, requestFirmClosure, withdrawFirmClosure } from "@/lib/closeFirmApi";
 import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
+import { LoadFailed } from "@/components/workspace/states";
+import { SaveFailed } from "@/components/workspace/form";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -52,14 +54,16 @@ const closeBody = (firmName: string) =>
   `The firm's owners are emailed now. Nevermore keeps a record of what was deleted, when, and on whose request, without any of the content.`;
 
 const AdvisorSettingsPage = () => {
-  const { isOwner, firm } = useWorkspace();
+  const { isOwner, isSupport, firm } = useWorkspace();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [typed, setTyped] = useState("");
+  // While "Try again" on the closure check asks again, the failure is not on screen: a second failure is then a new alert, read afresh.
+  const [rechecking, setRechecking] = useState(false);
   const [closeProblem, setCloseProblem] = useState<string | null>(null);
-  const { closesAt } = useFirmClosure(firm?.id ?? null);
+  const { closesAt, canAsk, why, loaded: closureKnown, failed: closureFailed, error: closureError } = useFirmClosure(firm?.id ?? null);
 
   const leave = async () => {
     if (!firm) return;
@@ -110,7 +114,8 @@ const AdvisorSettingsPage = () => {
   };
 
   const atAddress = useFirmAddress().status === "known";
-  const links = SETTINGS_LINKS.filter((l) => !l.ownersOnly || isOwner);
+  // Nevermore support reads the pages an owner reads, and is offered nothing it could not use (story CRM-P2.4).
+  const links = SETTINGS_LINKS.filter((l) => !l.ownersOnly || isOwner || isSupport);
   return (
     <main className="container mx-auto px-6 py-8 max-w-3xl">
       <h1 className="font-display text-3xl font-bold mb-6">Settings</h1>
@@ -122,11 +127,11 @@ const AdvisorSettingsPage = () => {
         ))}
       </ul>
 
-      {firm && (
+      {firm && !isSupport && (
         <section aria-labelledby="leave-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 id="leave-heading" className="font-semibold">Leave this firm</h2>
           <p className="text-sm text-muted-foreground mb-3">Stop being a member of {firm.name}. Your sign-in is kept.</p>
-          {problem && <p role="alert" className="text-sm text-destructive mb-3">{problem}</p>}
+          <SaveFailed message={problem} className="font-normal mb-3" />
           <button
             type="button"
             className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50"
@@ -145,13 +150,27 @@ const AdvisorSettingsPage = () => {
               {firm.name} closes on {closingDate(closesAt)}. Until then it is read-only. Withdraw the request and it is exactly as it was.
             </p>
           ) : (
-            <p className="text-sm text-muted-foreground mb-3">Ask to close {firm.name}. It stays read-only for 30 days, and you can change your mind until then.</p>
+            canAsk && <p className="text-sm text-muted-foreground mb-3">Ask to close {firm.name}. It stays read-only for 30 days, and you can change your mind until then.</p>
           )}
-          {closeProblem && <p role="alert" className="text-sm text-destructive mb-3">{closeProblem}</p>}
+          <SaveFailed message={closeProblem} className="font-normal mb-3" />
           {closesAt ? (
             <button type="button" disabled={busy} onClick={() => void withdraw()} className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50">
               Withdraw the request to close
             </button>
+          ) : rechecking ? (
+            <p role="status" className="text-sm text-muted-foreground">Checking whether this firm can be closed…</p>
+          ) : closureFailed && !closureKnown ? (
+            <LoadFailed
+              error={closureError ?? new Error("Couldn't check the firm.")}
+              what="whether this firm can be closed"
+              onRetry={() => { setRechecking(true); void refreshFirmClosure(firm.id).finally(() => setRechecking(false)); }}
+            />
+          ) : !closureKnown ? null : !canAsk ? (
+            <p className="text-sm">
+              {why === "default_firm" ? "This firm takes the intakes people start on Nevermore, so it can't be closed."
+                : why === "refused" ? "This firm was refused, so there is nothing to close."
+                : "You can't close this firm."}
+            </p>
           ) : (
             <button type="button" onClick={() => { setCloseProblem(null); setTyped(""); setClosing(true); }}
               className="min-h-11 px-3 rounded-md border border-destructive text-destructive text-sm hover:bg-muted disabled:opacity-50">
@@ -172,7 +191,7 @@ const AdvisorSettingsPage = () => {
             <input id="close-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off"
               className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm" />
           </div>
-          {closeProblem && <p role="alert" className="text-sm text-destructive">{closeProblem}</p>}
+          <SaveFailed message={closeProblem} className="font-normal" />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>Keep the firm</AlertDialogCancel>
             <AlertDialogAction

@@ -58,6 +58,7 @@ const GLOSSES: Record<string, string> = {
 
 const CANCELLED_GLOSSES: Record<string, string> = {
   "reminders turned off": "Not sent: the prospect stopped draft reminders before this one went.",
+  "the firm closed": "Not sent: the firm closed, so nobody is left to tell.",
   "the draft changed": "Not sent: the draft changed, was certified or closed after this reminder was queued, so the date it gave no longer held.",
 };
 

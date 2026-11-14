@@ -1,5 +1,6 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The banner every workspace page shows while the firm is waiting to close (story CRM-P1.7). It only says what the database enforces: it
@@ -19,18 +20,20 @@ const { default: WorkspaceShell } = await import("./WorkspaceShell");
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 const renderAt = async (at: string) => {
   render(
-    <MemoryRouter initialEntries={[at]}>
-      <Routes>
-        <Route element={<WorkspaceShell />}>
-          <Route path="*" element={<p>The page</p>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[at]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="*" element={<p>The page</p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   await settle();
 };
 const answer = (closesAt: string | null) =>
-  rpc.mockImplementation(async (fn: string) => (fn === "my_firm_closure" ? { data: closesAt ? [{ asked_at: "2026-11-18T10:00:00Z", closes_at: closesAt }] : [], error: null } : { data: null, error: null }));
+  rpc.mockImplementation(async (fn: string) => (fn === "my_firm_closure" ? { data: [{ asked_at: closesAt ? "2026-11-18T10:00:00Z" : null, closes_at: closesAt, can_ask: !closesAt }], error: null } : { data: null, error: null }));
 
 beforeEach(() => {
   clearMyFirms();

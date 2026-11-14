@@ -29,6 +29,8 @@ import {
 
 import { downloadName } from "../../supabase/functions/_shared/fileSignature.ts";
 import { functionErrorReply } from "@/lib/functionError";
+import { z } from "zod";
+import { readSaveAnswer, type RecordConflict, type Saved } from "@/lib/recordVersion";
 // Every call here is authorized by the database (row security and advisor-only functions);
 // the advisor routes in the UI are a convenience on top of that, not the control.
 
@@ -64,7 +66,7 @@ const isEndedSession = (error: { message: string; code?: string }) =>
   ["PGRST301", "PGRST302", "PGRST303"].includes(error.code ?? "") || /\bjwt\b|exp claim/i.test(error.message);
 
 /**
- * The error to throw for a failed call, classified the way AdvisorLoadError reads it: an ended session is `unauthenticated`
+ * The error to throw for a failed call, classified the way `LoadFailed` reads it: an ended session is `unauthenticated`
  * (it signs the person out), a refusal (42501) is `forbidden`. Anything else keeps `message`.
  */
 export const classifyApiError = (error: { message: string; code?: string }, message: string): AdvisorApiError =>
@@ -85,47 +87,6 @@ export async function fetchNeedsSecondFactor(): Promise<boolean> {
   const { data, error } = await supabase.rpc("advisor_needs_second_factor");
   if (error) fail(error, "Couldn't check your sign-in.");
   return data === true;
-}
-
-/** The queue's sorts besides its default: the longest wait on a PEO, or the quote that expires soonest. */
-export type QueueSort = "oldest_waiting" | "earliest_expiry";
-
-/** How many submissions the queue shows at a time. */
-export const QUEUE_PAGE_SIZE = 25;
-
-export interface SubmissionPage {
-  rows: SubmissionSummary[];
-  /** How many submissions match the status and search, across every page. */
-  total: number;
-}
-
-/**
- * One page of the queue, filtered by status (and, with `needsAction`, to the submissions that need advisor
- * action) and searched (every word must appear in the company, contact or reference) in the database.
- * Pages count from 1.
- */
-export async function listSubmissions(opts: {
-  status: PipelineStatus | null;
-  search?: string;
-  page?: number;
-  needsAction?: boolean;
-  /** Only the submissions with a quote request sent and not yet answered. */
-  waiting?: boolean;
-  sort?: QueueSort | null;
-}): Promise<SubmissionPage> {
-  const page = Math.max(1, Math.floor(opts.page ?? 1));
-  const { data, error } = await supabase.rpc("advisor_list_submissions", {
-    p_status: opts.status,
-    p_search: opts.search?.trim() || null,
-    p_limit: QUEUE_PAGE_SIZE,
-    p_offset: (page - 1) * QUEUE_PAGE_SIZE,
-    p_needs_action: opts.needsAction ? true : null,
-    p_waiting: opts.waiting ? true : null,
-    p_sort: opts.sort ?? null,
-  });
-  if (error) fail(error, "Couldn't load submissions.");
-  const rows = data ?? [];
-  return { rows, total: rows[0]?.total_count ?? 0 };
 }
 
 // ---------- Outbox & notifications (G-1.3) ----------
@@ -202,11 +163,32 @@ export async function addReferralPartner(firmId: string, code: string, name: str
   return data as ReferralPartner;
 }
 
-/** Renames a firm's partner or changes its kind. Its code never changes. */
-export async function updateReferralPartner(firmId: string, code: string, name: string, kind: string): Promise<ReferralPartner> {
-  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind });
+const referralPartnerFieldsSchema = z.object({ name: z.string(), kind: z.string() }) as z.ZodType<ReferralPartnerFields>;
+const referralPartnerRowSchema = z
+  .object({ firm_id: z.string(), code: z.string(), name: z.string(), kind: z.string(), version: z.number() })
+  .passthrough() as unknown as z.ZodType<ReferralPartner>;
+/** The editable fields of a referral partner as they are now, in a conflict. */
+export type ReferralPartnerFields = { name: string; kind: string };
+/** Someone else changed the partner while the person was editing it (CRM-S2.4b). Nothing was saved; the answer says what is there now and who changed what. */
+export type ReferralPartnerConflict = RecordConflict<ReferralPartnerFields>;
+
+/**
+ * Renames a firm's partner or changes its kind. Its code never changes. `version` is the partner's version when the person started: a save from a
+ * version that is no longer current saves nothing and returns the conflict (`conflict: true`) instead of the partner (`conflict: false`, with its new version).
+ */
+export async function updateReferralPartner(
+  firmId: string,
+  code: string,
+  name: string,
+  kind: string,
+  version: number,
+): Promise<{ conflict: false; partner: ReferralPartner } | ReferralPartnerConflict> {
+  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_firm_id: firmId, p_code: code, p_name: name, p_kind: kind, p_version: version });
   if (error || !data) fail(error, "Couldn't save the partner.");
-  return data as ReferralPartner;
+  const answer = readSaveAnswer<ReferralPartner, ReferralPartnerFields>(data, referralPartnerRowSchema, referralPartnerFieldsSchema);
+  if (!answer) fail(null, "Couldn't save the partner.");
+  // The generic layer says `record`; this call says `partner`, mapped here once.
+  return answer.conflict ? answer : { conflict: false, partner: (answer as Saved<ReferralPartner>).record };
 }
 
 /**

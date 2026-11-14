@@ -1,16 +1,18 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
 import { choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { NothingYet, PanelFailed } from "@/components/workspace/states";
 import { formatDateTime } from "@/components/advisor/format";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
 import {
   addOrganisation, approveJoinRequest, declineJoinRequest, fetchJoinRequests, fetchOrganisations, removeOrganisation,
   type JoinRequest, type JoinRole, type ListedOrganisation,
 } from "@/lib/joinByOrganisationApi";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 // The two sections of the Invitations page that are about people coming in by their organisation (story CRM-P1.4): the firm's listed
 // Google domains and Microsoft tenants, and the people who asked to join from one. The database decides who may do any of it (a
@@ -74,10 +76,11 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
   const key = ["firm-organisations", firmId];
   const organisations = useQuery({ queryKey: key, queryFn: () => fetchOrganisations(firmId), ...live });
   const [confirming, setConfirming] = useState<string | null>(null);
+  const form = useRef<HTMLDivElement>(null);
   const remove = useMutation({
     mutationFn: removeOrganisation,
     onSuccess: () => { toast.success("Removed. People who sign in from it will no longer be listed."); setConfirming(null); },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(failureWords(err, DID_NOT_GO_THROUGH)),
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
   return (
@@ -90,18 +93,20 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
           email address, and a free-mail domain can't be listed.
         </p>
       </div>
-      <OrganisationForm firmId={firmId} onListed={() => queryClient.invalidateQueries({ queryKey: key })} />
+      <div ref={form}><OrganisationForm firmId={firmId} onListed={() => queryClient.invalidateQueries({ queryKey: key })} /></div>
       {organisations.isError && !organisations.data && (
-        <div role="alert" className="text-sm space-y-2">
-          <p className="text-destructive">{organisations.error.message}</p>
-          <button className={button} onClick={() => void organisations.refetch()}>Try again</button>
-        </div>
+        <PanelFailed what="the organisations" error={organisations.error} onRetry={() => void organisations.refetch()} />
       )}
       {organisations.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>
       )}
       {organisations.data && organisations.data.length === 0 && (
-        <p role="status" className="text-sm text-muted-foreground">No organisation is listed, so nobody can ask to join by signing in from one.</p>
+        // Nothing yet (CRM-S2.2): the form above makes the first one, so the action takes the person to its first field.
+        <NothingYet
+          layout="line"
+          sentence="Organisations you list appear here; until you list one, nobody can ask to join by signing in from it."
+          primary={{ label: "List an organisation", onClick: () => form.current?.querySelector<HTMLElement>("input, select")?.focus() }}
+        />
       )}
       {organisations.data && organisations.data.length > 0 && (
         <ul aria-label="Listed organisations" className="space-y-2">
@@ -148,7 +153,7 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
       toast.success(d.kind === "approve" ? `${d.request.email} is now ${WITH_ARTICLE[held ?? d.role]} of ${firmName}.` : `Declined ${d.request.email}.`);
       setDeclining(null);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(failureWords(err, DID_NOT_GO_THROUGH)),
     // Whatever happened, what the database holds now is what the owner sees.
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
@@ -161,15 +166,13 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
         </p>
       </div>
       {requests.isError && !requests.data && (
-        <div role="alert" className="text-sm space-y-2">
-          <p className="text-destructive">{requests.error.message}</p>
-          <button className={button} onClick={() => void requests.refetch()}>Try again</button>
-        </div>
+        <PanelFailed what="the people who asked to join" error={requests.error} onRetry={() => void requests.refetch()} />
       )}
       {requests.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>
       )}
-      {requests.data && requests.data.length === 0 && <p role="status" className="text-sm text-muted-foreground">Nobody is waiting to join.</p>}
+      {/* Nothing yet (CRM-S2.2), with no action: people ask by signing in, an owner cannot make a request. */}
+      {requests.data && requests.data.length === 0 && <NothingYet layout="line" sentence="People who ask to join from a listed organisation appear here." />}
       {requests.data && requests.data.length > 0 && (
         <ul aria-label="Asked to join" className="space-y-3">
           {requests.data.map((r: JoinRequest) => {

@@ -413,9 +413,9 @@ export const DATA_CLASSES: DataClass[] = [
     label: "Firms, teams and who belongs to them",
     sensitivity: "confidential",
     examples: "A brokerage's name and address in the web address, who sees its records, its teams, and which accounts are members of it, in what role and from and until when, and which members are suspended and since when. Nothing about an intake's answers.",
-    stored: { tables: ["firms", "firm_teams", "firm_memberships", "firm_member_suspensions", "firm_suspensions", "firm_closures"], buckets: [], elsewhere: [] },
+    stored: { tables: ["firms", "firm_teams", "firm_memberships", "firm_member_suspensions", "firm_suspensions", "firm_closures", "support_sessions"], buckets: [], elsewhere: [] },
     retention: "For good: a membership is never changed, only ended, so who could see a record on a given day can always be answered.",
-    deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. A closed firm's own working data (invitations, listed organisations, requests to join, saved views, column choices, referral partners and teams) is deleted 30 days after an owner asked; every membership is ended, not deleted, and the platform keeps a record of the closing with a count per table and no content (CRM-P1.7). Intakes are never deleted by it (docs/DATA_HANDLING.md).",
+    deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. A closed firm's own working data (invitations, listed organisations, requests to join, saved views, column choices, referral partners and teams) is deleted 30 days after an owner asked; every membership is ended, not deleted, and the platform keeps a record of the closing with a count per table and no content (CRM-P1.7). Intakes are never deleted by it (docs/DATA_HANDLING.md). The platform keeps its own record of each hour of support access Nevermore opened on a firm (which firm, why, when it started and ended, and which Nevermore person, for the platform alone, CRM-P2.4); the firm's owners read the reason and the times and never who, and the record is kept after the firm closes.",
   },
   {
     id: "firm_invitations",
@@ -433,7 +433,7 @@ export const DATA_CLASSES: DataClass[] = [
     examples: "The Google domains and Microsoft tenants a firm's owners listed (a domain or tenant ID and the name the owner gave it), and each request to join: which account asked, when, which listed organisation vouched, and whether an owner approved it (with the role) or declined it, and who decided. Nothing about an intake.",
     stored: { tables: ["firm_organisations", "join_requests"], buckets: [], elsewhere: [] },
     retention: "Kept with the firm, as the record of how a person joined or was turned away. A declined request is kept so the same person is not listed again each time they sign in. A rule to clear old requests is not built yet (docs/DATA_HANDLING.md).",
-    deletion: "A person's account deleted at their request removes their requests; a firm's listing is removed by an owner. A closed firm's own working data (invitations, listed organisations, requests to join, saved views, column choices, referral partners and teams) is deleted 30 days after an owner asked; every membership is ended, not deleted, and the platform keeps a record of the closing with a count per table and no content (CRM-P1.7). Intakes are never deleted by it (docs/DATA_HANDLING.md).",
+    deletion: "A person's account deleted at their request removes their requests; a firm's listing is removed by an owner. A closed firm's own working data (invitations, listed organisations, requests to join, saved views, column choices, referral partners and teams) is deleted 30 days after an owner asked; every membership is ended, not deleted, and the platform keeps a record of the closing with a count per table and no content (CRM-P1.7). Intakes are never deleted by it (docs/DATA_HANDLING.md). The platform keeps its own record of each hour of support access Nevermore opened on a firm (which firm, why, when it started and ended, and which Nevermore person, for the platform alone, CRM-P2.4); the firm's owners read the reason and the times and never who, and the record is kept after the firm closes.",
   },
   {
     id: "firm_activity",
@@ -443,6 +443,15 @@ export const DATA_CLASSES: DataClass[] = [
     stored: { tables: ["firm_activity"], buckets: [], elsewhere: [] },
     retention: `${RETENTION.firmActivityDays} days, the window for operational events (D4); no one can change or delete an entry before then, an admin included. The window is a draft (D4): counsel may ask for longer.`,
     deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included; an entry made by a platform admin from outside the firm reads as \"Nevermore\" (no name, email or id), D-33.",
+  },
+  {
+    id: "record_history",
+    label: "The history of a record",
+    sensitivity: "confidential",
+    examples: "For each record a firm keeps (today a referral partner), who created it and when, and every change to its own fields: who, when, the field, and the value before and after (a partner's name or kind). Only the fields a trigger was told to track; never an intake's answers.",
+    stored: { tables: ["record_history"], buckets: [], elsewhere: [] },
+    retention: "Kept as long as the record is (D-45). It starts when it shipped: changes before then were not kept.",
+    deletion: "Nobody can change or delete an entry, an admin included. Deleting a record removes its history in the same step, and closing a firm (CRM-P1.7) deletes the firm's histories with its other data. A firm reads it through one function, as a member of the record's firm; who at Nevermore acted reads as \"Nevermore\", with no name, email or id (D-33).",
   },
   {
     id: "table_settings",

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PIPELINE_STATUSES } from "@/data/advisor";
 
@@ -9,6 +9,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 const { countQueueViews, listQueue, QUEUE_FIELDS, QUEUE_LIST_PAGE_SIZE } = await import("./queueApi");
 const { AdvisorApiError } = await import("./advisorApi");
+const { FILTER_DAYS_MAX, FILTER_LIST_MAX, FILTER_TEXT_MAX, MAX_TABLE_PAGE, TABLE_FILTER_LIMIT, VIEWS_PER_COUNT_CALL } = await import("@/components/workspace/table/columns");
 type QueueFilter = import("./queueApi").QueueFilter;
 
 const caught = async (call: () => Promise<unknown>) => {
@@ -112,6 +113,47 @@ describe("the queue's fields agree with the database", () => {
   it("names the same fields with the same kinds", () => {
     const server = Object.fromEntries([...block("queue_fields").matchAll(/WHEN '(\w+)' THEN '(\w+)'/g)].map((m) => [m[1], m[2]]));
     expect(server).toEqual(QUEUE_FIELDS);
+  });
+
+  // Catches: the address codec letting through (or cutting short) what the database takes. Each limit is read from the CHECK itself in the
+  // latest migration that holds it (not from the words of its message, which could stay while the check changes), its message must say the
+  // same number, and no later migration may have redefined the function that holds the check without it.
+  describe("reads the address by the database's own limits", () => {
+    const files = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort().map((name) => ({ name, sql: readFileSync(`supabase/migrations/${name}`, "utf8") }));
+    // The text of a function's definition: from its CREATE to the next statement that creates something.
+    const bodiesOf = (sql: string, fn: string) =>
+      [...sql.matchAll(new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+public\\.${fn}\\b`, "g"))].map((m) => {
+        const rest = sql.slice(m.index!);
+        const next = rest.slice(10).search(/\nCREATE\s/);
+        return next === -1 ? rest : rest.slice(0, next + 10);
+      });
+    const limit = (check: RegExp, message: RegExp, owners: string[], holders = owners, which: "latest" | "first" = "latest"): number => {
+      const holding = files
+        .map((f) => ({ name: f.name, sql: holders.flatMap((h) => bodiesOf(f.sql, h)).find((b) => check.test(b)) }))
+        .filter((f): f is { name: string; sql: string } => f.sql !== undefined);
+      expect(holding.length, `a function (${holders}) holds ${check}`).toBeGreaterThan(0);
+      const latest = which === "first" ? holding[0] : holding.at(-1)!;
+      const number = Number(latest.sql.match(check)![1]);
+      expect(Number(latest.sql.match(message)?.[1]), `${latest.name}: the message agrees with the check ${check}`).toBe(number);
+      const redefined = files.filter((f) => f.name > latest.name && owners.some((o) => new RegExp(`CREATE\\s+(OR\\s+REPLACE\\s+)?FUNCTION\\s+public\\.${o}\\b`).test(f.sql))).map((f) => f.name);
+      expect(redefined, `a later migration redefines ${owners} without ${check}`).toEqual([]);
+      return number;
+    };
+    const cases: [string, number, RegExp, RegExp, string[], string[]?, ("latest" | "first")?][] = [
+      ["a page", MAX_TABLE_PAGE, /pg < 1 OR pg > (\d+)/, /A page number is 1 to (\d+)/, ["queue_list_submissions"]],
+      // The full path (queue_page_full) was the first definition of the call, renamed when the faster path came in 20261117100500, and is
+      // restated in 20261118150000 (text sorted by the ICU collation); its latest definition must still check the page.
+      ["a page, in the full path", MAX_TABLE_PAGE, /pg < 1 OR pg > (\d+)/, /A page number is 1 to (\d+)/, ["queue_page_full"]],
+      ["filters in all", TABLE_FILTER_LIMIT, /jsonb_array_length\(p_filters\) > (\d+)/, /A table takes at most (\d+) filters/, ["queue_filters_checked"]],
+      ["a text value", FILTER_TEXT_MAX, /char_length\(v #>> '\{\}'\) > (\d+)/, /takes at most (\d+) characters/, ["workspace_filter_check"]],
+      ["a list value", FILTER_TEXT_MAX, /char_length\(item #>> '\{\}'\) > (\d+)/, /takes values of 1 to (\d+) characters/, ["workspace_filter_check"]],
+      ["values in a list", FILTER_LIST_MAX, /jsonb_array_length\(v\) = 0 OR jsonb_array_length\(v\) > (\d+)/, /needs 1 to (\d+) values/, ["workspace_filter_check"]],
+      ["days", FILTER_DAYS_MAX, /NOT BETWEEN 0 AND (\d+)\s*\n?\s*OR/, /whole number of days, 0 to (\d+)/, ["workspace_filter_check"]],
+      ["views in one count call", VIEWS_PER_COUNT_CALL, /jsonb_array_length\(p_views\) NOT BETWEEN 1 AND (\d+)/, /Views are a list of 1 to (\d+)/, ["queue_view_counts"]],
+    ];
+    it.each(cases)("%s", (_name, ours, check, message, owners, holders, which) => {
+      expect(ours).toBe(limit(check, message, owners, holders, which));
+    });
   });
 
   it("offers the pipeline's stages as the stage filter's values, in order", () => {

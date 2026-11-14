@@ -6,25 +6,26 @@ const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ signOut }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
-const { default: AdvisorLoadError } = await import("./AdvisorLoadError");
+const { LoadFailed } = await import("./LoadFailed");
 const { AdvisorApiError } = await import("@/lib/advisorApi");
 
 const renderError = (error: Error, onRetry = vi.fn()) => {
   render(
     <MemoryRouter>
-      <AdvisorLoadError error={error} what="submissions" onRetry={onRetry} />
+      <LoadFailed error={error} what="the submissions" onRetry={onRetry} />
     </MemoryRouter>,
   );
   return onRetry;
 };
 
-describe("AdvisorLoadError", () => {
+describe("LoadFailed", () => {
   beforeEach(() => signOut.mockReset().mockResolvedValue(undefined));
 
   it("explains an ordinary failure and offers to retry", () => {
     const onRetry = renderError(new Error("Network request failed"));
-    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load submissions.");
-    expect(screen.getByRole("alert")).toHaveTextContent("Network request failed");
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load the submissions.");
+    // The network's own words are not for a person (CRM-S2.3, D-175).
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Network request failed");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(signOut).not.toHaveBeenCalled();

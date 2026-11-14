@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
+import { useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, BellRing, MailWarning } from "lucide-react";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
 import FieldReviewPanel from "@/components/advisor/FieldReviewPanel";
@@ -13,7 +13,10 @@ import PeoNeedsPanel from "@/components/advisor/PeoNeedsPanel";
 import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
+import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
+import { LoadFailed, NotAvailable, PlaceholderBlock, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
+import { MENU_COUNTS_KEY } from "@/lib/menuCountsApi";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
@@ -39,7 +42,9 @@ const AdvisorSubmissionPage = () => {
   const { id = "" } = useParams();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
-  // The submission whose opening the database has recorded, so a reload after a change is not another opening.
+  // The submission whose opening has been SENT to the database (not only answered), so neither a reload after a change nor "Try again" on
+  // a slow first answer is another opening: the database records an opening when it handles the call, and a second call a half minute
+  // later is a second entry in the firm's record. A failed call clears it, since a failed call recorded nothing.
   const openedRef = useRef<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
@@ -60,13 +65,14 @@ const AdvisorSubmissionPage = () => {
     setLoad((prev) => (prev.kind === "ready" && prev.detail.id === id ? prev : { kind: "loading" }));
     // The first load of a submission on screen is its opening, which the database records; a reload after a change is not.
     const opening = openedRef.current !== id;
+    if (opening) openedRef.current = id;
     loadSubmission(id, opening)
-      .then((detail) => {
-        openedRef.current = id;
-        return detail;
-      })
       .then((detail) => !cancelled && setLoad(detail ? { kind: "ready", detail } : { kind: "not_found" }))
-      .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
+      .catch((error: Error & { code?: string }) => {
+        if (opening && openedRef.current === id) openedRef.current = null;
+        // An address whose id is no id at all (the database refuses it, 22P02) is a submission that isn't there, not a load that could work next time.
+        if (!cancelled) setLoad(error.code === "22P02" ? { kind: "not_found" } : { kind: "error", error });
+      });
     return () => { cancelled = true; };
   }, [id, attempt]);
 
@@ -76,6 +82,9 @@ const AdvisorSubmissionPage = () => {
     setHighlighted(messageId);
     document.getElementById(messageAnchor(messageId))?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, []);
+
+  // Ten seconds with nothing to show (not a reload after a change, which keeps the submission on screen, D-49).
+  const slowLoad = useSlowLoad(load.kind === "loading", reload);
 
   const messageIds = useMemo(
     () => new Set(load.kind === "ready" ? load.detail.transcript.map((m) => m.id) : []),
@@ -89,20 +98,11 @@ const AdvisorSubmissionPage = () => {
           <ArrowLeft className="w-4 h-4" /> All submissions
         </Link>
 
-        {load.kind === "loading" && (
-          <div className="flex items-center justify-center py-24 text-muted-foreground" role="status">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading submission…
-          </div>
-        )}
+        {load.kind === "loading" && <SubmissionLoading slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />}
 
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="this submission" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="this submission" onRetry={reload} />}
 
-        {load.kind === "not_found" && (
-          <div className="border border-dashed border-border rounded-xl p-12 text-center">
-            <p className="font-medium">Submission not found.</p>
-            <p className="text-sm text-muted-foreground">It may have been removed, or the link is wrong.</p>
-          </div>
-        )}
+        {load.kind === "not_found" && <NotAvailable noun="submission" backTo="/advisor" backLabel="Back to all submissions" />}
 
         {load.kind === "ready" && (
           <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} />
@@ -111,6 +111,42 @@ const AdvisorSubmissionPage = () => {
     </div>
   );
 };
+
+/**
+ * What the page shows while the submission is on its way (CRM-S2.1): the title area and each panel's own heading as the real page draws
+ * them, with grey lines where the company, the details and each panel's content will be. Only the panels every submission has are drawn
+ * (the PEO threads and what changed since signing appear when the submission has them). The slow-load line sits under the title.
+ */
+const SubmissionLoading = ({ slow, onTryAgain }: { slow: boolean; onTryAgain: () => void }) => (
+  <RecordLoading name="submission">
+    <div className="mb-6">
+      <div aria-hidden="true" aria-busy="true" className="flex h-9 items-center"><PlaceholderLine width="name" className="h-6 w-72" /></div>
+      <SlowLoadLine loading slow={slow} onTryAgain={onTryAgain} />
+      <div aria-hidden="true" aria-busy="true" className="mt-2 space-y-2">
+        <PlaceholderLine width="person" className="block" />
+        <PlaceholderLine width="name" className="block w-96" />
+        <PlaceholderLine width="text" className="block" />
+      </div>
+    </div>
+    <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+      <div className="space-y-6 min-w-0">
+        <PlaceholderPanel heading="What each PEO still needs"><PlaceholderLines count={3} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Captured fields"><PlaceholderLines count={6} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Transcript"><PlaceholderBlock className="h-40" /></PlaceholderPanel>
+      </div>
+      <div className="space-y-6">
+        <PlaceholderPanel heading="Needs advisor action"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Ask the prospect"><PlaceholderBlock className="h-24" /></PlaceholderPanel>
+        <PlaceholderPanel heading="Quote requests"><PlaceholderLines count={3} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Status"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Advisor packet"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Uploaded documents"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Internal notes"><PlaceholderLines count={2} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Review audit trail"><PlaceholderLines count={2} /></PlaceholderPanel>
+      </div>
+    </div>
+  </RecordLoading>
+);
 
 const Detail = ({
   detail,
@@ -130,6 +166,13 @@ const Detail = ({
   // The PEOs and their profiles in use, from the database: the quote requests' fit checks, the packet's checks and
   // the census layouts read them.
   const peoCatalog = usePeoCatalog();
+  // A thread marked read clears the mark on the queue; the menu's Inbox count follows at once, not at its next refresh (story CRM-S1.1c).
+  const queryClient = useQueryClient();
+  const refreshMenuCounts = useCallback(() => void queryClient.invalidateQueries({ queryKey: [...MENU_COUNTS_KEY] }), [queryClient]);
+  const threadOpened = useCallback(() => { reload(); refreshMenuCounts(); }, [reload, refreshMenuCounts]);
+  // A change to a quote request or to the status (a send recorded, a quote received or declined, Won or Lost closing the rest) moves the
+  // Quotes count, so the menu is told at once too, not at its next refresh.
+  const quotesChanged = useCallback(() => { reload(); refreshMenuCounts(); }, [reload, refreshMenuCounts]);
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
   // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
@@ -146,6 +189,8 @@ const Detail = ({
   };
   // What each PEO still needs is built from the last certified version, never from answers given since.
   const certifiedVersion = lastCertifiedVersion(detail, verifiedFieldsOf(detail.reviews));
+  // "What each PEO still needs" shows the profiles loading or failing when there is a certified version it can read; it then says so for the Advisor packet too.
+  const needsShowsCatalog = !!certifiedVersion && !certifiedVersion.cantTell;
   const sub = detail.submission;
   // The certification the page's files were built from, checked again at each download's click.
   const builtFrom = certificationOf(detail.id, detail.intakeStatus, sub ?? {});
@@ -199,7 +244,7 @@ const Detail = ({
             submission={sub}
             sessionId={detail.id}
             stage={detail.pipelineStatus}
-            onSendRecorded={reload}
+            onSendRecorded={quotesChanged}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
           />
           <PeoThreadPanel
@@ -210,7 +255,7 @@ const Detail = ({
             notes={detail.quoteRequestNotes}
             events={detail.quoteRequestEvents}
             reads={detail.quoteRequestThreadReads}
-            onOpened={reload}
+            onOpened={threadOpened}
           />
           <FieldReviewPanel
             sessionId={detail.id}
@@ -267,7 +312,7 @@ const Detail = ({
             data={detail.data}
             catalog={peoCatalog.peos}
             onAskProspect={(message) => askProspect(message)}
-            onChanged={reload}
+            onChanged={quotesChanged}
           />
           <StatusPanel
             key={detail.pipelineStatus}
@@ -278,9 +323,9 @@ const Detail = ({
             certifiedOnce={!!detail.submission?.signer_name}
             history={detail.history}
             quoteRequests={detail.quoteRequests}
-            onChanged={reload}
+            onChanged={quotesChanged}
           />
-          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} />
+          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} announceCatalog={!needsShowsCatalog} />
           <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
           <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />
@@ -345,6 +390,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
         own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
+        <DownloadsOffNotice />
         <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} onDownloaded={() => recordSubmissionFileDownload(detail.id)} />
       </div>
     )}

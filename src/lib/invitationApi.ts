@@ -45,7 +45,8 @@ export function resendInvitation(invitationId: string) {
 /** The firm's invitations that can still be used or resent, oldest first. Owners only. */
 export async function fetchPendingInvitations(firmId: string): Promise<PendingInvitation[]> {
   const { data, error } = await supabase.rpc("firm_pending_invitations", { p_firm_id: firmId });
-  if (error) throw new Error(error.code === "42501" ? "Only an owner of the firm can see invitations." : "Couldn't load the invitations.");
+  // A refusal (42501) carries `forbidden`, which the page reads (as it reads the advisor reads') to say there is nothing to retry.
+  if (error) throw error.code === "42501" ? Object.assign(new Error("Only an owner of the firm can see invitations."), { forbidden: true }) : new Error("Couldn't load the invitations.");
   return (data ?? []).map((i) => ({
     id: i.invitation_id,
     email: i.email,

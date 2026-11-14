@@ -76,10 +76,19 @@ describe("FirmInvitationsPage", () => {
     expect(items[2]).toHaveTextContent("The email did not go out");
   });
 
-  it("says plainly when nobody is waiting", async () => {
+  // Catches: an empty list that leaves the owner without a way to make the first invitation, offers one that does not lead to the form, or is announced twice.
+  it("says what belongs in an empty list, with an action that takes the owner to the invite form, and is one status", async () => {
     api.fetchPendingInvitations.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText("No invitations are waiting.")).toBeInTheDocument();
+    expect(await screen.findByText("Invitations you send appear here until they are accepted.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Pending invitations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear filters/ })).not.toBeInTheDocument();
+    // Each empty list says its own sentence once, as its own polite status.
+    const statuses = screen.getAllByRole("status").filter((s) => s.textContent);
+    expect(statuses.filter((s) => s.textContent === "Invitations you send appear here until they are accepted.")).toHaveLength(1);
+    expect(statuses.every((s) => s.getAttribute("aria-live") === "polite")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    expect(screen.getByLabelText("Email address")).toHaveFocus();
   });
 
   it("invites the email typed with the role chosen, then clears the form and reloads the list", async () => {
@@ -314,10 +323,18 @@ describe("FirmInvitationsPage", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("That invitation has already been used or withdrawn."));
   });
 
+  // Catches: the owners-only refusal read as a failure that "Try again" might fix.
+  it("says there is nothing to retry when the list is refused to this account", async () => {
+    api.fetchPendingInvitations.mockRejectedValueOnce(Object.assign(new Error("Only an owner of the firm can see invitations."), { forbidden: true }));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have access to this firm's records.");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
   it("offers a retry when the list can't be loaded", async () => {
     api.fetchPendingInvitations.mockRejectedValueOnce(new Error("Couldn't load the invitations."));
     renderPage();
-    expect(await screen.findByText("Couldn't load the invitations.")).toBeInTheDocument();
+    expect(await screen.findByText("We couldn't load the invitations.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("list", { name: "Pending invitations" })).toBeInTheDocument();
   });

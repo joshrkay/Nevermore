@@ -15,6 +15,10 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const db = {
   firms: [] as { firm_id: string; name: string; address: string; role: string }[],
   closesAt: null as string | null,
+  // What the database says about the firm: false for the one that takes every intake.
+  mayClose: true,
+  why: null as string | null,
+  loadFails: false,
   fail: null as { code?: string; message: string } | "pending" | null,
   calls: [] as [string, Record<string, unknown>][],
 };
@@ -24,7 +28,9 @@ const rpc = vi.fn(async (fn: string, args: Record<string, unknown> = {}) => {
     case "my_firms": return { data: db.firms, error: null };
     case "has_role": return { data: false, error: null };
     case "advisor_needs_second_factor": return { data: false, error: null };
-    case "my_firm_closure": return { data: db.closesAt ? [{ asked_at: "2026-11-18T10:00:00Z", closes_at: db.closesAt }] : [], error: null };
+    case "my_firm_closure":
+      if (db.loadFails) return { data: null, error: { code: "08006", message: "network down" } };
+      return { data: [{ asked_at: db.closesAt ? "2026-11-18T10:00:00Z" : null, closes_at: db.closesAt, can_ask: db.mayClose && !db.closesAt, cannot_ask_because: db.mayClose ? null : db.why }], error: null };
     case "request_firm_closure": {
       if (db.fail === "pending") return new Promise(() => undefined);
       if (db.fail) return { data: null, error: db.fail };
@@ -67,6 +73,9 @@ describe("closing a firm from Settings", () => {
     db.calls = [];
     db.fail = null;
     db.closesAt = null;
+    db.mayClose = true;
+    db.why = null;
+    db.loadFails = false;
     firmAddress = { status: "none" };
     db.firms = [{ firm_id: "f1", name: "Acme Brokers", address: "acme", role: "owner" }];
   });
@@ -134,6 +143,63 @@ describe("closing a firm from Settings", () => {
     await waitFor(() => expect(calls("withdraw_firm_closure")).toEqual([["withdraw_firm_closure", { p_firm_id: "f1" }]]));
     expect(await screen.findByRole("button", { name: "Close this firm" })).toBeEnabled();
     expect(screen.queryByRole("heading", { name: "This firm is closing" })).not.toBeInTheDocument();
+  });
+
+  // Catches: the firm that takes every intake is offered "Close this firm" (the database refuses it, but the page must not invite it).
+  it("does not offer to close the firm the database says can't be closed, and says why", async () => {
+    db.mayClose = false;
+    db.why = "default_firm";
+    await renderPage();
+    expect(await screen.findByText("This firm takes the intakes people start on Nevermore, so it can't be closed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close this firm" })).not.toBeInTheDocument();
+    expect(calls("request_firm_closure")).toEqual([]);
+  });
+
+  // Catches: a refused firm's owner is told the default firm's sentence (it is the only reason that gets it), or is offered the button.
+  it("says a refused firm was refused, not that it takes every intake", async () => {
+    db.mayClose = false;
+    db.why = "refused";
+    await renderPage();
+    expect(await screen.findByText("This firm was refused, so there is nothing to close.")).toBeInTheDocument();
+    expect(screen.queryByText(/takes the intakes people start on Nevermore/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close this firm" })).not.toBeInTheDocument();
+  });
+
+  // Catches: a failed load is read as "this firm can't be closed" (an ordinary firm's owner told it takes every intake after a network error),
+  // or leaves no way to try again.
+  it("says it couldn't check when the load fails, offers to try again, and never says the firm can't be closed", async () => {
+    db.loadFails = true;
+    await renderPage();
+    expect(await screen.findByText(/couldn.t load whether this firm can be closed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/takes the intakes people start on Nevermore/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close this firm" })).not.toBeInTheDocument();
+    db.loadFails = false;
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(await screen.findByRole("button", { name: "Close this firm" })).toBeEnabled();
+  });
+
+  // Catches (D-175): "Try again" on a check that fails again leaving the first failure on screen, so the second is never announced, and focus
+  // left on a button that was never replaced.
+  it("takes the failure away while it asks again, so a second failure is announced afresh, with focus on its button", async () => {
+    db.loadFails = true;
+    await renderPage();
+    const first = await screen.findByRole("alert");
+    expect(first).toHaveTextContent(/couldn.t load whether this firm can be closed/i);
+    fireEvent.click(within(first).getByRole("button", { name: "Try again" }));
+    expect(first).not.toBeInTheDocument();
+    const second = await screen.findByRole("alert");
+    expect(second).not.toBe(first);
+    expect(within(second).getByRole("button", { name: "Try again" })).toHaveFocus();
+  });
+
+  // Catches: the page words the database's refusal of the default firm as something else.
+  it("says why when the database refuses the firm that takes every intake", async () => {
+    db.fail = { code: "PT403", message: "This firm takes the intakes people start on Nevermore, so it can't be closed" };
+    await renderPage();
+    const dialog = await openDialog();
+    fireEvent.change(dialog.getByLabelText(/Type the firm's name to confirm/), { target: { value: "Acme Brokers" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Close Acme Brokers in 30 days" }));
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("so it can't be closed");
   });
 
   // Catches: a refusal is shown as the database's text or hides that nothing was asked; the dialog closes as if it had worked.

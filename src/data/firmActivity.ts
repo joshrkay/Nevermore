@@ -32,12 +32,17 @@ export const ENTRY_KINDS = [
   { value: "join_declined", label: "Declined a request to join" },
   { value: "closure_asked", label: "Asked to close the firm" },
   { value: "closure_withdrawn", label: "Withdrew the request to close the firm" },
+  { value: "closure_stopped", label: "Nevermore stopped the request to close the firm" },
 ] as const;
 
 export const ENTRY_KIND_VALUES: string[] = ENTRY_KINDS.map((k) => k.value);
 
 /** What an entry's kind is called; a kind this version doesn't know is shown as the database wrote it. */
 export const kindLabel = (kind: string): string => ENTRY_KINDS.find((k) => k.value === kind)?.label ?? kind;
+
+/** What an entry is called in the list: its kind, except that the end of a use of support (story CRM-P2.4) is named as the end. */
+export const entryLabel = (kind: string, recordType: string): string =>
+  kind === "support_access" && recordType === "support_session_end" ? "Nevermore support's access ended" : kindLabel(kind);
 
 // Kept equal to the database's list of record types by src/data/schemaSync.test.ts.
 const RECORD_LABELS: Record<string, string> = {
@@ -47,6 +52,8 @@ const RECORD_LABELS: Record<string, string> = {
   quote_request: "Quote request",
   membership: "Membership",
   firm: "Firm",
+  support_session: "Support session",
+  support_session_end: "Support session ended",
 };
 
 export const RECORD_TYPE_VALUES: string[] = Object.keys(RECORD_LABELS);

@@ -10,7 +10,11 @@ import {
 import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
 import ClosingBanner from "./ClosingBanner";
-import { MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
+import ConnectionBanner from "./ConnectionBanner";
+import SupportBanner, { SupportEnded } from "./SupportBanner";
+import { useSupportOver } from "./useSupportOver";
+import { badgeText, MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
+import { useMenuCounts } from "./useMenuCounts";
 import { useWorkspace, WorkspaceProvider } from "./useWorkspace";
 
 // The class of the grey-and-blue look (D-41, src/index.css). It goes on the page's root element, not on the shell's own
@@ -19,15 +23,20 @@ export const WORKSPACE_THEME_CLASS = "theme-workspace";
 
 const initial = (name: string) => name.trim().charAt(0).toUpperCase() || "?";
 
-const Item = ({ item, pathname, search, onChoose }: { item: MenuItem; pathname: string; search: URLSearchParams; onChoose: () => void }) => {
+const Item = ({ item, pathname, search, onChoose, count }: { item: MenuItem; pathname: string; search: URLSearchParams; onChoose: () => void; count?: number }) => {
   const here = item.isCurrent(pathname, search);
   const Icon = item.icon;
+  const badge = count === undefined ? null : badgeText(count);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={here}>
-        <Link to={item.to} onClick={onChoose} aria-current={here ? "page" : undefined}>
+        {/* With a badge the link is named "Quotes, 4 open", never read as a bare number; the number said is the real one, not the capped one. */}
+        <Link to={item.to} onClick={onChoose} aria-current={here ? "page" : undefined} aria-label={badge && item.countWords ? `${item.label}, ${item.countWords(count as number)}` : undefined}>
           <Icon aria-hidden="true" />
-          <span>{item.label}</span>
+          <span className="min-w-0 truncate">{item.label}</span>
+          {badge && item.countWords && (
+            <span aria-hidden="true" className="ml-auto min-w-5 shrink-0 rounded-full bg-sidebar-primary px-1.5 text-center text-xs font-semibold leading-5 text-sidebar-primary-foreground">{badge}</span>
+          )}
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -42,6 +51,7 @@ const MenuBody = () => {
   const params = new URLSearchParams(search);
   const { signOut } = useAuth();
   const { firm, role, isPlatformAdmin, person } = useWorkspace();
+  const counts = useMenuCounts();
   return (
     <>
       {isMobile && <SheetTitle className="sr-only">Menu</SheetTitle>}
@@ -60,7 +70,7 @@ const MenuBody = () => {
         <SidebarGroup className="flex-1">
           <nav aria-label="Workspace" className="flex h-full flex-col">
             <SidebarMenu>
-              {MENU_ITEMS.map((item) => <Item key={item.key} item={item} pathname={pathname} search={params} onChoose={close} />)}
+              {MENU_ITEMS.map((item) => <Item key={item.key} item={item} pathname={pathname} search={params} onChoose={close} count={item.countKey ? counts[item.countKey] : undefined} />)}
             </SidebarMenu>
             <SidebarMenu className="mt-auto">
               {isPlatformAdmin && (
@@ -129,6 +139,23 @@ const PhoneBar = () => {
   );
 };
 
+// The part of the frame that needs the workspace's answer (so it sits inside the provider): the banners and the page, or, once a support
+// session's hour is over, the page that says so in the page's place.
+const Frame = () => {
+  const { supportEndsAt } = useWorkspace();
+  const supportOver = useSupportOver(supportEndsAt);
+  return (
+    <>
+      <PhoneBar />
+      <SupportBanner />
+      <ClosingBanner />
+      <ConnectionBanner />
+      {supportOver ? <SupportEnded /> : <Outlet />}
+      <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
+    </>
+  );
+};
+
 /**
  * The frame of every member page (story CRM-S1.1a, D-37 to D-42): the menu down the left, which at phone width is a
  * button that opens it over the page, and the page itself beside it. It is a layout route: the guard sits around it in
@@ -156,10 +183,7 @@ const WorkspaceShell = () => {
         <MenuBody />
       </Sidebar>
       <div className="min-w-0 flex-1 bg-background text-foreground">
-        <PhoneBar />
-        <ClosingBanner />
-        <Outlet />
-        <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
+        <Frame />
       </div>
     </SidebarProvider>
     </WorkspaceProvider>

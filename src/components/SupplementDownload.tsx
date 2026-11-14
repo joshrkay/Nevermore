@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,7 +14,7 @@ import { buildSupplementPdf } from "@/lib/supplementPdf";
  * built is said, as the packet's download does. Busy while the certification is checked again (a tab can outlive it:
  * `builtFrom`) and the PDF is made.
  */
-const SupplementDownload = ({ supplement, builtFrom, onDownloaded }: { supplement: Supplement; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
+const SupplementDownloadControl = ({ supplement, builtFrom, onDownloaded }: { supplement: Supplement; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
   const [busy, setBusy] = useState(false);
   const { rows, notAnswered } = supplement;
   const download = async () => {
@@ -63,5 +65,8 @@ const SupplementDownload = ({ supplement, builtFrom, onDownloaded }: { supplemen
     </div>
   );
 };
+
+/** Not offered during Nevermore support: a file built here from rows support may read would leave the product unrecorded (CRM-P2.4). */
+const SupplementDownload = (props: ComponentProps<typeof SupplementDownloadControl>) => (useDownloadsOff() ? null : <SupplementDownloadControl {...props} />);
 
 export default SupplementDownload;

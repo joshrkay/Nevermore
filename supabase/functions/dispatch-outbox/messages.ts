@@ -55,8 +55,8 @@ export interface MemberLeft {
 
 /** The notice to a firm's owners that an owner asked to close the firm, or withdrew the request (public.request_firm_closure, withdraw_firm_closure). */
 export interface FirmClosing {
-  event: "asked" | "withdrawn";
-  /** The address of the owner who asked or withdrew. */
+  event: "asked" | "withdrawn" | "stopped";
+  /** The address of the owner who asked or withdrew; empty when Nevermore stopped it (the firm never learns who at Nevermore, D-33). */
   byEmail: string;
   firmName: string;
   /** When the firm closes, as `YYYY-MM-DDTHH:MM:SSZ` (UTC); only for a request just made. */
@@ -180,11 +180,14 @@ export function parseMemberLeft(raw: unknown): MemberLeft | null {
 /** The closing notice's fields, or null without who, which firm and what happened (and, for a request, when it closes). Only these are ever read. */
 export function parseFirmClosing(raw: unknown): FirmClosing | null {
   const p = asObject(raw);
-  const byEmail = p && asEmail(p.by_email);
-  const firmName = p && oneLine(p.firm_name, 200);
-  const closesAt = p && oneLine(p.closes_at, 20);
   const event = p && p.event;
-  if (!p || !byEmail || !firmName || (event !== "asked" && event !== "withdrawn")) return null;
+  const firmName = p && oneLine(p.firm_name, 200);
+  if (!p || !firmName || (event !== "asked" && event !== "withdrawn" && event !== "stopped")) return null;
+  // Nevermore's stop names no one: only the firm and what happened are read.
+  if (event === "stopped") return { event, byEmail: "", firmName, closesAt: null };
+  const byEmail = asEmail(p.by_email);
+  const closesAt = oneLine(p.closes_at, 20);
+  if (!byEmail) return null;
   if (event === "asked" && (closesAt === null || !CERTIFIED_AT.test(closesAt) || !Number.isFinite(Date.parse(closesAt)))) return null;
   return { event, byEmail, firmName, closesAt: event === "asked" ? closesAt : null };
 }
@@ -425,10 +428,14 @@ export function renderMemberLeft(n: MemberLeft): RenderedEmail {
  */
 export function renderFirmClosing(n: FirmClosing): RenderedEmail {
   const asked = n.event === "asked";
-  const subject = asked ? `${n.byEmail} asked to close ${n.firmName}` : `${n.byEmail} withdrew the request to close ${n.firmName}`;
+  const stopped = n.event === "stopped";
+  const subject = asked ? `${n.byEmail} asked to close ${n.firmName}`
+    : stopped ? `Nevermore stopped the request to close ${n.firmName}` : `${n.byEmail} withdrew the request to close ${n.firmName}`;
   const headline = asked
     ? `${n.byEmail} asked to close ${n.firmName}. It closes on ${n.closesAt ? utcStamp(n.closesAt).slice(0, 10) : ""} unless an owner withdraws the request first.`
-    : `${n.byEmail} withdrew the request to close ${n.firmName}. The firm stays open and nothing was deleted.`;
+    : stopped
+      ? `Nevermore stopped the request to close ${n.firmName}. The firm stays open and nothing was deleted.`
+      : `${n.byEmail} withdrew the request to close ${n.firmName}. The firm stays open and nothing was deleted.`;
   const detail = asked
     ? "Until then the firm is read-only: everyone can read it and nothing can be changed, added, sent or deleted. An owner can withdraw the request in Settings before that day."
     : "The firm can be changed again.";

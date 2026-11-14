@@ -180,6 +180,17 @@
 \i supabase/migrations/20261118100000_join_by_organisation.sql
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
+\i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
+\i supabase/migrations/20261118120000_help_from_nevermore.sql
+\i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
+\i supabase/migrations/20261118140000_menu_counts.sql
+\i supabase/migrations/20261118140500_menu_counts_fixes.sql
+\i supabase/migrations/20261118150000_queue_sort_collation.sql
+\i supabase/migrations/20261118160000_record_version.sql
+\i supabase/migrations/20261118160500_record_version_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -382,6 +393,11 @@ BEGIN
   INSERT INTO public.firm_closures (firm_id, asked_at, asked_by, closes_at, withdrawn_at, withdrawn_by) VALUES
     (firm_a, now() - interval '3 days', adm, now() + interval '27 days', now() - interval '2 days', adm),
     (firm_b, now() - interval '3 days', adm, now() + interval '27 days', now() - interval '2 days', adm);
+
+  -- A support session of each firm that has ended (20261118120000): the platform's record is kept, and neither firm has one open.
+  INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at, ended_at, ended_how) VALUES
+    (firm_a, adm, 'fixture@example.test', 'fixture', now() - interval '3 hours', now() - interval '2 hours', now() - interval '2 hours', 'ran_out'),
+    (firm_b, adm, 'fixture@example.test', 'fixture', now() - interval '3 hours', now() - interval '2 hours', now() - interval '2 hours', 'ran_out');
 
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
@@ -756,6 +772,10 @@ INSERT INTO matrix VALUES
   ('public.firm_suspensions',                           '{}', NULL),
   -- The platform's record of requests to close a firm (CRM-P1.7): nobody reads it through the API; admins reach it through admin_firm_states().
   ('public.firm_closures',                              '{}', NULL),
+  -- The platform's record of each time Nevermore looked at a firm (CRM-P2.4): who, why, when. Nobody reads it through the API, the firm's
+  -- owners and platform admins included; admins reach it through admin_support_sessions() and an owner reads the reasons, never who, through
+  -- firm_support_sessions().
+  ('public.support_sessions',                           '{}', NULL),
   -- A firm's suspended members (CRM-P1.5): closed to the API; an owner reads them through firm_members() (supabase/tests/firm_members.sql).
   ('public.firm_member_suspensions',                    '{}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
@@ -782,6 +802,12 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.saved_views',                                '{}', NULL),
   ('public.table_preferences',                          '{}', NULL);
+
+-- ---- CRM-S5.2: the history of a record (20261118130000) ----
+-- Closed to the API, a member reads it through record_history_list() (supabase/tests/record_history.sql); the referral partners the
+-- fixtures make are what writes its rows, through the trigger.
+INSERT INTO matrix VALUES
+  ('public.record_history',                             '{}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -1065,8 +1091,20 @@ INSERT INTO callable VALUES
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
   ('admin_suspend_firm(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_suspend_firm(%2$L, ''probe'')', 'a platform admin who is no member of the firm suspends it with a reason (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
+  ('admin_stop_firm_closure(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_stop_firm_closure(%2$L, ''probe'')', 'a platform admin who is no member of the firm ends its open request to close with a reason (CRM-P1.7); refused for everyone else, a firm''s own owner included'),
+  ('intake_folder_firm_read_only(p_folder text)', 'own', NULL, 'the manuscripts storage policies call it as the caller: whether the intake a folder names is of a closing firm the caller currently belongs to; false for anyone else'),
   ('admin_lift_firm_suspension(p_firm_id uuid)', 'admin', 'SELECT public.admin_lift_firm_suspension(%2$L)', 'a platform admin who is no member of the firm lifts its suspension (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
   ('admin_firm_states()', 'admin', 'SELECT * FROM public.admin_firm_states()', 'every firm with its approval state and whether it is suspended, with the reason, for platform admins only (D-16)'),
+  -- Help from Nevermore (CRM-P2.4, supabase/tests/help_from_nevermore.sql): a platform admin starts and ends a session of their own; the helpers answer about
+  -- the caller only; the firm's owners read the reasons, never who.
+  ('start_support_session(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.start_support_session(%2$L, ''probe'')', 'a platform admin who is no member of the firm starts one hour of read-only support access with a reason; refused for everyone else'),
+  ('end_support_session(p_session_id uuid)', 'admin', 'SELECT public.end_support_session(%2$L)', 'a platform admin ends their own support session now; refused for everyone else'),
+  ('admin_support_sessions()', 'admin', 'SELECT * FROM public.admin_support_sessions()', 'every support session with who and why, for platform admins only'),
+  ('my_support_session_here()', 'own', NULL, 'the caller''s own latest support session for the firm the request names, for a platform admin; no row for anyone else'),
+  ('firm_support_sessions(p_firm_id uuid)', 'own', NULL, 'the reason and times of each use of support, never who, for that firm''s owners (and a support session); 42501 for everyone else'),
+  ('is_support_session(p_firm_id uuid)', 'own', NULL, 'whether the caller has an open support session for that firm; about the caller only; every refusal asks it'),
+  ('support_reads_firm(p_firm_id uuid)', 'own', NULL, 'whether the caller''s support session lets them read that firm at the address the request names; about the caller only; firm_role asks it'),
+  ('refuse_support_session(p_firm_id uuid)', 'own', NULL, 'raises when the caller holds a support session for that firm: the refusal an export or a send calls first'),
   ('my_suspended_firm_at_address(p_address text)', 'own', NULL, 'whether the firm at an address is suspended, true only for a current member of it, so the screen can say so; false for anyone else (supabase/tests/firm_suspension.sql)'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
@@ -1168,8 +1206,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now(), public.default_firm_id())', 'the funnel by source'),
   ('advisor_add_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_add_referral_partner(''probe-partner'', ''Probe'', ''other'')', 'adding a referral partner'),
-  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
-                                                                     'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
+  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid, p_version integer)', 'advisor',
+                                                                     'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'', NULL, 1)', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
@@ -1193,6 +1231,9 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.queue_list_submissions(''[]'', ''company_name'', ''asc'', 1)', 'the queue: one page, filtered and sorted in the database (D-44)'),
   ('queue_view_counts(p_views jsonb, p_search text, p_time_zone text)', 'advisor',
                                                                      'SELECT count(*) FROM public.queue_view_counts(''[{"name":"All"}]'')', 'the count on each of the queue''s view tabs');
+-- CRM-S1.1c (20261118140000_menu_counts.sql): the menu's counts, for the caller's own firm.
+INSERT INTO callable VALUES
+  ('menu_counts()', 'advisor', 'SELECT public.menu_counts()::text', 'the numbers on the menu (open quotes, intakes with new PEO mail): the caller''s own firm only, the same shape for no firm as for none');
 
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000; supabase/tests/table_settings.sql) ----
 INSERT INTO callable VALUES
@@ -1205,6 +1246,10 @@ INSERT INTO callable VALUES
   ('unshare_saved_view(p_view_id uuid)', 'own', NULL, 'a current owner stops sharing a shared view of their firm; PT404 for a view the caller may not read, 42501 for a member who is no owner'),
   ('my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid)', 'own', NULL, 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else'),
   ('set_my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid, p_columns jsonb)', 'own', NULL, 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else');
+-- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
+INSERT INTO callable VALUES
+  ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
+   'a current member of the record''s firm (or a support session at its address) reads the history of a record they may see; PT404 for a record of another firm, one that does not exist and a caller who is no member, all the same; no actor id or email, staff shown as Nevermore');
 
 DO $$
 DECLARE
@@ -1655,7 +1700,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('retry_intake_deletion', 'admin', 'by_id', $$SELECT public.retry_intake_deletion({del})::text$$),
   -- A referral partner is its firm's own: adding one to a firm, or changing one by its code, is that firm's members' alone.
   ('advisor_add_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_add_referral_partner('probe-added', 'Probe', 'other', {firm})::text$$),
-  ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm})::text$$);
+  ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm}, 1)::text$$);
 -- Invitations (CRM-P1.2): only a current owner of the firm invites, resends, withdraws and lists. The matrix's admin and second
 -- firm owner are those owners; every other caller, the other firm's owner and a platform admin included, is refused (D-16, D-18).
 INSERT INTO fprobe (fn, who, shape, call) VALUES
@@ -1719,6 +1764,11 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
    $$SELECT total::text FROM public.queue_view_counts('[{"name":"Submitted","filters":[{"field":"intake_status","op":"any_of","value":["submitted"]}]}]')$$,
    $$SELECT count(*)::text FROM public.chamber_sessions s JOIN public.submission_workflow w ON w.session_id = s.id WHERE s.firm_id = {firm} AND s.status = 'submitted'$$);
 
+-- CRM-S1.1c: the menu's counts. Each count equals the caller's own firm's: sent quote requests, and intakes with unread PEO mail.
+INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
+  ('menu_counts', 'advisor', 'count', $$SELECT (public.menu_counts() ->> 'quotes')$$,
+   $$SELECT count(*)::text FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm} AND q.status = 'sent'$$);
+
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
 -- Every function is a current member's, on their own firm's views: {view} is the agent's private view (advisor, agent_b),
 -- {oview} the owner's private one and {sview} the owner's shared one (admin, owner_b). Another firm's member, a platform
@@ -1733,6 +1783,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('unshare_saved_view', 'admin', 'by_id', $$SELECT public.unshare_saved_view({sview})::text$$),
   ('my_table_columns', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.my_table_columns({firm}, 'submissions', {sview})$$),
   ('set_my_table_columns', 'advisor', 'by_id', $$SELECT public.set_my_table_columns({firm}, 'submissions', {sview}, '["company_name"]')::text$$);
+-- CRM-S5.2: the history of a referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
+-- non-member are refused, the same as for a record that does not exist.
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('record_history_list', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.record_history_list({firm}, 'referral_partners', {partner})$$);
 
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
@@ -2189,12 +2243,12 @@ BEGIN
   FOREACH who IN ARRAY ARRAY['platform_admin', 'former_agent', 'suspended_agent', 'prospect_a', 'guest_a', 'signed_out', 'advisor_as_guest'] LOOP
     r := pg_temp.call_as(who, $q$SELECT firm_id::text FROM public.advisor_add_referral_partner('nobody-test', 'Nobody', 'other')$q$);
     IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % adding a partner with no firm named gave %, expected a refusal', who, r; END IF;
-    r := pg_temp.call_as(who, $q$SELECT code FROM public.advisor_update_referral_partner('acme-cfo', 'Nobody', 'other')$q$);
+    r := pg_temp.call_as(who, $q$SELECT public.advisor_update_referral_partner('acme-cfo', 'Nobody', 'other', NULL, 1)::text$q$);
     IF r <> '42501' THEN RAISE EXCEPTION 'FAIL: % renaming a partner with no firm named gave %, expected a refusal', who, r; END IF;
   END LOOP;
 
   -- A change by code reaches the caller's own firm's partner only, though the other firm holds the same code.
-  r := pg_temp.call_as('agent_b', $q$SELECT name FROM public.advisor_update_referral_partner('acme-cfo', 'Renamed by B', 'other')$q$);
+  r := pg_temp.call_as('agent_b', $q$SELECT public.advisor_update_referral_partner('acme-cfo', 'Renamed by B', 'other', NULL, (SELECT version FROM public.referral_partners WHERE code = 'acme-cfo'))  -> 'record' ->> 'name'$q$);
   IF r <> 'ok:Renamed by B' THEN RAISE EXCEPTION 'FAIL: the second firm''s agent could not rename their own partner (%)', r; END IF;
   RESET ROLE;
   IF (SELECT name FROM public.referral_partners WHERE code = 'acme-cfo' AND firm_id = fa) <> 'Acme CFO Partners' THEN
@@ -2724,6 +2778,11 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   -- one, so making it neither closes nor locks either firm.
   ('public.firm_closures', 'firm', 'its own firm_id; closed to the API, platform admins reach it through admin_firm_states()',
    $m$INSERT INTO public.firm_closures (firm_id, asked_at, closes_at, withdrawn_at) VALUES ({firm}, now() - interval '2 hours', now() - interval '1 hour', now() - interval '1 hour') RETURNING ctid::text$m$, false),
+  -- The platform's record of support access (20261118120000): its own firm_id, read by no member. The probe's row is an ended one, so
+  -- making it opens no session for anyone.
+  ('public.support_sessions', 'firm', 'its own firm_id; closed to the API, platform admins reach it through admin_support_sessions()',
+   $m$INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at, ended_at, ended_how)
+      VALUES ({firm}, gen_random_uuid(), 'probe@example.test', 'probe-{tag}', now() - interval '3 hours', now() - interval '2 hours', now() - interval '2 hours', 'ran_out') RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
@@ -2737,6 +2796,14 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.table_preferences', 'firm', 'its own firm_id; closed to the API, a member reads their own columns through a function',
    $m$INSERT INTO public.table_preferences (firm_id, user_id, table_name, columns) VALUES ({firm}, {u}, 'submissions', '["probe"]') RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- CRM-S5.2: the history of a record (20261118130000) ----
+-- A record's history: its own firm_id. Closed to the API, so no member reads a row directly and there is no positive control here; a member
+-- reads it through record_history_list(). Nobody inserts, changes or deletes a row, so the probe's row is made by the superuser and, since
+-- the table's own trigger refuses its deletion, is left in place (it names a record that does not exist, so no function ever shows it).
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.record_history', 'firm', 'its own firm_id; closed to the API, a member reads a record''s history through a function',
+   $m$INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind) VALUES ({firm}, 'referral_partners', 'probe-{tag}', gen_random_uuid(), 'created') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -2748,7 +2815,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures', 'public.support_sessions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -3339,6 +3406,17 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('my_table_columns', 'firm_scoped', 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else (4e)'),
   ('set_my_table_columns', 'firm_scoped', 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else (4e)');
 
+-- CRM-S5.2 (20261118130000_record_history.sql; supabase/tests/record_history.sql).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('record_history_list', 'firm_scoped', 'a current member reads the history of a record of their own firm that they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
+  ('record_history_capture', 'trigger', 'writes a tracked record''s creation and each change of a field the trigger was told to track, inside the write that made it; no API role can run it or write the table'),
+  ('record_history_can_see', 'service_only', 'whether the caller may see a record of a firm, per table: the reading function asks it; no API role can call it'),
+  ('record_history_remove', 'service_only', 'the one function that deletes history, owned by the role that may (ADR 0012): a record''s once the record is gone, a firm''s only while it closes; no API role can run it'),
+  ('record_history_record_exists', 'service_only', 'whether a record still exists, per table: record_history_remove asks it; no API role can call it'),
+  ('record_history_who', 'service_only', 'how a history names who made a change (a member''s email, "Nevermore", "System"): the reading function and a conflict ask it, so they cannot disagree; no API role can call it (D-33, D-156)'),
+  ('record_version_changes', 'service_only', 'the fields that differ from what a person started from, and who changed each: a record''s save function asks it after its own firm checks, for a record the caller may see; no API role can call it (D-155)'),
+  ('firm_actor_is_staff', 'service_only', 'whether an actor was Nevermore''s own person acting on a firm they were not a member of (D-33): the firm''s record and the history of a record stamp it; no API role can call it');
+
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),
   ('admin_discard_peo_draft', 'platform_wide', 'a PEO''s requirement profile: the same for every firm'),
@@ -3354,15 +3432,29 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_suspend_firm', 'platform_wide', 'a platform admin suspends a firm: no firm''s member can, and the firm''s data is touched by nothing (supabase/tests/firm_suspension.sql)'),
   ('admin_lift_firm_suspension', 'platform_wide', 'a platform admin lifts a firm''s suspension'),
   ('admin_firm_states', 'platform_wide', 'every firm''s state and suspension for the platform admin''s page: no firm''s member reads it'),
+  ('start_support_session', 'platform_wide', 'a platform admin starts one hour of read-only support access to a firm with a reason; no member can'),
+  ('end_support_session', 'platform_wide', 'a platform admin ends their own support session'),
+  ('admin_support_sessions', 'platform_wide', 'every support session with who and why: no firm''s member reads it'),
+  ('my_support_session_here', 'own', 'the caller''s own latest support session for the firm at the address'),
+  ('firm_support_sessions', 'own', 'the reason and times of each use of support for a firm''s owners, never who'),
+  ('is_support_session', 'own', 'whether the caller holds an open support session for a firm'),
+  ('support_reads_firm', 'own', 'whether the caller''s support session lets them read a firm at this address'),
+  ('refuse_support_session', 'own', 'raises for a caller who holds a support session for the firm: exports and sends call it'),
+  ('settle_support_sessions', 'service_only', 'records the end of every support session that is over, as the daily job''s step'),
+  ('support_activity_append', 'service_only', 'writes one entry of a support session into the firm''s record, always as Nevermore''s'),
+  ('end_support_session_for_new_member', 'service_only', 'ends a person''s open support session for a firm when they become a member of it (accepting an invitation, an approved request); no API role runs it'),
   ('my_suspended_firm_at_address', 'own', 'whether the caller''s own firm at an address is suspended'),
   ('request_firm_closure', 'own', 'a current owner of the firm asks to close it; acts only for the caller and the firm they own (supabase/tests/close_a_firm.sql)'),
   ('withdraw_firm_closure', 'own', 'a current owner of the firm withdraws its request to close; acts only for the caller and the firm they own'),
+  ('admin_stop_firm_closure', 'platform_wide', 'a platform admin ends a firm''s open request to close, with a reason: no firm''s member can, and nothing of the firm''s is touched'),
+  ('intake_folder_firm_read_only', 'own', 'storage policy helper: whether the intake a folder names is of a closing firm the caller belongs to'),
   ('my_firm_closure', 'own', 'when the caller''s own firm closes, for a current member of it only'),
   ('firm_is_read_only', 'service_only', 'whether a firm is closing or closed: the helper the write paths ask, as the database''s own question; no API role can call it'),
   ('firm_is_closed', 'service_only', 'whether a firm has been closed by the daily job: the address and alert functions ask it'),
   ('firm_is_being_closed', 'service_only', 'whether the closing is running for a firm whose request is open and past its 30 days: the two triggers that let it end the last owner and clear a team ask it'),
   ('assert_firm_writable', 'service_only', 'refuses a current member of a closing firm with a plain message; every function that changes a firm''s data calls it first'),
   ('close_firm_now', 'service_only', 'closes one firm whose request is due, as the service role: deletes its working data, ends every membership and records what was deleted without content (supabase/tests/close_a_firm.sql)'),
+  ('repair_default_firm_closure', 'service_only', 'ends an open request to close the default firm, once, as the migration that added it runs (supabase/tests/close_a_firm_races.sql)'),
   ('close_due_firms', 'service_only', 'the daily job''s step: closes every firm whose request is due'),
   ('firm_is_suspended', 'service_only', 'whether a firm is suspended now: the helper every policy and function asks, as the database''s own question; no API role can call it'),
   ('admin_belongs_to_firm', 'service_only', 'whether the caller is a current member of a firm, suspended or not: the helper the platform admin''s rule asks'),
@@ -3456,7 +3548,7 @@ INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
   'record_membership_change', 'record_send_activity', 'keep_suspension', 'drop_mailbox_when_membership_ends',
-  'refuse_note_on_closing_firm', 'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
+  'refuse_note_on_closing_firm', 'end_alert_of_closed_firm', 'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',
   'snapshot_certified_evidence', 'stamp_message_firm', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',
@@ -3468,7 +3560,8 @@ SELECT unnest(ARRAY[
 -- not privileged and need no entry.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
-  ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)');
+  ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
+  ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)');
 
 -- Everything wrong between the registry and the catalogue, one per line, or NULL. It reads which functions exist and who may
 -- execute them, never what a function says.

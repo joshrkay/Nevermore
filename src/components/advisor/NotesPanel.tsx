@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
 import { addNote, type AdvisorNote } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
@@ -8,16 +8,19 @@ import { formatDateTime } from "./format";
 const NotesPanel = ({ sessionId, notes, onAdded }: { sessionId: string; notes: AdvisorNote[]; onAdded: () => void }) => {
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The note wasn't saved. Check your connection and try again. What you typed is still here.");
+  const addButton = useRef<HTMLButtonElement>(null);
 
   const save = async () => {
     if (!body.trim()) return;
     setSaving(true);
+    failure.clear();
     try {
       await addNote(sessionId, body);
       setBody("");
       onAdded();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -37,7 +40,9 @@ const NotesPanel = ({ sessionId, notes, onAdded }: { sessionId: string; notes: A
         placeholder="Add a note…"
         className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
       />
+      <SaveFailed message={failure.message} returnFocusTo={addButton} />
       <button
+        ref={addButton}
         onClick={save}
         disabled={saving || !body.trim()}
         className="flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50"
