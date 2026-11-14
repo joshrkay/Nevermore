@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { BellRing } from "lucide-react";
 import {
@@ -9,7 +10,7 @@ import { US_STATE_CODES } from "@/data/chamberValidation";
 import { RECOMMENDED_ITEMS, REQUIRED_ITEMS } from "@/data/readiness";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 import { INBOX_PARAM } from "@/components/workspace/menu";
-import type { ColumnDefinition, FieldChoice, FieldDefinitions, TableDefinition, TableQuery, TableView } from "@/components/workspace/table";
+import { useSavedViewList, withSavedViews, type ColumnDefinition, type FieldChoice, type FieldDefinitions, type TableDefinition, type TableQuery, type TableView } from "@/components/workspace/table";
 import { QUEUE_FIELDS, listQueue, type QueueField, type QueueFilter, type QueuePage, type QueueRow } from "@/lib/queueApi";
 import type { EmailProblem } from "@/lib/advisorApi";
 
@@ -312,10 +313,14 @@ export const QUEUE_TABLE: QueueTableDefinition = {
 };
 
 /**
- * The queue's definition. A hook so that CRM-S3.4a can add the firm's saved views to it once they have loaded (with `viewsStatus`
- * "loading" until then); today everything is in code and it is always ready.
+ * The queue's definition: what is in code, and the firm's saved views after the built-in ones once they have loaded (CRM-S3.4a). Until the first
+ * answer `viewsStatus` is "loading" (an address that names a view the table doesn't list yet waits for it, D-141); the definition is memoized on
+ * the list, so it is the same object until a view is added, changed or removed.
  */
-export const useQueueTable = (): QueueTableDefinition => QUEUE_TABLE;
+export const useQueueTable = (): QueueTableDefinition => {
+  const { saved, status } = useSavedViewList(QUEUE_TABLE.id);
+  return useMemo(() => withSavedViews(QUEUE_TABLE, saved, status), [saved, status]);
+};
 
 /** The page's one call to the database: the effective query (the view's filters and the address's together). */
 export const fetchQueuePage = (query: TableQuery<Fields>): Promise<QueuePage> => listQueue(query);

@@ -61,11 +61,26 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
   align?: "left" | "right";
 }
 
+/** What the person may do with a saved view (the database's own answer, `list_saved_views`); a built-in view has none of it. */
+export interface SavedViewRights {
+  /** Saved by the person asking. */
+  mine: boolean;
+  /** Shared with the firm by an owner. */
+  shared: boolean;
+  /** May rename, change and delete it. */
+  canChange: boolean;
+  /** May share it with the firm (an owner, on a view of their own not yet shared). */
+  canShare: boolean;
+  /** May stop sharing it (an owner, on any shared view). */
+  canUnshare: boolean;
+}
+
 /**
- * A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too.
- * CRM-S3.4a adds a view's own `sort` and `columns` here (and makes `queryFor` and `sameAddress` apply the sort: today a view has no sort of
- * its own, so the address's sort is the only one). CRM-S3.1a built the person's column choice for the table (`useMyColumns`, `ColumnsMenu`); the
- * choice per saved view is S3.4a's, which gives the hook the view's id.
+ * A view of the table: a name, the filters it stands for, and (from CRM-S3.4a) its own sort and columns. A built-in view is written in code;
+ * a saved view is one the firm keeps (`saved` says what the person may do with it). A view's `sort` is the table's order while the address
+ * holds none (`queryFor`, `sameAddress`, the headers and the line over the table all read it). A view's `columns` are the ids it was saved with;
+ * the person's own choice for the view comes before them (`useMyColumns`, which is given the active view's id), and a view with none leaves
+ * the person's choice for the table.
  *
  * How the table's limit of 20 filters is applied to the total: the view's filters count first and the address's take what is left
  * (`effectiveFilters`). The rows use the current view's room. A tab's count uses the room of ITS view, so a tab whose view has more
@@ -77,6 +92,12 @@ export interface TableView<K extends TableFields> {
   id: string;
   label: string;
   filters: TableFilter<K>[];
+  /** The order the view's rows are in while the address holds no sort of its own. None: the table's own order. */
+  sort?: TableSort<keyof K & string> | null;
+  /** The column ids the view was saved with, in order. None: the person's choice for the table applies. */
+  columns?: string[] | null;
+  /** Present on a saved view only: built-in views can't be renamed, shared or deleted. */
+  saved?: SavedViewRights;
 }
 
 /**
@@ -156,6 +177,8 @@ export const TABLE_FILTER_LIMIT = 20;
 export const FILTER_TEXT_MAX = 200;
 /** "Views are a list of 1 to 20": the most views one call for tab counts takes. The frame asks in batches of this many. */
 export const VIEWS_PER_COUNT_CALL = 20;
+/** A saved view's name: "1 to 60 characters" (`saved_view_name_ok`). The database checks it; this only stops typing at the ceiling. */
+export const VIEW_NAME_MAX = 60;
 /** "needs 1 to 100 values" for a list. */
 export const FILTER_LIST_MAX = 100;
 /** "a whole number of days, 0 to 3660". */
