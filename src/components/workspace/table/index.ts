@@ -12,6 +12,8 @@ export { TableFrame } from "./TableFrame";
 export { tableIsLoading } from "./tableIsLoading";
 export { useTableAddress } from "./useTableAddress";
 export { useMyColumns, type MyColumns } from "./useMyColumns";
+export { withSavedViews } from "./savedViews";
+export { useSavedViewList, useSavedViewsControl, type SavedViewsControl } from "./useSavedViews";
 export { useFirmReady, useRefreshTable, useTableContextKey, useTableRows, useTableViewCounts, TABLE_REFRESH_MS } from "./useTableRows";
 export { ViewTabs } from "./ViewTabs";
 export { filterInWords, inForceInWords, isNarrowed } from "./words";
