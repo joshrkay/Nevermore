@@ -125,6 +125,17 @@
 \i supabase/migrations/20261117120500_table_settings_fixes.sql
 \i supabase/migrations/20261117160000_epics_reconciled.sql
 \i supabase/migrations/20261118090000_leave_a_firm.sql
+-- Stand-in for pg_cron (same names and signature as supabase/tests/outbox_schedule.sql uses), holding the daily job of the firm's record
+-- as 20261116160001 made it, so the fixes migration can be seen to add the outbox clean-up to that same job.
+CREATE SCHEMA cron;
+CREATE TABLE cron.job (jobid serial PRIMARY KEY, jobname text UNIQUE, schedule text NOT NULL, command text NOT NULL);
+CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURNS bigint LANGUAGE sql AS $$
+  INSERT INTO cron.job (jobname, schedule, command) VALUES (job_name, schedule, command)
+  ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+  RETURNING jobid::bigint
+$$;
+INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity', '53 3 * * *', 'select public.prune_firm_activity();');
+\i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -513,4 +524,107 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.remove_member(%L, %L)', zenith, pg_temp.id('rm_owner'))), '23514: The last owner of a firm can''t be removed. Make someone else an owner first.', 'the last owner is refused in the removal''s own words');
   RESET ROLE;
   RAISE NOTICE 'leave_a_firm: removal after the shared ending passed';
+END $$;
+
+-- ---------- firm-level outbox rows are kept ninety days, like the firm's record (D-106) ----------
+-- A "member left" email holds the leaver's address, the firm's name and the owners' addresses. It is deleted 90 days after it was queued,
+-- by the daily job that prunes the firm's record. Intake-bound rows are not touched: they go with their intake.
+-- Break caught: firm-level rows live for ever; the window is not the firm record's; an intake's queued email is deleted by it; a person
+-- can run it; it is a second scheduler instead of part of the existing daily job.
+DO $$
+DECLARE
+  acme uuid := pg_temp.id('acme'); sid uuid; removed integer;
+BEGIN
+  INSERT INTO public.chamber_sessions (user_id, firm_id) VALUES (pg_temp.new_user('prune_prospect'), acme) RETURNING id INTO sid;
+  INSERT INTO public.outbox_events (kind, firm_id, dedupe_key, payload, created_at) VALUES
+    ('member_left', acme, 'prune-old', '{}', now() - interval '91 days'),
+    ('member_left', acme, 'prune-new', '{}', now() - interval '89 days');
+  INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload, created_at)
+  VALUES ('advisor_notification', sid, 'prune-intake-old', '{"reference":"x"}', now() - interval '200 days');
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT public.prune_firm_outbox_events()'), '42501', 'a person can''t run the clean-up');
+  RESET ROLE;
+  PERFORM pg_temp.as_service();
+  removed := public.prune_firm_outbox_events();
+  RESET ROLE;
+  PERFORM pg_temp.is(removed, 1, 'it reports how many it removed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-old'), 0::bigint, 'a firm-level row older than 90 days is deleted');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-new'), 1::bigint, 'a newer one is kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-intake-old'), 1::bigint, 'an intake-bound row is left alone, however old');
+  PERFORM pg_temp.is((SELECT interval '90 days' = public.firm_activity_retention()), true, 'the window is the firm record''s');
+  PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'), 'select public.prune_firm_activity(); select public.prune_firm_outbox_events();', 'it runs in the firm record''s daily job');
+  PERFORM pg_temp.is((SELECT count(*) FROM cron.job), 1::bigint, 'and no second job was made');
+  RAISE NOTICE 'leave_a_firm: outbox retention passed';
+END $$;
+
+-- ---------- an index on the firm of an outbox row ----------
+-- Break caught: deleting a firm, or the clean-up above, scans every outbox row.
+DO $$
+BEGIN
+  PERFORM pg_temp.is(EXISTS (
+    SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+    WHERE i.indrelid = 'public.outbox_events'::regclass AND a.attname = 'firm_id'), true, 'outbox_events is indexed by firm_id');
+  RAISE NOTICE 'leave_a_firm: outbox firm index passed';
+END $$;
+
+-- ---------- leaving twice at once (D-32) ----------
+-- The row lock in leave_firm makes a second leave by the same person wait and then find the membership already ended, so it gets the
+-- plain "You are not a member of this firm" (PT404). Without the lock it runs its own update on the ended row, and the history trigger
+-- refuses it in database words (42501, "A membership is never changed").
+-- Break caught: the lock is removed.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- The person is made in a block of its own, so it is committed before the other sessions look.
+DO $$
+BEGIN
+  PERFORM pg_temp.new_user('dbl_agent');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('dbl_agent'), 'agent');
+END $$;
+DO $$
+DECLARE
+  f uuid := pg_temp.id('acme');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  claims text;
+  second_pid integer;
+  tries integer := 0;
+  s text;
+  m text;
+BEGIN
+  claims := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('dbl_agent'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'dbl_agent@example.test')::text);
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  PERFORM race.dblink_exec('race_first', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_first', claims) AS t(c text);
+  PERFORM * FROM race.dblink('race_first', format($q$SELECT public.leave_firm(%L)::text$q$, f)) AS t(r text);
+  PERFORM race.dblink_exec('race_second', 'BEGIN');
+  PERFORM race.dblink_exec('race_second', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_second', claims) AS t(c text);
+  PERFORM race.dblink_send_query('race_second', format($q$SELECT public.leave_firm(%L)::text$q$, f));
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 AND race.dblink_is_busy('race_second') = 1 LOOP
+    tries := tries + 1;
+    IF tries > 100 THEN EXIT; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_second') AS t(r text);
+    RAISE EXCEPTION 'FAIL: the person left twice';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    IF m LIKE 'FAIL:%' THEN RAISE; END IF;
+    IF m NOT LIKE '%You are not a member of this firm%' THEN RAISE EXCEPTION 'FAIL: the second leave gave % (%), expected the plain refusal', s, m; END IF;
+  END;
+  PERFORM race.dblink_disconnect('race_first');
+  BEGIN
+    PERFORM race.dblink_exec('race_second', 'ROLLBACK');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('race_second');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(f, 'member_left') WHERE subject_user_id = pg_temp.id('dbl_agent')), 1::bigint, 'one leaving in the record');
+  RAISE NOTICE 'leave_a_firm: two-session double leave passed';
 END $$;

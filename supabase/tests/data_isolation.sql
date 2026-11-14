@@ -176,6 +176,7 @@
 \i supabase/migrations/20261117120500_table_settings_fixes.sql
 \i supabase/migrations/20261117160000_epics_reconciled.sql
 \i supabase/migrations/20261118090000_leave_a_firm.sql
+\i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1226,6 +1227,7 @@ BEGIN
     'SELECT count(*) FROM public.held_mail_due(1)',
     format('SELECT public.outbox_alert_recipients(%L)', nobody),
     format('SELECT public.outbox_owner_recipients(%L)', nobody),
+    'SELECT public.prune_firm_outbox_events()',
     format('SELECT public.end_membership_now(0, %L)', 'probe'),
     format('SELECT public.mailbox_store(%L, ''google'', ''advisor@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')', pg_temp.id('advisor')),
     format('SELECT public.mailbox_secret(%L)', nobody),
@@ -3352,7 +3354,7 @@ SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
   'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'guard_invitation_mail_rate', 'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
-  'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
+  'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'prune_firm_outbox_events', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',

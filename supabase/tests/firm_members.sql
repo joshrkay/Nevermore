@@ -1022,6 +1022,7 @@ $$;
 \i supabase/migrations/20261117120500_table_settings_fixes.sql
 \i supabase/migrations/20261117160000_epics_reconciled.sql
 \i supabase/migrations/20261118090000_leave_a_firm.sql
+\i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

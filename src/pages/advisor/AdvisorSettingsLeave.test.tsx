@@ -158,4 +158,15 @@ describe("leaving a firm from Settings", () => {
     await waitFor(() => expect(afterLeaving).toHaveBeenCalled());
     expect(db.calls.filter(([fn]) => fn === "leave_firm")).toEqual([["leave_firm", { p_firm_id: "f2" }]]);
   });
+
+  // Catches: on the bare domain a member of several firms is offered a leave that doesn't say which firm (they choose a firm first).
+  it("offers nothing on the bare domain to a member of several firms, who has no current firm until they choose one", async () => {
+    db.firms = [
+      { firm_id: "f1", name: "Acme Brokers", address: "acme", role: "agent" },
+      { firm_id: "f2", name: "Zenith Benefits", address: "zenith", role: "lead" },
+    ];
+    await renderPage();
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Leave this firm" })).not.toBeInTheDocument();
+  });
 });

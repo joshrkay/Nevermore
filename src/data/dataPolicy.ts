@@ -195,7 +195,7 @@ export const DATA_CLASSES: DataClass[] = [
       buckets: [],
       elsewhere: ["Supabase Auth (the account's email address)", "Resend (the notification emails sent)"],
     },
-    retention: `${WITH_INTAKE} Account details until the account is deleted.`,
+    retention: `${WITH_INTAKE} Account details until the account is deleted. A queued email about an intake goes with the intake; the one email that belongs to a firm instead (see Email notifications) is kept ${RETENTION.firmActivityDays} days.`,
     deletion: `${DELETED_WITH_INTAKE} The account is deleted separately, on request.`,
   },
   {
@@ -334,8 +334,8 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "confidential",
     examples: "The queued advisor alert and prospect confirmation, delivery and bounce events, and the do-not-send list.",
     stored: { tables: ["outbox_events", "email_delivery_events", "email_suppressions"], buckets: [], elsewhere: ["Resend"] },
-    retention: `Queued emails are kept with their intake. Delivery events ${RETENTION.emailEventDays} days. Suppressions until removed on request.`,
-    deletion: "Queued emails are deleted with their intake; delivery events by the daily retention job; suppressions by hand.",
+    retention: `Queued emails about an intake are kept with their intake. The email that tells a firm's owners a member left belongs to the firm, not to an intake, and is kept ${RETENTION.firmActivityDays} days after it was queued, like the firm's record. Delivery events ${RETENTION.emailEventDays} days. Suppressions until removed on request.`,
+    deletion: "Queued emails about an intake are deleted with their intake; the firm-level email by the daily job that prunes the firm's record (prune_firm_outbox_events); delivery events by the daily retention job; suppressions by hand.",
   },
   {
     id: "account",
