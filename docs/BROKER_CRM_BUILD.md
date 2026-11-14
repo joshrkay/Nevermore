@@ -417,6 +417,67 @@ order.
 | 23 | CRM-S1.2b | Search in the database: accounts, contacts, opportunities and quotes by name, business, email, phone, web domain, File ID and PEO, five per kind, by visibility, never an intake's answers; each person's recent records | 7 | Sonnet (D) | `20261119230000` |
 | 24 | CRM-S1.2a | The search box in the menu: grouped results with "see all", the last five opened, "Nothing matches" with New account | 11, 12, 17, 23 | Sonnet (A) | none |
 
+## Epic 4 decisions (2026-11-14)
+
+These came from grilling Epic 4's stories (CRM-O1.1, CRM-O1.2, CRM-A2.3, CRM-A2.4, CRM-O1.3 with Q-4.1) against the
+glossary, the ADRs, the PRD, screens 19, 25 and 26 and the code at Epic 3's tip (`crm/epic-03-accounts-contacts` at
+the merge of #143). The founder took every recommended answer. What exists: `accounts`, `contacts` and
+`opportunities` (CRM-Q1.1a), an opportunity's stage worked out from its submission's pipeline stage (D-206, D-216),
+quote requests with the won quote kept on the submission (D44), and the per-PEO completeness check in the browser
+(`src/data/peoCompleteness.ts`). What does not: any save function for an opportunity, an account's page (Epic 3
+row 11), placements, renewals, commission, and a way for an agent to start an intake (New quote, Epic 5).
+
+Epic 4 is grilled now and built after the Epic 3 rows each story needs have merged. The decisions below hold for
+the whole epic; each story's own decisions are in its section, written in its pull request, from its own range of
+numbers so the five can be written side by side. A number a story does not use stays unused.
+
+| # | Decision |
+|---|---|
+| D-219 | Branches as D-2 and D-3: `crm/epic-04-opportunities`, cut from Epic 3's branch, with its pull request into that branch; one `crm/04/<story id>` per story with its pull request into the epic branch. Each story's pull request holds its grilling first and its build after, on the same branch |
+| D-220 | Builders as D-189: Sonnet builds every story at high effort, Opus reviews every story, and a story that fails its review twice is rebuilt by Opus. The riskiest are CRM-O1.2 (it changes the send and quote functions) and CRM-O1.3a (one step that writes five tables) |
+| D-221 | What a later epic builds stays off Epic 4's screens (D-24, D-38: no dead buttons): Email the contact and the Emails column (Epic 6), Send to a PEO, Send to another PEO and Choose PEOs (Epic 6), Compare (N-3.1, Epic 7), PEOs authorized (Q-2.x, Epic 6), Remind (Epic 6), "Save and start the quote" and "Start from last year's certified answers" (New quote, Epic 5), and Home's renewals (CRM-H1). Each later story adds its part where Epic 4 leaves the place for it |
+| D-222 | Until Epic 6 a send and a quote are still recorded by hand on the submission's page (D44, D-8). The opportunity's quotes panel links each row to that page |
+| D-223 | Q-4.1 is built with CRM-O1.3, not after N-3.4. What it needs is a won placement, which CRM-O1.3 makes; N-3.4 (the employer chooses) changes who first names the quote, not what is recorded when it is won |
+| D-224 | Section ranges: CRM-O1.2 D-227 to D-239; CRM-O1.1 D-240 to D-254; CRM-A2.3 D-255 to D-264; CRM-A2.4 D-265 to D-279; CRM-O1.3 with Q-4.1 D-280 to D-299. ADR 0026 is CRM-O1.2's, ADR 0027 is CRM-O1.3's |
+| D-225 | Words are added to `GLOSSARY.md` when each story is built (rule 6), from the words its section settles: **Placement**, **Renewal**, **Lost reason**, **Commission basis**, **Commission payment**, **Former client**, and the opportunity's stage no longer "until CRM-O1.2" |
+| D-226 | Every new table has its firm, its row security by its account's visibility (`can_see_firm_record`, as contacts and opportunities), its two-firm probe (D-28), its function registry entries, its line in `firm_closing_plan()` and, where an agent edits it, `record_track` (history and version, D-45, D-46). Every write refuses a closing firm (ADR 0023) and a support session (ADR 0024) first |
+
+### Epic 4 build order
+
+Lanes as Epic 3's: **D** the database, **A** the accounts and opportunities pages. Under D-105 every migration
+sorts after Epic 3's last (`20261119230000`), in this order. "Epic 3 row n" is a row of Epic 3's build order.
+
+| # | Story | What it covers | Needs | Builder | Migration |
+|---|---|---|---|---|---|
+| 1 | CRM-O1.2 | The stage: Lost without an intake kept on the opportunity, the first send and the first quote move the pipeline stage (ADR 0026), stage changes in the opportunity's history with their cause, and what would move it on | none | Sonnet (D), risky | `20261120090000` |
+| 2 | CRM-O1.1a | The opportunity's page in the database: one read of the opportunity, its quotes, its intake and its contacts; the save with its version (D-46) and the level rule (D-209) | 1 | Sonnet (D) | `20261120100000` |
+| 3 | CRM-A2.4a | Placements and renewals: the tables, adding, editing and deleting a renewal by hand, the account's renewals with days away, the Renewal column and the "Renewing in 120 days" view in the accounts table's query, and Former client | Epic 3 row 8 | Sonnet (D) | `20261120110000` |
+| 4 | CRM-O1.3a | Won, lost and reopen in one step each: the quote chosen and the rest closed with a reason, the placement with its commission basis and the renewal, the lost reason; commission payments (Q-4.1) | 1, 3 | Sonnet (D), risky | `20261120120000` |
+| 5 | CRM-O1.1b | The opportunity's page (`/opportunities/:id`): trail, header, stage bar, quotes, intake, activity, details edited in place, contacts, the page states; names on the account's page open it (replaces D-187) | 2, Epic 3 rows 11 and 16 | Sonnet (A) | none |
+| 6 | CRM-A2.3 | New opportunity on an account (screen 25): the form and the function that makes it | 2, Epic 3 rows 11 and 14 | Sonnet (A) | `20261120130000` |
+| 7 | CRM-A2.4b | Renewals on screen: the account's Renewals tab and its count, Add a renewal, Start the renewal (the New opportunity form filled in), the Renewal column and view on the accounts table | 3, 6, Epic 3 row 10 | Sonnet (A) | none |
+| 8 | CRM-O1.3b | Mark won or lost (screen 26), the won or lost banner with Reopen, Record a payment, and the console's Won and Lost opening the same dialog | 4, 5 | Sonnet (A) | none |
+
+### CRM-O1.2 decisions
+
+_Grilled in its pull request._
+
+### CRM-O1.1 decisions
+
+_Grilled in its pull request._
+
+### CRM-A2.3 decisions
+
+_Grilled in its pull request._
+
+### CRM-A2.4 decisions
+
+_Grilled in its pull request._
+
+### CRM-O1.3 with Q-4.1 decisions
+
+_Grilled in its pull request._
+
 ## Rules for building one story
 
 1. **Branch.** `crm/<epic number>/<story id in lower case>` (for example `crm/01/crm-p1.2`), cut from the epic's
