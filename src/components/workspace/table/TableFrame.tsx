@@ -14,6 +14,7 @@ import { useFirmReady, useRefreshTable, type useTableRows } from "./useTableRows
 import { EmptyBody } from "../states/EmptyStates";
 import { LoadingStatus } from "../states/LoadingStatus";
 import { PlaceholderBody } from "../states/PlaceholderBody";
+import { RefreshFailed } from "../states/RefreshFailed";
 import { placeholderColumns } from "../states/placeholderShapes";
 import { SlowLoadLine } from "../states/SlowLoadLine";
 import { useSlowLoad } from "../states/useSlowLoad";
@@ -98,7 +99,11 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       waitingFor={!firmReady ? "Still waiting for your firm's details." : hasHeld(address) ? "Still waiting for the table's views and fields." : undefined}
     />
   );
-  const refusal = data.error ? refusedQueryReason(data.error) : null;
+  // A failed refresh over rows already on screen (CRM-S2.4a, D-181) is a note over the rows, never the panel that replaces them: the rows are the
+  // answer to the question on screen, and an ask that failed after them does not make them wrong. Only a failure with nothing to show is the panel.
+  const refreshFailed = !!data.error && !!page && !placeholdering;
+  const failure = refreshFailed ? null : data.error;
+  const refusal = failure ? refusedQueryReason(failure) : null;
   // The sort the headers show: the address's, or else the table's own when one column shows it. With neither, no header is marked and the
   // line over the table says what the order is.
   const shownSort = address.sort ?? table.defaultSort;
@@ -122,7 +127,8 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       {typeof toolbar === "function" ? toolbar({ loading: loadingNow, slowLine }) : <>{toolbar}{slowLine}</>}
       {views}
       {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
-      {data.error ? (
+      {refreshFailed && <RefreshFailed what={`the ${table.noun.plural}`} onRetry={data.retry} retrying={data.isRetrying} />}
+      {failure ? (
         refusal ? (
           <div role="alert" className="border border-border rounded-xl p-6 text-center">
             <ShieldAlert className="w-6 h-6 text-primary mx-auto mb-2" aria-hidden="true" />
@@ -131,7 +137,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             <Link to={bareHref} className="text-sm text-primary underline">Show all {table.noun.plural}</Link>
           </div>
         ) : (
-          error(data.error, data.retry, address)
+          error(failure, data.retry, address)
         )
       ) : (
         <>

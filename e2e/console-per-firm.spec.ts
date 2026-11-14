@@ -77,7 +77,8 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
     await page.goto(`${firmUrl(FIRM_B)}/advisor/submissions/${alphaIntake}`);
     await expect(page.getByRole("heading", { name: "This submission isn't available." })).toBeFocused();
     await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.getByRole("status")).toHaveCount(0);
+    // No status says anything (the shell's connection region is on every page and empty until the connection goes, CRM-S2.4a).
+    await expect(page.getByRole("status").filter({ hasText: /\S/ })).toHaveCount(0);
     await expect(page.getByText("Alpha Secret Co")).toHaveCount(0);
     // The same words for an id that was never a submission, so nothing tells a person which of the two it was.
     await page.goto(`${firmUrl(FIRM_B)}/advisor/submissions/not-a-submission`);

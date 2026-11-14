@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, Link, MemoryRouter, RouterProvider, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
 const signOut = vi.fn();
@@ -335,23 +335,195 @@ describe("AdvisorPartnersPage", () => {
       expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
     });
 
-    // Catches: a save from an out-of-date partner looking as if it worked (or overwriting), or losing what the person typed. Until the conflict
-    // dialog (CRM-S2.4a), the row stays open with their typing and says plainly that someone else changed the partner.
-    it("says someone else changed the partner, keeps what was typed and does not say it saved", async () => {
-      api.updateReferralPartner.mockResolvedValue({
+    // Catches: a save from an out-of-date partner looking as if it worked (or overwriting), or losing what the person typed, or a dialog that
+    // does not say what changed, where and by whom (CRM-S2.4a, D-155, D-181).
+    describe("when someone else changed the partner while it was being edited", () => {
+      const theirs = {
         conflict: true,
         currentVersion: 4,
-        current: { name: "Acme Finance Group", kind: "accounting" },
-        changed: [{ field: "name", value: "Acme Finance Group", who: "owner@example.com", at: "2026-11-14T10:00:00+00:00" }],
+        current: { name: "Acme Finance Group", kind: "other" },
+        changed: [
+          { field: "name", value: "Acme Finance Group", who: "owner@example.com", at: "2026-11-14T12:00:00+00:00" },
+          { field: "kind", value: "other", who: "Nevermore", at: "2026-11-14T12:05:00+00:00" },
+        ],
+      };
+      const dialog = () => screen.getByRole("alertdialog");
+      const typeII = async () => {
+        api.updateReferralPartner.mockResolvedValueOnce(theirs);
+        const opened = await openEdit();
+        await opened.user.type(within(opened.row).getByLabelText("Name"), " II");
+        await opened.user.click(within(opened.row).getByRole("button", { name: "Save" }));
+        await screen.findByRole("alertdialog");
+        return opened;
+      };
+
+      it("opens a dialog that sets what they typed beside what is there now, with who changed each field and when, and saves nothing", async () => {
+        const { row } = await typeII();
+        expect(within(dialog()).getByRole("heading", { name: "Someone else changed this partner" })).toBeInTheDocument();
+        expect(dialog()).toHaveAccessibleName("Someone else changed this partner");
+        const rows = within(within(dialog()).getByRole("table")).getAllByRole("row").slice(1);
+        expect(rows).toHaveLength(2);
+        expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent("Name");
+        const [yours, theirsCell, who] = within(rows[0]).getAllByRole("cell");
+        expect(yours).toHaveTextContent("Acme CFO Partners II");
+        expect(theirsCell).toHaveTextContent("Acme Finance Group");
+        expect(who).toHaveTextContent("owner@example.com");
+        expect(who).toHaveTextContent(/Nov 1[45], 2026/);
+        // A code is shown as the words the form shows, and a person at Nevermore is only ever "Nevermore" (D-33).
+        const [, kindTheirs, kindWho] = within(rows[1]).getAllByRole("cell");
+        expect(kindTheirs).toHaveTextContent("Other");
+        expect(kindWho).toHaveTextContent("Nevermore");
+        // Nothing was saved, nothing says it was, and what was typed is still in the form behind.
+        expect(api.updateReferralPartner).toHaveBeenCalledTimes(1);
+        expect(toast.success).not.toHaveBeenCalled();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+        expect(screen.queryByText(/Reload to see their change/)).not.toBeInTheDocument();
+        // The three choices, and a plain line on what each does.
+        for (const name of ["Keep mine", "Keep theirs", "Keep editing"]) expect(within(dialog()).getByRole("button", { name })).toBeInTheDocument();
+        expect(dialog()).toHaveAccessibleDescription(/Keep mine saves what you typed over their change\. Keep theirs/);
       });
-      const { user, row } = await openEdit();
-      await user.type(within(row).getByLabelText("Name"), " II");
-      await user.click(within(row).getByRole("button", { name: "Save" }));
-      const alert = await within(row).findByRole("alert");
-      expect(alert).toHaveTextContent("Someone else changed this partner while you were editing. Reload to see their change.");
-      expect(api.updateReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
-      expect(toast.success).not.toHaveBeenCalled();
-      expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+
+      // Catches: focus left behind the dialog, or on a choice that overwrites someone's work.
+      it("puts focus on the choice that changes nothing, and keeps it inside the dialog", async () => {
+        const { user } = await typeII();
+        expect(within(dialog()).getByRole("button", { name: "Keep editing" })).toHaveFocus();
+        for (let i = 0; i < 5; i++) {
+          await user.tab();
+          expect(dialog()).toContainElement(document.activeElement as HTMLElement);
+        }
+        await user.tab({ shift: true });
+        expect(dialog()).toContainElement(document.activeElement as HTMLElement);
+      });
+
+      // Catches: "Keep mine" saving from the old version again (refused again), or not saving at all.
+      it("keeps what the person typed: Keep mine saves it again from the version that holds their change", async () => {
+        api.updateReferralPartner.mockResolvedValueOnce(theirs).mockResolvedValueOnce({ conflict: false, partner: { ...acme, name: "Acme CFO Partners II", version: 5 } });
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep mine" }));
+        await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(2));
+        expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 4);
+        expect(await screen.findByRole("button", { name: "Edit Acme CFO Partners II" })).toBeInTheDocument();
+        expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+        expect(toast.success).toHaveBeenCalledWith("Partner saved");
+        // The row is closed, and focus is on its Edit button rather than lost to the page.
+        expect(screen.getByRole("button", { name: "Edit Acme CFO Partners II" })).toHaveFocus();
+      });
+
+      // Catches: Keep mine hiding a second change made while the dialog was open.
+      it("shows the dialog again, with the newest change, when Keep mine finds yet another change", async () => {
+        const third = { ...theirs, currentVersion: 5, current: { name: "Third", kind: "other" }, changed: [{ field: "name", value: "Third", who: "lead@example.com", at: "2026-11-14T12:30:00+00:00" }] };
+        api.updateReferralPartner.mockResolvedValueOnce(theirs).mockResolvedValueOnce(third);
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep mine" }));
+        await waitFor(() => expect(within(screen.getByRole("alertdialog")).getByText("lead@example.com")).toBeInTheDocument());
+        expect(within(screen.getByRole("alertdialog")).queryByText("owner@example.com")).not.toBeInTheDocument();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+      });
+
+      // Catches: "Keep theirs" leaving the old version behind (the next save would conflict with a change the person has just accepted), or leaving their typing
+      // in the form as if it were still the thing to save.
+      it("takes their version: the form shows it, focus goes to the first field, and a save starts from their version", async () => {
+        const { user, row } = await typeII();
+        await user.click(within(dialog()).getByRole("button", { name: "Keep theirs" }));
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme Finance Group");
+        expect(within(row).getByLabelText("Kind of partner")).toHaveValue("other");
+        expect(within(row).getByLabelText("Name")).toHaveFocus();
+        expect(api.updateReferralPartner).toHaveBeenCalledTimes(1);
+        api.updateReferralPartner.mockResolvedValueOnce({ conflict: false, partner: { ...acme, name: "Acme Finance Group", kind: "other", version: 5 } });
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme Finance Group", "other", 4));
+      });
+
+      // Catches: closing the dialog throwing the typing away, or a way to close it that picks a side.
+      it("keeps editing: the dialog closes, what was typed stays, focus is back on Save, and Save conflicts again from the same version", async () => {
+        api.updateReferralPartner.mockResolvedValue(theirs);
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep editing" }));
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+        expect(within(row).getByRole("button", { name: "Save" })).toHaveFocus();
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await screen.findByRole("alertdialog");
+        expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      });
+
+      // Catches: Escape choosing a side or closing the row (it would ask to discard, or silently discard).
+      it("treats Escape as keep editing, without asking to discard and without closing the row", async () => {
+        const { user, row } = await typeII();
+        await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+        expect(screen.queryByText("Discard your changes?")).not.toBeInTheDocument();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+      });
+
+      // Catches: an empty comparison when the fields were changed and changed back (the version still moved).
+      it("says so when their changes left the fields as they were, and still offers the choices", async () => {
+        api.updateReferralPartner.mockResolvedValueOnce({ ...theirs, current: { name: "Acme CFO Partners", kind: "accounting" }, changed: [] });
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        const d = await screen.findByRole("alertdialog");
+        expect(d).toHaveTextContent("The fields are as they were when you started");
+        expect(within(d).queryByRole("table")).not.toBeInTheDocument();
+        expect(within(d).getByRole("button", { name: "Keep mine" })).toBeInTheDocument();
+      });
+    });
+
+    // Without a connection (CRM-S2.4a, D-182, D-143): Save is not usable and says why; nothing is sent, nothing typed is lost.
+    describe("without a connection", () => {
+      const goOffline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false); window.dispatchEvent(new Event("offline")); });
+      const goOnline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true); window.dispatchEvent(new Event("online")); });
+      afterEach(() => { vi.restoreAllMocks(); });
+
+      // Catches: a Save that looks usable and fails with a dropped-connection message after the person has waited, or one that is disabled with no reason.
+      it("makes Save aria-disabled with the reason, ignores a click, keeps the typing, and is usable again when the connection is back", async () => {
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        goOffline();
+        const save = within(row).getByRole("button", { name: "Save" });
+        expect(save).toHaveAttribute("aria-disabled", "true");
+        expect(save).not.toBeDisabled();
+        expect(save).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+        await user.click(save);
+        expect(api.updateReferralPartner).not.toHaveBeenCalled();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+        goOnline();
+        expect(within(row).getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-disabled");
+        expect(within(row).getByRole("button", { name: "Save" })).not.toHaveAccessibleDescription(/offline/);
+        api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...acme, name: "Acme CFO Partners II", version: 4 } });
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(1));
+      });
+
+      // Catches: Enter in a field sending a save that cannot arrive, or doing nothing at all.
+      it("does not send a save made with Enter, says it was not saved, and keeps the typing", async () => {
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        goOffline();
+        await user.keyboard("{Enter}");
+        expect(api.updateReferralPartner).not.toHaveBeenCalled();
+        expect(await within(row).findByRole("alert")).toHaveTextContent("You're offline, so this wasn't saved. Try again when you're back online. What you typed is still here.");
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+      });
+
+      it("does the same for the add form", async () => {
+        renderPage();
+        const user = userEvent.setup();
+        await screen.findByRole("button", { name: "Edit Acme CFO Partners" });
+        goOffline();
+        const add = screen.getByRole("button", { name: "Add partner" });
+        expect(add).toHaveAttribute("aria-disabled", "true");
+        expect(add).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+        await user.click(add);
+        expect(api.addReferralPartner).not.toHaveBeenCalled();
+      });
     });
 
     // Catches: Cancel asking when nothing changed.
@@ -618,8 +790,9 @@ describe("AdvisorPartnersPage", () => {
       await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(2));
       await screen.findByRole("row", { name: /Gamma/ });
       await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Save" }));
-      expect(await within(screen.getByRole("row", { name: /Save/ })).findByRole("alert")).toHaveTextContent("Someone else changed this partner while you were editing.");
+      expect(await screen.findByRole("alertdialog")).toHaveTextContent("Someone else changed this partner");
       expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
       // Another reload, then Save again: still the starting version, still a conflict.
       api.listReferralPartners.mockResolvedValue([{ ...bobs, version: 5 }, gamma]);
       api.addReferralPartner.mockResolvedValue({ ...gamma, code: "delta", name: "Delta" });
@@ -631,7 +804,7 @@ describe("AdvisorPartnersPage", () => {
       await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Save" }));
       await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(2));
       expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
-      expect(await within(screen.getByRole("row", { name: /Save/ })).findByRole("alert")).toHaveTextContent("Someone else changed this partner");
+      expect(await screen.findByRole("alertdialog")).toHaveTextContent("Someone else changed this partner");
     });
 
     // Catches: a closed row keeping its old starting version, so the next edit conflicts with a change the person already saw.

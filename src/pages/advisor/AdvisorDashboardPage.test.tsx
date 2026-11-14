@@ -1531,7 +1531,8 @@ describe("AdvisorDashboardPage", () => {
       const refresh = screen.getByRole("button", { name: "Refresh" });
       refresh.focus();
       fireEvent.click(refresh);
-      await screen.findByRole("alert");
+      // The rows are on screen, so the failure is a note over them (CRM-S2.4a), not the panel that replaces them.
+      await screen.findByText(/We couldn't refresh the submissions/);
       expect(document.activeElement).toBe(refresh);
     });
 
@@ -1547,8 +1548,127 @@ describe("AdvisorDashboardPage", () => {
       await act(async () => { vi.advanceTimersByTime(60_000); });
       listQueue.mockRejectedValue(new Error("down again"));
       await act(async () => { vi.advanceTimersByTime(60_000); });
-      await screen.findByRole("alert");
-      expect(document.activeElement).not.toBe(within(screen.getByRole("alert")).getByRole("button", { name: "Try again" }));
+      const note = await screen.findByText(/We couldn't refresh the submissions/);
+      expect(document.activeElement).not.toBe(within(note.closest("[role=status]") as HTMLElement).getByRole("button", { name: "Try again" }));
+    });
+  });
+
+
+  // Refresh in place (CRM-S2.4a, D-49, D-180): the list is asked again on focus and every minute, and a failure of that must not take the rows away.
+  describe("refreshing in place, and a table that fails to refresh", () => {
+    // The minute's ask is made at the end of the advance, and its answer arrives after: let it.
+    const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(1); });
+    const fake = () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    const note = () => (screen.queryByText(/We couldn't refresh the submissions/)?.closest("[role=status]") ?? null) as HTMLElement | null;
+
+    // Catches (D-49): the minute's refresh being a redraw: the table rebuilt (scroll lost), the focused control dropped, or half-typed words cleared.
+    it("brings new rows in place on the minute and on focus: same table, scroll, focus and typing stay", async () => {
+      fake();
+      listQueue.mockResolvedValueOnce(pageOf(1, 20));
+      renderAt();
+      await tick(0);
+      const table = screen.getByRole("table");
+      const scrollBox = table.parentElement as HTMLElement;
+      scrollBox.scrollTop = 120;
+      scrollBox.scrollLeft = 40;
+      const search = screen.getByRole("searchbox");
+      search.focus();
+      fireEvent.change(search, { target: { value: "Co" } });
+      listQueue.mockResolvedValue({ ...pageOf(1, 21), rows: [row({ session_id: "new", company_name: "Brand New Co" }), ...pageOf(1, 20).rows] });
+      await tick(60_000);
+      expect(screen.getByText("Brand New Co")).toBeInTheDocument();
+      expect(screen.getByRole("table")).toBe(table);
+      expect(scrollBox.scrollTop).toBe(120);
+      expect(scrollBox.scrollLeft).toBe(40);
+      expect(document.activeElement).toBe(search);
+      expect(search).toHaveValue("Co");
+      // And on focus: the window coming back asks again.
+      listQueue.mockResolvedValue({ ...pageOf(1, 22), rows: [row({ session_id: "newer", company_name: "Newest Co" }), ...pageOf(1, 20).rows] });
+      act(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange", { bubbles: true })); });
+      await tick(0);
+      expect(screen.getByText("Newest Co")).toBeInTheDocument();
+      expect(document.activeElement).toBe(search);
+    });
+
+    // Catches: a background refresh that fails replacing the rows a person is reading with the failed-load panel (D-180).
+    it("keeps the rows on screen and says so in a note with Try again, instead of the failed-load panel", async () => {
+      fake();
+      listQueue.mockResolvedValueOnce(pageOf(1, 20));
+      renderAt();
+      await tick(0);
+      expect(screen.getByText("Company 1")).toBeInTheDocument();
+      listQueue.mockRejectedValue(Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" }));
+      await tick(60_000);
+      expect(screen.getByText("Company 1")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(note()).toHaveTextContent("We couldn't refresh the submissions. What's below may be out of date.");
+      expect(note()).not.toHaveTextContent(/statement timeout|57014/);
+      expect(within(note()!).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
+
+    // Catches: the note being taken away and put back by each failed minute (it would be read again every time, and a focused "Try again" would be lost).
+    it("is one note across failed minutes: the same element, never read again, and gone when a refresh works", async () => {
+      fake();
+      listQueue.mockResolvedValueOnce(pageOf(1, 20));
+      renderAt();
+      await tick(0);
+      listQueue.mockRejectedValue(new Error("down"));
+      await tick(60_000);
+      const first = note()!;
+      within(first).getByRole("button", { name: "Try again" }).focus();
+      await tick(60_000);
+      await tick(60_000);
+      expect(note()).toBe(first);
+      expect(document.activeElement).toBe(within(first).getByRole("button", { name: "Try again" }));
+      expect(listQueue.mock.calls.length).toBeGreaterThan(3); // it keeps asking quietly while rows are on screen
+      listQueue.mockResolvedValue(pageOf(1, 20));
+      await tick(60_000);
+      expect(note()).toBeNull();
+      expect(screen.getByText("Company 1")).toBeInTheDocument();
+    });
+
+    // Catches: Try again on the note doing nothing, or losing focus to the page when the note goes.
+    it("asks again on its Try again, takes the note away when the rows come, and keeps focus in the page", async () => {
+      fake();
+      listQueue.mockResolvedValueOnce(pageOf(1, 20));
+      renderAt();
+      await tick(0);
+      listQueue.mockRejectedValue(new Error("down"));
+      await tick(60_000);
+      const before = listQueue.mock.calls.length;
+      listQueue.mockResolvedValue([row({ company_name: "Fresh Co" })]);
+      const button = within(note()!).getByRole("button", { name: "Try again" });
+      button.focus();
+      fireEvent.click(button);
+      await tick(0);
+      expect(listQueue.mock.calls.length).toBeGreaterThan(before);
+      expect(screen.getByText("Fresh Co")).toBeInTheDocument();
+      expect(note()).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
+
+    // Catches (D-180): an errored table with nothing to show being asked again every minute and on focus, so its panel remounts, a person's un-pressed
+    // "Try again" loses focus and the alert is read again each time.
+    it("asks a table with no rows again only when Try again is pressed, not on the minute or on focus", async () => {
+      fake();
+      listQueue.mockRejectedValue(new Error("down"));
+      renderAt();
+      await tick(0);
+      const alert = screen.getByRole("alert");
+      const button = within(alert).getByRole("button", { name: "Try again" });
+      button.focus();
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      await tick(60_000);
+      await tick(60_000);
+      act(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange", { bubbles: true })); });
+      await tick(0);
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("alert")).toBe(alert);
+      expect(document.activeElement).toBe(button);
+      listQueue.mockResolvedValue([row()]);
+      fireEvent.click(button);
+      await tick(0);
+      expect(screen.getByRole("link", { name: "Acme" })).toBeInTheDocument();
     });
   });
 

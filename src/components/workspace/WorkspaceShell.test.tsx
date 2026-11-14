@@ -220,3 +220,46 @@ describe("the menu at phone width", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+// The no-connection banner (CRM-S2.4a, D-182): said once when the connection goes, gone when it is back, on every page of the workspace.
+describe("the no-connection banner", () => {
+  const goOffline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false); window.dispatchEvent(new Event("offline")); });
+  const goOnline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true); window.dispatchEvent(new Event("online")); });
+  const offlineStatus = () => screen.queryAllByRole("status").find((s) => /offline/i.test(s.textContent ?? "")) ?? null;
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // Catches: nothing telling a person their screen has stopped updating, or a banner that is there all the time.
+  it("says so when the connection goes, over the page that is already loaded, and takes the words away when it is back", async () => {
+    await renderAt("/advisor");
+    expect(offlineStatus()).toBeNull();
+    goOffline();
+    expect(offlineStatus()).toHaveTextContent("You're offline. What's on screen may be out of date, and nothing can be saved until you're back online.");
+    expect(screen.getByText("The page")).toBeInTheDocument();
+    goOnline();
+    expect(offlineStatus()).toBeNull();
+  });
+
+  // Catches: a banner read out again on every poll, or put on screen as a new element each time, or one that is a live region only after it has words
+  // (a region inserted with its words is announced unreliably).
+  it("is one live region that is on the page before it has words, and its words are not replaced by a poll or a second offline event", async () => {
+    await renderAt("/advisor");
+    const region = screen.getByRole("status", { name: "Connection" });
+    expect(region).toHaveTextContent("");
+    goOffline();
+    expect(screen.getByRole("status", { name: "Connection" })).toBe(region);
+    const words = region.firstElementChild;
+    expect(words).not.toBeNull();
+    goOffline();
+    await settle();
+    expect(region.firstElementChild).toBe(words);
+    goOnline();
+    expect(region).toHaveTextContent("");
+  });
+
+  // Catches: a person who opens the workspace with no connection being told nothing.
+  it("shows at once when the workspace opens without a connection", async () => {
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    await renderAt("/advisor");
+    expect(offlineStatus()).toHaveTextContent("You're offline.");
+  });
+});

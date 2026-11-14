@@ -10,6 +10,7 @@ import {
 import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
 import ClosingBanner from "./ClosingBanner";
+import ConnectionBanner from "./ConnectionBanner";
 import SupportBanner, { SupportEnded } from "./SupportBanner";
 import { useSupportOver } from "./useSupportOver";
 import { badgeText, MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
@@ -148,6 +149,7 @@ const Frame = () => {
       <PhoneBar />
       <SupportBanner />
       <ClosingBanner />
+      <ConnectionBanner />
       {supportOver ? <SupportEnded /> : <Outlet />}
       <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
     </>

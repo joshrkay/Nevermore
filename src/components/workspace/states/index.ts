@@ -9,3 +9,4 @@ export { clearLabelFor, type NarrowedBy } from "./clearLabel";
 export { EmptyBody, NothingMatches, NothingYet, type EmptyAction, type EmptyLayout } from "./EmptyStates";
 export { LoadFailed, PanelFailed } from "./LoadFailed";
 export { NotAvailable } from "./NotAvailable";
+export { RefreshFailed } from "./RefreshFailed";

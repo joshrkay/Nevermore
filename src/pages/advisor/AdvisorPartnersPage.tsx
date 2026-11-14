@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
 import {
-  choiceRule, Field, FormActions, nameRule, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
+  choiceRule, Field, FormActions, nameRule, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
 } from "@/components/workspace/form";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { funnelRange } from "@/data/funnel";
@@ -279,8 +279,23 @@ const PartnerTable = ({ partners, counts, links, onChanged }: { partners: Referr
 
 type SavedPartner = ReferralPartner;
 
+/** How the conflict dialog names a partner's editable fields and words their values (a kind's code is shown as its label). */
+const CONFLICT_FIELDS = {
+  name: { label: "Name" },
+  kind: { label: "Kind of partner", format: (v: unknown) => partnerKindLabel(String(v)) },
+};
+
 const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
   const [editing, setEditing] = useState(false);
+  // A save closes the row, and the Save button that had focus goes with it: focus goes to the row's Edit button, which is what takes its place.
+  const editButton = useRef<HTMLButtonElement>(null);
+  const [focusEdit, setFocusEdit] = useState(false);
+  useEffect(() => {
+    if (focusEdit && !editing) {
+      editButton.current?.focus();
+      setFocusEdit(false);
+    }
+  }, [focusEdit, editing]);
   // What this row's own last save answered, shown (and edited from) at once; the list reload that follows confirms it and takes over.
   const [saved, setSaved] = useState<ReferralPartner | null>(null);
   const partner = saved && saved.version >= listed.version ? saved : listed;
@@ -294,17 +309,17 @@ const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: Re
       // The version the person started editing from, never the row's live one (a reload may have brought a newer one).
       if (started.version === undefined) throw new SaveRefused("Couldn't save the partner. Reload the page and try again.");
       const answer = await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind, started.version);
-      if (!("partner" in answer)) {
-        // Nothing was saved. Until the conflict dialog arrives (CRM-S2.4a), say so plainly and keep what was typed.
-        throw new SaveRefused("Someone else changed this partner while you were editing. Reload to see their change.");
-      }
+      // Nothing was saved: the form opens the conflict dialog (what was typed beside what is there now), and the person chooses.
+      if (!("partner" in answer)) throw new SaveConflict(answer);
       toast.success("Partner saved");
       return answer.partner;
     },
+    conflictDialog: { noun: "partner", fields: CONFLICT_FIELDS },
     savedValues: (_, v) => v,
     onSaved: (answer) => {
       setSaved(answer);
       setEditing(false);
+      setFocusEdit(true);
       onChanged();
     },
     failureMessage: "Couldn't save the partner. Check your connection and try again.",
@@ -359,7 +374,7 @@ const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: Re
         {editing ? (
           <FormActions className="min-w-44" />
         ) : (
-          <button type="button" onClick={startEditing} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
+          <button ref={editButton} type="button" onClick={startEditing} aria-label={`Edit ${partner.name}`} className={`${buttonClass} ml-auto`}>
             Edit
           </button>
         )}

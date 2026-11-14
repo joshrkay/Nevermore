@@ -1,11 +1,11 @@
-import { createContext, forwardRef, useContext, useEffect, useRef, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
+import { createContext, forwardRef, useContext, useEffect, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import type { ControllerRenderProps, FieldValues } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage, useFormField } from "@/components/ui/form";
 import { cn } from "@/lib/utils";
 import { SaveFailed } from "./SaveFailed";
-import type { WorkspaceFormApi } from "./useWorkspaceForm";
+import { OFFLINE_SAVE_REASON, type WorkspaceFormApi } from "./useWorkspaceForm";
 
 const ApiContext = createContext<WorkspaceFormApi | null>(null);
 
@@ -60,19 +60,32 @@ export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", c
   className?: string;
 }) => {
   const api = useApi();
-  const save = useRef<HTMLButtonElement>(null);
+  const save = api.saveButton;
   // The Save button was disabled while the request ran, so the browser dropped the focus from it. When the save fails with a
   // message beside the buttons, the focus goes back there (and the message, an alert, is announced once as it appears).
   useEffect(() => {
     if (api.saveError && !api.saving) save.current?.focus();
-  }, [api.saveError, api.saving]);
+  }, [api.saveError, api.saving, save]);
+  const reasonId = `${api.formId}-offline`;
   return (
     <div className={cn("flex flex-wrap items-center justify-end gap-2", className)}>
       <SaveFailed message={api.saveError} className="basis-full" />
+      {api.offline && <p id={reasonId} className="basis-full text-xs text-muted-foreground">{OFFLINE_SAVE_REASON}</p>}
       {api.cancel && (
         <Button type="button" variant="outline" className="h-11 rounded-md" disabled={api.saving} onClick={api.cancel}>{cancelLabel}</Button>
       )}
-      <Button ref={save} type="submit" form={api.formId} className="h-11 rounded-md" disabled={api.saving} aria-busy={api.saving}>
+      {/* With no connection Save is aria-disabled, not disabled (D-143): it stays in the tab order, says why, and ignores the click. */}
+      <Button
+        ref={save}
+        type="submit"
+        form={api.formId}
+        className="h-11 rounded-md"
+        disabled={api.saving}
+        aria-busy={api.saving}
+        aria-disabled={api.offline || undefined}
+        aria-describedby={api.offline ? reasonId : undefined}
+        onClick={api.offline ? (e) => e.preventDefault() : undefined}
+      >
         {api.saving && <Loader2 className="animate-spin" aria-hidden="true" />}
         {api.saving ? savingLabel : submitLabel}
       </Button>

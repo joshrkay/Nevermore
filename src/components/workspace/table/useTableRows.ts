@@ -19,6 +19,13 @@ export function useFirmReady() {
   return { firmId: workspace?.firm?.id ?? null, ready: workspace === null || workspace.firm !== null };
 }
 
+/**
+ * Whether a table's list is asked again by itself (on the minute, on focus, on reconnecting). It is, except when it has failed with nothing to
+ * show (CRM-S2.4a, D-180): asking again would redraw the failed panel each time (its "Try again" losing focus, its alert read again) over a failure
+ * that "Try again" is the way out of. A table that failed over rows keeps asking quietly: the note over the rows stays one note until a refresh works.
+ */
+const keepsAsking = (query: { state: { status: string; data: unknown } }) => !(query.state.status === "error" && query.state.data === undefined);
+
 /** The key every query of one table starts with, so everything the page shows for it can be asked again together. */
 const tableKey = (firmId: string | null, table: { id: string }) => ["table", firmId, table.id] as const;
 
@@ -44,8 +51,9 @@ export function useTableRows<K extends TableFields, Row, Context>(
     queryFn: async () => ({ page: await fetchPage(asked), search: address.search }),
     enabled: ready && !hasHeld(address),
     placeholderData: keepPreviousData,
-    refetchInterval: TABLE_REFRESH_MS,
-    refetchOnWindowFocus: true,
+    refetchInterval: (q) => (keepsAsking(q) ? TABLE_REFRESH_MS : false),
+    refetchOnWindowFocus: (q) => keepsAsking(q),
+    refetchOnReconnect: (q) => keepsAsking(q),
     retry: false,
   });
   return {
@@ -53,6 +61,8 @@ export function useTableRows<K extends TableFields, Row, Context>(
     /** The search the rows on screen were found for. */
     searchOfRows: query.data?.search ?? "",
     error: query.isError ? (query.error as Error) : null,
+    /** Asked again while the rows of the same question are on screen (a retry is under way), so a failure note can say so. */
+    isRetrying: query.isFetching && query.isError,
     isPlaceholder: query.isPlaceholderData,
     isRefreshing: query.isFetching,
     retry: () => void query.refetch(),
