@@ -866,7 +866,7 @@ BEGIN
 END $$;
 
 -- ---------- a key that is not a record's ----------
--- Break caught: a history key is compared as text (no index, a scan of every contact) or cast and raises for a key that is not an id.
+-- Break caught: a history key is cast to an id and raises for a key that is not one, instead of being a record that is not there.
 DO $$
 DECLARE acme uuid := pg_temp.id('acme'); a1 uuid := pg_temp.id('a1');
 BEGIN
@@ -879,12 +879,59 @@ BEGIN
   PERFORM pg_temp.is(public.record_history_record_exists(acme, 'accounts', 'not-an-id'), false, 'a key that is not an id is no record');
   PERFORM pg_temp.is(public.record_history_record_exists(acme, 'contacts', pg_temp.id('c1')::text), true, 'a contact');
   PERFORM pg_temp.is(public.record_history_record_exists(acme, 'opportunities', pg_temp.id('o1')::text), true, 'an opportunity');
-  -- Found by the primary key's index: the id is compared as an id (a text comparison reads every contact of the firm: 18 s to delete one account with
-  -- 2,000 contacts among 200,000). Row counts say nothing reliable about a plan, so this asks what the two functions' source compares, as
-  -- close_a_firm.sql asks whether a write still asks its guard.
-  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('record_history_can_see', 'record_history_record_exists')
-    AND (p.prosrc ~ 'id::text' OR p.prosrc !~ 'record_history_key_uuid')), 0::bigint, 'the history functions compare a record''s id as an id');
   RAISE NOTICE 'crm_records: keys passed';
+END $$;
+
+-- ---------- the history functions read a few rows, not the firm's ----------
+-- Break caught: a history key is compared with the record's id as text (id::text, id::varchar or any other cast of the id), which no index serves, so
+-- each lookup reads every record of the firm (deleting one account with 2,000 contacts among 200,000 took 18 s). Asked by what the lookup reads: with
+-- the tables' statistics fresh and a sequential scan priced out, looking up an id-shaped key that is no record must read no row of the table, through
+-- record_history_can_see (as a member, through record_history_list) and through record_history_record_exists. The firm has 300 of each. Planning a
+-- lookup reads the two ends of an index on the account to price the join (two rows, whatever the firm's size), so each lookup is planned once, as one
+-- plan for every key, by a first call with another key, and the second call is measured: what it reads is what the lookup reads.
+CREATE FUNCTION pg_temp.rows_read(t text) RETURNS bigint LANGUAGE sql AS $$
+  SELECT s.seq_tup_read + COALESCE(s.idx_tup_fetch, 0) FROM pg_stat_xact_user_tables s WHERE s.relid = ('public.' || t)::regclass
+$$;
+
+CREATE FUNCTION pg_temp.history_list_as_member(t text, k text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, %L, %L)$q$, pg_temp.id('acme'), t, k));
+  RESET ROLE;
+  RETURN r;
+END $$;
+
+DO $$
+BEGIN
+  PERFORM pg_temp.account('k1', 'acme', NULL);
+  INSERT INTO public.accounts (source, firm_id, name) SELECT 'added_by_hand', pg_temp.id('acme'), 'Lookup account ' || g FROM generate_series(1, 300) g;
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email)
+  SELECT pg_temp.id('acme'), pg_temp.id('k1'), 'Lookup ' || g, 'lookup' || g || '@example.test' FROM generate_series(1, 300) g;
+  INSERT INTO public.opportunities (firm_id, account_id, name) SELECT pg_temp.id('acme'), pg_temp.id('k1'), 'Lookup search ' || g FROM generate_series(1, 300) g;
+END $$;
+ANALYZE public.accounts, public.contacts, public.opportunities;
+
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); t text; missing text := gen_random_uuid()::text; before bigint;
+BEGIN
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  FOREACH t IN ARRAY ARRAY['accounts', 'contacts', 'opportunities'] LOOP
+    PERFORM pg_temp.is(pg_temp.history_list_as_member(t, gen_random_uuid()::text), 'PT404', 'planned: an id that is no record of ' || t || ' is not found');
+    before := pg_temp.rows_read(t);
+    PERFORM pg_temp.is(pg_temp.history_list_as_member(t, missing), 'PT404', 'an id that is no record of ' || t || ' is not found');
+    PERFORM pg_temp.is(pg_temp.rows_read(t) - before, 0::bigint, 'and the history''s reader (record_history_can_see, as a member) read no row of ' || t || ' to say so');
+    PERFORM pg_temp.is(public.record_history_record_exists(acme, t::public.record_history_table, gen_random_uuid()::text), false, 'planned: an id that is no record of ' || t || ' does not exist');
+    before := pg_temp.rows_read(t);
+    PERFORM pg_temp.is(public.record_history_record_exists(acme, t::public.record_history_table, missing), false, 'an id that is no record of ' || t || ' does not exist');
+    PERFORM pg_temp.is(pg_temp.rows_read(t) - before, 0::bigint, 'and record_history_record_exists read no row of ' || t || ' to say so');
+  END LOOP;
+  -- The measure can see a scan: the same lookup with the id compared as text reads the firm's contacts.
+  before := pg_temp.rows_read('contacts');
+  PERFORM count(*) FROM public.contacts c WHERE c.firm_id = acme AND c.id::text = missing;
+  PERFORM pg_temp.is(pg_temp.rows_read('contacts') - before >= 300, true, 'compared as text, the same lookup reads the firm''s contacts');
+  RAISE NOTICE 'crm_records: few rows read passed';
 END $$;
 
 -- ---------- closing a firm ----------
