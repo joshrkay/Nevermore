@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { PanelFailed, RefreshFailed } from "@/components/workspace/states";
-import { ACTIVITY_KINDS, activityIsOfKind, type ActivityKind } from "@/data/accountPage";
-import type { AccountFile, AccountListTab, AccountPage, AccountTabRows, TabRows } from "@/lib/accountPageApi";
+import { ACTIVITY_FILTERS_SHOWN } from "@/data/accountPage";
+import type { AccountFile, ActivityFilter, AccountListTab, AccountPage, AccountTabRows, TabRows } from "@/lib/accountPageApi";
 import { AccountFiles } from "./AccountFiles";
 import { activityColumns, contactColumns, EMPTY_WORDS, opportunityColumns, quoteColumns, TAB_LABELS } from "./accountColumns";
 import { EmptyLine, ListPanel, ListRowsLoading, Rows } from "./accountLists";
@@ -25,8 +25,8 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   page: AccountPage;
   contactId: string | null;
 }) {
-  const [kind, setKind] = useState<ActivityKind>("all");
-  const { query, data } = useAccountTabQuery(firmId, accountId, tab);
+  const [filter, setFilter] = useState<ActivityFilter>("all");
+  const { query, data } = useAccountTabQuery(firmId, accountId, tab, filter);
   const heading = TAB_LABELS[tab];
   const id = `account-${tab}-heading`;
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -52,9 +52,27 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
     : pagesLoaded >= MAX_PAGES_FOR_A_CONTACT ? "That contact isn't in the first 500 here."
     : null;
 
+  // The filter stays while a filter is on its way, so the person can choose another.
+  const filters = tab === "activity" && (
+        <div role="group" aria-label="Show" className="mb-3 flex gap-2">
+          {ACTIVITY_FILTERS_SHOWN.map((k) => (
+            <button
+              key={k.id}
+              type="button"
+              aria-pressed={filter === k.id}
+              onClick={() => setFilter(k.id)}
+              className={`min-h-9 rounded-full border px-3 text-sm ${filter === k.id ? "border-primary bg-primary/10 font-medium" : "border-border text-muted-foreground hover:bg-muted"}`}
+            >
+              {k.label}
+            </button>
+          ))}
+        </div>
+  );
+
   if (!data) {
     return (
       <ListPanel id={id} heading={heading} headingRef={headingRef}>
+        {filters}
         {query.isError ? (
           <PanelFailed what={NOUNS[tab]} error={query.error as Error} onRetry={() => void query.refetch()} />
         ) : query.isPending ? (
@@ -69,23 +87,9 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   return (
     <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef}>
       {query.isError && <RefreshFailed what={NOUNS[tab]} onRetry={() => void query.refetch()} retrying={query.isFetching} />}
-      {tab === "activity" && (
-        <div role="group" aria-label="Show" className="mb-3 flex gap-2">
-          {ACTIVITY_KINDS.map((k) => (
-            <button
-              key={k.id}
-              type="button"
-              aria-pressed={kind === k.id}
-              onClick={() => setKind(k.id)}
-              className={`min-h-9 rounded-full border px-3 text-sm ${kind === k.id ? "border-primary bg-primary/10 font-medium" : "border-border text-muted-foreground hover:bg-muted"}`}
-            >
-              {k.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {filters}
       {contactNote && <p role="status" className="mb-3 text-sm text-muted-foreground">{contactNote}</p>}
-      {tabBody(tab, data, kind, contactId, emptyWords(tab, page))}
+      {tabBody(tab, data, contactId, emptyWords(tab, page, filter))}
       {query.hasNextPage && (
         <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">
           <span>Showing {data.rows.length} of {data.count}.</span>
@@ -98,19 +102,22 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   );
 }
 
-function emptyWords(tab: AccountListTab | "files", page: AccountPage): string {
+const EMPTY_FILTERED: Record<Exclude<ActivityFilter, "all">, string> = {
+  calls: "No calls yet.", notes: "No notes yet.", tasks: "No tasks yet.", changes: "No changes yet.",
+};
+
+function emptyWords(tab: AccountListTab | "files", page: AccountPage, filter: ActivityFilter): string {
+  if (tab === "activity" && filter !== "all") return EMPTY_FILTERED[filter];
   if (tab === "quotes") return page.tabs.opportunities.count > 0 ? EMPTY_WORDS.quotesNoneSent : EMPTY_WORDS.quotes;
   return EMPTY_WORDS[tab];
 }
 
 /** The tab's rows as its own table, or the tab's one line when it has none (after the Activity filter, too). */
-function tabBody(tab: AccountListTab | "files", data: TabRows<unknown>, kind: ActivityKind, contactId: string | null, empty: string) {
-  if (tab === "activity") {
-    const rows = (data as TabRows<AccountTabRows["activity"]>).rows.filter((r) => activityIsOfKind(r, kind));
-    return rows.length === 0 ? <EmptyLine>{empty}</EmptyLine> : <Rows caption="The account's history" columns={activityColumns} rows={rows} rowKey={(r) => r.entryKey} />;
-  }
+function tabBody(tab: AccountListTab | "files", data: TabRows<unknown>, contactId: string | null, empty: string) {
   if (data.rows.length === 0) return <EmptyLine>{empty}</EmptyLine>;
   switch (tab) {
+    case "activity":
+      return <Rows caption="The account's activity" columns={activityColumns} rows={(data as TabRows<AccountTabRows["activity"]>).rows} rowKey={(r) => r.entryKey} />;
     case "contacts":
       return <Rows caption="The account's contacts" columns={contactColumns} rows={(data as TabRows<AccountTabRows["contacts"]>).rows} rowKey={(r) => r.id} highlight={contactId} />;
     case "opportunities":

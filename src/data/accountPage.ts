@@ -78,6 +78,9 @@ export const ACTIVITY_FILTERS_SHOWN: { id: ActivityFilter; label: string }[] = [
   { id: "all", label: "All" }, { id: "calls", label: "Calls" }, { id: "notes", label: "Notes" }, { id: "tasks", label: "Tasks" }, { id: "changes", label: "Changes" },
 ];
 
+/** What each entry of the Activity tab is called. */
+export const KIND_LABELS = { change: "Change", call: "Call", note: "Note", task: "Task" } as const;
+
 /** A moment in the person's own time: "Nov 14, 2026, 10:30 AM". The text itself if it is not a date. */
 export const formatWhen = (iso: string): string => {
   const date = new Date(iso);

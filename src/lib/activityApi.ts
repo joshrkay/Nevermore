@@ -59,6 +59,13 @@ export class ActivityError extends Error {
 const nullableText = z.string().nullable();
 const ref = z.object({ id: z.string().min(1), name: nullableText });
 
+/** One call, note or task as the database gives it (its column names). */
+type ItemRow = {
+  type: ActivityType; id: string; entry_key: string; at: string; who: string | null; author_id: string | null; contact: PersonRef | null; opportunity: PersonRef | null;
+  outcome: CallOutcome | null; title: string | null; body: string | null; additions: { at: string; who: string | null; text: string }[]; assignee: PersonRef | null;
+  due_on: string | null; done_at: string | null; done_by: string | null; can_edit: boolean; editable_until: string | null;
+};
+
 /** The shape of one call, note or task as the database gives it; `type` tells which. The Activity tab's rows (src/lib/accountPageApi.ts) use it too. */
 export const activityItemSchema = z.object({
   type: z.enum(["call", "note", "task"]),
@@ -79,9 +86,9 @@ export const activityItemSchema = z.object({
   done_by: nullableText,
   can_edit: z.boolean(),
   editable_until: nullableText,
-});
+}) as unknown as z.ZodType<ItemRow>;
 
-export const activityItemOf = (a: z.infer<typeof activityItemSchema>): ActivityItem => ({
+export const activityItemOf = (a: ItemRow): ActivityItem => ({
   type: a.type, id: a.id, entryKey: a.entry_key, at: a.at, who: a.who, authorId: a.author_id, contact: a.contact, opportunity: a.opportunity, outcome: a.outcome,
   title: a.title, body: a.body, additions: a.additions, assignee: a.assignee, dueOn: a.due_on, doneAt: a.done_at, doneBy: a.done_by, canEdit: a.can_edit,
   editableUntil: a.editable_until,
@@ -128,7 +135,7 @@ export interface Logged {
   followUp: ActivityItem | null;
 }
 
-const loggedSchema = z.object({ activity: activityItemSchema, follow_up: activityItemSchema.nullable() });
+const loggedSchema = z.object({ activity: activityItemSchema, follow_up: activityItemSchema.nullable() }) as unknown as z.ZodType<{ activity: ItemRow; follow_up: ItemRow | null }>;
 
 /** Logs a call, a note or a task on an account. A refusal is an `ActivityError`: `invalid` (the database says what is wrong, in words), `notAllowed`, `notFound`, `readOnly` (a closing firm, Nevermore support) or `failed`. */
 export async function logActivity(firmId: string, input: LogInput): Promise<Logged> {
@@ -215,7 +222,7 @@ const optionsSchema = z.object({
   contacts: z.array(z.object({ id: z.string().min(1), name: z.string(), title: nullableText })),
   opportunities: z.array(z.object({ id: z.string().min(1), name: z.string() })),
   people: z.array(z.object({ id: z.string().min(1), name: z.string() })),
-});
+}) as unknown as z.ZodType<ActivityOptions>;
 
 /** The contacts and opportunities a call can be with or about, and the firm's members a task can be for. Null when the person may not see the account. */
 export async function getActivityOptions(firmId: string, accountId: string): Promise<ActivityOptions | null> {
