@@ -134,10 +134,11 @@ REVOKE ALL ON FUNCTION public.find_duplicate_account(uuid, text, text, text, tex
 -- never been certified (55000): a draft has no chain (ADR 0025).
 --
 -- The values are the certified ones: the answers of the intake's latest certification (its snapshot), not the working copy. Ordering, D-29 and D-32:
--- the opportunity's intake is unique, which is what proves one chain; the firm's advisory lock is taken before the look for the chain and before the
--- match, so two certifications at once of the same intake find one chain, and two certifications at once of the same business are matched against
--- each other (the second sees the first, which committed before the lock was released) instead of each missing the other. A conflict on the intake
--- that the lock should have made impossible fails the step and rolls the account back, so even without the lock no second chain is made.
+-- the opportunity's intake is unique, which is what proves one chain. A chain that is already there is answered at once, without the lock (a
+-- certification again must not queue behind a chain being made). Otherwise the firm's advisory lock is taken, the chain looked for again and only then
+-- the match made, so two steps at once for the same intake find one chain, and two at once for the same business are matched against each other (the
+-- second sees the first, which committed before the lock was released) instead of each missing the other. A conflict on the intake that the lock should
+-- have made impossible fails the step and rolls the account back, so even without the lock no second chain is made.
 CREATE FUNCTION public.make_intake_chain(p_intake_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
