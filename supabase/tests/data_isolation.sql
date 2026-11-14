@@ -194,6 +194,7 @@
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
+\i supabase/migrations/20261119140000_account_page.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1296,6 +1297,16 @@ INSERT INTO callable VALUES
    'the count behind each view tab, for the accounts the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
   ('firm_member_choices(p_firm_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) reads the firm''s current members by id and name, for the Owner filter; 42501 for every other caller');
+-- CRM-A2.1a (20261119140000_account_page.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
+INSERT INTO callable VALUES
+  ('account_page(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the account, by level, reads its details and each tab''s count and first five rows; NULL, the same as for an account that is not there, for anyone else: another firm''s member, a platform admin, a former member, an agent whose level does not reach it'),
+  ('account_files(p_firm_id uuid, p_account_id uuid, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for an account''s files that passed the virus check: names and places, never what was read out of one; the link to a file is Storage''s own, under its own access rule'),
+  ('submission_account(p_firm_id uuid, p_submission_id uuid)', 'own', NULL,
+   'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
+  ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there');
 -- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
 INSERT INTO callable VALUES
   ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
@@ -1848,6 +1859,17 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('record_history_list', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.record_history_list({firm}, 'referral_partners', {partner})$$);
 
+-- CRM-A2.1a: an account's page, its files, a submission's account and the save of an account's own fields ({acct} is the firm's account owned by its agent, {sid} its
+-- certified intake, which that account's opportunity holds). The reads answer nothing, as they do for an account that is not there, to anyone who may not see the
+-- account; the save refuses them. A member who owns nothing here (the member of both firms) is not the positive control: the account is its agent's (a call that
+-- names {acct} is not tried as that member; the submission's call names it in a condition for that reason: the submission's account is that one).
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('account_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_page({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('account_files', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_files({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('submission_account', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.submission_account({firm}, {sid})) WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('update_account', 'advisor', 'by_id',
+   $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$');
+
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
 BEGIN
@@ -1875,7 +1897,8 @@ BEGIN
                     AND m.role = 'agent' AND m.valid_until IS NULL ORDER BY m.id LIMIT 1)),
       (f, 'suspended', COALESCE((SELECT x.user_id::text FROM public.firm_member_suspensions x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)
                                  AND x.ended_at IS NULL ORDER BY x.id LIMIT 1), gen_random_uuid()::text)),
-      (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1));
+      (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1)),
+      (f, 'acct', (SELECT a.id::text FROM public.accounts a WHERE a.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2079,7 +2102,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{view\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3532,6 +3555,14 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
   ('opportunity_stage', 'service_only', 'an opportunity''s stage, worked out from its submission''s pipeline stage; answers for any opportunity by id, so no API role can call it: a query that has decided the caller may see the opportunity asks it');
+
+-- CRM-A2.1a (20261119140000_account_page.sql; supabase/tests/account_page.sql): an account's page, the level rule for changes and the save of an account's own fields.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
+  ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),
+  ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
+  ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
+  ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),

@@ -860,6 +860,43 @@ export type Database = {
         Args: { p_firm_id: string | null }
         Returns: { user_id: string; name: string }[]
       }
+      // An account's page (20261119140000): {account, can_change, tabs: {contacts, opportunities, quotes, activity, files}}, each tab {count, rows} with its first five
+      // rows; null, the same as for an account that is not there, for anyone who may not see the account. src/lib/accountPageApi.ts reads it.
+      account_page: {
+        Args: { p_firm_id: string; p_account_id: string }
+        Returns: Json
+      }
+      // An account's files that passed the virus check: {count, rows}, a page of at most 100; null for anyone who may not see the account.
+      account_files: {
+        Args: { p_firm_id: string; p_account_id: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // The id and name of the account that holds a submission, for someone who may see that account; null for anyone else.
+      submission_account: {
+        Args: { p_firm_id: string; p_submission_id: string }
+        Returns: Json
+      }
+      // The save of an account's own fields from a version: {conflict: false, record} or {conflict: true, currentVersion, current, changed}.
+      update_account: {
+        Args: {
+          p_account_id: string
+          p_name: string
+          p_trade_name: string | null
+          p_website: string | null
+          p_phone: string | null
+          p_street: string | null
+          p_city: string | null
+          p_state: string | null
+          p_postal_code: string | null
+          p_industry: string | null
+          p_employees: number | null
+          p_states_of_operation: string[]
+          p_current_provider: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {
