@@ -57,10 +57,14 @@ type DbError = { code?: string; message?: string };
 const NOT_MEMBER = "You aren't a member of this firm.";
 const NOT_AVAILABLE = "That view isn't available.";
 
-/** The database words these refusals plainly itself (a name taken, the ceiling, something that can't be kept); anything else gets `fallback`. */
-function refusal(error: DbError, words: { notAllowed: string; fallback: string }): Error {
+/**
+ * The database words these refusals plainly itself (a name taken, the ceiling, something that can't be kept); anything else gets `fallback`.
+ * `locked` says what a refusal of a firm that can't be changed (closing, or a support session: PT423) means for the call, given the database's reason.
+ */
+function refusal(error: DbError, words: { notAllowed: string; fallback: string; locked?: (why: string) => string }): Error {
   switch (error.code) {
     case "42501": return new Error(words.notAllowed);
+    case "PT423": return new Error(words.locked ? words.locked(error.message || "This firm can't be changed") : words.fallback);
     case "PT404": return new Error(NOT_AVAILABLE);
     case "PT409":
     case "PT422":
@@ -161,5 +165,7 @@ export async function fetchMyColumns(firmId: string, table: WorkspaceTable, view
 /** Keeps the person's own columns for a table (no view) or for a saved view; null forgets the choice. */
 export async function setMyColumns(firmId: string, table: WorkspaceTable, viewId: string | null, columns: string[] | null): Promise<void> {
   const { error } = await supabase.rpc("set_my_table_columns", { p_firm_id: firmId, p_table: table, p_view_id: viewId, p_columns: columns });
-  if (error) throw refusal(error, { notAllowed: NOT_MEMBER, fallback: "Couldn't keep your columns. Try again." });
+  if (error) {
+    throw refusal(error, { notAllowed: NOT_MEMBER, fallback: "Couldn't keep your columns. Try again.", locked: (why) => `${why}, so your columns weren't kept.` });
+  }
 }

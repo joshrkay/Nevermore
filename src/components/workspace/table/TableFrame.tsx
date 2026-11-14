@@ -30,6 +30,11 @@ interface Props<K extends TableFields, Row, Context> {
   /** The columns to draw: the table's own (the default), or the person's visible and ordered ones (CRM-S3.1a). The grey loading rows use the same list. */
   columns?: ColumnDefinition<Row, keyof K & string, Context>[];
   /**
+   * The person's choice of columns has not arrived yet (CRM-S3.1a). The table is then in its loading state, grey rows and all, even if the rows are
+   * already here, so a row is never drawn in columns the person is about to lose.
+   */
+  columnsLoading?: boolean;
+  /**
    * Above the table: the search box and the controls that change the address. CRM-S3.3a's filter row and CRM-S3.1a's columns menu join
    * here. Given as a function, it is told whether the rows are still on their way (`loading`, CRM-S2.1), so it can disable what needs the
    * rows (Refresh, anything acting on rows); controls that change the QUERY (search, filters, tabs, sort) stay usable, so a person can
@@ -69,7 +74,7 @@ const refusalHeading = (reason: string, plural: string): string =>
  * the address holds something the table can't judge yet, the loading slot shows and nothing is asked. When the database refuses the
  * query (a filter it doesn't take) the frame says why in the database's words and offers the way back, to the table's bare address (a refused sort or page is not undone by keeping it); it never offers "Try again".
  */
-export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, toolbar, views, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, columnsLoading = false, toolbar, views, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
   const { address, hrefFor, bareHref, change, notice } = location;
   const { page } = data;
   const pageSize = page?.pageSize ?? TABLE_PAGE_SIZE;
@@ -82,8 +87,8 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
 
   // Nothing to show yet (CRM-S2.1): the real table is drawn with grey rows in its body, under its real headers, and the same element
   // takes the rows when they arrive, so focus and the sideways scroll survive. The frame owns the slow-load line for this wait.
-  const loadingNow = tableIsLoading(address, data);
-  const placeholdering = !page || pastTheEnd || hasHeld(address);
+  const loadingNow = tableIsLoading(address, data, columnsLoading);
+  const placeholdering = !page || pastTheEnd || hasHeld(address) || columnsLoading;
   const { ready: firmReady } = useFirmReady();
   const refresh = useRefreshTable(table);
   // Waiting for an answer to a question the person has changed, over the previous answer (dimmed rows, or the dimmed empty words), is a wait too: a request
@@ -151,7 +156,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             // The grey rows while waiting; when no rows came back, one cell under the real headers with the empty state in it, so it is the same
             // table before and after. Rows that answer another question are dimmed here as elsewhere (no busy mark: the words do not change while it waits).
             placeholder={
-              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} />
+              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} pinFirst />
               : isEmpty ? (
                 <EmptyBody columns={columns.length} dimmed={data.isPlaceholder}>{empty(settled.current, { focusTable })}</EmptyBody>
               ) : undefined

@@ -54,6 +54,7 @@ const RECORD_LABELS: Record<string, string> = {
   firm: "Firm",
   support_session: "Support session",
   support_session_end: "Support session ended",
+  table: "Table",
 };
 
 export const RECORD_TYPE_VALUES: string[] = Object.keys(RECORD_LABELS);

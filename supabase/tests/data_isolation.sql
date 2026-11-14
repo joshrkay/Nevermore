@@ -191,6 +191,8 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261118170000_export.sql
+\i supabase/migrations/20261118170500_export_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1248,6 +1250,9 @@ INSERT INTO callable VALUES
   ('set_my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid, p_columns jsonb)', 'own', NULL, 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else');
 -- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
 INSERT INTO callable VALUES
+  ('export_table(p_firm_id uuid, p_table text, p_columns jsonb, p_filters jsonb, p_keys jsonb, p_time_zone text)', 'own', NULL,
+   'a current member of the firm at its address exports the rows of referral partners they may see (the firm''s record: its owners), recorded in the firm''s record in the same step; 42501 for anyone else, PT423 for a support session (supabase/tests/export.sql)'),
+  ('signed_in_within(p_window interval)', 'own', NULL, 'whether the caller''s own sign-in was proved within a window (the token''s amr times); about the caller only'),
   ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
    'a current member of the record''s firm (or a support session at its address) reads the history of a record they may see; PT404 for a record of another firm, one that does not exist and a caller who is no member, all the same; no actor id or email, staff shown as Nevermore');
 
@@ -1787,6 +1792,15 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 -- non-member are refused, the same as for a record that does not exist.
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('record_history_list', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.record_history_list({firm}, 'referral_partners', {partner})$$);
+-- CRM-S3.8b: an export of one referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
+-- non-member are refused before anything is read (42501); the member gets that one row (and the export is recorded, rolled back here).
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('export_table', 'advisor', 'by_id',
+   -- The firm's one partner is its whole table, which needs a recent sign-in (D-205): the call gives the caller's token one, so only who they are decides.
+   $$SELECT public.export_table({firm}, 'referral_partners', '["code"]', jsonb_build_array(jsonb_build_object('field', 'code', 'op', 'is', 'value', {partner}))) ->> 'row_count'
+     FROM (SELECT set_config('request.jwt.claims', (COALESCE(NULLIF(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
+             || jsonb_build_object('amr', jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', extract(epoch FROM now())::bigint))))::text, true)) fresh$$,
+   ARRAY['42501', 'PT404', 'P0002', 'ok:0'], '^ok:1$');
 
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
@@ -3561,7 +3575,9 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why) VALUES
   ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
   ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
-  ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)');
+  ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)'),
+  ('export_table', 'firm_scoped', 'an export of a table of the caller''s own firm, recorded as it is made: a current member at the firm''s address only, the firm''s record its owners only (4e; supabase/tests/export.sql)'),
+  ('signed_in_within', 'own', 'whether the caller''s own sign-in was proved within a window, read from their own token; reads no table');
 
 -- Everything wrong between the registry and the catalogue, one per line, or NULL. It reads which functions exist and who may
 -- execute them, never what a function says.

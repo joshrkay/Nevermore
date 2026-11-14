@@ -39,6 +39,7 @@ import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS,
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { BROWSER_ACTIVITY, ENTRY_KIND_VALUES, RECORD_TYPE_VALUES } from "@/data/firmActivity";
 import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
+import { EXPORT_COLUMNS } from "@/lib/exportApi";
 import { TEMPLATE_WORKBOOK_STATUSES } from "@/lib/templateWorkbooks";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
@@ -282,6 +283,11 @@ describe("server and client intake rules agree", () => {
 
   it("holds the same kinds of record in a firm's record as the page labels", () => {
     expect(quoted(latestBlock("firm_activity_record_types"))).toEqual(RECORD_TYPE_VALUES);
+  });
+
+  // Exports (20261118170000): the columns each table exports, in the order the database writes a whole row.
+  it.each(Object.keys(EXPORT_COLUMNS) as (keyof typeof EXPORT_COLUMNS)[])("exports the same columns of %s as the client names", (table) => {
+    expect(quoted(latestBlock(`export_columns_${table}`))).toEqual([table, ...EXPORT_COLUMNS[table]]);
   });
 
   // Quote request notes (20261111090000): the kinds the note form offers, and how long a note can be.
