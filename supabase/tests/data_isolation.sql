@@ -193,6 +193,7 @@
 \i supabase/migrations/20261118160500_record_version_fixes.sql
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119100000_crm_records.sql
+\i supabase/migrations/20261119110000_chain_at_certification.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -483,6 +484,11 @@ BEGIN
   -- Prospect B's intakes belong to the second firm. The API can't choose a firm (an intake always starts in Edgar Allan
   -- Advisory's, keep_intake_firm); here the superuser places them, as the address a prospect arrives at will.
   RESET ROLE;
+  -- The two certifications above made their chains (CRM-Q1.1b), in the default firm. An intake that holds an opportunity cannot be moved to another firm
+  -- (20261119100000), and the CRM fixture below makes its own records, with known owners and counts: so these go first.
+  DELETE FROM public.opportunities;
+  DELETE FROM public.contacts;
+  DELETE FROM public.accounts;
   UPDATE public.chamber_sessions SET firm_id = firm_b WHERE user_id = pb;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
@@ -3482,6 +3488,12 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
   ('opportunity_stage', 'service_only', 'an opportunity''s stage, worked out from its submission''s pipeline stage; answers for any opportunity by id, so no API role can call it: a query that has decided the caller may see the opportunity asks it');
+
+-- CRM-Q1.1b (20261119110000_chain_at_certification.sql; supabase/tests/chain_at_certification.sql): the chain made when an intake is first certified.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('make_intake_chain', 'service_only', 'makes the account, contact and opportunity of one certified intake, in that intake''s firm, or answers the ones that are there; runs for any intake by id, so no API role can call it: the certification''s trigger and the bringing in of existing submissions (CRM-Q1.3) do'),
+  ('find_duplicate_account', 'service_only', 'the firm''s earliest account that may be the same business (D-193), by id of the firm; reads every account of the firm whoever may see it, so no API role can call it: a caller decides what to show'),
+  ('chain_at_certification', 'trigger', 'after an intake is certified, in the same transaction, makes its chain: not executable through the API');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),
