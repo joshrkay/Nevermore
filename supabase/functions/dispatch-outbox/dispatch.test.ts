@@ -956,7 +956,8 @@ describe("sendableKinds", () => {
     expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert"]);
     // The emails that link to the intake need the app's address; the confirmation doesn't.
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
+    // ... and neither does the owners' export alert, which holds no link (D-213).
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["export_alert", "prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
   });
 });
@@ -1201,7 +1202,6 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "member_left", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "firm_closing", problem: "APP_BASE_URL is not set to an https URL" },
-      { kind: "export_alert", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
@@ -1772,12 +1772,40 @@ describe("dispatching the email that a member made a large or repeated export", 
     ["a date that is not one", { exported_at: "today" }],
     ["no reason", { large: undefined }],
     ["no count of the hour", { exports_in_hour: 0 }],
+    // The database queues it only for a large export or a member's exactly-third in the hour (D-207): anything else is no reason to tell.
+    ["neither a large export nor the third in the hour", { large: false, exports_in_hour: 4 }],
   ])("gives up on a payload with %s, sending nothing", async (_why, change) => {
     const { deps, sent } = harness();
     const summary = await dispatchEvents([exportRow({ payload: { ...exportPayload, ...change } })], deps);
     expect(sent).toHaveLength(0);
     expect(summary.dead).toBe(1);
     expect(deps.fail).toHaveBeenCalledWith("evt-export", "invalid_payload", null, 1, false);
+  });
+
+  // Catches: a large export that happens to be the member's fourth (or 21st) in the hour is told as if frequency were why (D-214): the
+  // frequency reason is the third exactly, the only count at which the database queues for it.
+  it.each([4, 21])("names only the size when a large export is the member's export number %i in the hour", async (inHour) => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportRow({ payload: { ...exportPayload, exports_in_hour: inHour } })], deps);
+    expect(sent[0].message.text).toContain("It holds more than 500 rows.");
+    expect(sent[0].message.text).not.toContain("within an hour");
+  });
+
+  it("names both reasons for a large export that is also the third in the hour", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportRow({ payload: { ...exportPayload, exports_in_hour: 3 } })], deps);
+    expect(sent[0].message.text).toContain("It holds more than 500 rows. It is their third export within an hour.");
+  });
+
+  // Catches: the alert waits on the app's address, which it never uses (it holds no link), so a missing APP_BASE_URL would hold a
+  // security alert back; the sender is all it needs, as for the prospect's confirmation (D-213).
+  it("needs only the sender, not the app's address", async () => {
+    const noAppUrl = configFrom({ ...env, APP_BASE_URL: "" });
+    expect(sendableKinds(noAppUrl)).toContain("export_alert");
+    expect(blockedKinds(noAppUrl, null).map((b) => b.kind)).not.toContain("export_alert");
+    const { deps, sent } = harness({ config: noAppUrl });
+    await dispatchEvents([exportRow()], deps);
+    expect(sent).toHaveLength(1);
   });
 
   // D-35 for this kind: an owner who is no longer one is not sent it on a retry.

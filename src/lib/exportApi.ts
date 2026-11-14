@@ -24,7 +24,10 @@ export type ExportFilter = { field: string; op: string; value?: Json };
 export type ExportOptions = {
   /** Every filter in force, "and". None: every row the person may see. */
   filters?: ExportFilter[];
-  /** The selection: the keys of the rows chosen (a partner's code, an entry's key). Left out: every row the filters match. */
+  /**
+   * The selection: the keys of the rows chosen (a partner's code, an entry's key), at least one. Left out or null: every row the filters
+   * match. An empty list is refused (`invalid`) before the database is asked, never read as "every row" (D-212).
+   */
   keys?: string[] | null;
   /** The person's time zone, which a date filter's days are counted in. */
   timeZone?: string;
@@ -95,6 +98,10 @@ export async function exportTable<T extends ExportTable>(
   columns: readonly ExportColumn<T>[],
   options: ExportOptions = {},
 ): Promise<ExportResult<T>> {
+  // An empty selection is never "every row that matches" (D-212): a selection that lost its rows must not become the whole table.
+  if (options.keys && options.keys.length === 0) {
+    throw new ExportRefusal("Select at least one row to export, or clear the selection to export every row that matches.", "invalid");
+  }
   const { data, error } = await supabase.rpc("export_table", {
     p_firm_id: firmId,
     p_table: table,

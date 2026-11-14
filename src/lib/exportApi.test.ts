@@ -47,16 +47,24 @@ describe("exportTable", () => {
     expect(rpc.mock.calls[0][1]).toMatchObject({ p_filters: [], p_keys: null });
   });
 
+  // Catches: an empty selection is sent, or read as "every row that matches" (D-212): a selection that lost its rows must never become
+  // the whole table. It is refused here, before the database is asked, so nothing is recorded.
+  it("refuses an empty selection without asking the database", async () => {
+    const e = await caught(() => exportTable("firm-1", "referral_partners", ["code"], { keys: [] }));
+    expect([e.reason, e.message]).toEqual(["invalid", "Select at least one row to export, or clear the selection to export every row that matches."]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   // Catches: a refusal is read as a generic failure, so the screen can't offer "Sign in again" or ask to narrow the export.
   it.each([
     ["PT428", "sign_in_again", "Sign in again to export the whole table: you last signed in more than 12 hours ago."],
-    ["54000", "too_many", "This export would hold 10001 rows; the most one export holds is 10000. Narrow it with a filter."],
+    ["54000", "too_many", "This export would hold more than 10000 rows, the most one export holds. Narrow it with a filter."],
     ["PT423", "support", "Nevermore support can look, not export."],
     ["42501", "forbidden", "You can't export this table."],
-    ["22023", "invalid", "This export would hold 10001 rows; the most one export holds is 10000. Narrow it with a filter."],
+    ["22023", "invalid", "This export would hold more than 10000 rows, the most one export holds. Narrow it with a filter."],
     ["XX000", "failed", "Couldn't export. Try again."],
   ])("reads %s as %s", async (code, reason, message) => {
-    rpc.mockResolvedValue({ data: null, error: { code, message: "This export would hold 10001 rows; the most one export holds is 10000. Narrow it with a filter." } });
+    rpc.mockResolvedValue({ data: null, error: { code, message: "This export would hold more than 10000 rows, the most one export holds. Narrow it with a filter." } });
     const e = await caught(() => exportTable("firm-1", "referral_partners", ["code"]));
     expect(e).toBeInstanceOf(ExportRefusal);
     expect([e.reason, e.message, e.unauthenticated]).toEqual([reason, message, false]);

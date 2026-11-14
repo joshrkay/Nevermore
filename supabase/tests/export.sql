@@ -139,6 +139,7 @@
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
 \i supabase/migrations/20261118170000_export.sql
+\i supabase/migrations/20261118170500_export_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -472,9 +473,17 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.export(acme, 'firm_activity', '["who"]', '[{"field":"who","op":"is","value":"nevermore"}]'), '2|Nevermore;Nevermore', 'and can be filtered by who');
   PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'firm_activity', '["who"]', '[{"field":"role","op":"any_of","value":["boss"]}]')$q$, acme)),
     '22023', 'a role that is not a role is refused');
+  -- The record comes newest first (D-204). Break caught: the record's order is reversed or lost.
+  RESET ROLE;
+  INSERT INTO public.firm_activity (firm_id, at, kind, record_type, record_id) VALUES (acme, now() - interval '2 days', 'sign_in', 'firm', acme::text);
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is((SELECT (r -> 'rows' -> 0 ->> 0) > (r -> 'rows' -> 1 ->> 0) AND (r -> 'rows' -> 1 ->> 0) < export_moment_now
+                      FROM (SELECT public.export_table(acme, 'firm_activity', '["at"]', '[{"field":"kind","op":"any_of","value":["sign_in"]}]') AS r,
+                                   to_char(now() AT TIME ZONE 'UTC' - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS export_moment_now) q),
+    true, 'the firm''s record is exported newest first');
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.exports(acme),
-    'acme_agent:table/referral_partners:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:2',
+    'acme_agent:table/referral_partners:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:2 acme_owner:table/firm_activity:2',
     'exporting the record is recorded in it too');
   PERFORM pg_temp.clear();
   RAISE NOTICE 'export: the firm''s record passed';
@@ -492,12 +501,45 @@ BEGIN
   SET LOCAL session_replication_role = origin;
   PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]')$q$, zenith)),
-    '54000: This export would hold 10001 rows; the most one export holds is 10000. Narrow it with a filter.', 'an export of 10,001 rows is refused');
+    '54000: This export would hold more than 10000 rows, the most one export holds. Narrow it with a filter.', 'an export of 10,001 rows is refused');
   PERFORM pg_temp.is(split_part(pg_temp.export(zenith, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["other"]}]'), '|', 1), '10000',
     'one of exactly 10,000 is not');
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.exports(zenith), 'zenith_owner:table/referral_partners:10000', 'only the export that ran is recorded');
   RAISE NOTICE 'export: the cap passed';
+END $$;
+
+-- ---------- an export past the cap is refused before it is built ----------
+-- Break caught: the cap is checked only after every matching row has been turned into JSON, sorted and gathered, so an export of a very
+-- large table does all that work (and holds its memory) only to be refused; or a selection is applied after every row was built. Timed:
+-- the bounded count answers well inside the limit, the built one does not (on this database, about 2.5 s for 200,000 rows).
+DO $$
+DECLARE huge uuid; t0 timestamptz;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Huge Group', 'huge-group', now()) RETURNING id INTO huge;
+  INSERT INTO fx VALUES ('huge', huge);
+  PERFORM pg_temp.new_user('huge_owner');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (huge, pg_temp.id('huge_owner'), 'owner');
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.referral_partners (firm_id, code, name, kind)
+    SELECT huge, 'p-' || lpad(i::text, 6, '0'), 'Partner ' || lpad(i::text, 6, '0'), 'other' FROM generate_series(1, 200000) i;
+  SET LOCAL session_replication_role = origin;
+  ANALYZE public.referral_partners;
+  PERFORM pg_temp.as_user('huge_owner', 'huge-group');
+  t0 := clock_timestamp();
+  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code","name","kind","created_at","updated_at"]')$q$, huge)), '54000',
+    'an export of 200,000 rows is refused');
+  PERFORM pg_temp.is(clock_timestamp() - t0 < interval '700 milliseconds', true, 'without building the 200,000 rows first');
+  t0 := clock_timestamp();
+  PERFORM pg_temp.is(pg_temp.export(huge, 'referral_partners', '["code"]', '[]', '["p-000007","p-199999"]'), '2|p-000007;p-199999', 'a selection of two of them is exported');
+  PERFORM pg_temp.is(clock_timestamp() - t0 < interval '700 milliseconds', true, 'without building every row to find the two');
+  RESET ROLE;
+  SET LOCAL session_replication_role = replica;
+  DELETE FROM public.referral_partners WHERE firm_id = huge;
+  DELETE FROM public.firm_activity WHERE firm_id = huge;
+  SET LOCAL session_replication_role = origin;
+  RAISE NOTICE 'export: refused before it is built passed';
 END $$;
 
 -- ---------- the owners' alert: more than 500 rows ----------
@@ -592,7 +634,7 @@ DECLARE f text;
 BEGIN
   PERFORM pg_temp.is(has_function_privilege('anon', 'public.export_table(uuid, text, jsonb, jsonb, jsonb, text)', 'EXECUTE'), false, 'signed out, nobody can run it');
   PERFORM pg_temp.is(has_function_privilege('authenticated', 'public.export_table(uuid, text, jsonb, jsonb, jsonb, text)', 'EXECUTE'), true, 'a signed-in person can');
-  FOREACH f IN ARRAY ARRAY['public.export_visible_rows(uuid, text)', 'public.export_columns(text)', 'public.export_columns_checked(text, jsonb)',
+  FOREACH f IN ARRAY ARRAY['public.export_rows(uuid, text, text[])', 'public.export_columns(text)', 'public.export_columns_checked(text, jsonb)',
                            'public.export_filters_checked(text, jsonb, date)', 'public.export_keys_checked(jsonb)', 'public.export_row_passes(text, jsonb, jsonb, text)',
                            'public.export_field_kind(text, text)', 'public.export_row_cap()', 'public.export_alert_rows()', 'public.export_alert_repeats()',
                            'public.export_fresh_sign_in()', 'public.export_moment(timestamptz)'] LOOP
