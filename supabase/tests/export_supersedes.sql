@@ -312,6 +312,27 @@ BEGIN
 END $$;
 
 \i supabase/migrations/20261118180500_epic3_export_pause.sql
+
+-- Break caught: the pause's lookup reads the whole holding table for each entry 20261119090500 puts back (the table, made by CREATE TABLE AS,
+-- has no index), so putting back N exports is N squared work. With 5,000 more held, the lookup the trigger makes for one entry is by the
+-- index: the table is scanned once, by an index, and never read from end to end. Undone, so the upgrade carries the eight.
+BEGIN;
+INSERT INTO public.epic3_carried_exports (id, entry_key, firm_id, at, actor_id, actor_is_staff, kind, record_type, record_id, row_count)
+  SELECT 1000000 + g, gen_random_uuid(), pg_temp.id('acme'), now(), pg_temp.id('acme_owner'), false, 'export_made', 'table', 'referral_partners', 1
+  FROM generate_series(1, 5000) g;
+ANALYZE public.epic3_carried_exports;
+CREATE TEMP TABLE scans_before AS SELECT seq_scan, idx_scan FROM pg_stat_xact_user_tables WHERE relid = 'public.epic3_carried_exports'::regclass;
+INSERT INTO public.firm_activity (id, entry_key, firm_id, at, actor_id, actor_is_staff, kind, record_type, record_id)
+  OVERRIDING SYSTEM VALUE
+  VALUES (1002500, gen_random_uuid(), pg_temp.id('acme'), now(), pg_temp.id('acme_owner'), false, 'export_made', 'table', 'referral_partners');
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT s.idx_scan - b.idx_scan FROM pg_stat_xact_user_tables s, scans_before b WHERE s.relid = 'public.epic3_carried_exports'::regclass),
+    1::bigint, 'a held entry goes in past the pause after one look by the index');
+  PERFORM pg_temp.is((SELECT s.seq_scan - b.seq_scan FROM pg_stat_xact_user_tables s, scans_before b WHERE s.relid = 'public.epic3_carried_exports'::regclass),
+    0::bigint, 'without reading the holding table from end to end');
+END $$;
+ROLLBACK;
 \i supabase/migrations/20261119090000_export.sql
 
 -- ---------- the handoff: Epic 3's export_rows is granted, and main's entries are still set aside ----------

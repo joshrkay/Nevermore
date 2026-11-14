@@ -35,6 +35,16 @@ $$;
 
 REVOKE ALL ON FUNCTION public.epic3_export_pause() FROM PUBLIC, anon, authenticated, service_role;
 
+-- The pause looks each entry 20261119090500 puts back up by its id. 20261118180000 made the holding table with CREATE TABLE AS, which gives it
+-- no index, so each look would read the whole table and putting back N exports would be N squared work. Its ids are firm_activity's own, so
+-- they are unique. Where 20261119090500 already ran, the table is gone and there is nothing to index. The index goes with the table.
+DO $$
+BEGIN
+  IF to_regclass('public.epic3_carried_exports') IS NOT NULL THEN
+    CREATE UNIQUE INDEX epic3_carried_exports_id_key ON public.epic3_carried_exports (id);
+  END IF;
+END $$;
+
 CREATE TRIGGER firm_activity_export_pause
   BEFORE INSERT ON public.firm_activity
   FOR EACH ROW
