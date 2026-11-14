@@ -29,6 +29,8 @@ const rpc = vi.fn(async (fn: string, args: Record<string, unknown> = {}) => {
     case "my_firms": return { data: db.firms, error: null };
     case "has_role": return { data: false, error: null };
     case "advisor_needs_second_factor": return { data: false, error: null };
+    // The Close this firm section (CRM-P1.7) asks whether the firm is closing; leaving is what this file is about.
+    case "my_firm_closure": return { data: [{ asked_at: null, closes_at: null, can_ask: true, cannot_ask_because: null }], error: null };
     default: throw new Error(`the page asked the database for ${fn}`);
   }
 });

@@ -1042,7 +1042,7 @@ export type Database = {
       }
       my_firm_closure: {
         Args: { p_firm_id: string }
-        Returns: { asked_at: string | null; closes_at: string | null; can_ask: boolean }[]
+        Returns: { asked_at: string | null; closes_at: string | null; can_ask: boolean; cannot_ask_because: string | null }[]
       }
       admin_stop_firm_closure: {
         Args: { p_firm_id: string; p_reason: string }

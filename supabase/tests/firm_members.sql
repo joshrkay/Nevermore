@@ -1027,6 +1027,7 @@ $$;
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
 \i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

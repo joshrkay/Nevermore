@@ -5,7 +5,7 @@ import { fetchMyFirmClosure, type FirmClosure } from "@/lib/closeFirmApi";
 // per firm, shared by whoever asks, asked again when the window gets focus and every 60 seconds (D-49), and at once after the owner
 // asks or withdraws. It only chooses what to show; the database is what refuses changes.
 
-type Answer = FirmClosure & { loaded: boolean };
+type Answer = FirmClosure & { loaded: boolean; failed: boolean; error?: Error };
 const answers = new Map<string, Answer>();
 const listeners = new Set<() => void>();
 const inFlight = new Map<string, Promise<void>>();
@@ -14,7 +14,11 @@ function load(firmId: string): Promise<void> {
   const running = inFlight.get(firmId);
   if (running) return running;
   const p = fetchMyFirmClosure(firmId).then((closure) => {
-    answers.set(firmId, { loaded: true, ...closure });
+    answers.set(firmId, { loaded: true, failed: false, ...closure });
+  }, (error: Error) => {
+    // A failed question is a failed question: what was known before stays, and the failure is said, never read as "no".
+    answers.set(firmId, { ...(answers.get(firmId) ?? { loaded: false, closesAt: null, canAsk: false, why: null }), failed: true, error });
+  }).then(() => {
     listeners.forEach((l) => l());
   }).finally(() => inFlight.delete(firmId));
   inFlight.set(firmId, p);
@@ -46,5 +50,5 @@ export function useFirmClosure(firmId: string | null): Answer {
     window.addEventListener("focus", ask);
     return () => { window.clearInterval(timer); window.removeEventListener("focus", ask); };
   }, [firmId, ask]);
-  return (firmId ? answers.get(firmId) : undefined) ?? { loaded: false, closesAt: null, canAsk: false };
+  return (firmId ? answers.get(firmId) : undefined) ?? { loaded: false, failed: false, closesAt: null, canAsk: false, why: null };
 }

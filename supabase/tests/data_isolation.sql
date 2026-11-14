@@ -181,6 +181,7 @@
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
 \i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -3368,6 +3369,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('firm_is_being_closed', 'service_only', 'whether the closing is running for a firm whose request is open and past its 30 days: the two triggers that let it end the last owner and clear a team ask it'),
   ('assert_firm_writable', 'service_only', 'refuses a current member of a closing firm with a plain message; every function that changes a firm''s data calls it first'),
   ('close_firm_now', 'service_only', 'closes one firm whose request is due, as the service role: deletes its working data, ends every membership and records what was deleted without content (supabase/tests/close_a_firm.sql)'),
+  ('repair_default_firm_closure', 'service_only', 'ends an open request to close the default firm, once, as the migration that added it runs (supabase/tests/close_a_firm_races.sql)'),
   ('close_due_firms', 'service_only', 'the daily job''s step: closes every firm whose request is due'),
   ('firm_is_suspended', 'service_only', 'whether a firm is suspended now: the helper every policy and function asks, as the database''s own question; no API role can call it'),
   ('admin_belongs_to_firm', 'service_only', 'whether the caller is a current member of a firm, suspended or not: the helper the platform admin''s rule asks'),

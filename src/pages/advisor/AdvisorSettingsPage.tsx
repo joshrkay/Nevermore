@@ -9,6 +9,7 @@ import { SETTINGS_LINKS } from "@/components/workspace/menu";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { firmUrl } from "@/lib/firmHost";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { afterLeavingFirm, leaveFirm } from "@/lib/leaveFirmApi";
 import { closingDate, requestFirmClosure, withdrawFirmClosure } from "@/lib/closeFirmApi";
 import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
@@ -59,7 +60,7 @@ const AdvisorSettingsPage = () => {
   const [closing, setClosing] = useState(false);
   const [typed, setTyped] = useState("");
   const [closeProblem, setCloseProblem] = useState<string | null>(null);
-  const { closesAt, canAsk, loaded: closureKnown } = useFirmClosure(firm?.id ?? null);
+  const { closesAt, canAsk, why, loaded: closureKnown, failed: closureFailed, error: closureError } = useFirmClosure(firm?.id ?? null);
 
   const leave = async () => {
     if (!firm) return;
@@ -152,8 +153,14 @@ const AdvisorSettingsPage = () => {
             <button type="button" disabled={busy} onClick={() => void withdraw()} className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50">
               Withdraw the request to close
             </button>
+          ) : closureFailed && !closureKnown ? (
+            <AdvisorLoadError error={closureError ?? new Error("Couldn't check the firm.")} what="whether this firm can be closed" onRetry={() => void refreshFirmClosure(firm.id)} />
           ) : !closureKnown ? null : !canAsk ? (
-            <p className="text-sm">This firm takes the intakes people start on Nevermore, so it can't be closed.</p>
+            <p className="text-sm">
+              {why === "default_firm" ? "This firm takes the intakes people start on Nevermore, so it can't be closed."
+                : why === "refused" ? "This firm was refused, so there is nothing to close."
+                : "You can't close this firm."}
+            </p>
           ) : (
             <button type="button" onClick={() => { setCloseProblem(null); setTyped(""); setClosing(true); }}
               className="min-h-11 px-3 rounded-md border border-destructive text-destructive text-sm hover:bg-muted disabled:opacity-50">

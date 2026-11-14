@@ -130,6 +130,7 @@
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 \i supabase/migrations/20261118110000_close_a_firm.sql
 \i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -934,11 +935,10 @@ BEGIN
 END $$;
 
 -- ---------- withdrawing and closing at the same moment (D-32) ----------
--- The closure row's lock (and the time conditions) order a withdrawal against the closing. A request whose 30 days end in two seconds is
+-- The firm's row lock (taken first by the withdrawal and by the closing) and the time conditions order a withdrawal against the closing. A request whose 30 days end in two seconds is
 -- withdrawn in one session, which holds its transaction open past that moment; the job's closing, in another, then must wait and find the
--- request withdrawn: nothing is deleted. Without the row's lock the closing does its deleting first and is only stopped at the end by a
--- check constraint, with a different error. The firm-row locks the first version also took are gone: this row lock and the conditions
--- are what orders these, and the unique index orders two requests.
+-- request withdrawn: nothing is deleted. Without the lock the closing does its deleting first and is only stopped at the end by a
+-- check constraint, with a different error. (The other orderings on the firm's row are tested in close_a_firm_races.sql.)
 CREATE SCHEMA race;
 CREATE EXTENSION dblink SCHEMA race;
 DO $$
