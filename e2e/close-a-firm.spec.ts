@@ -113,9 +113,12 @@ test("an owner asks to close the firm, a member sees the banner and can't change
     await expect(memberPage.getByRole("cell", { name: "First Partners" })).toBeVisible();
     const [download] = await Promise.all([memberPage.waitForEvent("download"), memberPage.getByRole("button", { name: "Export" }).click()]);
     expect(download.suggestedFilename()).toMatch(/^referral-partners-\d{4}-\d{2}-\d{2}\.csv$/);
-    const lines = (await readFile(await download.path(), "utf8")).replace(/^\uFEFF/, "").split("\r\n");
-    expect(lines[0]).toBe('Code,Name,Kind,"Started, 30 days","Certified, 30 days",Added,Last changed');
-    expect(lines[1]).toMatch(/^first-partners,First Partners,/);
+    const bytes = await readFile(await download.path());
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const lines = bytes.toString("utf8").replace(/^\uFEFF/, "").split("\r\n");
+    // The columns the page shows (this firm has no link to show, so its code), under the page's own headings.
+    expect(lines[0]).toBe('Partner,Their code,"Started, 30 days","Certified, 30 days"');
+    expect(lines[1]).toBe("First Partners,first-partners,0,0");
     expect(lines).toHaveLength(3);
     await expect(memberPage.getByText("Exported 1 referral partner.")).toBeVisible();
     const entry = await withDb((client) => client.query(

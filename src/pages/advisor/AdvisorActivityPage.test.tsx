@@ -1,18 +1,20 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { blobText } from "@/test/blob";
+import { blobBytes, blobText } from "@/test/blob";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
 // about which firms they own, so an answer given before the second factor is not handed out after it.
-const auth = { user: { id: "u1", email: "owner@example.com" }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
+const auth = { user: { id: "u1", email: "owner@example.com", app_metadata: { providers: ["email"] } }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn(), signIn: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 // The page's calls to the database, by the names advisorApi gives them; AdvisorApiError is the real one, so a refusal is read as it is.
 const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
-vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+// The authenticator's calls (src/lib/secondFactor.ts), faked at the client.
+const mfa = { listFactors: vi.fn(), challengeAndVerify: vi.fn() };
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: { mfa } } }));
 // The Export button asks the database through exportRows (its refusals are the real ExportError) and hands the file to downloadBlob: both are faked here,
 // so the test sees the file the person would have been given, never the browser's own download.
 const exportRows = vi.fn();
@@ -46,6 +48,10 @@ describe("AdvisorActivityPage", () => {
     exportRows.mockReset();
     downloadBlob.mockReset();
     auth.signOut.mockReset();
+    auth.signIn.mockReset();
+    auth.user = { id: "u1", email: "owner@example.com", app_metadata: { providers: ["email"] } };
+    mfa.listFactors.mockReset().mockResolvedValue({ data: { totp: [], all: [] }, error: null });
+    mfa.challengeAndVerify.mockReset();
     firmAddress = { status: "none" };
     auth.session = { access_token: "tok-1" };
     for (const fn of Object.values(api)) fn.mockReset();
@@ -796,8 +802,12 @@ describe("AdvisorActivityPage", () => {
       expect(row).not.toHaveTextContent("Table referral_partners");
     });
 
-    it("says one in the singular and puts a thousand as 1,000", async () => {
-      expect(await recordOf(made("referral_partners", 1))).toHaveTextContent("Exported 1 referral partner");
+    it("says one in the singular", async () => {
+      expect(await recordOf(made("referral_partners", 1))).toHaveTextContent(/Exported 1 referral partner$/);
+    });
+
+    it("puts a thousand as 1,000", async () => {
+      expect(await recordOf(made("referral_partners", 1000))).toHaveTextContent("Exported 1,000 referral partners");
     });
 
     it("names the firm's own record as what was taken", async () => {
@@ -814,32 +824,66 @@ describe("AdvisorActivityPage", () => {
   });
 
   describe("the Export button (story CRM-S3.8a)", () => {
-    const COLUMNS = [{ id: "at", label: "When" }, { id: "who", label: "Who" }, { id: "kind", label: "What" }, { id: "subject", label: "About" }, { id: "row_count", label: "Rows" }];
-    const answer = (rows: Record<string, string | number | null>[]) => ({
-      table: "firm_activity", label: "The firm's record", columns: COLUMNS, rows, count: rows.length, skipped: 0, exportedAt: "2026-11-19T10:00:00+00:00",
+    // The database's columns: the page shows four of them, and words two (the kind and the record).
+    const COLUMNS = [
+      { id: "at", label: "When" }, { id: "who", label: "Who" }, { id: "kind", label: "What" }, { id: "record_type", label: "Record type" },
+      { id: "record_id", label: "Record" }, { id: "subject", label: "About" }, { id: "role", label: "Role" }, { id: "row_count", label: "Rows" },
+    ];
+    const answer = (rows: Record<string, string | number | null>[], over: Record<string, unknown> = {}) => ({
+      table: "firm_activity", label: "The firm's record", columns: COLUMNS, rows, count: rows.length, skipped: 0, exportedAt: "2026-11-19T10:00:00+00:00", ...over,
     });
-    const line = (over: Record<string, string | number | null> = {}) => ({ at: "2026-11-19T09:00:00+00:00", who: "agent@example.com", kind: "sign_in", subject: null, row_count: null, ...over });
+    const line = (over: Record<string, string | number | null> = {}) => ({
+      at: "2026-11-19T09:00:00+00:00", who: "agent@example.com", kind: "sign_in", record_type: "firm", record_id: "firm-1", subject: null, role: null, row_count: null, ...over,
+    });
     const exportButton = () => screen.findByRole("button", { name: "Export" });
     const theFile = async () => {
       expect(downloadBlob).toHaveBeenCalledTimes(1);
       const [blob, name] = downloadBlob.mock.calls[0] as [Blob, string];
-      return { name, text: await blobText(blob) };
+      return { name, text: await blobText(blob), bytes: await blobBytes(blob) };
     };
+    const HEAD = "When,Who,What,Record";
+    const tooOld = () => new ExportError("signInAgain", "Sign in again to export a whole table.");
 
-    it("downloads a CSV of the whole record, the database's columns in its order, named for the table and the day", async () => {
-      exportRows.mockResolvedValue(answer([line(), line({ who: "Nevermore", kind: "support_access", subject: '-Dana "D", Esq.' })]));
+    it("downloads a CSV of the whole record with the columns the page shows, kinds and records in its words, named for the table and the day", async () => {
+      exportRows.mockResolvedValue(answer([
+        line(),
+        line({ who: "Nevermore", kind: "export_made", record_type: "table", record_id: "referral_partners", row_count: 42 }),
+        line({ kind: "member_added", record_type: "membership", record_id: "m1", subject: "-Dana \"D\", Esq.", role: "agent" }),
+      ]));
       renderPage();
       fireEvent.click(await exportButton());
-      expect(await screen.findByText("Exported 2 entries in the firm's record.")).toBeInTheDocument();
+      expect(await screen.findByText("Exported 3 entries in the firm's record.")).toBeInTheDocument();
       expect(exportRows).toHaveBeenCalledWith({ firmId: "firm-1", table: "firm_activity", filters: {} });
       const { name, text } = await theFile();
       expect(name).toBe("firm-record-2026-11-19.csv");
+      // What and Record are worded as the page words them, never as the codes sign_in, table and referral_partners; the columns the page does not show
+      // (the record's type and the role) stay out. A subject that starts with a minus would run as a formula; one with quotes and a comma is quoted.
       expect(text).toBe(
-        "When,Who,What,About,Rows\r\n" +
-        "2026-11-19T09:00:00+00:00,agent@example.com,sign_in,,\r\n" +
-        // A subject that starts with a minus would run as a formula; one with quotes and commas is quoted.
-        `2026-11-19T09:00:00+00:00,Nevermore,support_access,"'-Dana ""D"", Esq.",\r\n`,
+        `${HEAD}\r\n` +
+        "2026-11-19T09:00:00+00:00,agent@example.com,Signed in,Firm firm-1\r\n" +
+        "2026-11-19T09:00:00+00:00,Nevermore,Exported records,Exported 42 referral partners\r\n" +
+        `2026-11-19T09:00:00+00:00,agent@example.com,Added a member,"Membership m1 · -Dana ""D"", Esq. (agent)"\r\n`,
       );
+    });
+
+    it("words a use of Nevermore support as the page does, with the reason and the times", async () => {
+      supportApi.fetchFirmSupportUses.mockResolvedValue([{ id: "s1", reason: "Customer asked about a stuck quote", startedAt: "2026-11-12T15:00:00Z", endsAt: "2026-11-12T16:00:00Z", endedAt: null }]);
+      exportRows.mockResolvedValue(answer([line({ who: "Nevermore", kind: "support_access", record_type: "support_session", record_id: "s1" })]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      await screen.findByText("Exported 1 entry in the firm's record.");
+      const { text } = await theFile();
+      expect(text).toContain("Nevermore support opened your firm's console");
+      expect(text).toContain("Reason: Customer asked about a stuck quote");
+      expect(text).not.toContain("support_session");
+    });
+
+    it("starts the file with a byte order mark", async () => {
+      exportRows.mockResolvedValue(answer([line()]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      await screen.findByText("Exported 1 entry in the firm's record.");
+      expect([...(await theFile()).bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     });
 
     it("takes the rows that match the person and the kind the page is filtered by", async () => {
@@ -881,17 +925,83 @@ describe("AdvisorActivityPage", () => {
       renderPage();
       fireEvent.click(await exportButton());
       expect(await screen.findByText("Nothing matched, so the file holds only the headings.")).toBeInTheDocument();
-      expect((await theFile()).text).toBe("When,Who,What,About,Rows\r\n");
+      expect((await theFile()).text).toBe(`${HEAD}\r\n`);
     });
 
-    it("asks to sign in again when the last sign-in is too old for a whole record, and sends the person to sign in and back", async () => {
-      exportRows.mockRejectedValue(new ExportError("signInAgain", "Sign in again to export a whole table."));
-      renderPage();
-      fireEvent.click(await exportButton());
-      expect(await screen.findByRole("alert")).toHaveTextContent("Sign in again to export a whole table.");
-      expect(downloadBlob).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
-      expect(auth.signOut).toHaveBeenCalledWith("expired");
+    describe("when the last sign-in is too old for a whole record (PT401)", () => {
+      it("steps up in place with the authenticator's code and exports again with the filters the page still has", async () => {
+        mfa.listFactors.mockResolvedValue({ data: { totp: [{ id: "factor-1" }], all: [] }, error: null });
+        mfa.challengeAndVerify.mockResolvedValue({ data: {}, error: null });
+        exportRows.mockRejectedValueOnce(tooOld());
+        exportRows.mockResolvedValue(answer([line()]));
+        renderPage();
+        fireEvent.change(await screen.findByLabelText("Person"), { target: { value: "u2" } });
+        await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: null, after: null }));
+        fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "send_recorded" } });
+        await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: "u2", kind: "send_recorded", after: null }));
+        await screen.findByRole("table", { name: "Who did what" });
+        fireEvent.click(await exportButton());
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.change(within(dialog).getByLabelText(/6-digit code/), { target: { value: "123456" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        expect(await screen.findByText("Exported 1 entry in the firm's record.")).toBeInTheDocument();
+        // Not the whole record: the second export asks for exactly what the first did, and the page's filters are still set.
+        expect(exportRows).toHaveBeenCalledTimes(2);
+        expect(exportRows).toHaveBeenLastCalledWith({ firmId: "firm-1", table: "firm_activity", filters: { person: "u2", kind: "send_recorded" } });
+        expect(screen.getByLabelText("Person")).toHaveValue("u2");
+        expect(screen.getByLabelText("Kind")).toHaveValue("send_recorded");
+        expect(auth.signOut).not.toHaveBeenCalled();
+      });
+
+      it("steps up in place with the password for a person with no authenticator, and exports again with the same filters", async () => {
+        auth.signIn.mockResolvedValue({ error: null });
+        exportRows.mockRejectedValueOnce(tooOld());
+        exportRows.mockResolvedValue(answer([line()]));
+        renderPage();
+        fireEvent.change(await screen.findByLabelText("Kind"), { target: { value: "sign_in" } });
+        await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", after: null }));
+        fireEvent.click(await exportButton());
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.change(within(dialog).getByLabelText("Password"), { target: { value: "correct-horse" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        await screen.findByText("Exported 1 entry in the firm's record.");
+        expect(auth.signIn).toHaveBeenCalledWith("owner@example.com", "correct-horse");
+        expect(exportRows).toHaveBeenLastCalledWith({ firmId: "firm-1", table: "firm_activity", filters: { kind: "sign_in" } });
+      });
+
+      it("keeps the page's filters in the address when a person who signed in with Google must sign in again, and reads them back from it", async () => {
+        auth.user = { id: "u1", email: "owner@example.com", app_metadata: { providers: ["google"] } };
+        const lead = "5f1c2a9e-0000-4000-8000-000000000002";
+        api.listFirmActivityPeople.mockResolvedValue([{ user_id: lead, email: "lead@example.com", is_nevermore: false }]);
+        exportRows.mockRejectedValue(tooOld());
+        const Where = () => <p data-testid="where">{useLocation().search}</p>;
+        render(<MemoryRouter initialEntries={["/advisor/activity"]}><AdvisorActivityPage /><Where /></MemoryRouter>);
+        fireEvent.change(await screen.findByLabelText("Person"), { target: { value: lead } });
+        fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "send_recorded" } });
+        await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: lead, kind: "send_recorded", after: null }));
+        await screen.findByRole("table", { name: "Who did what" });
+        fireEvent.click(await exportButton());
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.click(within(dialog).getByRole("button", { name: "Sign in again" }));
+        expect(auth.signOut).toHaveBeenCalledWith("step_up");
+        const search = new URLSearchParams(screen.getByTestId("where").textContent ?? "");
+        expect(search.get("person")).toBe(lead);
+        expect(search.get("kind")).toBe("send_recorded");
+        // Back from signing in, the page opens on the address it was left at, with the same filters, and then keeps them in its own state only.
+        cleanup();
+        api.listFirmActivity.mockClear();
+        render(<MemoryRouter initialEntries={[`/advisor/activity?${search.toString()}`]}><AdvisorActivityPage /><Where /></MemoryRouter>);
+        await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: lead, kind: "send_recorded", after: null }));
+        expect(await screen.findByLabelText("Person")).toHaveValue(lead);
+        expect(screen.getByLabelText("Kind")).toHaveValue("send_recorded");
+        await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent(/^$/));
+      });
+
+      it("ignores a person or a kind in the address that is none the record knows", async () => {
+        renderPage("/advisor/activity?person=not-a-person&kind=made_up");
+        await screen.findByRole("table", { name: "Who did what" });
+        expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: null, kind: null, after: null });
+      });
     });
 
     it("tells a record too large for one file to be narrowed, and gives no file", async () => {

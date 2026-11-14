@@ -6,9 +6,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
 import { endTime, fetchFirmSupportUses, type FirmSupportUse } from "@/lib/supportApi";
-import { ENTRY_KINDS, entryLabel, kindLabel, recordLabel } from "@/data/firmActivity";
+import { ENTRY_KIND_VALUES, ENTRY_KINDS, entryLabel, kindLabel, recordLabel } from "@/data/firmActivity";
 import { exportedWords } from "@/data/exportTables";
 import { ExportControl } from "@/components/workspace/ExportControl";
+import type { ShownColumn } from "@/lib/exportFile";
 import {
   listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
@@ -21,6 +22,25 @@ type Load =
   | { kind: "not_allowed" }
   | { kind: "choose"; firms: OwnedFirm[] }
   | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse>; asked: string; firmKey: string | null };
+
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The columns of the table below, as an export writes them: the same four, with the kind and the record worded as the page words them. */
+const exportColumns = (uses: Map<string, FirmSupportUse>): ShownColumn[] => [
+  { id: "at", heading: "When" },
+  { id: "who", heading: "Who" },
+  { id: "kind", heading: "What", text: (row) => entryLabel(String(row.kind), String(row.record_type)) },
+  {
+    id: "record_id",
+    heading: "Record",
+    text: (row) => recordText({
+      kind: String(row.kind), record_type: String(row.record_type), record_id: String(row.record_id),
+      role: row.role === null || row.role === undefined ? null : String(row.role),
+      subject_email: row.subject === null || row.subject === undefined ? null : String(row.subject),
+      row_count: typeof row.row_count === "number" ? row.row_count : null,
+    }, uses),
+  },
+];
 
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -52,7 +72,7 @@ const who = (byNevermore: boolean, actorId: string | null, email: string | null)
  * The record an entry was about: what it is and its id (for an export, how many rows of which table), for a membership the person it was about and their role, and for an invitation the role it offered.
  * A use of Nevermore support (CRM-P2.4) says why and when, in the words the admin wrote for the firm's owners, never who.
  */
-function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): string {
+function recordText(e: Pick<FirmActivityEntry, "kind" | "record_type" | "record_id" | "role" | "subject_email" | "row_count">, uses: Map<string, FirmSupportUse>): string {
   // An export is about a table and says how many rows it took (CRM-S3.8b): "Exported 42 referral partners", not "Table referral_partners".
   if (e.kind === "export_made" && e.record_type === "table" && e.row_count !== null && e.row_count !== undefined) return exportedWords(e.record_id, e.row_count);
   if (e.record_type === "support_session" || e.record_type === "support_session_end") {
@@ -87,8 +107,28 @@ const AdvisorActivityPage = () => {
   const firmParam = params.get("firm");
   const [loaded, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [person, setPerson] = useState<string | null>(null);
-  const [kind, setKind] = useState<string | null>(null);
+  // The filters start as the address says (a person who had to sign in again to export comes back to the filters they had, CRM-S3.8a), when what it says
+  // is something the record knows: a person is a member's id or Nevermore, a kind one of the record's. The address is cleaned of them at once, so a later
+  // reload does not bring back a filter the person has since cleared.
+  const [person, setPerson] = useState<string | null>(() => {
+    const given = params.get("person");
+    return given !== null && (given === NEVERMORE_FILTER || USER_ID.test(given)) ? given : null;
+  });
+  const [kind, setKind] = useState<string | null>(() => {
+    const given = params.get("kind");
+    return given !== null && ENTRY_KIND_VALUES.includes(given) ? given : null;
+  });
+  useEffect(() => {
+    if (!params.has("person") && !params.has("kind")) return;
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("person");
+      next.delete("kind");
+      return next;
+    }, { replace: true });
+    // Once, on opening: the filters are the page's own state from then on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Where each page after the first starts: after the last entry the reader saw on the page before.
   const [trail, setTrail] = useState<ActivityCursor[]>([]);
   const page = trail.length + 1;
@@ -249,7 +289,7 @@ const AdvisorActivityPage = () => {
               </div>
               {/* Every entry that matches the person and the kind chosen, not only the page on screen (the database reads the rest; CRM-S3.8a). */}
               {load.kind === "ready" && !isEmpty && (
-                <div className="ml-auto"><ExportControl firmId={load.firmId} table="firm_activity" filters={exportFilters} /></div>
+                <div className="ml-auto"><ExportControl firmId={load.firmId} table="firm_activity" columns={exportColumns(load.uses)} filters={exportFilters} address={exportFilters} /></div>
               )}
             </div>
 
