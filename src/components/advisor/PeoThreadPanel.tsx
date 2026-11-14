@@ -12,6 +12,7 @@ import {
   type QuoteRequestEventRow, type QuoteRequestMailAttachmentRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 interface PeoThreadPanelProps {
   prospectUserId: string;
@@ -46,7 +47,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
       toast.success("Moved to the holding list. An admin will place it.");
       onMoved?.();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
       setMoving("asking");
     }
   };
@@ -60,7 +61,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
       void recordActivity("document_downloaded", "quote_request", String(entry.requestId));
       window.location.assign(url);
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     } finally {
       setOpening(null);
     }
@@ -204,7 +205,7 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
         onOpened?.();
       } catch (err) {
         // The thread still shows; its mark stays, so the next open tries again.
-        toast.error((err as Error).message);
+        toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
       }
     }
   };

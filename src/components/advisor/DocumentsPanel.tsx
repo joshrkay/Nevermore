@@ -7,6 +7,7 @@ import { advisorScanNotice } from "@/data/documentStatus";
 import { documentUrl, recordActivity, type DocumentEvent } from "@/lib/advisorApi";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { actorName, formatDateTime } from "./format";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 interface DocumentsPanelProps {
   documents: ReviewedDocument[];
@@ -27,7 +28,7 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
       // Recorded only once a link was signed and handed to the browser (the link itself is never kept here).
       void recordActivity("document_downloaded", "document", doc.id);
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "We couldn't open that file. Check your connection and try again."));
     } finally {
       setOpening(null);
     }

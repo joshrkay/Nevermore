@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { fetchIsAdmin } from "@/lib/advisorApi";
 import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, stopFirmClosure, suspendFirm, type FirmState, type WaitingFirm } from "@/lib/firmApi";
 import { firmHostname, firmUrlFrom } from "@/lib/firmHost";
 import { endSupportSession, endTime, fetchSupportSessions, startSupportSession, SUPPORT_REASON_MAX, type SupportSession } from "@/lib/supportApi";
+import { LoadFailed } from "@/components/workspace/states";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 type Load =
   | { kind: "loading" }
@@ -63,10 +64,10 @@ const AdvisorFirmsPage = () => {
       setConfirming(null);
       setAttempt((n) => n + 1);
     } catch (err) {
-      // An ended session is no failure to retry: AdvisorLoadError signs the person out. A refusal (42501) stays a message,
+      // An ended session is no failure to retry: LoadFailed signs the person out. A refusal (42501) stays a message,
       // since it can also mean the admin belongs to this firm, and the person can still use the page.
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -82,7 +83,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -98,7 +99,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -111,7 +112,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -127,7 +128,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error((err as Error).message);
+      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -148,7 +149,7 @@ const AdvisorFirmsPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the firms" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the firms" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_admin" && <p role="status" className="text-sm">Only an admin can approve or suspend firms.</p>}
         {load.kind === "ready" && (
           <>

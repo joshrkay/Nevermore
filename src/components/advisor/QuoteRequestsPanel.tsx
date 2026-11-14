@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
+import { failureWords, SaveFailed, useSaveFailure } from "@/components/workspace/form";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
 import { hasNewMail } from "@/data/mailThread";
 import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
@@ -63,10 +64,13 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
   const [startOn, setStartOn] = useState(request.proposed_start_on ?? "");
   const [note, setNote] = useState(request.note ?? "");
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The answer wasn't saved. Check your connection and try again. What you typed is still here.");
+  const answerButton = useRef<HTMLButtonElement>(null);
   const quoted = status === "quoted";
 
   const save = async () => {
     setSaving(true);
+    failure.clear();
     try {
       await updateQuoteRequest(request.id, {
         status,
@@ -79,7 +83,7 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
       toast.success(`Recorded ${request.peo_name}'s answer.`);
       onSaved(status);
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -107,8 +111,9 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
       )}
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
       <textarea id={`${id}-note`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} rows={2} className={inputClass} />
+      <SaveFailed message={failure.message} returnFocusTo={answerButton} className="text-xs" />
       <div className="flex gap-2">
-        <button onClick={save} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
+        <button ref={answerButton} onClick={save} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save answer
         </button>
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
@@ -125,6 +130,8 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
   const id = `reply-address-${request.id}`;
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The new address wasn't issued. Check your connection and try again.");
+  const issueButton = useRef<HTMLButtonElement>(null);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(address);
@@ -135,13 +142,14 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
   };
   const reissue = async () => {
     setSaving(true);
+    failure.clear();
     try {
       await reissueQuoteRequestAddress(request.id);
       toast.success(`Issued a new address for ${request.peo_name}.`);
       setConfirming(false);
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -160,7 +168,8 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
         <div role="alert" className="text-xs space-y-1">
           <p>Issue a new address? Mail sent to this one will no longer reach this quote request, so {request.peo_name} has to be given the new one.</p>
           <div className="flex gap-2">
-            <button onClick={reissue} disabled={saving} className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50">
+            <SaveFailed message={failure.message} returnFocusTo={issueButton} className="text-xs" />
+            <button ref={issueButton} onClick={reissue} disabled={saving} className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50">
               {saving && <Loader2 className="w-3 h-3 animate-spin" />} Issue a new address
             </button>
             <button onClick={() => setConfirming(false)} className="px-2 py-1 rounded-md border border-border">Keep this one</button>
@@ -183,15 +192,18 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
   const [notedOn, setNotedOn] = useState(note?.noted_on ?? localToday());
   const [body, setBody] = useState(note?.body ?? "");
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The note wasn't saved. Check your connection and try again. What you typed is still here.");
+  const noteButton = useRef<HTMLButtonElement>(null);
   const save = async () => {
     setSaving(true);
+    failure.clear();
     try {
       if (note) await correctQuoteRequestNote(note.id, { kind, notedOn, body });
       else await addQuoteRequestNote(request.id, { kind, notedOn, body });
       toast.success(note ? "Corrected the note." : `Added a note on ${request.peo_name}.`);
       onSaved();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -213,8 +225,9 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
             ? "To ask the prospect, use Ask the prospect on the saved note."
             : "A note leaves the quote request's status as it is."}
       </p>
+      <SaveFailed message={failure.message} returnFocusTo={noteButton} className="text-xs" />
       <div className="flex gap-2">
-        <button onClick={save} disabled={saving || body.trim() === "" || !notedOn} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
+        <button ref={noteButton} onClick={save} disabled={saving || body.trim() === "" || !notedOn} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} {note ? "Save correction" : "Save note"}
         </button>
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
@@ -233,6 +246,8 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   // Today in the advisor's own calendar, as a date input holds it.
   const [sentOn, setSentOn] = useState(localToday);
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The send wasn't recorded. Check your connection and try again.");
+  const sendButton = useRef<HTMLButtonElement>(null);
   // The pipeline step offered after a send or a quote, until the advisor takes it or says not now.
   const [offer, setOffer] = useState<PipelineStatus | null>(null);
   // The quote request whose answer is being recorded.
@@ -255,20 +270,21 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
       toast.success(`Status changed to ${PIPELINE_LABELS[to]}.`);
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "The status wasn't changed. Check your connection and try again."));
     }
   };
 
   const send = async () => {
     if (!peo) return;
     setSaving(true);
+    failure.clear();
     try {
       await recordQuoteSend(sessionId, peo, sentOn);
       toast.success(`Recorded the send to ${peo}.`);
       setOffer(stageToOffer("send", status));
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -436,7 +452,9 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         )}
         <label htmlFor="quote-sent-on" className="block text-xs text-muted-foreground">Sent on</label>
         <input id="quote-sent-on" type="date" value={sentOn} onChange={(e) => setSentOn(e.target.value)} className={inputClass} />
+        <SaveFailed message={failure.message} returnFocusTo={sendButton} className="text-xs" />
         <button
+          ref={sendButton}
           onClick={send}
           disabled={saving || !peo || !sentOn}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"

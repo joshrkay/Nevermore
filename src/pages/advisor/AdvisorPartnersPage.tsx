@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import {
   choiceRule, Field, FormActions, nameRule, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
 } from "@/components/workspace/form";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { funnelRange } from "@/data/funnel";
 import { SOURCE_CODE_PATTERN } from "@/data/intakeSource";
@@ -32,6 +31,7 @@ import {
   type MemberFirm,
   type ReferralPartner,
 } from "@/lib/advisorApi";
+import { LoadFailed } from "@/components/workspace/states";
 
 type Counts = Map<string, { started: number; certified: number }>;
 type Load =
@@ -144,7 +144,7 @@ const AdvisorPartnersPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading partners…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the referral partners" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the referral partners" onRetry={reload} />}
         {load.kind === "no_firm" && <p role="status" className="text-sm">You aren't a member of a firm, so there are no referral partners to show.</p>}
         {load.kind === "ready" && !referralLinksWork(load.firmId) && (
           <p role="note" className="text-sm text-muted-foreground mt-6">

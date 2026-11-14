@@ -9,10 +9,11 @@ import { SETTINGS_LINKS } from "@/components/workspace/menu";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { firmUrl } from "@/lib/firmHost";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { afterLeavingFirm, leaveFirm } from "@/lib/leaveFirmApi";
 import { closingDate, requestFirmClosure, withdrawFirmClosure } from "@/lib/closeFirmApi";
 import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
+import { LoadFailed } from "@/components/workspace/states";
+import { SaveFailed } from "@/components/workspace/form/SaveFailed";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -128,7 +129,7 @@ const AdvisorSettingsPage = () => {
         <section aria-labelledby="leave-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 id="leave-heading" className="font-semibold">Leave this firm</h2>
           <p className="text-sm text-muted-foreground mb-3">Stop being a member of {firm.name}. Your sign-in is kept.</p>
-          {problem && <p role="alert" className="text-sm text-destructive mb-3">{problem}</p>}
+          <SaveFailed message={problem} className="font-normal mb-3" />
           <button
             type="button"
             className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50"
@@ -149,13 +150,13 @@ const AdvisorSettingsPage = () => {
           ) : (
             canAsk && <p className="text-sm text-muted-foreground mb-3">Ask to close {firm.name}. It stays read-only for 30 days, and you can change your mind until then.</p>
           )}
-          {closeProblem && <p role="alert" className="text-sm text-destructive mb-3">{closeProblem}</p>}
+          <SaveFailed message={closeProblem} className="font-normal mb-3" />
           {closesAt ? (
             <button type="button" disabled={busy} onClick={() => void withdraw()} className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50">
               Withdraw the request to close
             </button>
           ) : closureFailed && !closureKnown ? (
-            <AdvisorLoadError error={closureError ?? new Error("Couldn't check the firm.")} what="whether this firm can be closed" onRetry={() => void refreshFirmClosure(firm.id)} />
+            <LoadFailed error={closureError ?? new Error("Couldn't check the firm.")} what="whether this firm can be closed" onRetry={() => void refreshFirmClosure(firm.id)} />
           ) : !closureKnown ? null : !canAsk ? (
             <p className="text-sm">
               {why === "default_firm" ? "This firm takes the intakes people start on Nevermore, so it can't be closed."
@@ -182,7 +183,7 @@ const AdvisorSettingsPage = () => {
             <input id="close-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off"
               className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm" />
           </div>
-          {closeProblem && <p role="alert" className="text-sm text-destructive">{closeProblem}</p>}
+          <SaveFailed message={closeProblem} className="font-normal" />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>Keep the firm</AlertDialogCancel>
             <AlertDialogAction

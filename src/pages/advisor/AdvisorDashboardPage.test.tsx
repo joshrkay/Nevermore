@@ -1477,11 +1477,55 @@ describe("AdvisorDashboardPage", () => {
       expect(where()).toBe("");
     });
 
-    it("keeps today's panel, with a retry, for any other failure", async () => {
+    // Catches: a failed load showing the database's own words ("canceling statement due to statement timeout"), a retry that forgets the filters, sort or view,
+    // and focus dropping to the page when the panel is replaced by the grey rows.
+    it("says in plain words what could not be loaded for any other failure, never the database's words, and Try again keeps the address and focus", async () => {
       listQueue.mockRejectedValueOnce(Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" }));
+      renderAt("/advisor?view=won&sort=-employee_count&filter=states:any_of:CA");
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("We couldn't load the submissions.");
+      expect(alert).not.toHaveTextContent(/statement timeout|57014/);
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      // The toolbar's own controls are still there, and the address is as it was.
+      expect(where()).toBe("?view=won&filter=states:any_of:CA&sort=-employee_count");
+      expect(screen.getByRole("button", { name: "Filter by Employees" })).toBeInTheDocument();
+      listQueue.mockResolvedValue([row()]);
+      fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenCalledTimes(2);
+      expect(listQueue.mock.calls[1][0]).toEqual(listQueue.mock.calls[0][0]);
+      expect(where()).toBe("?view=won&filter=states:any_of:CA&sort=-employee_count");
+      // Focus did not fall to the page when the panel went: it stayed with the page's main area, which is there before and after.
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    });
+
+    // Catches: a retry that fails again leaving nothing on screen, or an alert that is not said again.
+    it("says so again when Try again fails again, with the button still there", async () => {
+      listQueue.mockRejectedValue(new Error("canceling statement due to statement timeout"));
       renderAt();
-      expect(await screen.findByRole("alert")).toHaveTextContent("canceling statement due to statement timeout");
-      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(listQueue).toHaveBeenCalledTimes(2));
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("We couldn't load the submissions.");
+      expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      // The first button went with the first failure; focus is on the new one, so a keyboard person can press it again.
+      expect(document.activeElement).toBe(within(alert).getByRole("button", { name: "Try again" }));
+    });
+
+    // Catches: a later failure, long after "Try again" worked (a refresh a minute on), taking focus from wherever the person is.
+    it("does not take focus for a failure that is not the answer to a Try again just pressed", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      listQueue.mockRejectedValueOnce(new Error("down"));
+      renderAt();
+      const failed = await screen.findByRole("alert");
+      listQueue.mockResolvedValue([row()]);
+      fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
+      await screen.findByRole("link", { name: "Acme" });
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      listQueue.mockRejectedValue(new Error("down again"));
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      await screen.findByRole("alert");
+      expect(document.activeElement).not.toBe(within(screen.getByRole("alert")).getByRole("button", { name: "Try again" }));
     });
   });
 
@@ -1729,7 +1773,7 @@ describe("AdvisorDashboardPage", () => {
   it("shows an error and retries", async () => {
     listQueue.mockRejectedValueOnce(new Error("Network request failed"));
     renderAt();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Network request failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load the submissions.");
     listQueue.mockResolvedValue([row()]);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();

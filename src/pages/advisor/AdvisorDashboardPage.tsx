@@ -5,8 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { emailProblemsBySession } from "@/data/outbox";
 import { listEmailProblems, type EmailProblem } from "@/lib/advisorApi";
 import { countQueueViews } from "@/lib/queueApi";
-import { NothingMatches, NothingYet } from "@/components/workspace/states";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
+import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
 } from "@/components/advisor/queueTable";
@@ -109,7 +108,7 @@ const AdvisorDashboardPage = () => {
   };
 
   // A refused query is the frame's own panel; this is every other failed load.
-  const error = (e: Error, retry: () => void) => <AdvisorLoadError error={e} what="submissions" onRetry={retry} />;
+  const error = (e: Error, retry: () => void) => <LoadFailed error={e} what="the submissions" onRetry={retry} />;
 
   return (
     <div className="bg-background">

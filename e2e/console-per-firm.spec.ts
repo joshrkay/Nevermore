@@ -73,12 +73,32 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
     await expect(page.getByText("Alpha Secret Co")).toHaveCount(0);
   });
 
-  await test.step("firm A's submission, opened by its address, is not found: not an error and not a spinner", async () => {
+  await test.step("firm A's submission, opened by its address, isn't available: not an error and not a spinner, with the way back to the list (CRM-S2.3)", async () => {
     await page.goto(`${firmUrl(FIRM_B)}/advisor/submissions/${alphaIntake}`);
-    await expect(page.getByText("Submission not found.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "This submission isn't available." })).toBeFocused();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(page.getByRole("status")).toHaveCount(0);
     await expect(page.getByText("Alpha Secret Co")).toHaveCount(0);
+    // The same words for an id that was never a submission, so nothing tells a person which of the two it was.
+    await page.goto(`${firmUrl(FIRM_B)}/advisor/submissions/not-a-submission`);
+    await expect(page.getByRole("heading", { name: "This submission isn't available." })).toBeVisible();
+    await page.getByRole("link", { name: "Back to all submissions" }).click();
+    await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
+  });
+
+  await test.step("a list that can't be loaded says so in plain words, keeps the filters, and Try again loads it (CRM-S2.3)", async () => {
+    await page.goto(`${firmUrl(FIRM_B)}/advisor?filter=needs_action:is:false`);
+    await expect(page.getByText("Bravo Own Co")).toBeVisible();
+    await page.route("**/rest/v1/rpc/queue_list_submissions", (route) => route.abort());
+    await page.reload();
+    const alert = page.getByRole("alert");
+    await expect(alert).toContainText("We couldn't load the submissions.");
+    await expect(alert).not.toContainText(/fetch|network|rpc|queue_list/i);
+    await expect(page).toHaveURL(/filter=needs_action(:|%3A)is(:|%3A)false/);
+    await page.unroute("**/rest/v1/rpc/queue_list_submissions");
+    await alert.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByText("Bravo Own Co")).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
   });
 
   await test.step("the menu offers the firm's pages and none of the platform's", async () => {

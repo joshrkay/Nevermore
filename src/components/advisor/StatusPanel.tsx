@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
 import {
   isPipelineStatus,
   nextPipelineStatuses,
@@ -40,6 +41,8 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const [next, setNext] = useState<PipelineStatus>(status);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The status wasn't changed. Check your connection and try again. What you typed is still here.");
+  const updateButton = useRef<HTMLButtonElement>(null);
   const [winner, setWinner] = useState("");
   const quoted = quoteRequests.filter((q) => q.status === "quoted");
   const needsWinner = next === "won" && winner === "";
@@ -64,6 +67,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const save = async () => {
     if (next === status) return;
     setSaving(true);
+    failure.clear();
     try {
       if (next === "won") await setStatus(sessionId, next, note, Number(winner));
       else await setStatus(sessionId, next, note);
@@ -71,7 +75,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
       toast.success(`Status changed to ${PIPELINE_LABELS[next]}.`);
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -131,7 +135,9 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
           rows={2}
           className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
         />
+        <SaveFailed message={failure.message} returnFocusTo={updateButton} />
         <button
+          ref={updateButton}
           onClick={save}
           disabled={saving || next === status || needsWinner}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"

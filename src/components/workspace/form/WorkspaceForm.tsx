@@ -4,6 +4,7 @@ import type { ControllerRenderProps, FieldValues } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage, useFormField } from "@/components/ui/form";
 import { cn } from "@/lib/utils";
+import { SaveFailed } from "./SaveFailed";
 import type { WorkspaceFormApi } from "./useWorkspaceForm";
 
 const ApiContext = createContext<WorkspaceFormApi | null>(null);
@@ -67,7 +68,7 @@ export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", c
   }, [api.saveError, api.saving]);
   return (
     <div className={cn("flex flex-wrap items-center justify-end gap-2", className)}>
-      {api.saveError && <p role="alert" className="basis-full text-sm font-medium text-destructive">{api.saveError}</p>}
+      <SaveFailed message={api.saveError} className="basis-full" />
       {api.cancel && (
         <Button type="button" variant="outline" className="h-11 rounded-md" disabled={api.saving} onClick={api.cancel}>{cancelLabel}</Button>
       )}

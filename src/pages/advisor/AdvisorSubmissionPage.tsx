@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BellRing, MailWarning } from "lucide-react";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
 import FieldReviewPanel from "@/components/advisor/FieldReviewPanel";
@@ -15,7 +14,7 @@ import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
-import { PlaceholderBlock, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
+import { LoadFailed, NotAvailable, PlaceholderBlock, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { MENU_COUNTS_KEY } from "@/lib/menuCountsApi";
 import StatusPanel from "@/components/advisor/StatusPanel";
@@ -69,9 +68,10 @@ const AdvisorSubmissionPage = () => {
     if (opening) openedRef.current = id;
     loadSubmission(id, opening)
       .then((detail) => !cancelled && setLoad(detail ? { kind: "ready", detail } : { kind: "not_found" }))
-      .catch((error: Error) => {
+      .catch((error: Error & { code?: string }) => {
         if (opening && openedRef.current === id) openedRef.current = null;
-        if (!cancelled) setLoad({ kind: "error", error });
+        // An address whose id is no id at all (the database refuses it, 22P02) is a submission that isn't there, not a load that could work next time.
+        if (!cancelled) setLoad(error.code === "22P02" ? { kind: "not_found" } : { kind: "error", error });
       });
     return () => { cancelled = true; };
   }, [id, attempt]);
@@ -100,14 +100,9 @@ const AdvisorSubmissionPage = () => {
 
         {load.kind === "loading" && <SubmissionLoading slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />}
 
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="this submission" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="this submission" onRetry={reload} />}
 
-        {load.kind === "not_found" && (
-          <div className="border border-dashed border-border rounded-xl p-12 text-center">
-            <p className="font-medium">Submission not found.</p>
-            <p className="text-sm text-muted-foreground">It may have been removed, or the link is wrong.</p>
-          </div>
-        )}
+        {load.kind === "not_found" && <NotAvailable noun="submission" backTo="/advisor" backLabel="Back to all submissions" />}
 
         {load.kind === "ready" && (
           <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} />

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn, LoadFailed } from "@/components/workspace/states";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
@@ -182,7 +181,7 @@ const AdvisorActivityPage = () => {
         </div>
 
         {load.kind === "loading" && <LoadingStatus name="the record of who did what" />}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the record of who did what" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the record of who did what" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_allowed" && (
           <p role="status" className="text-sm">Only a firm's owners can read its record of who did what.</p>
         )}

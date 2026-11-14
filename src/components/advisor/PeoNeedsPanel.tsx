@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { AlertTriangle, ClipboardList, Loader2 } from "lucide-react";
+import { AlertTriangle, ClipboardList } from "lucide-react";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { findPeo, peoFit, type PeoRecord } from "@/data/peoCatalog";
@@ -20,6 +20,7 @@ import type { PipelineStatus } from "@/data/advisor";
 import type { ChamberSubmission } from "@/data/manuscript";
 import BundleDownload from "@/components/BundleDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
+import { PanelFailed, PlaceholderLines, RecordLoading } from "@/components/workspace/states";
 import RecordSendPrompt from "./RecordSendPrompt";
 import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
@@ -215,19 +216,15 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
       );
     }
     if (catalogStatus === "loading") {
+      // The shared loading pieces (CRM-S2.3, D-146): one status for a screen reader, grey lines where the PEOs will be.
       return (
-        <p aria-live="polite" className="text-sm text-muted-foreground flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Loading the PEOs' profiles to see what each still needs.
-        </p>
+        <RecordLoading name="the PEOs' profiles">
+          <div aria-hidden="true" aria-busy="true"><PlaceholderLines count={4} /></div>
+        </RecordLoading>
       );
     }
     if (catalogStatus === "failed") {
-      return (
-        <div role="alert" className="text-sm space-y-1">
-          <p>We couldn't load the PEOs' profiles, so we can't say what each still needs.</p>
-          <button type="button" onClick={onRetryCatalog} className="min-h-11 text-primary underline hover:text-primary/90">Load the profiles again</button>
-        </div>
-      );
+      return <PanelFailed what="the PEOs' profiles" message="We couldn't load the PEOs' profiles, so we can't say what each still needs." onRetry={onRetryCatalog} />;
     }
     const groups = groupByCompleteness(certified.intake, certified.documents, catalog);
     const chosen = chosenPeo ? findPeo(catalog, chosenPeo) : undefined;

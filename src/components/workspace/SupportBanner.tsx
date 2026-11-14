@@ -4,6 +4,7 @@ import { clearMyFirms } from "@/hooks/useOwnedFirms";
 import { openFirmAddress, platformFirmsUrl } from "@/lib/firmHost";
 import { endSupportSession, endTime } from "@/lib/supportApi";
 import { useWorkspace } from "./useWorkspace";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 /**
  * Shown on every page of the workspace while a platform admin looks at the firm on a support session (story CRM-P2.4): who they are
@@ -22,7 +23,7 @@ const SupportBanner = () => {
       clearMyFirms();
       openFirmAddress(platformFirmsUrl());
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error(failureWords(error, "That didn't go through. Check your connection and try again."));
       setEnding(false);
     }
   };

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -10,6 +9,8 @@ import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms } from "@/hooks/useOwnedFirms";
 import { currentFirm } from "@/lib/currentFirm";
 import { fetchFirmMembers, liftSuspension, removeMember, suspendMember, type FirmMember, type MemberRole } from "@/lib/memberApi";
+import { LoadFailed } from "@/components/workspace/states";
+import { SaveFailed } from "@/components/workspace/form/SaveFailed";
 
 type Load =
   | { kind: "loading" }
@@ -141,9 +142,9 @@ const AdvisorMembersPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Loading…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the members" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the members" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_allowed" && <p role="status" className="text-sm">Only a firm's owners can see and change its members.</p>}
-        {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
+        <SaveFailed message={problem} className="font-normal" />
         {done && !problem && <p role="status" className="text-sm">{done}</p>}
 
         {load.kind === "ready" && (

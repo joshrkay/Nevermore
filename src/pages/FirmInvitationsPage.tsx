@@ -12,7 +12,8 @@ import {
   cancelInvitation, fetchMyFirm, fetchPendingInvitations, inviteMember, resendInvitation,
   type Delivery, type FirmRole, type PendingInvitation,
 } from "@/lib/invitationApi";
-import { NothingYet } from "@/components/workspace/states";
+import { LoadFailed, NothingYet } from "@/components/workspace/states";
+import { failureWords } from "@/components/workspace/form/failureWords";
 import { AskedToJoinSection, OrganisationsSection } from "@/components/workspace/FirmJoinSections";
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -74,7 +75,7 @@ function tellDelivery(delivery: Delivery, email: string, sentWords: string, fail
 
 type Load =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
+  | { kind: "error"; error: Error }
   | { kind: "not_owner" }
   | { kind: "ready"; firm: { id: string; name: string }; invitations: PendingInvitation[] };
 
@@ -101,7 +102,7 @@ const FirmInvitationsPage = () => {
       const invitations = await fetchPendingInvitations(mine.id);
       setLoad({ kind: "ready", firm: { id: mine.id, name: mine.name }, invitations });
     } catch (err) {
-      setLoad({ kind: "error", message: (err as Error).message });
+      setLoad({ kind: "error", error: err as Error });
     }
   }, [address]);
 
@@ -121,7 +122,7 @@ const FirmInvitationsPage = () => {
       tellDelivery(result.delivery, i.email, `Invitation sent again to ${i.email}.`, "The invitation is saved but the email didn't go out. Try again.");
       await refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -133,7 +134,7 @@ const FirmInvitationsPage = () => {
       toast.success(`Invitation to ${i.email} withdrawn.`);
       await refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -161,10 +162,7 @@ const FirmInvitationsPage = () => {
           </div>
         )}
         {address && load.kind === "error" && (
-          <div role="alert" className="text-sm space-y-2">
-            <p className="text-destructive">{load.message}</p>
-            <button className={button} onClick={() => { setLoad({ kind: "loading" }); void refresh(); }}>Try again</button>
-          </div>
+          <LoadFailed what="the invitations" error={load.error} onRetry={() => { setLoad({ kind: "loading" }); void refresh(); }} />
         )}
         {address && load.kind === "not_owner" && <p role="status" className="text-sm">Only an owner of the firm can invite people.</p>}
         {address && load.kind === "ready" && (

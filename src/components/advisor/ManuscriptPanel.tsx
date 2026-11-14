@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { failureWords, SaveFailed, useSaveFailure } from "@/components/workspace/form";
 import AnswersJsonDownload from "@/components/AnswersJsonDownload";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
@@ -13,6 +14,7 @@ import { downloadBlob } from "@/lib/downloadFile";
 import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import { manuscriptUrl, recordActivity, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { certificationOf } from "@/lib/certificationCheck";
+import { PanelFailed, PlaceholderLines, RecordLoading } from "@/components/workspace/states";
 import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import { formatDateTime } from "./format";
 
@@ -44,6 +46,8 @@ interface ManuscriptPanelProps {
 const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onChanged }: ManuscriptPanelProps) => {
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const failure = useSaveFailure("The packet wasn't generated. Check your connection and try again.");
+  const generateButton = useRef<HTMLButtonElement>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const latestEventId = detail.reviewEvents[0]?.id ?? 0;
   const latest = detail.versions[0];
@@ -57,6 +61,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
 
   const generate = async () => {
     setGenerating(true);
+    failure.clear();
     try {
       const version = (latest?.version ?? 0) + 1;
       const packet = applyAdvisorReview(detail.data, detail.provenance, detail.reviews);
@@ -98,10 +103,10 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
       console.error("Failed to generate manuscript:", err);
       if (isStaleRefusal(err)) {
         // Built from answers or a review that are no longer current: show the current ones.
-        toast.error(`${(err as Error).message}. The page now shows the latest answers and review.`);
+        failure.say(`${(err as Error).message}. The page now shows the latest answers and review.`);
         onChanged();
       } else {
-        toast.error((err as Error).message || "We couldn't generate the packet.");
+        failure.failed(err);
       }
     } finally {
       setGenerating(false);
@@ -115,7 +120,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
       window.location.assign(await manuscriptUrl(v, versionFilename(detail.data.company_name, v)));
       void recordActivity("packet_downloaded", "manuscript", v.id);
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "We couldn't open that packet. Check your connection and try again."));
     } finally {
       setOpening(null);
     }
@@ -161,21 +166,26 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
             on. Correction reasons are printed in it.
           </p>
           {catalogStatus === "loading" && (
-            <p className="text-xs text-muted-foreground" role="status">
-              Loading the PEOs' profiles. You can generate the packet once they're in.
-            </p>
+            <RecordLoading name="the PEOs' profiles">
+              <div aria-hidden="true" aria-busy="true" className="mb-1"><PlaceholderLines count={2} /></div>
+              <p className="text-xs text-muted-foreground">You can generate the packet once they're in.</p>
+            </RecordLoading>
           )}
           {catalogStatus === "failed" && (
-            <div role="alert" className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1.5 space-y-1">
-              <p>We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.</p>
-              <button onClick={onRetryCatalog} className="min-h-11 underline">Try again</button>
-            </div>
+            <PanelFailed
+              what="the PEOs' profiles"
+              message="We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating."
+              onRetry={onRetryCatalog}
+              className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1.5 space-y-1"
+            />
           )}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={revealSensitive} onChange={(e) => setRevealSensitive(e.target.checked)} />
             Include full dates of birth
           </label>
+          <SaveFailed message={failure.message} returnFocusTo={generateButton} className="text-xs" />
           <button
+            ref={generateButton}
             onClick={generate}
             disabled={generating || !catalogReady}
             className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"

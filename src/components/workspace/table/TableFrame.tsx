@@ -47,7 +47,7 @@ interface Props<K extends TableFields, Row, Context> {
    * for an action that makes the empty state go away ("Clear filters"), so focus is not dropped to the page.
    */
   empty: (address: TableAddress<K>, helpers: { focusTable: () => void }) => ReactNode;
-  /** What shows when the rows can't be loaded, with the way to try again. CRM-S2.3 fills it. A refused query is the frame's own panel, not this. */
+  /** What shows when the rows can't be loaded (every failure but a refused query, which is the frame's own panel): a page fills it with `LoadFailed` (CRM-S2.3, D-175), never the error's own words. */
   error: (error: Error, retry: () => void, address: TableAddress<K>) => ReactNode;
   /** A click anywhere on a row, outside its links, opens it. */
   onOpenRow?: (row: Row) => void;

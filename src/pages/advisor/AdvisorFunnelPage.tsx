@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import {
   DEFAULT_FUNNEL_PERIOD,
   formatDuration,
@@ -16,6 +15,7 @@ import {
 } from "@/data/funnel";
 import { sourceRows, sourceTitle, type SourceRow } from "@/data/referralPartners";
 import { loadFunnel, loadIntakeSourcesOfMyFirms, type MemberFirm } from "@/lib/advisorApi";
+import { LoadFailed } from "@/components/workspace/states";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[]; firms: MemberFirm[] };
 
@@ -76,7 +76,7 @@ const AdvisorFunnelPage = () => {
           </div>
         )}
 
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the funnel" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the funnel" onRetry={() => setAttempt((n) => n + 1)} />}
 
         {load.kind === "ready" && (load.rows[0].intakes === 0 ? (
           <div className="border border-dashed border-border rounded-xl p-12 text-center">

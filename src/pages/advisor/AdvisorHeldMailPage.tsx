@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Loader2, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { HELD_REASON_LABELS, heldDaysLeft } from "@/data/quoteRequests";
 import { describeAttachment } from "@/data/mailThread";
@@ -10,6 +9,8 @@ import {
   assignHeldMessage, discardHeldMessage, fetchIsAdmin, loadHeldMail,
   type AssignableRequest, type HeldMail, type QuoteRequestMessageRow,
 } from "@/lib/advisorApi";
+import { LoadFailed } from "@/components/workspace/states";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "not_admin" } | { kind: "ready"; held: HeldMail };
 
@@ -45,7 +46,7 @@ const HeldMessage = ({ message, held, onDone }: { message: QuoteRequestMessageRo
       toast.success(kind === "assign" ? "Assigned. It is new PEO mail on that thread." : "Discarded.");
       onDone();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
       setBusy(null);
     }
   };
@@ -140,7 +141,7 @@ const AdvisorHeldMailPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading held mail…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the holding list" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the holding list" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "not_admin" && <p role="status" className="text-sm">Only an admin can see held mail.</p>}
         {load.kind === "ready" && (load.held.messages.length === 0 ? (
           <p role="status" className="text-sm text-muted-foreground">Nothing is being held.</p>

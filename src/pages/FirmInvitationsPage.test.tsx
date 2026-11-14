@@ -326,7 +326,7 @@ describe("FirmInvitationsPage", () => {
   it("offers a retry when the list can't be loaded", async () => {
     api.fetchPendingInvitations.mockRejectedValueOnce(new Error("Couldn't load the invitations."));
     renderPage();
-    expect(await screen.findByText("Couldn't load the invitations.")).toBeInTheDocument();
+    expect(await screen.findByText("We couldn't load the invitations.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("list", { name: "Pending invitations" })).toBeInTheDocument();
   });

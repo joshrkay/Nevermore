@@ -211,7 +211,7 @@ describe("AdvisorOutboxPage", () => {
       expect(slowLine()).toBeInTheDocument();
       await act(async () => fail(new Error("Network request failed")));
       await tick(0);
-      expect(screen.getByRole("alert")).toHaveTextContent("Network request failed");
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load the outbox.");
       expect(slowLine()).not.toBeInTheDocument();
     });
 
@@ -615,7 +615,7 @@ describe("AdvisorOutboxPage", () => {
       outboxSummary.mockResolvedValue(summaryOf({}));
       renderAt();
       expect(await screen.findByText("We couldn't load the outbox.")).toBeInTheDocument();
-      expect(screen.getByText("Network down")).toBeInTheDocument();
+      expect(screen.queryByText("Network down")).not.toBeInTheDocument();
       listOutboxEvents.mockResolvedValue([event()]);
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       expect(await screen.findByText("Acme")).toBeInTheDocument();

@@ -180,6 +180,25 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
   });
 
   // Catches: a lead or an agent is shown the owners' lists, or the page asks the database for them.
+  // Catches: a section that cannot load showing the database's own words in red, or taking the whole page down with it, or its Try again being the page's.
+  it.each([
+    ["Organisations", "fetchOrganisations", "We couldn't load the organisations."],
+    ["Asked to join", "fetchJoinRequests", "We couldn't load the people who asked to join."],
+  ] as const)("says in plain words when %s can't be loaded, keeps the rest of the page, and tries that section again on its own button", async (heading, call, words) => {
+    join[call].mockRejectedValueOnce(new Error("relation \"join_requests\" does not exist"));
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: heading })).closest("section")!;
+    const alert = await within(section).findByRole("alert");
+    expect(alert).toHaveTextContent(words);
+    expect(alert).not.toHaveTextContent("does not exist");
+    expect(screen.getByRole("heading", { name: "Invitations" })).toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(section).queryByRole("alert")).not.toBeInTheDocument());
+    expect(join[call]).toHaveBeenCalledTimes(2);
+    // The button went with the failure: focus is on its panel, not dropped to the page.
+    await waitFor(() => expect(section).toHaveFocus());
+  });
+
   it("shows neither list to someone who is not an owner, and asks for neither", async () => {
     invitations.fetchMyFirm.mockResolvedValue({ id: "f1", name: "Acme Brokers", role: "lead" });
     renderPage();

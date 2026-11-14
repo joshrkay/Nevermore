@@ -7,3 +7,5 @@ export { SlowLoadLine } from "./SlowLoadLine";
 export { SLOW_LOAD_MS, useSlowLoad } from "./useSlowLoad";
 export { clearLabelFor, type NarrowedBy } from "./clearLabel";
 export { EmptyBody, NothingMatches, NothingYet, type EmptyAction, type EmptyLayout } from "./EmptyStates";
+export { LoadFailed, PanelFailed } from "./LoadFailed";
+export { NotAvailable } from "./NotAvailable";

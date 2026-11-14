@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
 import { disconnectMailbox, fetchMyMailbox, type MyMailbox } from "@/lib/advisorApi";
 import { startBrokerSignIn } from "@/lib/brokerAuth";
+import { LoadFailed } from "@/components/workspace/states";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; mailbox: MyMailbox };
 
@@ -51,7 +52,7 @@ const AdvisorMailboxPage = () => {
       setConfirming(false);
       setAttempt((n) => n + 1);
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     }
     setBusy(null);
   };
@@ -79,7 +80,7 @@ const AdvisorMailboxPage = () => {
             <Loader2 className="w-5 h-5 animate-spin mr-2" aria-hidden="true" /> Checking your mailbox…
           </div>
         )}
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="your mailbox" onRetry={() => setAttempt((n) => n + 1)} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="your mailbox" onRetry={() => setAttempt((n) => n + 1)} />}
         {load.kind === "ready" && load.mailbox.connected && (
           <section className="border border-border rounded-xl p-5 space-y-3" aria-label="Connected mailbox">
             <p className="text-sm">

@@ -199,7 +199,8 @@ describe("AdvisorActivityPage", () => {
       expect(slowLine()).toBeInTheDocument();
       await act(async () => fail(new Error("The network dropped")));
       await tick(0);
-      expect(screen.getByText("The network dropped")).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load the record of who did what.");
+      expect(screen.queryByText("The network dropped")).not.toBeInTheDocument();
       expect(slowLine()).not.toBeInTheDocument();
     });
 
@@ -429,11 +430,11 @@ describe("AdvisorActivityPage", () => {
     });
   });
 
-  it("says what failed, with the reason, and tries again when asked", async () => {
+  it("says what failed, never the network's own words, and tries again when asked", async () => {
     api.listFirmActivity.mockRejectedValueOnce(new Error("The network dropped"));
     renderPage();
     expect(await screen.findByText("We couldn't load the record of who did what.")).toBeInTheDocument();
-    expect(screen.getByText("The network dropped")).toBeInTheDocument();
+    expect(screen.queryByText("The network dropped")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
     expect(api.listFirmActivity).toHaveBeenCalledTimes(2);

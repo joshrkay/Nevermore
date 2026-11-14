@@ -27,9 +27,9 @@ import {
   type OutboxStatus,
 } from "@/data/outbox";
 import { listOutboxEvents, outboxSummary, requeueOutboxEvent, type OutboxEvent, type OutboxSummaryRow } from "@/lib/advisorApi";
-import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
-import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn } from "@/components/workspace/states";
+import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn, LoadFailed } from "@/components/workspace/states";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 type Load =
   | { kind: "loading" }
@@ -133,7 +133,7 @@ const AdvisorOutboxPage = () => {
       }
       reload();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
     } finally {
       setBusy(null);
       setRebuilding(null);
@@ -229,7 +229,7 @@ const AdvisorOutboxPage = () => {
           })}
         </div>
 
-        {load.kind === "error" && <AdvisorLoadError error={load.error} what="the outbox" onRetry={reload} />}
+        {load.kind === "error" && <LoadFailed error={load.error} what="the outbox" onRetry={reload} />}
 
         {load.kind === "loading" && <LoadingStatus name="the outbox" />}
 

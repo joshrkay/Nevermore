@@ -5,13 +5,14 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Input } from "@/components/ui/input";
 import { choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
-import { NothingYet } from "@/components/workspace/states";
+import { NothingYet, PanelFailed } from "@/components/workspace/states";
 import { formatDateTime } from "@/components/advisor/format";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
 import {
   addOrganisation, approveJoinRequest, declineJoinRequest, fetchJoinRequests, fetchOrganisations, removeOrganisation,
   type JoinRequest, type JoinRole, type ListedOrganisation,
 } from "@/lib/joinByOrganisationApi";
+import { failureWords } from "@/components/workspace/form/failureWords";
 
 // The two sections of the Invitations page that are about people coming in by their organisation (story CRM-P1.4): the firm's listed
 // Google domains and Microsoft tenants, and the people who asked to join from one. The database decides who may do any of it (a
@@ -79,7 +80,7 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
   const remove = useMutation({
     mutationFn: removeOrganisation,
     onSuccess: () => { toast.success("Removed. People who sign in from it will no longer be listed."); setConfirming(null); },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(failureWords(err, "That didn't go through. Check your connection and try again.")),
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
   return (
@@ -94,10 +95,7 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
       </div>
       <div ref={form}><OrganisationForm firmId={firmId} onListed={() => queryClient.invalidateQueries({ queryKey: key })} /></div>
       {organisations.isError && !organisations.data && (
-        <div role="alert" className="text-sm space-y-2">
-          <p className="text-destructive">{organisations.error.message}</p>
-          <button className={button} onClick={() => void organisations.refetch()}>Try again</button>
-        </div>
+        <PanelFailed what="the organisations" onRetry={() => void organisations.refetch()} />
       )}
       {organisations.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>
@@ -155,7 +153,7 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
       toast.success(d.kind === "approve" ? `${d.request.email} is now ${WITH_ARTICLE[held ?? d.role]} of ${firmName}.` : `Declined ${d.request.email}.`);
       setDeclining(null);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(failureWords(err, "That didn't go through. Check your connection and try again.")),
     // Whatever happened, what the database holds now is what the owner sees.
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
@@ -168,10 +166,7 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
         </p>
       </div>
       {requests.isError && !requests.data && (
-        <div role="alert" className="text-sm space-y-2">
-          <p className="text-destructive">{requests.error.message}</p>
-          <button className={button} onClick={() => void requests.refetch()}>Try again</button>
-        </div>
+        <PanelFailed what="the people who asked to join" onRetry={() => void requests.refetch()} />
       )}
       {requests.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>

@@ -66,7 +66,7 @@ const isEndedSession = (error: { message: string; code?: string }) =>
   ["PGRST301", "PGRST302", "PGRST303"].includes(error.code ?? "") || /\bjwt\b|exp claim/i.test(error.message);
 
 /**
- * The error to throw for a failed call, classified the way AdvisorLoadError reads it: an ended session is `unauthenticated`
+ * The error to throw for a failed call, classified the way `LoadFailed` reads it: an ended session is `unauthenticated`
  * (it signs the person out), a refusal (42501) is `forbidden`. Anything else keeps `message`.
  */
 export const classifyApiError = (error: { message: string; code?: string }, message: string): AdvisorApiError =>
