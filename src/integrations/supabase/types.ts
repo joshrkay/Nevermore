@@ -476,6 +476,8 @@ export type Database = {
           record_id: string
           record_type: string
           role: string | null
+          // How many rows an export held (20261119090000); null for any other kind of entry.
+          row_count: number | null
           subject_user_id: string | null
         }
         Insert: never
@@ -838,9 +840,17 @@ export type Database = {
           record_id: string
           record_type: string
           role: string | null
+          // How many rows an export held (20261119090000); null for any other kind of entry.
+          row_count: number | null
           subject_email: string | null
           subject_user_id: string | null
         }[]
+      }
+      // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
+      // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
+      export_rows: {
+        Args: { p_firm_id: string; p_table: string; p_filters?: Json; p_ids?: Json | null }
+        Returns: Json
       }
       firm_activity_people: {
         Args: { p_firm_id: string }
