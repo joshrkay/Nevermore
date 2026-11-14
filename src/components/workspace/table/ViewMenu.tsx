@@ -1,7 +1,7 @@
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { VIEW_NAME_MAX, type TableView } from "./columns";
+import { VIEW_NAME_MAX, type SavedViewRights } from "./columns";
 import { wordsOf } from "./wordsOf";
 import type { SavedViewsControl } from "./useSavedViews";
 
@@ -9,7 +9,7 @@ const ITEM = "inline-flex min-h-9 w-full items-center rounded-md px-3 text-left 
 const BUTTON = "inline-flex min-h-9 items-center gap-1 rounded-md border border-border px-3 text-sm hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 interface Props {
-  view: TableView<never> & { saved: NonNullable<TableView<never>["saved"]> };
+  view: { id: string; label: string; saved: SavedViewRights };
   control: SavedViewsControl;
 }
 
@@ -28,30 +28,37 @@ export function ViewMenu({ view, control }: Props) {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const ids = useId();
+  // The attempt on its way: closing the dialog ends it, so a refusal that arrives later is not shown in the next, clean dialog.
+  const attempt = useRef(0);
   const { canChange, canShare, canUnshare } = view.saved;
   if (!canChange && !canShare && !canUnshare) return null;
 
-  const reset = () => {
-    setStep("menu");
-    setName(view.label);
-    setProblem(null);
-  };
   const close = () => {
+    attempt.current++;
     setOpen(false);
-    reset();
+    setStep("menu");
+    setProblem(null);
+    setBusy(false);
+  };
+  /** The name offered is the view's name as it is NOW, whenever the dialog opens or the rename step starts (it may have been renamed since this was drawn). */
+  const startRename = () => {
+    setProblem(null);
+    setStep("rename");
   };
   /** Runs one change: the dialog closes when it was made, and says why when it wasn't. */
   const run = async (change: () => Promise<void>, fallback: string) => {
     if (busy) return;
+    const mine = ++attempt.current;
     setBusy(true);
     setProblem(null);
     try {
       await change();
-      close();
+      if (attempt.current === mine) close();
     } catch (error) {
-      setProblem(wordsOf(error, fallback));
-    } finally {
-      setBusy(false);
+      if (attempt.current === mine) {
+        setProblem(wordsOf(error, fallback));
+        setBusy(false);
+      }
     }
   };
   const submitRename = (e: FormEvent) => {
@@ -64,7 +71,7 @@ export function ViewMenu({ view, control }: Props) {
   };
 
   return (
-    <Popover open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+    <Popover open={open} onOpenChange={(next) => (next ? (setName(view.label), setOpen(true)) : close())}>
       <PopoverTrigger asChild>
         <button type="button" aria-label={`Options for ${view.label}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
@@ -73,7 +80,7 @@ export function ViewMenu({ view, control }: Props) {
       <PopoverContent align="start" className="w-72" aria-label={`Options for ${view.label}`}>
         {step === "menu" && (
           <div className="space-y-1">
-            {canChange && <button type="button" onClick={() => setStep("rename")} className={ITEM}>Rename</button>}
+            {canChange && <button type="button" onClick={startRename} className={ITEM}>Rename</button>}
             {canShare && <button type="button" onClick={() => void run(() => control.share(view.id), "Couldn't share the view. Try again.")} className={ITEM}>Share with the firm</button>}
             {canUnshare && <button type="button" onClick={() => void run(() => control.unshare(view.id), "Couldn't stop sharing the view. Try again.")} className={ITEM}>Stop sharing</button>}
             {canChange && <button type="button" onClick={() => setStep("delete")} className={ITEM}>Delete</button>}
@@ -87,6 +94,7 @@ export function ViewMenu({ view, control }: Props) {
             <input
               id={`${ids}-name`}
               type="text"
+              autoFocus
               value={name}
               maxLength={VIEW_NAME_MAX}
               autoComplete="off"
@@ -113,7 +121,7 @@ export function ViewMenu({ view, control }: Props) {
               <button type="button" aria-disabled={busy || undefined} onClick={() => void run(() => control.remove(view.id), "Couldn't delete the view. Try again.")} className={BUTTON}>
                 {busy ? "Deleting…" : "Delete view"}
               </button>
-              <button type="button" onClick={close} className={BUTTON}>Cancel</button>
+              <button type="button" onClick={close} autoFocus className={BUTTON}>Cancel</button>
             </div>
           </div>
         )}
