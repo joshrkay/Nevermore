@@ -2,7 +2,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { MAILBOX_PATH } from "./menu";
 
 /** The address parameter a sign-in that couldn't connect the mailbox leaves on the page it returns to (src/pages/BrokerCallbackPage.tsx). */
-export const MAILBOX_FAILED_PARAM = "connect";
+const MAILBOX_FAILED_PARAM = "connect";
 
 /**
  * Said on the page a broker comes back to after signing in with Google or Microsoft when the mailbox couldn't be connected (story M-4.1): the sign-in
