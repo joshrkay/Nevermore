@@ -1,28 +1,38 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
-import type { SubmissionSummary } from "@/lib/advisorApi";
+import type { QueueRow } from "@/lib/queueApi";
 
+// The submissions queue on the workspace's table frame (story CRM-S3.5a). The database cuts the pages and runs the filters (supabase/tests/
+// queue_query.sql); these tests are what a person sees and does through the page: the rows, "1 to 50 of 375", the pager's links, every
+// old address, a garbage address, the Inbox filter, a refused filter, and that the rows stay while the next arrive (D-49, D-50).
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
 // The header asks which firm the address names; these pages are tested at the bare domain.
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
-const listSubmissions = vi.fn();
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } }));
+const listQueue = vi.fn();
+const countQueueViews = vi.fn();
 const listEmailProblems = vi.fn();
-// A test can resolve a plain list (one page holding everything) or a page with its own total.
-vi.mock("@/lib/advisorApi", () => ({
-  QUEUE_PAGE_SIZE: 25,
-  listSubmissions: async (opts: unknown) => {
-    const result = await listSubmissions(opts);
-    return Array.isArray(result) ? { rows: result, total: result.length } : result;
+vi.mock("@/lib/advisorApi", async (original) => ({ ...(await original<typeof import("@/lib/advisorApi")>()), listEmailProblems: () => listEmailProblems() }));
+// A test can resolve a plain list (one page holding everything) or a whole page with its own total.
+vi.mock("@/lib/queueApi", async (original) => ({
+  ...(await original<typeof import("@/lib/queueApi")>()),
+  listQueue: async (opts: { page?: number }) => {
+    const result = await listQueue(opts);
+    return Array.isArray(result) ? { rows: result, total: result.length, page: opts.page ?? 1, pageSize: 50 } : { page: opts.page ?? 1, pageSize: 50, ...result };
   },
-  listEmailProblems: () => listEmailProblems(),
+  countQueueViews: (...args: unknown[]) => countQueueViews(...args),
 }));
-const query = (over: Record<string, unknown> = {}) => ({ status: null, search: "", page: 1, needsAction: false, waiting: false, sort: null, ...over });
+// What the page asks listQueue for, for an address.
+const query = (over: Record<string, unknown> = {}) => ({ filters: [], sort: null, page: 1, search: "", ...over });
+const pipeline = (...values: string[]) => ({ field: "pipeline_status", op: "any_of", value: values });
+const yes = (field: string) => ({ field, op: "is", value: true });
 
 const { default: AdvisorDashboardPage } = await import("./AdvisorDashboardPage");
 
-const row = (over: Partial<SubmissionSummary> = {}): SubmissionSummary => ({
+const row = (over: Partial<QueueRow> = {}): QueueRow => ({
   session_id: "s1",
   company_name: "Acme",
   contact_name: "Pat Prospect",
@@ -48,7 +58,8 @@ const row = (over: Partial<SubmissionSummary> = {}): SubmissionSummary => ({
   sent_older_version: false,
   new_peo_mail_requests: 0,
   start_month: null,
-  total_count: 1,
+  has_new_peo_mail: false,
+  waiting_on_peo: false,
   ...over,
 });
 
@@ -57,13 +68,16 @@ const LocationProbe = () => <p data-testid="location">{useLocation().search}</p>
 
 const renderAt = (url = "/advisor") =>
   render(
-    <MemoryRouter initialEntries={[url]}>
-      <Routes>
-        <Route path="/advisor" element={<AdvisorDashboardPage />} />
-        <Route path="/advisor/submissions/:id" element={<p>Detail page</p>} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[url]}>
+        <Routes>
+          <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
+          <Route path="/advisor/submissions/:id" element={<ShowId />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+const where = () => screen.getByTestId("location").textContent;
 
 const companyOrder = () =>
   screen
@@ -71,43 +85,61 @@ const companyOrder = () =>
     .slice(1)
     .map((r) => within(r).getAllByRole("link")[0].textContent);
 
+// A page of a list of `total` companies, 50 to a page, as the database cuts it.
+const pageOf = (page: number, total: number) => ({
+  rows: Array.from({ length: Math.max(0, Math.min(50, total - (page - 1) * 50)) }, (_, i) =>
+    row({ session_id: `s${(page - 1) * 50 + i}`, company_name: `Company ${(page - 1) * 50 + i + 1}` })),
+  total,
+});
+
 describe("AdvisorDashboardPage", () => {
   beforeEach(() => {
-    listSubmissions.mockReset();
+    listQueue.mockReset();
+    countQueueViews.mockReset().mockResolvedValue([]);
     listEmailProblems.mockReset().mockResolvedValue([]);
     signOut.mockReset().mockResolvedValue(undefined);
   });
+  afterEach(() => cleanup());
 
-  // Catches: Inbox (the menu's "Inbox, 2 with new mail") opening the whole queue with nothing saying so, so the number looks wrong.
-  it("says, when it was opened from Inbox, that every submission is shown and what marks the ones with new PEO mail", async () => {
-    listSubmissions.mockResolvedValue([row({ new_peo_mail_requests: 1 })]);
-    renderAt("/advisor?mail=new");
-    await screen.findByRole("link", { name: "Acme" });
-    expect(screen.getByText("Showing every submission. The ones with new PEO mail are marked “New PEO mail”.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Submissions" })).toBeInTheDocument();
-    expect(screen.getByText("New PEO mail")).toBeInTheDocument();
-  });
+  describe("the Inbox", () => {
+    // Catches: Inbox (the menu's "Inbox, 2 with new mail") opening the whole queue, so the number and the rows disagree (D-133).
+    it("asks the database only for the intakes with new PEO mail when opened from the menu's Inbox link, and says so in the address", async () => {
+      listQueue.mockResolvedValue([row({ new_peo_mail_requests: 1, has_new_peo_mail: true })]);
+      renderAt("/advisor?mail=new");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("has_new_peo_mail")] }));
+      expect(listQueue).not.toHaveBeenCalledWith(query());
+      await waitFor(() => expect(where()).toBe("?filter=has_new_peo_mail:is:true"));
+      expect(screen.getByText("New PEO mail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Submissions" })).toBeInTheDocument();
+    });
 
-  // Catches: the line showing on the ordinary queue, where nobody came from Inbox.
-  it("shows no such line on the ordinary queue, or for another value of the parameter", async () => {
-    listSubmissions.mockResolvedValue([row()]);
-    renderAt("/advisor");
-    await screen.findByRole("link", { name: "Acme" });
-    expect(screen.queryByText(/Showing every submission/)).not.toBeInTheDocument();
-    cleanup();
-    renderAt("/advisor?mail=old");
-    await screen.findByRole("link", { name: "Acme" });
-    expect(screen.queryByText(/Showing every submission/)).not.toBeInTheDocument();
+    // Catches: the interim "Showing every submission" line surviving now that the filter is real.
+    it("shows no line saying every submission is shown, and says what an empty Inbox means", async () => {
+      listQueue.mockResolvedValue([]);
+      renderAt("/advisor?mail=new");
+      expect(await screen.findByText("No submissions with new PEO mail.")).toBeInTheDocument();
+      expect(screen.queryByText(/Showing every submission/)).not.toBeInTheDocument();
+    });
+
+    // Catches: the ordinary queue, or another value of the parameter, being filtered.
+    it("filters nothing on the ordinary queue or for another value of the parameter", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?mail=old");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      await waitFor(() => expect(where()).toBe(""));
+    });
   });
 
   it("shows a loading state", () => {
-    listSubmissions.mockReturnValue(new Promise(() => {}));
+    listQueue.mockReturnValue(new Promise(() => {}));
     renderAt();
     expect(screen.getByRole("status")).toHaveTextContent("Loading submissions");
   });
 
   it("lists company, contact, state footprint, headcount, submission date, status and completeness", async () => {
-    listSubmissions.mockResolvedValue([
+    listQueue.mockResolvedValue([
       row(),
       row({
         session_id: "s2",
@@ -148,8 +180,19 @@ describe("AdvisorDashboardPage", () => {
     expect(within(beta).getByText("Needs review")).toBeInTheDocument();
   });
 
+  // Catches: the frame losing what makes a table a table to a screen reader: its caption, column headers with scope, the first column as the row's header, its own scroll box.
+  it("is a real table: a caption, column headers, the company as each row's header, and a box that scrolls sideways", async () => {
+    listQueue.mockResolvedValue([row()]);
+    renderAt();
+    const table = await screen.findByRole("table", { name: "Submissions" });
+    expect(screen.getAllByRole("columnheader").every((h) => h.getAttribute("scope") === "col")).toBe(true);
+    expect(within(table).getByRole("rowheader")).toHaveTextContent("Acme");
+    expect(within(table).getByRole("rowheader")).toHaveAttribute("scope", "row");
+    expect(table.closest("[role=region]")).toHaveClass("overflow-x-auto");
+  });
+
   it("says what is true when there is no submission date", async () => {
-    listSubmissions.mockResolvedValue([
+    listQueue.mockResolvedValue([
       // Submitted before the server stamped certification dates: certified, date unknown.
       row({ session_id: "legacy", company_name: "Legacy Co", submitted_at: null, intake_status: "submitted", signer_name: "Jo Doe" }),
       // Certified once, then the prospect changed their answers.
@@ -164,7 +207,7 @@ describe("AdvisorDashboardPage", () => {
   });
 
   it("says when a draft can no longer be opened by its prospect", async () => {
-    listSubmissions.mockResolvedValue([
+    listQueue.mockResolvedValue([
       row({ session_id: "e", company_name: "Idle Co", submitted_at: null, intake_status: "expired", signer_name: null, pipeline_status: "draft" }),
       row({ session_id: "a", company_name: "Restarted Co", submitted_at: null, intake_status: "archived", signer_name: null, pipeline_status: "draft" }),
       row({ session_id: "r", company_name: "Closed Co", submitted_at: null, intake_status: "revoked", signer_name: null, pipeline_status: "draft" }),
@@ -177,7 +220,7 @@ describe("AdvisorDashboardPage", () => {
   });
 
   it("only lists what an advisor needs to triage, nothing sensitive", async () => {
-    listSubmissions.mockResolvedValue([row()]);
+    listQueue.mockResolvedValue([row()]);
     renderAt();
     await screen.findByRole("link", { name: "Acme" });
     expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
@@ -186,7 +229,7 @@ describe("AdvisorDashboardPage", () => {
   });
 
   it("keeps the order the database chose", async () => {
-    listSubmissions.mockResolvedValue([
+    listQueue.mockResolvedValue([
       row({ session_id: "s1", company_name: "Zeta" }),
       row({ session_id: "s2", company_name: "Alpha" }),
       row({ session_id: "s3", company_name: "Mid" }),
@@ -198,67 +241,84 @@ describe("AdvisorDashboardPage", () => {
   });
 
   it("opens the matching submission from a click anywhere on its row", async () => {
-    listSubmissions.mockResolvedValue([
+    listQueue.mockResolvedValue([
       row({ session_id: "s1", contact_name: "Pat Prospect" }),
       row({ session_id: "s2", company_name: "Beta", contact_name: "Bo Buyer" }),
     ]);
-    render(
-      <MemoryRouter initialEntries={["/advisor"]}>
-        <Routes>
-          <Route path="/advisor" element={<AdvisorDashboardPage />} />
-          <Route path="/advisor/submissions/:id" element={<ShowId />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    renderAt();
     fireEvent.click(await screen.findByText("Bo Buyer"));
     expect(await screen.findByText("Detail page for s2")).toBeInTheDocument();
   });
 
   it("opens a submission once from its link, so Back returns to the queue", async () => {
-    listSubmissions.mockResolvedValue([row({ session_id: "s1" })]);
+    listQueue.mockResolvedValue([row({ session_id: "s1" })]);
     const Detail = () => {
       const navigate = useNavigate();
       return <button onClick={() => navigate(-1)}>Back</button>;
     };
     render(
-      <MemoryRouter initialEntries={["/advisor"]}>
-        <Routes>
-          <Route path="/advisor" element={<AdvisorDashboardPage />} />
-          <Route path="/advisor/submissions/:id" element={<Detail />} />
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/advisor"]}>
+          <Routes>
+            <Route path="/advisor" element={<AdvisorDashboardPage />} />
+            <Route path="/advisor/submissions/:id" element={<Detail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     fireEvent.click(await screen.findByRole("link", { name: "Acme" }));
     fireEvent.click(await screen.findByRole("button", { name: "Back" }));
     expect(await screen.findByRole("heading", { name: "Submissions" })).toBeInTheDocument();
   });
 
-  it("filters by status", async () => {
-    listSubmissions.mockResolvedValue([row()]);
-    renderAt();
-    await screen.findByRole("link", { name: "Acme" });
-    expect(listSubmissions).toHaveBeenLastCalledWith(query());
+  describe("the status tabs, which are the queue's built-in views", () => {
+    // Catches: a tab that doesn't ask for its status, or doesn't say so in the address.
+    it("filters by status from a tab, keeps the view in the address, and goes back to all", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      expect(screen.getByRole("link", { name: /^All statuses/ })).toHaveAttribute("aria-current", "page");
 
-    listSubmissions.mockResolvedValue([]);
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "won" } });
-    expect(await screen.findByText("No submissions are won.")).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "won" }));
+      listQueue.mockResolvedValue([]);
+      fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
+      expect(await screen.findByText("No submissions are won.")).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("won")] }));
+      expect(where()).toBe("?view=won");
+      expect(screen.getByRole("link", { name: /^Won/ })).toHaveAttribute("aria-current", "page");
 
-    listSubmissions.mockResolvedValue([row()]);
-    fireEvent.click(screen.getByRole("button", { name: "Show all statuses" }));
-    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenLastCalledWith(query());
-  });
+      listQueue.mockResolvedValue([row()]);
+      fireEvent.click(screen.getByRole("link", { name: "Show all statuses" }));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      expect(where()).toBe("");
+    });
 
-  it("reads the filter from the URL", async () => {
-    listSubmissions.mockResolvedValue([]);
-    renderAt("/advisor?status=information_requested");
-    expect(await screen.findByText("No submissions are information requested.")).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenCalledWith(query({ status: "information_requested" }));
+    // Catches: a tab's number not coming from the database's view counts, or counting something other than what its rows would total.
+    it("shows each tab's count from the view counts, under the search and filters on screen", async () => {
+      listQueue.mockResolvedValue([row()]);
+      countQueueViews.mockResolvedValue([{ name: "all", total: 20 }, { name: "draft", total: 5 }, { name: "won", total: 3 }]);
+      renderAt("/advisor?action=1&q=acme");
+      expect(await screen.findByRole("link", { name: "Won 3" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "All statuses 20" })).toBeInTheDocument();
+      const [views, opts] = countQueueViews.mock.calls.at(-1)!;
+      expect(views[0]).toEqual({ name: "all", filters: [yes("needs_action")] });
+      expect(views.find((v: { name: string }) => v.name === "won")).toEqual({ name: "won", filters: [pipeline("won"), yes("needs_action")] });
+      expect(opts).toEqual({ search: "acme" });
+    });
+
+    it("still lists the rows, with no numbers on the tabs, when the counts fail", async () => {
+      listQueue.mockResolvedValue([row()]);
+      countQueueViews.mockRejectedValue(new Error("nope"));
+      renderAt();
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Won" })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
   });
 
   it("marks a submission that needs advisor action on its row, with the advisor's note", async () => {
-    listSubmissions.mockResolvedValue([
+    listQueue.mockResolvedValue([
       row({ session_id: "s1", needs_action: true, needs_action_note: "Call the CFO about payroll" }),
       row({ session_id: "s2", company_name: "Beta" }),
     ]);
@@ -271,29 +331,125 @@ describe("AdvisorDashboardPage", () => {
   });
 
   it("lists only the submissions that need advisor action, alone or with a status, and says when there are none", async () => {
-    listSubmissions.mockResolvedValue([row({ needs_action: true })]);
+    listQueue.mockResolvedValue([row({ needs_action: true })]);
     renderAt("/advisor?status=under_review");
     await screen.findByRole("link", { name: "Acme" });
     const toggle = screen.getByRole("checkbox", { name: "Needs advisor action only" });
     expect(toggle).not.toBeChecked();
 
-    listSubmissions.mockResolvedValue([]);
+    listQueue.mockResolvedValue([]);
     fireEvent.click(toggle);
     expect(await screen.findByText("No under review submissions that need advisor action.")).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "under_review", needsAction: true }));
+    expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("under_review"), yes("needs_action")] }));
     expect(screen.getByRole("checkbox", { name: "Needs advisor action only" })).toBeChecked();
+    expect(where()).toBe("?view=under_review&filter=needs_action:is:true");
 
-    listSubmissions.mockResolvedValue([row()]);
-    fireEvent.click(screen.getByRole("button", { name: "Show all submissions" }));
+    listQueue.mockResolvedValue([row()]);
+    fireEvent.click(screen.getByRole("link", { name: "Show all submissions" }));
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenLastCalledWith(query());
+    expect(listQueue).toHaveBeenLastCalledWith(query());
+  });
+
+  describe("every old address form still works, and is rewritten as the new one", () => {
+    // Catches: an old link, bookmark or the menu's link landing on the wrong rows, or leaving the old parameters in the address.
+    it.each([
+      ["?status=information_requested", query({ filters: [pipeline("information_requested")] }), "?view=information_requested"],
+      ["?action=1", query({ filters: [yes("needs_action")] }), "?filter=needs_action:is:true"],
+      ["?waiting=1", query({ filters: [yes("waiting_on_peo")] }), "?filter=waiting_on_peo:is:true"],
+      ["?mail=new", query({ filters: [yes("has_new_peo_mail")] }), "?filter=has_new_peo_mail:is:true"],
+      ["?q=gamma", query({ search: "gamma" }), "?q=gamma"],
+      ["?page=2", query({ page: 2 }), "?page=2"],
+      ["?sort=oldest_waiting", query({ sort: { field: "oldest_waiting_on", direction: "asc" } }), "?sort=oldest_waiting_on"],
+      ["?sort=earliest_expiry", query({ sort: { field: "earliest_quote_expires_on", direction: "asc" } }), "?sort=earliest_quote_expires_on"],
+      [
+        "?status=won&action=1&waiting=1&mail=new&q=pat+gamma&sort=oldest_waiting&page=3",
+        query({
+          filters: [pipeline("won"), yes("needs_action"), yes("waiting_on_peo"), yes("has_new_peo_mail")],
+          search: "pat gamma",
+          sort: { field: "oldest_waiting_on", direction: "asc" },
+          page: 3,
+        }),
+        "?view=won&q=pat+gamma&filter=needs_action:is:true&filter=waiting_on_peo:is:true&filter=has_new_peo_mail:is:true&sort=oldest_waiting_on&page=3",
+      ],
+    ])("%s", async (url, expected, rewritten) => {
+      listQueue.mockImplementation(async (o: { page: number }) => ({ ...pageOf(o.page, 200) }));
+      renderAt(`/advisor${url}`);
+      await screen.findByRole("table");
+      expect(listQueue).toHaveBeenLastCalledWith(expected);
+      await waitFor(() => expect(where()).toBe(rewritten));
+    });
+
+    // Catches: the new parameters losing to old ones that happen to be on the same address.
+    it("lets the new parameters win over old ones", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?view=lost&status=won&sort=-company_name");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("lost")], sort: { field: "company_name", direction: "desc" } }));
+    });
+  });
+
+  // Catches: a bookmarked, hand-edited or stale address crashing the page, or being sent to the database as it is.
+  it("reads a garbage address without crashing, keeps only what it can read, and rewrites the address cleanly", async () => {
+    listQueue.mockResolvedValue([row()]);
+    renderAt(
+      "/advisor?page=-4&page=banana&sort=--x&filter=nope:is:1&filter=needs_action:between:5&filter=company_name:contains&filter=%5Cu&view=zzz&q=ab&junk=1"
+      + "&filter=pipeline_status:any_of:won,lost&filter=employee_count:more_than:abc&filter=submitted_at:on:2026-02-30&filter=",
+    );
+    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+    expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("won", "lost")] }));
+    expect(listQueue).not.toHaveBeenCalledWith(expect.objectContaining({ page: -4 }));
+    await waitFor(() => expect(where()).toBe("?filter=pipeline_status:any_of:won,lost"));
+  });
+
+  // Catches: a page number that isn't a place (zero, negative, fractional, words, enormous) being sent to the database or kept in the address.
+  it.each(["0", "-4", "2.5", "abc", "99999999999", "1"])("treats page=%s as the first page", async (bad) => {
+    listQueue.mockResolvedValue([row()]);
+    renderAt(`/advisor?page=${bad}`);
+    await screen.findByRole("link", { name: "Acme" });
+    expect(listQueue).toHaveBeenLastCalledWith(query());
+    // Never asked for, not even once before the address was tidied.
+    expect(listQueue.mock.calls.every(([o]) => o.page === 1)).toBe(true);
+    await waitFor(() => expect(where()).toBe(""));
+  });
+
+  it("keeps a filter's value whole when it holds a colon or a comma", async () => {
+    listQueue.mockResolvedValue([row()]);
+    renderAt("/advisor?filter=company_name:contains:Smith%5C,%20Jones%5C:%20Co&filter=states:any_of:CA,NY&filter=employee_count:between:5,50&filter=submitted_at:in_last_days:30&filter=missing_required:is_empty");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(listQueue).toHaveBeenLastCalledWith(query({
+      filters: [
+        { field: "company_name", op: "contains", value: "Smith, Jones: Co" },
+        { field: "states", op: "any_of", value: ["CA", "NY"] },
+        { field: "employee_count", op: "between", value: [5, 50] },
+        { field: "submitted_at", op: "in_last_days", value: 30 },
+        { field: "missing_required", op: "is_empty" },
+      ],
+    }));
+    // An address that already means this is left as it is (no rewrite), the escapes intact, so a copied link means the same.
+    await waitFor(() => expect(where()).toBe("?filter=company_name:contains:Smith%5C,%20Jones%5C:%20Co&filter=states:any_of:CA,NY&filter=employee_count:between:5,50&filter=submitted_at:in_last_days:30&filter=missing_required:is_empty"));
+  });
+
+  // Catches: a filter the database refuses leaving a blank page or a "try again" that can never work.
+  it("shows the database's reason plainly when it refuses a filter, and a way back to every submission", async () => {
+    listQueue.mockImplementation(async (o: { filters: unknown[] }) => {
+      if (o.filters.length) throw Object.assign(new Error('The filter "My team" can\'t be used until records have an owner.'), { code: "22023" });
+      return [row()];
+    });
+    renderAt("/advisor?filter=needs_action:is:true");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("These filters can't be used.");
+    expect(alert).toHaveTextContent('The filter "My team" can\'t be used until records have an owner.');
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("link", { name: "Show all submissions" }));
+    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+    expect(where()).toBe("");
   });
 
   it("reads the needs-action filter from the URL", async () => {
-    listSubmissions.mockResolvedValue([]);
+    listQueue.mockResolvedValue([]);
     renderAt("/advisor?action=1");
     expect(await screen.findByText("No submissions that need advisor action.")).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenCalledWith(query({ needsAction: true }));
+    expect(listQueue).toHaveBeenCalledWith(query({ filters: [yes("needs_action")] }));
   });
 
   describe("search", () => {
@@ -309,212 +465,244 @@ describe("AdvisorDashboardPage", () => {
     };
 
     it("searches in the database once typing pauses, from the first page, and keeps the search in the URL", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
-      render(
-        <MemoryRouter initialEntries={["/advisor?page=2"]}>
-          <Routes>
-            <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
-          </Routes>
-        </MemoryRouter>,
-      );
-      await screen.findByText(/nothing on page 2|Acme Holdings/);
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      renderAt("/advisor?page=2");
+      await screen.findByText(/Acme Holdings/).catch(() => undefined);
       fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat gamma" } });
       // Not once per keystroke: nothing is asked until typing pauses.
-      expect(listSubmissions).not.toHaveBeenCalledWith(query({ search: "pat gamma" }));
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
+      expect(listQueue).not.toHaveBeenCalledWith(query({ search: "pat gamma" }));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
       await waitFor(() => expect(companyOrder()).toEqual(["Gamma"]));
-      expect(screen.getByTestId("location")).toHaveTextContent("?q=pat+gamma");
+      expect(where()).toBe("?q=pat+gamma");
     });
 
     it("keeps a space typed just before a pause", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt();
       await screen.findByRole("link", { name: "Acme Holdings" });
       const box = screen.getByLabelText("Search");
       fireEvent.change(box, { target: { value: "pat " } });
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat" })));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "pat" })));
       expect(box).toHaveValue("pat ");
       fireEvent.change(box, { target: { value: "pat gamma" } });
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
     });
 
     it("doesn't search until at least 3 characters are typed, and says so (F-2.2)", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
-      render(
-        <MemoryRouter initialEntries={["/advisor"]}>
-          <Routes>
-            <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
-          </Routes>
-        </MemoryRouter>,
-      );
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      renderAt();
       await screen.findByRole("link", { name: "Acme Holdings" });
       const box = screen.getByLabelText("Search");
       fireEvent.change(box, { target: { value: " pa " } });
       expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
       // Give the pause time to pass: still nothing searched, the URL unchanged, every row listed.
       await new Promise((r) => setTimeout(r, 400));
-      expect(listSubmissions).not.toHaveBeenCalledWith(expect.objectContaining({ search: "pa" }));
-      expect(screen.getByTestId("location")).toHaveTextContent(/^$/);
+      expect(listQueue).not.toHaveBeenCalledWith(expect.objectContaining({ search: "pa" }));
+      expect(where()).toBe("");
       expect(companyOrder()).toEqual(["Acme Holdings", "Beta Works", "Gamma"]);
       expect(box).toHaveValue(" pa ");
 
       fireEvent.change(box, { target: { value: "pat" } });
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat" })));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "pat" })));
       expect(screen.queryByText("Type at least 3 characters to search.")).not.toBeInTheDocument();
       await waitFor(() => expect(companyOrder()).toEqual(["Acme Holdings", "Gamma"]));
 
       // Deleting back below the minimum lists everything again, and keeps what's typed.
       fireEvent.change(box, { target: { value: "pa" } });
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query()));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query()));
       await waitFor(() => expect(companyOrder()).toEqual(["Acme Holdings", "Beta Works", "Gamma"]));
       expect(box).toHaveValue("pa");
       expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
     });
 
-    it("treats a link with a search under 3 characters as no search", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+    // Catches: a link with a search too short to run being sent to the database, or left in the address.
+    it("treats a link with a search under 3 characters as no search, and takes it out of the address", async () => {
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt("/advisor?q=ga");
       await screen.findByRole("link", { name: "Beta Works" });
-      expect(listSubmissions).toHaveBeenCalledWith(query());
-      expect(listSubmissions).not.toHaveBeenCalledWith(query({ search: "ga" }));
-      expect(screen.getByText("3 submissions")).toBeInTheDocument();
-      expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
+      expect(listQueue).toHaveBeenCalledWith(query());
+      expect(listQueue).not.toHaveBeenCalledWith(query({ search: "ga" }));
+      expect(screen.getByText("1 to 3 of 3")).toBeInTheDocument();
+      await waitFor(() => expect(where()).toBe(""));
     });
 
     it("says how many match, across every page", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt();
       await screen.findByRole("link", { name: "Acme Holdings" });
-      expect(screen.getByText("3 submissions")).toBeInTheDocument();
+      expect(screen.getByText("1 to 3 of 3")).toBeInTheDocument();
       fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat" } });
-      expect(await screen.findByText("2 submissions match “pat”")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 2 of 2")).toBeInTheDocument();
     });
 
     it("reads the search from the URL", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt("/advisor?q=gamma");
       expect(await screen.findByRole("link", { name: "Gamma" })).toBeInTheDocument();
       expect(screen.getByLabelText("Search")).toHaveValue("gamma");
-      expect(listSubmissions).toHaveBeenCalledWith(query({ search: "gamma" }));
+      expect(listQueue).toHaveBeenCalledWith(query({ search: "gamma" }));
     });
 
     it("explains a search that finds nothing, and clears it", async () => {
-      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt("/advisor?q=zzz");
       expect(await screen.findByText("No submissions match “zzz”.")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-      expect(screen.getByLabelText("Search")).toHaveValue("");
+      fireEvent.click(screen.getByRole("link", { name: "Clear search" }));
       expect(await screen.findByRole("link", { name: "Acme Holdings" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Search")).toHaveValue("");
       expect(companyOrder()).toHaveLength(3);
     });
 
-    it("combines with the status filter", async () => {
-      listSubmissions.mockResolvedValue([]);
+    it("combines with the status view", async () => {
+      listQueue.mockResolvedValue([]);
       renderAt("/advisor?status=won&q=zzz");
       expect(await screen.findByText("No won submissions match “zzz”.")).toBeInTheDocument();
-      expect(listSubmissions).toHaveBeenCalledWith(query({ status: "won", search: "zzz" }));
+      expect(listQueue).toHaveBeenCalledWith(query({ filters: [pipeline("won")], search: "zzz" }));
     });
   });
 
   describe("pages", () => {
-    const pageOf = (page: number, total: number) => ({
-      rows: Array.from({ length: Math.min(25, total - (page - 1) * 25) }, (_, i) =>
-        row({ session_id: `s${(page - 1) * 25 + i}`, company_name: `Company ${(page - 1) * 25 + i + 1}` })),
-      total,
+    // Catches: the range line or the pager not saying what the story says: 50 a page, "1 to 50 of 375", Previous and Next as links with addresses.
+    it("shows 50 at a time as '1 to 50 of 375', with Previous and Next as real links that keep the rest of the address", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
+      renderAt("/advisor?view=won&q=acme");
+      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
+      expect(screen.getAllByRole("row")).toHaveLength(51);
+      const next = screen.getByRole("link", { name: "Next" });
+      expect(next).toHaveAttribute("href", "/advisor?view=won&q=acme&page=2");
+      expect(screen.queryByRole("link", { name: "Previous" })).not.toBeInTheDocument();
+      expect(screen.getByText("Previous").closest("[aria-disabled]")).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(next);
+      expect(await screen.findByText("51 to 100 of 375")).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ page: 2, filters: [pipeline("won")], search: "acme" }));
+      expect(screen.getByRole("link", { name: "Previous" })).toHaveAttribute("href", "/advisor?view=won&q=acme");
+      expect(screen.getByRole("link", { name: "Next" })).toHaveAttribute("href", "/advisor?view=won&q=acme&page=3");
     });
 
-    it("shows 25 at a time with the total, and moves between pages", async () => {
-      listSubmissions.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 60));
-      render(
-        <MemoryRouter initialEntries={["/advisor"]}>
-          <Routes>
-            <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
-          </Routes>
-        </MemoryRouter>,
-      );
-      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
-      expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
-      expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
-      expect(listSubmissions).toHaveBeenLastCalledWith(query({ page: 2 }));
-      expect(screen.getByTestId("location")).toHaveTextContent("?page=2");
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
-      expect(await screen.findByText("51–60 of 60 submissions")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-      fireEvent.click(screen.getByRole("button", { name: "Previous" }));
-      expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
+    it("disables Next on the last page, and Back undoes a page change", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
+      renderAt("/advisor?page=7");
+      expect(await screen.findByText("301 to 350 of 375")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("link", { name: "Next" }));
+      expect(await screen.findByText("351 to 375 of 375")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Next" })).not.toBeInTheDocument();
+      expect(screen.getByText("Next").closest("[aria-disabled]")).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(screen.getByRole("link", { name: "Previous" }));
+      expect(await screen.findByText("301 to 350 of 375")).toBeInTheDocument();
     });
 
     it("lets the browser's Back undo a page change", async () => {
-      listSubmissions.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 60));
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       const BackButton = () => {
         const navigate = useNavigate();
         return <button onClick={() => navigate(-1)}>Browser back</button>;
       };
       render(
-        <MemoryRouter initialEntries={["/advisor"]}>
-          <Routes>
-            <Route path="/advisor" element={<><AdvisorDashboardPage /><BackButton /></>} />
-          </Routes>
-        </MemoryRouter>,
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter initialEntries={["/advisor"]}>
+            <Routes>
+              <Route path="/advisor" element={<><AdvisorDashboardPage /><BackButton /></>} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
       );
-      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
-      expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("link", { name: "Next" }));
+      expect(await screen.findByText("51 to 100 of 375")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Browser back" }));
-      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
     });
 
-    it("starts from the first page when the filter changes", async () => {
-      listSubmissions.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 60));
+    // Catches: a page number past the end showing an empty table, or leaving the address lying.
+    it("lands on the last page when the address names one past the end, and rewrites the address", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
+      renderAt("/advisor?page=99");
+      expect(await screen.findByText("351 to 375 of 375")).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ page: 8 }));
+      expect(where()).toBe("?page=8");
+    });
+
+    it("lands on the first page, with the empty state, when the list has shrunk to nothing", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 0));
+      renderAt("/advisor?page=4");
+      expect(await screen.findByText("No submissions yet.")).toBeInTheDocument();
+      await waitFor(() => expect(where()).toBe(""));
+    });
+
+    // Catches: a new search, filter, sort or view keeping the old page number, so the rows under it mean nothing.
+    it("starts from the first page when the search, a tab, a filter or the sort changes", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt("/advisor?page=3");
-      expect(await screen.findByText("51–60 of 60 submissions")).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("Status"), { target: { value: "submitted" } });
-      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
-      expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "submitted" }));
-    });
+      expect(await screen.findByText("101 to 150 of 375")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "acme" } });
+      await waitFor(() => expect(where()).toBe("?q=acme"));
+      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
 
-    it("says when a page is past the end, and goes back to the first", async () => {
-      listSubmissions.mockImplementation(async ({ page }: { page: number }) => (page === 1 ? pageOf(1, 3) : { rows: [], total: 0 }));
-      renderAt("/advisor?page=9");
-      expect(await screen.findByText("There's nothing on page 9.")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Go to the first page" }));
-      expect(await screen.findByText("3 submissions")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("link", { name: "Next" }));
+      await screen.findByText("51 to 100 of 375");
+      fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
+      await waitFor(() => expect(where()).toBe("?view=won&q=acme"));
+
+      fireEvent.click(screen.getByRole("link", { name: "Next" }));
+      await screen.findByText("51 to 100 of 375");
+      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
+      await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=waiting_on_peo:is:true"));
+
+      fireEvent.click(screen.getByRole("link", { name: "Next" }));
+      await screen.findByText("51 to 100 of 375");
+      fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "1" } });
+      await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=waiting_on_peo:is:true&sort=oldest_waiting_on"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({
+        filters: [pipeline("won"), yes("waiting_on_peo")], search: "acme", sort: { field: "oldest_waiting_on", direction: "asc" },
+      }));
     });
   });
 
+  it("reads the sort from the address, shows it in the header, and lets the Sort box change it", async () => {
+    listQueue.mockResolvedValue([row()]);
+    renderAt("/advisor?sort=-submitted_at");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "submitted_at", direction: "desc" } }));
+    expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
+    expect(screen.getByRole("columnheader", { name: "Company" })).not.toHaveAttribute("aria-sort");
+    fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "2" } });
+    await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "earliest_quote_expires_on", direction: "asc" } })));
+    fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "0" } });
+    await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query()));
+  });
+
   it("has an empty state", async () => {
-    listSubmissions.mockResolvedValue([]);
+    listQueue.mockResolvedValue([]);
     renderAt();
     expect(await screen.findByText("No submissions yet.")).toBeInTheDocument();
   });
 
   it("shows an error and retries", async () => {
-    listSubmissions.mockRejectedValueOnce(new Error("Network request failed"));
+    listQueue.mockRejectedValueOnce(new Error("Network request failed"));
     renderAt();
     expect(await screen.findByRole("alert")).toHaveTextContent("Network request failed");
-    listSubmissions.mockResolvedValue([row()]);
+    listQueue.mockResolvedValue([row()]);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
   });
 
   it("ends the session when the server says it has expired", async () => {
-    listSubmissions.mockRejectedValueOnce(Object.assign(new Error("Your session has expired."), { unauthenticated: true }));
+    listQueue.mockRejectedValueOnce(Object.assign(new Error("Your session has expired."), { unauthenticated: true }));
     renderAt();
     expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired");
     expect(signOut).toHaveBeenCalledWith("expired");
   });
 
   it("tells an account that has lost access to the firm, and doesn't offer a retry", async () => {
-    listSubmissions.mockRejectedValueOnce(Object.assign(new Error("You don't have access to this firm's records."), { forbidden: true }));
+    listQueue.mockRejectedValueOnce(Object.assign(new Error("You don't have access to this firm's records."), { forbidden: true }));
     renderAt();
     expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have access to this firm's records");
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
+
   describe("prospects who cannot be reached by email", () => {
     it("flags the submissions whose confirmation bounced or was reported as spam, and only those", async () => {
-      listSubmissions.mockResolvedValue([
+      listQueue.mockResolvedValue([
         row({ session_id: "s1", company_name: "Bounced Co" }),
         row({ session_id: "s2", company_name: "Spam Co" }),
         row({ session_id: "s3", company_name: "Fine Co" }),
@@ -524,7 +712,9 @@ describe("AdvisorDashboardPage", () => {
         { session_id: "s2", reason: "complained", since: "2026-10-28T12:00:00Z" },
       ]);
       renderAt();
-      const rows = (await screen.findAllByRole("row")).slice(1);
+      await screen.findByText("Bounced Co");
+      await screen.findByText("Email bounced");
+      const rows = screen.getAllByRole("row").slice(1);
       const by = (name: string) => within(rows.find((r) => within(r).queryByText(name))!);
       expect(by("Bounced Co").getByText("Email bounced")).toBeInTheDocument();
       expect(by("Spam Co").getByText("Reported as spam")).toBeInTheDocument();
@@ -534,7 +724,7 @@ describe("AdvisorDashboardPage", () => {
     });
 
     it("still shows the queue, with no flags, when the check fails", async () => {
-      listSubmissions.mockResolvedValue([row({ company_name: "Acme" })]);
+      listQueue.mockResolvedValue([row({ company_name: "Acme" })]);
       listEmailProblems.mockRejectedValue(new Error("Couldn't check for bounced emails."));
       renderAt();
       expect(await screen.findByText("Acme")).toBeInTheDocument();
@@ -543,7 +733,7 @@ describe("AdvisorDashboardPage", () => {
     });
 
     it("still shows the queue when the check throws before it can even ask", async () => {
-      listSubmissions.mockResolvedValue([row({ company_name: "Acme" })]);
+      listQueue.mockResolvedValue([row({ company_name: "Acme" })]);
       listEmailProblems.mockImplementation(() => { throw new Error("synchronous"); });
       renderAt();
       expect(await screen.findByText("Acme")).toBeInTheDocument();
@@ -552,7 +742,7 @@ describe("AdvisorDashboardPage", () => {
 
   describe("quote requests", () => {
     it("marks a submission with PEO mail nobody has opened, and counts the quote requests when there are several", async () => {
-      listSubmissions.mockResolvedValue([
+      listQueue.mockResolvedValue([
         row({ company_name: "One", new_peo_mail_requests: 1, quote_requests_sent: 1 }),
         row({ session_id: "s2", company_name: "Two", new_peo_mail_requests: 3, quote_requests_sent: 3 }),
         row({ session_id: "s3", company_name: "None" }),
@@ -567,7 +757,7 @@ describe("AdvisorDashboardPage", () => {
     it("shows quotes back out of sent, the longest wait, the earliest expiry, the target start and an older version", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-11-16T15:00:00"));
-      listSubmissions.mockResolvedValue([
+      listQueue.mockResolvedValue([
         row({ quote_requests_sent: 3, quotes_received: 1, oldest_waiting_on: "2026-11-10", earliest_quote_expires_on: "2026-12-14",
           sent_older_version: true, start_month: "April 2027" }),
         row({ session_id: "s2", company_name: "Beta" }),
@@ -585,41 +775,59 @@ describe("AdvisorDashboardPage", () => {
     });
 
     it("lists only the submissions waiting on a PEO, keeps it in the URL, and says when there are none", async () => {
-      listSubmissions.mockResolvedValue([]);
+      listQueue.mockResolvedValue([]);
       renderAt("/advisor?status=sent_to_carrier");
       await screen.findByText(/No submissions are/);
       fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "sent_to_carrier", waiting: true })));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("sent_to_carrier"), yes("waiting_on_peo")] })));
       expect(await screen.findByText("No sent to peos submissions waiting on a PEO.")).toBeInTheDocument();
     });
+  });
 
-    it("sorts by the longest wait or the earliest expiry, from the first page, and reads the sort from the URL", async () => {
-      listSubmissions.mockResolvedValue([row()]);
-      renderAt("/advisor?page=2&sort=earliest_expiry");
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ page: 2, sort: "earliest_expiry" })));
-      fireEvent.change(await screen.findByLabelText("Sort"), { target: { value: "oldest_waiting" } });
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ sort: "oldest_waiting" })));
-      fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "" } });
-      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query()));
+  describe("staying fresh (D-49)", () => {
+    // Catches: the rows disappearing into a spinner while the next page loads, which loses the reader's place.
+    it("keeps the rows on screen while the next page loads, and says the range once it arrives", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
+      renderAt();
+      await screen.findByText("1 to 50 of 375");
+      let arrive!: (v: unknown) => void;
+      listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
+      fireEvent.click(screen.getByRole("link", { name: "Next" }));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ page: 2 })));
+      // Still the first page's rows, and no loading spinner.
+      expect(screen.getByText("Company 1")).toBeInTheDocument();
+      expect(screen.queryByText(/Loading submissions/)).not.toBeInTheDocument();
+      expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
+      // The range is a polite live region.
+      expect(screen.getByText("1 to 50 of 375")).toHaveAttribute("aria-live", "polite");
+      await act(async () => arrive(pageOf(2, 375)));
+      expect(await screen.findByText("51 to 100 of 375")).toBeInTheDocument();
+      expect(screen.getByText("Company 51")).toBeInTheDocument();
     });
 
+    // Catches: the queue going stale: no refresh on a minute or on returning to the tab, or one that blanks the rows, or one that outlives the page.
     it("refreshes every minute and when the tab is back in focus, keeping the rows on screen meanwhile", async () => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-      listSubmissions.mockResolvedValueOnce([row()]);
+      listQueue.mockResolvedValueOnce([row()]);
       const { unmount } = renderAt();
       await screen.findByText("Acme");
-      listSubmissions.mockReturnValue(new Promise(() => {}));
-      act(() => vi.advanceTimersByTime(60_000));
-      expect(listSubmissions).toHaveBeenCalledTimes(2);
+      let arrive!: (v: unknown) => void;
+      listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(listQueue).toHaveBeenCalledTimes(2);
       expect(screen.getByText("Acme")).toBeInTheDocument();
       expect(screen.queryByText(/Loading submissions/)).not.toBeInTheDocument();
-      act(() => { window.dispatchEvent(new Event("focus")); });
-      expect(listSubmissions).toHaveBeenCalledTimes(3);
+      await act(async () => arrive([row({ company_name: "Acme (refreshed)" })]));
+      expect(await screen.findByText("Acme (refreshed)")).toBeInTheDocument();
+      listQueue.mockReturnValue(new Promise(() => {}));
+      await act(async () => { window.dispatchEvent(new Event("visibilitychange")); });
+      expect(listQueue).toHaveBeenCalledTimes(3);
+      expect(screen.getByText("Acme (refreshed)")).toBeInTheDocument();
       unmount();
       // Leaving the page stops the refresh: no timer is left behind.
       expect(vi.getTimerCount()).toBe(0);
-      act(() => vi.advanceTimersByTime(60_000));
-      expect(listSubmissions).toHaveBeenCalledTimes(3);
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(listQueue).toHaveBeenCalledTimes(3);
       vi.useRealTimers();
     });
   });

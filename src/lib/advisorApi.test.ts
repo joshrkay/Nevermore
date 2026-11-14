@@ -75,7 +75,6 @@ const {
   fetchNeedsSecondFactor,
   listEmailProblems,
   listOutboxEvents,
-  listSubmissions,
   loadSubmission,
   outboxSummary,
   requeueOutboxEvent,
@@ -150,7 +149,7 @@ describe("advisor API errors", () => {
 
   it("calls a database refusal a lack of access to the firm's records", async () => {
     failWith({ code: "42501", message: "Advisor access required" });
-    const err = await caught(() => listSubmissions({ status: null }));
+    const err = await caught(() => listEmailProblems());
     expect(err).toBeInstanceOf(AdvisorApiError);
     expect(err.forbidden).toBe(true);
     expect(err.unauthenticated).toBe(false);
@@ -166,7 +165,7 @@ describe("advisor API errors", () => {
     ["PostgREST's anonymous-access code, whatever its wording", { code: "PGRST302", message: "Anonymous access is disabled" }],
   ])("calls %s an ended session", async (_label, error) => {
     failWith(error);
-    const err = await caught(() => listSubmissions({ status: null }));
+    const err = await caught(() => listEmailProblems());
     expect(err.unauthenticated).toBe(true);
     expect(err.forbidden).toBe(false);
     expect(err.message).toBe("Your session has expired. Sign in again to continue.");
@@ -174,7 +173,7 @@ describe("advisor API errors", () => {
 
   it("leaves any other failure as it was reported", async () => {
     failWith({ code: "57014", message: "canceling statement due to statement timeout" });
-    const err = await caught(() => listSubmissions({ status: null }));
+    const err = await caught(() => listEmailProblems());
     expect(err.forbidden).toBe(false);
     expect(err.unauthenticated).toBe(false);
     expect(err.message).toBe("canceling statement due to statement timeout");
@@ -182,8 +181,8 @@ describe("advisor API errors", () => {
 
   it("falls back to a plain message when the failure has none", async () => {
     failWith({ message: "" });
-    const err = await caught(() => listSubmissions({ status: null }));
-    expect(err.message).toBe("Couldn't load submissions.");
+    const err = await caught(() => listEmailProblems());
+    expect(err.message).toBe("Couldn't check for bounced emails.");
   });
 });
 
@@ -269,34 +268,6 @@ describe("email problems API", () => {
   });
 });
 
-describe("the submission queue", () => {
-  beforeEach(() => rpc.mockReset());
-
-  it("asks the database for one page, searched and filtered there", async () => {
-    rpc.mockResolvedValue({ data: [{ session_id: "s26", total_count: 60 }], error: null });
-    const page = await listSubmissions({ status: "won", search: "  acme  pat ", page: 2 });
-    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
-      p_status: "won", p_search: "acme  pat", p_limit: 25, p_offset: 25, p_needs_action: null, p_waiting: null, p_sort: null,
-    });
-    expect(page).toEqual({ rows: [{ session_id: "s26", total_count: 60 }], total: 60 });
-  });
-
-  it("asks for the first page with no search by default, and calls an empty page empty", async () => {
-    rpc.mockResolvedValue({ data: [], error: null });
-    expect(await listSubmissions({ status: null, search: "   ", page: 0 })).toEqual({ rows: [], total: 0 });
-    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
-      p_status: null, p_search: null, p_limit: 25, p_offset: 0, p_needs_action: null, p_waiting: null, p_sort: null,
-    });
-  });
-
-  it("lists only the submissions that need advisor action when asked", async () => {
-    rpc.mockResolvedValue({ data: [], error: null });
-    await listSubmissions({ status: "under_review", needsAction: true });
-    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
-      p_status: "under_review", p_search: null, p_limit: 25, p_offset: 0, p_needs_action: true, p_waiting: null, p_sort: null,
-    });
-  });
-});
 
 describe("needs advisor action", () => {
   beforeEach(() => rpc.mockReset().mockResolvedValue({ data: {}, error: null }));
@@ -647,13 +618,6 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "lost", p_note: null, p_won_quote_request_id: null });
   });
 
-  it("asks the queue for only the submissions waiting on a PEO, sorted by the longest wait or the earliest expiry", async () => {
-    rpc.mockResolvedValue({ data: [], error: null });
-    await listSubmissions({ status: null, waiting: true, sort: "oldest_waiting" });
-    expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: true, p_sort: "oldest_waiting" }));
-    await listSubmissions({ status: null });
-    expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: null, p_sort: null }));
-  });
 });
 });
 

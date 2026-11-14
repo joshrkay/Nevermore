@@ -87,47 +87,6 @@ export async function fetchNeedsSecondFactor(): Promise<boolean> {
   return data === true;
 }
 
-/** The queue's sorts besides its default: the longest wait on a PEO, or the quote that expires soonest. */
-export type QueueSort = "oldest_waiting" | "earliest_expiry";
-
-/** How many submissions the queue shows at a time. */
-export const QUEUE_PAGE_SIZE = 25;
-
-export interface SubmissionPage {
-  rows: SubmissionSummary[];
-  /** How many submissions match the status and search, across every page. */
-  total: number;
-}
-
-/**
- * One page of the queue, filtered by status (and, with `needsAction`, to the submissions that need advisor
- * action) and searched (every word must appear in the company, contact or reference) in the database.
- * Pages count from 1.
- */
-export async function listSubmissions(opts: {
-  status: PipelineStatus | null;
-  search?: string;
-  page?: number;
-  needsAction?: boolean;
-  /** Only the submissions with a quote request sent and not yet answered. */
-  waiting?: boolean;
-  sort?: QueueSort | null;
-}): Promise<SubmissionPage> {
-  const page = Math.max(1, Math.floor(opts.page ?? 1));
-  const { data, error } = await supabase.rpc("advisor_list_submissions", {
-    p_status: opts.status,
-    p_search: opts.search?.trim() || null,
-    p_limit: QUEUE_PAGE_SIZE,
-    p_offset: (page - 1) * QUEUE_PAGE_SIZE,
-    p_needs_action: opts.needsAction ? true : null,
-    p_waiting: opts.waiting ? true : null,
-    p_sort: opts.sort ?? null,
-  });
-  if (error) fail(error, "Couldn't load submissions.");
-  const rows = data ?? [];
-  return { rows, total: rows[0]?.total_count ?? 0 };
-}
-
 // ---------- Outbox & notifications (G-1.3) ----------
 
 export type OutboxEvent = Database["public"]["Functions"]["advisor_list_outbox_events"]["Returns"][number];

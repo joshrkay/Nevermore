@@ -28,15 +28,17 @@ export interface MenuItem {
 }
 
 /**
- * The address parameter that asks the queue for new PEO mail only. The database filter for "has new PEO mail" shipped with
- * CRM-S3.3b; the page does not apply it until it moves onto the table frame (CRM-S3.5a) and gets its filters (CRM-S3.3a), which
- * will honour this parameter. Until then Inbox opens the whole queue, and the page says so in one line.
+ * The address parameter that asks the queue for new PEO mail only. The queue's table address reads it as the filter "has new PEO mail
+ * is yes" (CRM-S3.5a) and rewrites the address to say so, so the page then holds `filter=has_new_peo_mail:is:true`: Inbox is the current
+ * section for either spelling.
  */
 export const INBOX_PARAM = { name: "mail", value: "new" } as const;
+const INBOX_FILTER = "has_new_peo_mail:is:true";
 
 const QUEUE = "/advisor";
 const isQueue = (pathname: string) => pathname === QUEUE;
-const isInbox = (pathname: string, search: URLSearchParams) => isQueue(pathname) && search.get(INBOX_PARAM.name) === INBOX_PARAM.value;
+const isInbox = (pathname: string, search: URLSearchParams) =>
+  isQueue(pathname) && (search.get(INBOX_PARAM.name) === INBOX_PARAM.value || search.getAll("filter").includes(INBOX_FILTER));
 
 /** What Settings opens (D-38). Activity is for owners. `atFirmAddress`: the page works only at the firm's own address, so from the bare domain the link goes there. */
 export const SETTINGS_LINKS: { label: string; description: string; to: string; ownersOnly?: boolean; atFirmAddress?: boolean }[] = [

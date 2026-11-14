@@ -78,6 +78,9 @@ describe("the workspace menu", () => {
     ["/advisor?status=under_review", "Quotes"],
     ["/advisor/submissions/abc", "Quotes"],
     ["/advisor?mail=new", "Inbox"],
+    // The queue rewrites mail=new to the filter it stands for (CRM-S3.5a); Inbox stays marked, and Quotes is not.
+    ["/advisor?filter=has_new_peo_mail:is:true", "Inbox"],
+    ["/advisor?view=won&filter=needs_action:is:true", "Quotes"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],
