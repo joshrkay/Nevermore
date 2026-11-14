@@ -1,4 +1,5 @@
 import type { TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
+import { OPERATORS, type OperatorShape } from "./operators";
 import {
   FILTER_DAYS_MAX, FILTER_LIST_MAX, FILTER_TEXT_MAX, MAX_TABLE_PAGE, TABLE_FILTER_LIMIT, type TableDefinition,
 } from "./columns";
@@ -44,25 +45,16 @@ export interface Dropped {
   filterFields: string[];
 }
 
-type Shape = "none" | "text" | "number" | "numbers" | "day" | "days" | "count" | "list" | "bool";
-
-/** The operators of each kind of field and the shape of the value each takes: the same operators `src/lib/tableQuery.ts` types. */
-const OPERATORS: Record<string, Record<string, Shape>> = {
-  text: { contains: "text", is: "text", is_empty: "none" },
-  number: { is: "number", more_than: "number", less_than: "number", between: "numbers" },
-  date: { on: "day", before: "day", after: "day", between: "days", in_next_days: "count", in_last_days: "count" },
-  choice: { any_of: "list", none_of: "list", is_empty: "none" },
-  choices: { any_of: "list", none_of: "list", is_empty: "none" },
-  yes_no: { is: "bool" },
-  person: { any_of: "list", me: "none", my_team: "none" },
-};
-
 const has = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
 
 // ---- text: always well formed, counted in characters ----
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
-/** Text with no half of a character left in it (a lone surrogate would make the address impossible to write). */
-const wellFormed = (s: string) => s.replace(LONE_SURROGATE, "�");
+/**
+ * Text the address can write and the database can take: no half of a character left in it (a lone surrogate would make the address
+ * impossible to write) and no NUL (U+0000, which Postgres text cannot hold: it fails the call with 22P05, a failure that is no
+ * refusal and no retry can mend). Other control characters the database treats as any other character, so they stay.
+ */
+const wellFormed = (s: string) => s.replace(LONE_SURROGATE, "\ufffd").split("\u0000").join("");
 /** The most characters (code points, as the database counts them) of a piece of text; never cuts a character in two. */
 const cut = (s: string, max: number) => {
   const chars = Array.from(s);
@@ -104,7 +96,7 @@ const textValue = (raw: string): string | undefined => {
 };
 
 /** The value a filter's text holds for an operator of this shape, or undefined when it is not one. */
-function readValue(shape: Shape, raw: string | undefined): unknown {
+function readValue(shape: OperatorShape, raw: string | undefined): unknown {
   if (shape === "none") return raw === undefined ? null : undefined;
   if (raw === undefined) return undefined;
   switch (shape) {
@@ -143,7 +135,7 @@ function readFilter<K extends TableFields>(table: TableDefinition<K, never, neve
   if (field === "") return { bad: true };
   if (!has(table.fields, field)) return { unknownField: field };
   const ops = OPERATORS[table.fields[field as keyof K & string].kind];
-  const shape = has(ops, op) ? ops[op] : undefined;
+  const shape = has(ops, op) ? ops[op].shape : undefined;
   if (!shape) return { bad: true };
   const value = readValue(shape, raw);
   if (value === undefined) return { bad: true };
@@ -305,5 +297,7 @@ export function changeAddress<K extends TableFields>(address: TableAddress<K>, c
   // A view or sort a person chose replaces the one that was held.
   if ("view" in change) next.held.view = null;
   if ("sort" in change) next.held.sort = null;
+  // A caller that states the whole filter list (a checkbox, a removed chip, "Clear filters") replaces the held filters too.
+  if ("filters" in change) next.held.filters = [];
   return next;
 }

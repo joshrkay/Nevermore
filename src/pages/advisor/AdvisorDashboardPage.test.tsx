@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { QueueRow } from "@/lib/queueApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
-import { changeAddress, judgeAddress, readAddress, sameAddress } from "@/components/workspace/table";
+import { changeAddress, judgeAddress, OPERATORS, readAddress, sameAddress } from "@/components/workspace/table";
 
 // The submissions queue on the workspace's table frame (story CRM-S3.5a). The database cuts the pages and runs the filters (supabase/tests/
 // queue_query.sql); these tests are what a person sees and does through the page: the rows, "1 to 50 of 375 submissions", the pager's links, every
@@ -981,7 +981,10 @@ describe("AdvisorDashboardPage", () => {
       expect(listQueue).toHaveBeenCalledTimes(1);
       expect(listQueue).toHaveBeenLastCalledWith(query());
       await waitFor(() => expect(where()).toBe(""));
-      expect(screen.queryByText(/isn't available/)).not.toBeInTheDocument();
+      // A shared link to a view that is gone says so, and the line goes with the next change of the address.
+      expect(screen.getByText("That view isn't available, so this shows all statuses.")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
+      await waitFor(() => expect(screen.queryByText(/isn't available/)).not.toBeInTheDocument());
     });
 
     // Catches: a filter on a custom field being thrown away before the custom fields are known, or kept after they are known not to include it.
@@ -1018,8 +1021,17 @@ describe("AdvisorDashboardPage", () => {
       renderAt("/advisor?view=saved-1");
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
       expect(listQueue).toHaveBeenLastCalledWith(query());
-      expect(screen.getByText("That view isn't available, so this shows every submission.")).toBeInTheDocument();
+      expect(screen.getByText("That view isn't available, so this shows all statuses.")).toBeInTheDocument();
       await waitFor(() => expect(where()).toBe(""));
+    });
+
+    // Catches: a filter silently left out because it names a field that is gone, once the fields are known.
+    it("says so when a filter names a field that isn't there once the fields are ready too, and keeps the others", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?filter=nope:contains:acme&filter=needs_action:is:true");
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(screen.getByText("A filter on a field that isn't available was left out.")).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action")] }));
     });
 
     it("says so when the fields fail to load and a filter had to be left out", async () => {
@@ -1126,6 +1138,191 @@ describe("AdvisorDashboardPage", () => {
     expect(text).toEqual({
       company: "Acme", contact: "Pat Prospect", states: "CA, NY", employees: "12", submitted: "Oct 1, 2026", status: "Submitted",
       completeness: "Complete", quotes: "",
+    });
+  });
+
+  describe("keeping up with a definition that changes", () => {
+    const view = (filters: unknown[]) => ({ id: "saved-1", label: "My saved view", filters }) as never;
+    const withView = (filters: unknown[]) => ({ ...QUEUE_TABLE, views: [...QUEUE_VIEWS, view(filters)] });
+
+    // Catches: a saved view edited under the same id showing the old rows and the old tab numbers until the next refresh.
+    it("asks again at once, for the rows and the tab numbers, when a view's filters change under the same id", async () => {
+      listQueue.mockResolvedValue([row()]);
+      countQueueViews.mockResolvedValue([{ name: "all", total: 5 }, { name: "saved-1", total: 2 }]);
+      setTable(withView([yes("needs_action")]));
+      renderAt("/advisor?view=saved-1");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action")] }));
+      const askedRows = listQueue.mock.calls.length;
+      const askedCounts = countQueueViews.mock.calls.length;
+      listQueue.mockResolvedValue([row({ company_name: "Edited Co" })]);
+      setTable(withView([yes("waiting_on_peo")]));
+      expect(await screen.findByRole("link", { name: "Edited Co" })).toBeInTheDocument();
+      expect(listQueue.mock.calls.length).toBe(askedRows + 1);
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("waiting_on_peo")] }));
+      await waitFor(() => expect(countQueueViews.mock.calls.length).toBe(askedCounts + 1));
+      const views = countQueueViews.mock.calls.at(-1)![0] as { name: string; filters: unknown[] }[];
+      expect(views.find((v) => v.name === "saved-1")!.filters).toEqual([yes("waiting_on_peo")]);
+    });
+
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `v${i}`, label: `View ${i}`, filters: [yes("needs_action")] })) as never[];
+    const answer = (views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: 100 + i }));
+
+    // Catches: "All" plus 20 or more views sent in one call, which the database refuses, so no tab is ever numbered.
+    it("asks for tab numbers in calls of at most 20 views and numbers every tab", async () => {
+      listQueue.mockResolvedValue([row()]);
+      countQueueViews.mockImplementation(async (views: { name: string }[]) => answer(views));
+      setTable({ ...QUEUE_TABLE, views: [...QUEUE_VIEWS, ...many(45 - QUEUE_VIEWS.length)] });
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      await waitFor(() => expect(countQueueViews).toHaveBeenCalledTimes(3));
+      expect(countQueueViews.mock.calls.map(([v]) => v.length)).toEqual([20, 20, 6]);
+      const names = countQueueViews.mock.calls.flatMap(([v]) => v.map((x: { name: string }) => x.name));
+      expect(new Set(names).size).toBe(46);
+      const tabs = within(screen.getByRole("navigation", { name: "Views" })).getAllByRole("link");
+      expect(tabs).toHaveLength(46);
+      await waitFor(() => expect(tabs.every((t) => /\d$/.test(t.textContent ?? ""))).toBe(true));
+    });
+
+    it("loses only a failed batch's numbers, and keeps showing the others", async () => {
+      listQueue.mockResolvedValue([row()]);
+      countQueueViews.mockImplementation(async (views: { name: string }[]) => {
+        if (views.some((v) => v.name === "v30")) throw new Error("down");
+        return answer(views);
+      });
+      setTable({ ...QUEUE_TABLE, views: [...QUEUE_VIEWS, ...many(45 - QUEUE_VIEWS.length)] });
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      const nav = screen.getByRole("navigation", { name: "Views" });
+      await waitFor(() => expect(within(nav).getByRole("link", { name: /^All statuses \d+/ })).toBeInTheDocument());
+      // v30 is in the last batch, which failed: those tabs have no number, the others do.
+      expect(within(nav).getByRole("link", { name: "View 33" })).toBeInTheDocument();
+      expect(within(nav).getByRole("link", { name: /^View 5 \d+/ })).toBeInTheDocument();
+    });
+
+    // Catches: a batch that fails after it once answered blanking its tabs at the first failure, instead of keeping the last numbers.
+    it("keeps a failed batch's last numbers through the failure", async () => {
+      listQueue.mockResolvedValue([row()]);
+      let down = false;
+      countQueueViews.mockImplementation(async (views: { name: string }[]) => {
+        if (down && views.some((v) => v.name === "v30")) throw new Error("down");
+        return answer(views);
+      });
+      setTable({ ...QUEUE_TABLE, views: [...QUEUE_VIEWS, ...many(45 - QUEUE_VIEWS.length)] });
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      const nav = screen.getByRole("navigation", { name: "Views" });
+      await waitFor(() => expect(within(nav).getByRole("link", { name: /^View 33 \d+/ })).toBeInTheDocument());
+      down = true;
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(countQueueViews).toHaveBeenCalledTimes(6));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(within(nav).getByRole("link", { name: /^View 33 \d+/ })).toBeInTheDocument();
+    });
+
+    // Catches: a filter held while custom fields load surviving "Clear filters", and applying once the fields arrive.
+    it("replaces a held filter when the filters are changed, so it never applies later", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
+      renderAt("/advisor?filter=a:contains:acme");
+      await screen.findByRole("status");
+      expect(where()).toBe("?filter=a:contains:acme");
+      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
+      await waitFor(() => expect(where()).toBe("?filter=waiting_on_peo:is:true"));
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "ready", fields: { ...QUEUE_TABLE.fields, a: { label: "A", kind: "text" } } as never });
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("waiting_on_peo")] }));
+    });
+
+    // Catches: a table's own default sort not showing in its header, or hiding the sort the address holds.
+    it("shows the table's default sort in the header, and the address's sort over it", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, defaultSort: { field: "submitted_at", direction: "desc" } });
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
+      cleanup();
+      renderAt("/advisor?sort=company_name");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "ascending");
+      expect(screen.getByRole("columnheader", { name: "Submitted" })).not.toHaveAttribute("aria-sort");
+    });
+
+    it("shows no sort in the queue's header when the address holds none: its own order is no column's", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getAllByRole("columnheader").some((h) => h.hasAttribute("aria-sort"))).toBe(false);
+    });
+  });
+
+  describe("text the database can't hold", () => {
+    // Catches: a NUL in a link reaching the database, which fails the call (22P05, not a refusal) and offers a "Try again" that can never work.
+    it("drops a NUL from the search and from filter text, whole characters kept", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?q=abc%00&filter=company_name:contains:ac%00me&filter=contact_name:is:%00");
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ search: "abc", filters: [{ field: "company_name", op: "contains", value: "acme" }] }));
+      expect(JSON.stringify(listQueue.mock.calls)).not.toContain("\\u0000");
+      await waitFor(() => expect(where()).toBe("?q=abc&filter=company_name:contains:acme"));
+    });
+
+    it("drops a NUL typed into the search box", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat\u0000 gamma" } });
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
+    });
+  });
+
+  describe("a refused sort or page", () => {
+    // Catches: every refusal headed "These filters can't be used", and a way back that keeps the sort that was refused.
+    it("says what was refused and goes back to the table's bare address", async () => {
+      listQueue.mockImplementation(async (o: { sort: unknown }) => {
+        if (o.sort) throw Object.assign(new Error('The queue has no field "company_name" to sort by'), { code: "22023" });
+        return [row()];
+      });
+      renderAt("/advisor?sort=company_name&q=acme&view=won&filter=needs_action:is:true&page=2");
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("This sort can't be used.");
+      expect(alert).toHaveTextContent('The queue has no field "company_name" to sort by');
+      expect(within(alert).getByRole("link", { name: "Show all submissions" })).toHaveAttribute("href", "/advisor");
+      fireEvent.click(within(alert).getByRole("link", { name: "Show all submissions" }));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(where()).toBe("");
+    });
+
+    it("heads any other refusal neutrally, with the database's reason", async () => {
+      listQueue.mockRejectedValueOnce(Object.assign(new Error('Unknown time zone "Nowhere/Here"'), { code: "22023" }));
+      renderAt();
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("This view of the submissions can't be shown.");
+      expect(alert).toHaveTextContent('Unknown time zone "Nowhere/Here"');
+    });
+  });
+
+  it("lists each kind's operators with words, and the codec reads every one of them", () => {
+    const sample: Record<string, string> = { none: "", text: "x", number: "5", numbers: "1,2", day: "2026-01-02", days: "2026-01-02,2026-01-03", count: "5", list: "a,b", bool: "true" };
+    const kinds = Object.keys(OPERATORS) as (keyof typeof OPERATORS)[];
+    const fields = Object.fromEntries(kinds.map((k) => [`f_${k}`, { label: k, kind: k }]));
+    const table = { ...QUEUE_TABLE, fields } as never;
+    for (const kind of kinds) {
+      for (const [op, def] of Object.entries(OPERATORS[kind])) {
+        expect(def.label, `${kind} ${op}`).not.toBe("");
+        const text = `f_${kind}:${op}${def.shape === "none" ? "" : `:${sample[def.shape]}`}`;
+        expect(readAddress(table, new URLSearchParams({ filter: text })).filters, text).toHaveLength(1);
+      }
+    }
+    // Exactly the operators src/lib/tableQuery.ts types and the database takes.
+    expect(Object.fromEntries(kinds.map((k) => [k, Object.keys(OPERATORS[k])]))).toEqual({
+      text: ["contains", "is", "is_empty"],
+      number: ["is", "more_than", "less_than", "between"],
+      date: ["on", "before", "after", "between", "in_next_days", "in_last_days"],
+      choice: ["any_of", "none_of", "is_empty"],
+      choices: ["any_of", "none_of", "is_empty"],
+      yes_no: ["is"],
+      person: ["any_of", "me", "my_team"],
     });
   });
 

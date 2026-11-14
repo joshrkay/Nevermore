@@ -49,7 +49,16 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
   align?: "left" | "right";
 }
 
-/** A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too. */
+/**
+ * A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too.
+ * CRM-S3.4a adds a view's own `sort` here (and makes `queryFor` and `sameAddress` apply it: today a view has no sort of its own, so the
+ * address's sort is the only one); CRM-S3.1a adds the view's own `columns`.
+ *
+ * How the table's limit of 20 filters is applied to the total: the view's filters count first and the address's take what is left
+ * (`effectiveFilters`). The rows use the current view's room. A tab's count uses the room of ITS view, so a tab whose view has more
+ * filters than the current one counts with fewer of the address's filters than the rows do (the last ones are left out of that tab's
+ * number only when the address is already near the limit).
+ */
 export interface TableView<K extends TableFields> {
   /** What the address's `view` holds. */
   id: string;
@@ -65,7 +74,14 @@ export interface TableView<K extends TableFields> {
  */
 export type Readiness = "ready" | "loading" | "failed";
 
-/** Everything the frame needs to know about one table. */
+/**
+ * Everything the frame needs to know about one table.
+ *
+ * Contract for a hook that builds a definition from what loads (CRM-S3.4a's saved views, CRM-X3.1's custom fields): it must return a
+ * MEMOIZED definition (the address is memoized on the definition object, so a new object every render reads the address again every
+ * render); it must keep the last list of views and fields while it asks again, reporting "loading" only before the first answer (or the
+ * tabs blank on every refresh and the address holds what it should judge); and it reports "failed" only when there is no list to keep.
+ */
 export interface TableDefinition<K extends TableFields, Row, Context = undefined> {
   /** The table's name: the `workspace_table` of the database and the second part of the query's key. */
   id: string;
@@ -83,6 +99,14 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
   viewsStatus?: Readiness;
   /** The words on the tab that is no view at all ("All statuses"). */
   allViewLabel: string;
+  /**
+   * The sort the table has when the address holds none, when one column shows it. `null` means the table's own order, which no single
+   * column shows (the queue's: certified submissions first, newest certification first, then latest change); the header then shows no
+   * sort and the sort box says `defaultSortLabel`.
+   */
+  defaultSort: TableSort<keyof K & string> | null;
+  /** The words for the table's own order, where a sort is chosen ("Newest first"). */
+  defaultSortLabel: string;
   /** Searches shorter than this (spaces left out) are not run. */
   searchMinChars: number;
   /** Old parameters mapped onto the new shape, so today's links keep working. A field an old parameter and a new filter both name is the new filter's. */
@@ -107,6 +131,8 @@ export const MAX_TABLE_PAGE = 100_000;
 export const TABLE_FILTER_LIMIT = 20;
 /** "takes at most 200 characters" (counted in characters, not in UTF-16 units) for a text filter, a list value and the search. */
 export const FILTER_TEXT_MAX = 200;
+/** "Views are a list of 1 to 20": the most views one call for tab counts takes. The frame asks in batches of this many. */
+export const VIEWS_PER_COUNT_CALL = 20;
 /** "needs 1 to 100 values" for a list. */
 export const FILTER_LIST_MAX = 100;
 /** "a whole number of days, 0 to 3660". */

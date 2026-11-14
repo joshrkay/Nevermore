@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type ComponentProps, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
@@ -31,16 +31,25 @@ interface Props<K extends TableFields, Row, Context> {
   error: (error: Error, retry: () => void, address: TableAddress<K>) => ReactNode;
   /** A click anywhere on a row, outside its links, opens it. */
   onOpenRow?: (row: Row) => void;
+  /** What a column header holds; CRM-S3.2a puts the sort control here. Default: the header's words. */
+  renderHeader?: ComponentProps<typeof DataTable<K, Row, Context>>["renderHeader"];
 }
+
+/** What a refusal was about, when its reason lets you tell, for the panel's heading; neutral otherwise. */
+const refusalHeading = (reason: string, plural: string): string =>
+  /to sort by|A sort goes/.test(reason) ? "This sort can't be used."
+  : /page number/i.test(reason) ? "This page can't be shown."
+  : /filter/i.test(reason) ? "These filters can't be used."
+  : `This view of the ${plural} can't be shown.`;
 
 /**
  * The frame every workspace table sits in (CRM-S3.5a): the toolbar and views above, then whichever of loading, error, empty or the table
  * with its pager the data calls for. A page past the end is corrected to the last page (the address is rewritten, not left lying). While
  * the address holds something the table can't judge yet, the loading slot shows and nothing is asked. When the database refuses the
- * query (a filter it doesn't take) the frame says why in the database's words and offers the way back; it never offers "Try again".
+ * query (a filter it doesn't take) the frame says why in the database's words and offers the way back, to the table's bare address (a refused sort or page is not undone by keeping it); it never offers "Try again".
  */
-export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, toolbar, views, loading, empty, error, onOpenRow }: Props<K, Row, Context>) {
-  const { address, hrefFor, change, notice } = location;
+export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, toolbar, views, loading, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+  const { address, hrefFor, bareHref, change, notice } = location;
   const { page } = data;
   const pageSize = page?.pageSize ?? TABLE_PAGE_SIZE;
   const lastPage = page ? Math.max(1, Math.ceil(page.total / pageSize)) : 1;
@@ -60,9 +69,9 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
         refusal ? (
           <div role="alert" className="border border-border rounded-xl p-6 text-center">
             <ShieldAlert className="w-6 h-6 text-primary mx-auto mb-2" aria-hidden="true" />
-            <p className="font-medium mb-1">These filters can't be used.</p>
+            <p className="font-medium mb-1">{refusalHeading(refusal, table.noun.plural)}</p>
             <p className="text-sm text-muted-foreground mb-3">{refusal}</p>
-            <Link to={hrefFor({ filters: [], view: null })} className="text-sm text-primary underline">Show all {table.noun.plural}</Link>
+            <Link to={bareHref} className="text-sm text-primary underline">Show all {table.noun.plural}</Link>
           </div>
         ) : (
           error(data.error, data.retry, address)
@@ -73,7 +82,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
         empty(address)
       ) : (
         <>
-          <DataTable table={table} context={context} rows={page.rows} caption={caption} sort={address.sort} busy={data.isPlaceholder} onOpenRow={onOpenRow} />
+          <DataTable table={table} context={context} rows={page.rows} caption={caption} sort={address.sort ?? table.defaultSort} busy={data.isPlaceholder} onOpenRow={onOpenRow} renderHeader={renderHeader} />
           <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />
         </>
       )}

@@ -39,9 +39,15 @@ export const NEEDS_ACTION_FILTER: QueueFilter = { field: "needs_action", op: "is
 export const WAITING_FILTER: QueueFilter = { field: "waiting_on_peo", op: "is", value: true };
 export const NEW_PEO_MAIL_FILTER: QueueFilter = { field: "has_new_peo_mail", op: "is", value: true };
 
+/**
+ * The queue's own order, with no sort in the address: certified submissions first, the latest certification first, then the latest change
+ * (advisor_list_submissions). No single column shows it, so the table's `defaultSort` is null and this is the words the Sort box uses.
+ */
+const DEFAULT_SORT_LABEL = "Newest first";
+
 /** The queue's sorts the page's Sort box offers until CRM-S3.2a's headers replace it. */
 export const QUEUE_SORTS = [
-  { label: "Newest first", sort: null },
+  { label: DEFAULT_SORT_LABEL, sort: null },
   { label: "Longest wait on a PEO", sort: { field: "oldest_waiting_on", direction: "asc" } },
   { label: "Quote expiring soonest", sort: { field: "earliest_quote_expires_on", direction: "asc" } },
 ] as const;
@@ -254,6 +260,8 @@ export const QUEUE_TABLE: QueueTableDefinition = {
   rowKey: (row) => row.session_id,
   views: QUEUE_VIEWS,
   allViewLabel: "All statuses",
+  defaultSort: null,
+  defaultSortLabel: DEFAULT_SORT_LABEL,
   searchMinChars: QUEUE_SEARCH_MIN_CHARS,
   legacy,
 };

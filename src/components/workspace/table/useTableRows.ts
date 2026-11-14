@@ -4,7 +4,7 @@ import { COUNTS_FAILING_FOR_MS, createFailureClock } from "@/lib/failureClock";
 import type { TableFields, TablePage, ViewCount } from "@/lib/tableQuery";
 import { WorkspaceContext } from "../workspaceContext";
 import { effectiveFilters, hasHeld, queryFor, type TableAddress, type TableQuery } from "./address";
-import type { TableDefinition } from "./columns";
+import { VIEWS_PER_COUNT_CALL, type TableDefinition } from "./columns";
 
 /** Every table's list is asked again this often, and when the window gets focus (D-49). */
 export const TABLE_REFRESH_MS = 60_000;
@@ -36,10 +36,12 @@ export function useTableRows<K extends TableFields, Row, Context>(
   fetchPage: (query: TableQuery<K>) => Promise<TablePage<Row>>,
 ) {
   const { firmId, ready } = useFirmReady();
+  // Keyed on what is asked (the effective query), not on the address: a saved view whose filters changed under the same id is another question.
+  const asked = queryFor(table, address);
   const query = useQuery({
-    queryKey: [...tableKey(firmId, table), "rows", address],
+    queryKey: [...tableKey(firmId, table), "rows", asked],
     // What the rows were asked for travels with them, so the range line can say what it counts once they arrive.
-    queryFn: async () => ({ page: await fetchPage(queryFor(table, address)), search: address.search }),
+    queryFn: async () => ({ page: await fetchPage(asked), search: address.search }),
     enabled: ready && !hasHeld(address),
     placeholderData: keepPreviousData,
     refetchInterval: TABLE_REFRESH_MS,
@@ -58,8 +60,11 @@ export function useTableRows<K extends TableFields, Row, Context>(
 }
 
 /**
- * How many rows each view holds (the number on its tab), under the search and filters on screen, from one call. The tab "All" is named
- * "all". A failed refresh keeps the last numbers, and they go only once refreshes have been failing for five minutes, as the menu's do (D-134).
+ * How many rows each view holds (the number on its tab), under the search and filters on screen. The tab "All" is named "all". The database
+ * counts at most 20 views a call, so the views are asked in batches of that many and the answers put together. A failed batch is a failed
+ * count for its own views only: they keep their last numbers through the failure and lose them after five minutes of failing, as the menu's
+ * do (D-134); the other batches' numbers are shown as they arrive. The key holds each view's effective filters, so a view whose filters
+ * changed under the same id is asked again at once.
  */
 export function useTableViewCounts<K extends TableFields, Row, Context>(
   table: TableDefinition<K, Row, Context>,
@@ -67,19 +72,36 @@ export function useTableViewCounts<K extends TableFields, Row, Context>(
   countViews: (views: { name: string; filters: TableQuery<K>["filters"] }[], opts: { search: string }) => Promise<ViewCount[]>,
 ) {
   const { firmId, ready } = useFirmReady();
-  const clock = useRef(createFailureClock(COUNTS_FAILING_FOR_MS)).current;
+  // One clock per batch, and the last numbers of the question they answered (a different question's numbers are never shown for this one).
+  const clocks = useRef<ReturnType<typeof createFailureClock>[]>([]);
+  const last = useRef<{ key: string; totals: Map<string, number> }>({ key: "", totals: new Map() });
+  const views = [{ name: "all", filters: effectiveFilters(table, null, address.filters) }, ...table.views.map((v) => ({ name: v.id, filters: effectiveFilters(table, v.id, address.filters) }))];
+  const asked = JSON.stringify([views, address.search]);
   const query = useQuery({
-    queryKey: [...tableKey(firmId, table), "counts", address.filters, address.search, table.views.map((v) => v.id)],
+    queryKey: [...tableKey(firmId, table), "counts", views, address.search],
     queryFn: async () => {
-      try {
-        const views = [{ name: "all", filters: effectiveFilters(table, null, address.filters) }, ...table.views.map((v) => ({ name: v.id, filters: effectiveFilters(table, v.id, address.filters) }))];
-        const counts = await countViews(views, { search: address.search });
-        clock.succeeded();
-        return counts;
-      } catch (error) {
-        clock.failed(firmId);
-        throw error;
-      }
+      if (last.current.key !== asked) last.current = { key: asked, totals: new Map() };
+      const batches: (typeof views)[] = [];
+      for (let i = 0; i < views.length; i += VIEWS_PER_COUNT_CALL) batches.push(views.slice(i, i + VIEWS_PER_COUNT_CALL));
+      const answers = await Promise.allSettled(batches.map((batch) => countViews(batch, { search: address.search })));
+      const out: ViewCount[] = [];
+      answers.forEach((answer, i) => {
+        clocks.current[i] ??= createFailureClock(COUNTS_FAILING_FOR_MS);
+        const clock = clocks.current[i];
+        if (answer.status === "fulfilled") {
+          clock.succeeded();
+          for (const c of answer.value) last.current.totals.set(c.name, c.total);
+          out.push(...answer.value);
+        } else {
+          clock.failed(firmId);
+          // Keep what this batch last said, unless it has been failing too long to be believed.
+          for (const v of batches[i]) {
+            if (clock.expired(firmId)) last.current.totals.delete(v.name);
+            else if (last.current.totals.has(v.name)) out.push({ name: v.name, total: last.current.totals.get(v.name)! });
+          }
+        }
+      });
+      return out;
     },
     enabled: ready && !hasHeld(address),
     placeholderData: keepPreviousData,
@@ -87,10 +109,7 @@ export function useTableViewCounts<K extends TableFields, Row, Context>(
     refetchOnWindowFocus: true,
     retry: false,
   });
-  // Read so that each failure draws the page again: the five minutes are noticed when they pass.
-  void query.errorUpdatedAt;
-  const expired = clock.expired(firmId);
-  return useMemo(() => new Map(expired ? [] : (query.data ?? []).map((c) => [c.name, c.total])), [query.data, expired]);
+  return useMemo(() => new Map((query.data ?? []).map((c) => [c.name, c.total])), [query.data]);
 }
 
 /** Asks again for everything the table's page shows (its rows, its tab counts and anything the page keyed under the table's `context` key). */
