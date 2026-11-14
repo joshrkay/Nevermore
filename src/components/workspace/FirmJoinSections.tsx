@@ -142,9 +142,10 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
   const [roles, setRoles] = useState<Record<string, JoinRole>>({});
   const [declining, setDeclining] = useState<string | null>(null);
   const decide = useMutation({
-    mutationFn: (d: Decision) => (d.kind === "approve" ? approveJoinRequest(d.request.id, d.role) : declineJoinRequest(d.request.id)),
-    onSuccess: (_r, d) => {
-      toast.success(d.kind === "approve" ? `${d.request.email} is now ${WITH_ARTICLE[d.role]} of ${firmName}.` : `Declined ${d.request.email}.`);
+    mutationFn: (d: Decision): Promise<JoinRole | undefined> => (d.kind === "approve" ? approveJoinRequest(d.request.id, d.role) : declineJoinRequest(d.request.id).then(() => undefined)),
+    onSuccess: (held, d) => {
+      // The role the database says the person holds, which is not the one picked when they had become a member another way meanwhile.
+      toast.success(d.kind === "approve" ? `${d.request.email} is now ${WITH_ARTICLE[held ?? d.role]} of ${firmName}.` : `Declined ${d.request.email}.`);
       setDeclining(null);
     },
     onError: (err: Error) => toast.error(err.message),

@@ -39,7 +39,8 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
     invitations.fetchPendingInvitations.mockReset().mockResolvedValue([]);
     join.fetchOrganisations.mockReset().mockResolvedValue([organisation(), organisation({ id: "o2", provider: "microsoft", orgId: "0f9f1d5c-3a64-4d6e-9f47-1c2b8f7e5a10", label: "Acme Brokers (Microsoft)" })]);
     join.fetchJoinRequests.mockReset().mockResolvedValue([request(), request({ id: "r2", email: "ms@advisory.example", provider: "microsoft", organisation: "Acme Brokers (Microsoft)" })]);
-    for (const fn of [join.addOrganisation, join.removeOrganisation, join.approveJoinRequest, join.declineJoinRequest]) fn.mockReset().mockResolvedValue(undefined);
+    for (const fn of [join.addOrganisation, join.removeOrganisation, join.declineJoinRequest]) fn.mockReset().mockResolvedValue(undefined);
+    join.approveJoinRequest.mockReset().mockImplementation(async (_id: string, role: string) => role);
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();
   });
@@ -141,6 +142,15 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
     expect(join.approveJoinRequest).toHaveBeenCalledTimes(1);
     expect(toast.success).toHaveBeenCalledWith("new@advisory.example is now a lead of Acme Brokers.");
     await waitFor(() => expect(join.fetchJoinRequests).toHaveBeenCalledTimes(2));
+  });
+
+  // Catches: the owner is told the role they picked when the database kept the role the person already held (they had joined by invitation).
+  it("names the role the person actually holds, which the database returns, not the one picked", async () => {
+    join.approveJoinRequest.mockResolvedValue("agent");
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Role for new@advisory.example"), { target: { value: "owner" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve new@advisory.example" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("new@advisory.example is now an agent of Acme Brokers."));
   });
 
   // Catches: declining makes a member, declines the wrong person, or asks nothing and loses the person for good by one mis-click.

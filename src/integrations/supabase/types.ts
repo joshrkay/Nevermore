@@ -1099,9 +1099,10 @@ export type Database = {
         Args: { p_firm_id: string }
         Returns: { request_id: string; email: string; asked_at: string; provider: string; org_label: string }[]
       }
+      // Returns the role the person now holds.
       approve_join_request: {
         Args: { p_request_id: string; p_role: string }
-        Returns: undefined
+        Returns: string
       }
       decline_join_request: {
         Args: { p_request_id: string }

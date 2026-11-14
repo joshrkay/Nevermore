@@ -137,6 +137,7 @@ $$;
 INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity', '53 3 * * *', 'select public.prune_firm_activity();');
 \i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 \i supabase/migrations/20261118100000_join_by_organisation.sql
+\i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -628,4 +629,160 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt('UPDATE public.advisor_role_events SET org_id = ''x''') LIKE 'rows:%', false, 'the old log can be edited');
   PERFORM pg_temp.is(pg_temp.attempt('DELETE FROM public.advisor_role_events') LIKE 'rows:%', false, 'the old log can be deleted from');
   RAISE NOTICE 'join_by_organisation: the tables and the retirement passed';
+END $$;
+
+-- ---------- fixes after review: who the automatic ask is not for ----------
+-- A sign-in with a given way of signing in (how: 'google' a provider sign-in, 'password', 'password_mfa').
+CREATE FUNCTION pg_temp.ask_how(who text, how text, addr text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE res text;
+BEGIN
+  PERFORM pg_temp.as_user(who, how);
+  res := public.ask_to_join_firm(addr);
+  RESET ROLE;
+  RETURN res;
+END $$;
+
+-- Break caught: a platform admin who signs in from a listed domain (a firm can list Nevermore's own) is put on the firm's list with their
+-- email, shown as Nevermore's person in the record (D-33, D-16); a person whose membership of the firm ended (removed or left) is listed
+-- again each time they sign in; a sign-in made with a password is vouched for by an old linked Google or Microsoft identity.
+DO $$
+DECLARE waiting uuid := pg_temp.id('waiting');
+BEGIN
+  PERFORM pg_temp.new_user('g_control'); PERFORM pg_temp.signin('g_control', 'google', '{"email": "c@advisory.example", "email_verified": true, "hd": "advisory.example"}');
+  PERFORM pg_temp.signin('platform_admin', 'google', '{"email": "staff@advisory.example", "email_verified": true, "hd": "advisory.example"}');
+  -- The same sign-in that lists a person who is not staff.
+  PERFORM pg_temp.is(pg_temp.ask('platform_admin', 'waiting-partners'), 'none', 'a platform admin is answered like an outsider');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.join_requests WHERE user_id = pg_temp.id('platform_admin')), 0::bigint, 'no request is made for a platform admin');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(waiting, 'join_asked') a WHERE a.actor_id = pg_temp.id('platform_admin') OR a.subject_user_id = pg_temp.id('platform_admin')), 0::bigint, 'and nothing is recorded naming them');
+  PERFORM pg_temp.is(pg_temp.waiting('waiting_owner', waiting) NOT LIKE '%staff@%', true, 'their email is not on the firm''s list');
+  PERFORM pg_temp.is(pg_temp.ask('g_control', 'waiting-partners'), 'asked', 'the same domain from someone who is not staff is listed');
+
+  -- An ended membership of that firm blocks the automatic ask, as a decline does: an owner brings them back by invitation.
+  PERFORM pg_temp.new_user('g_removed'); PERFORM pg_temp.signin('g_removed', 'google', '{"email": "r@advisory.example", "email_verified": true, "hd": "advisory.example"}');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES (waiting, pg_temp.id('g_removed'), 'agent', now() - interval '2 days', now() - interval '1 day');
+  PERFORM pg_temp.is(pg_temp.ask('g_removed', 'waiting-partners'), 'none', 'a person whose membership ended is not listed again');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.join_requests WHERE user_id = pg_temp.id('g_removed')), 0::bigint, 'and has no request');
+  -- Their ended membership of another firm does not matter here.
+  PERFORM pg_temp.is(pg_temp.ask('g_removed', 'zenith-benefits'), 'asked', 'an ended membership blocks only that firm');
+
+  -- A session that signed in with a password is vouched for by no provider, even with a Google identity linked to the account.
+  PERFORM pg_temp.new_user('g_password'); PERFORM pg_temp.signin('g_password', 'google', '{"email": "p@advisory.example", "email_verified": true, "hd": "advisory.example"}');
+  PERFORM pg_temp.is(pg_temp.ask_how('g_password', 'password', 'waiting-partners'), 'none', 'a password sign-in');
+  PERFORM pg_temp.is(pg_temp.ask_how('g_password', 'password_mfa', 'waiting-partners'), 'none', 'a password sign-in with its second factor');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.join_requests WHERE user_id = pg_temp.id('g_password')), 0::bigint, 'no request from a password sign-in');
+  PERFORM pg_temp.is(pg_temp.ask_how('g_password', 'google', 'waiting-partners'), 'asked', 'the same person signing in with the provider is listed');
+  RAISE NOTICE 'join_by_organisation: staff, ended memberships and password sign-ins passed';
+END $$;
+
+-- ---------- fixes after review: what approving returns ----------
+-- Break caught: the owner is told the role they picked when the person already held another (they became a member by invitation meanwhile).
+DO $$
+DECLARE
+  acme uuid := pg_temp.id('acme');
+  got text;
+BEGIN
+  PERFORM pg_temp.new_user('g_ret1'); PERFORM pg_temp.new_user('g_ret2');
+  INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label) VALUES (acme, pg_temp.id('g_ret1'), 'google', 'x.example', 'x'), (acme, pg_temp.id('g_ret2'), 'google', 'x.example', 'x');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, pg_temp.id('g_ret2'), 'agent');
+  PERFORM pg_temp.as_user('acme_owner');
+  got := public.approve_join_request(pg_temp.req_of(acme, pg_temp.id('g_ret1')), 'lead');
+  PERFORM pg_temp.is(got, 'lead', 'approving returns the role the person now holds');
+  got := public.approve_join_request(pg_temp.req_of(acme, pg_temp.id('g_ret2')), 'owner');
+  PERFORM pg_temp.is(got, 'agent', 'a person who already held a role is returned that one');
+  RESET ROLE;
+  RAISE NOTICE 'join_by_organisation: what approving returns passed';
+END $$;
+
+-- ---------- two sessions deciding at once (D-32) ----------
+-- Approving and declining one request at the same moment end with one outcome that the request, the membership and the firm's record agree
+-- on. What makes it so is the `status = 'open'` guard on the update that closes the request: the second to run waits for the first's row,
+-- finds it decided and is refused (PT410), and its membership is rolled back with it. There is no row lock on the request because the guard
+-- alone is enough (the test passes with only the guard and fails with neither). Two owners removing one listing at once: the lock in
+-- remove_firm_organisation makes the second find nothing, so the removal is recorded once.
+-- Break caught: the guard is removed (a member whose request reads declined, with a "declined" entry beside "member_added"); the removal lock is removed.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- Committed in blocks of their own so the other sessions see them.
+DO $$
+BEGIN
+  PERFORM pg_temp.new_user('dbl_asker'); PERFORM pg_temp.new_user('dbl_asker_2');
+  INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label)
+  VALUES (pg_temp.id('acme'), pg_temp.id('dbl_asker'), 'google', 'x.example', 'x'), (pg_temp.id('acme'), pg_temp.id('dbl_asker_2'), 'google', 'x.example', 'x');
+  INSERT INTO public.firm_organisations (firm_id, provider, org_id, label) VALUES (pg_temp.id('acme'), 'google', 'race.example', 'Race');
+END $$;
+CREATE FUNCTION pg_temp.race_pair(first_stmt text, second_stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  claims text;
+  second_pid integer;
+  tries integer := 0;
+  s text;
+  m text;
+  outcome text := 'ok';
+BEGIN
+  claims := format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text);
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_second', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  PERFORM race.dblink_exec('race_first', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_first', claims) AS t(c text);
+  PERFORM * FROM race.dblink('race_first', first_stmt) AS t(r text);
+  PERFORM race.dblink_exec('race_second', 'BEGIN');
+  PERFORM race.dblink_exec('race_second', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('race_second', claims) AS t(c text);
+  PERFORM race.dblink_send_query('race_second', second_stmt);
+  -- The second is waiting on the first when it holds a lock the first has.
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 AND race.dblink_is_busy('race_second') = 1 LOOP
+    tries := tries + 1;
+    IF tries > 100 THEN EXIT; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('race_second') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    outcome := s;
+  END;
+  PERFORM race.dblink_disconnect('race_first');
+  BEGIN
+    PERFORM race.dblink_exec('race_second', 'ROLLBACK');
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_disconnect('race_second');
+  RETURN outcome;
+END $$;
+DO $$
+DECLARE
+  acme uuid := pg_temp.id('acme');
+  rid uuid := pg_temp.req_of(pg_temp.id('acme'), pg_temp.id('dbl_asker'));
+  oid uuid := (SELECT o.id FROM public.firm_organisations o WHERE o.firm_id = pg_temp.id('acme') AND o.org_id = 'race.example');
+  second text;
+  st text;
+  members bigint;
+  declined bigint;
+  removed_before bigint := (SELECT count(*) FROM pg_temp.acts(pg_temp.id('acme'), 'organisation_removed'));
+BEGIN
+  second := pg_temp.race_pair(format($q$SELECT public.approve_join_request(%L, 'agent')::text$q$, rid), format($q$SELECT public.decline_join_request(%L)::text$q$, rid));
+  PERFORM pg_temp.is(second, 'PT410', 'the decline that came second is refused as already decided');
+  SELECT q.status INTO st FROM public.join_requests q WHERE q.id = rid;
+  SELECT count(*) INTO members FROM public.firm_memberships WHERE firm_id = acme AND user_id = pg_temp.id('dbl_asker');
+  SELECT count(*) INTO declined FROM pg_temp.acts(acme, 'join_declined') a WHERE a.subject_user_id = pg_temp.id('dbl_asker');
+  PERFORM pg_temp.is(st || ':' || members || ':' || declined, 'approved:1:0', 'the request, the membership and the record agree: approved');
+  -- And the other way round: the decline first, the approval second leaves no member.
+  rid := pg_temp.req_of(acme, pg_temp.id('dbl_asker_2'));
+  second := pg_temp.race_pair(format($q$SELECT public.decline_join_request(%L)::text$q$, rid), format($q$SELECT public.approve_join_request(%L, 'agent')::text$q$, rid));
+  PERFORM pg_temp.is(second, 'PT410', 'the approval that came second is refused as already decided');
+  SELECT q.status INTO st FROM public.join_requests q WHERE q.id = rid;
+  SELECT count(*) INTO members FROM public.firm_memberships WHERE firm_id = acme AND user_id = pg_temp.id('dbl_asker_2');
+  PERFORM pg_temp.is(st || ':' || members, 'declined:0', 'the request and the membership agree: declined, no member');
+  -- Two removals of one listing: recorded once, the second refused in plain words.
+  second := pg_temp.race_pair(format($q$SELECT public.remove_firm_organisation(%L)::text$q$, oid), format($q$SELECT public.remove_firm_organisation(%L)::text$q$, oid));
+  PERFORM pg_temp.is(second, '42501', 'the second removal finds nothing to remove');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts(acme, 'organisation_removed')), removed_before + 1, 'the two removals are one entry in the record');
+  RAISE NOTICE 'join_by_organisation: two-session decisions passed';
 END $$;

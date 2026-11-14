@@ -71,10 +71,14 @@ export async function fetchJoinRequests(firmId: string): Promise<JoinRequest[]> 
   return (data ?? []).map((r) => ({ id: r.request_id, email: r.email, askedAt: r.asked_at, provider: r.provider as OrganisationProvider, organisation: r.org_label }));
 }
 
-/** Makes the person a member with the role chosen. The membership has no team until teams have a screen. */
-export async function approveJoinRequest(id: string, role: JoinRole): Promise<void> {
-  const { error } = await supabase.rpc("approve_join_request", { p_request_id: id, p_role: role });
+/**
+ * Makes the person a member with the role chosen. The membership has no team until teams have a screen. Resolves with the role the person
+ * now holds: the one chosen, or the one they already had if they had become a member another way meanwhile.
+ */
+export async function approveJoinRequest(id: string, role: JoinRole): Promise<JoinRole> {
+  const { data, error } = await supabase.rpc("approve_join_request", { p_request_id: id, p_role: role });
   if (error) throw refusal(error, "Couldn't approve the request. Try again.");
+  return data === "owner" || data === "lead" || data === "agent" ? data : role;
 }
 
 export async function declineJoinRequest(id: string): Promise<void> {

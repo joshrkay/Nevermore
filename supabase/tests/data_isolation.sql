@@ -178,6 +178,7 @@
 \i supabase/migrations/20261118090000_leave_a_firm.sql
 \i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 \i supabase/migrations/20261118100000_join_by_organisation.sql
+\i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
