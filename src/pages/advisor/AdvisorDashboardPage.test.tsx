@@ -3585,6 +3585,122 @@ describe("AdvisorDashboardPage", () => {
       expect(await open(user)).toBeInTheDocument();
     });
 
+    // Catches: a change undone on screen when the person opens a row and comes back (the page is drawn again from the answer read before the change, which the query
+    // library keeps and never asks again), and the next change then keeping a list built from that old answer, which loses the earlier change in the database too
+    // (CRM-S3.1a review, D-196).
+    describe("leaving the table and coming back", () => {
+      const renderKeeping = (client: QueryClient) =>
+        render(
+          <WorkspaceContext.Provider value={firm}>
+            <QueryClientProvider client={client}>
+              <MemoryRouter initialEntries={["/advisor"]}>
+                <Routes>
+                  <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
+                  <Route path="/advisor/submissions/:id" element={<><ShowId /><GoBack /></>} />
+                </Routes>
+              </MemoryRouter>
+            </QueryClientProvider>
+          </WorkspaceContext.Provider>,
+        );
+
+      it("still shows the change after opening a row and coming back, and the next change keeps the whole list", async () => {
+        listQueue.mockResolvedValue([row()]);
+        renderKeeping(new QueryClient());
+        await screen.findByRole("link", { name: "Acme" });
+        const user = userEvent.setup();
+        await user.click(within(await open(user)).getByRole("checkbox", { name: "Contact" }));
+        await waitFor(() => expect(kept).toEqual(IDS.filter((id) => id !== "contact")));
+        await user.keyboard("{Escape}");
+        await user.click(screen.getByRole("link", { name: "Acme" }));
+        await screen.findByText("Detail page for s1");
+        await user.click(screen.getByRole("button", { name: "Go back" }));
+        await screen.findByRole("link", { name: "Acme" });
+        expect(headers()).toEqual(ALL.filter((h) => h !== "Contact"));
+        // It is still a kept choice: the way back to the default columns is offered.
+        const dialog = await open(user);
+        expect(within(dialog).getByRole("button", { name: "Back to default columns" })).not.toHaveAttribute("aria-disabled");
+        await user.keyboard("{Escape}");
+        // The next change is made from what is on screen, so it keeps the earlier one as well.
+        await user.click(within(await open(user)).getByRole("checkbox", { name: "States" }));
+        await waitFor(() => expect(kept).toEqual(IDS.filter((id) => id !== "contact" && id !== "states")));
+        expect(asksOf("my_table_columns")).toHaveLength(1);
+      });
+
+      // Catches: "back to default" undone the same way: the default columns forgotten in the database and the old choice drawn again on return.
+      it("still shows the default columns after going back to them, opening a row and coming back", async () => {
+        kept = ["company", "status"];
+        listQueue.mockResolvedValue([row()]);
+        renderKeeping(new QueryClient());
+        await waitFor(() => expect(headers()).toEqual(["Company", "Status"]));
+        const user = userEvent.setup();
+        await user.click(within(await open(user)).getByRole("button", { name: "Back to default columns" }));
+        await waitFor(() => expect(kept).toBeNull());
+        await user.keyboard("{Escape}");
+        await user.click(screen.getByRole("link", { name: "Acme" }));
+        await screen.findByText("Detail page for s1");
+        await user.click(screen.getByRole("button", { name: "Go back" }));
+        await screen.findByRole("link", { name: "Acme" });
+        expect(headers()).toEqual(ALL);
+        // Nothing is kept now, so there is nothing to go back from.
+        expect(within(await open(user)).getByRole("button", { name: "Back to default columns" })).toHaveAttribute("aria-disabled", "true");
+      });
+    });
+
+    // Catches: a Columns menu that can be used before the firm is known: the change is made on the table's defaults, is never kept (there is no firm to keep it
+    // for), and when the firm arrives it wins over what the database holds (CRM-S3.1a review, D-197).
+    it("is not usable before the firm is known, and is once it is and the person's choice has been read", async () => {
+      kept = ["company", "states"];
+      listQueue.mockResolvedValue([row()]);
+      const client = new QueryClient();
+      const tree = (known: boolean) => (
+        <WorkspaceContext.Provider value={{ ...firm, firm: known ? firm.firm : null }}>
+          <QueryClientProvider client={client}>
+            <MemoryRouter initialEntries={["/advisor"]}>
+              <Routes><Route path="/advisor" element={<AdvisorDashboardPage />} /></Routes>
+            </MemoryRouter>
+          </QueryClientProvider>
+        </WorkspaceContext.Provider>
+      );
+      const { rerender } = render(tree(false));
+      const button = screen.getByRole("button", { name: "Columns" });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription("Available once your columns have loaded");
+      const user = userEvent.setup();
+      await user.click(button);
+      expect(screen.queryByRole("dialog", { name: "Columns" })).not.toBeInTheDocument();
+      rerender(tree(true));
+      await waitFor(() => expect(headers()).toEqual(["Company", "States"]));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Columns" })).not.toHaveAttribute("aria-disabled"));
+      expect(asksOf("my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: null }]);
+    });
+
+    // Catches: "Back to default columns" refused ("already") for a person whose kept list happens to equal the default order, so the database keeps a list that
+    // never grows when the table gains a column: it stays hidden for them (D-187: a person with no choice follows the table's defaults).
+    it("still offers to forget the choice when the kept list is the default order", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderInFirm();
+      await screen.findByRole("link", { name: "Acme" });
+      const user = userEvent.setup();
+      const dialog = await open(user);
+      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
+      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
+      expect(headers()).toEqual(ALL);
+      await waitFor(() => expect(kept).toEqual(IDS));
+      const back = within(dialog).getByRole("button", { name: "Back to default columns" });
+      expect(back).not.toHaveAttribute("aria-disabled");
+      await user.click(back);
+      await waitFor(() => expect(kept).toBeNull());
+      expect(back).toHaveAttribute("aria-disabled", "true");
+    });
+
     // Catches: two quick changes reaching the database out of order, so the older list is the one kept and the next visit shows a table the person
     // had already moved on from (each save is the whole list).
     it("sends each change after the one before has been kept, so the last change is the one that is kept", async () => {
@@ -3646,6 +3762,7 @@ describe("AdvisorDashboardPage", () => {
         return (
           <>
             <p data-testid="shown">{mine.columns.map((c) => c.id).join(",")}</p>
+            <p data-testid="has-choice">{String(mine.hasChoice)}</p>
             <button type="button" onClick={() => mine.choose(["company", "states"])}>Choose</button>
             <button type="button" onClick={() => mine.choose(null)}>Forget</button>
           </>
@@ -3675,6 +3792,42 @@ describe("AdvisorDashboardPage", () => {
         await waitFor(() => expect(asksOf("set_my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: "view-1", p_columns: ["company", "states"] }]));
         rerender(tree(null));
         await waitFor(() => expect(shownIds()).toBe(IDS.join(",")));
+      });
+
+      // Catches: the way back being refused ("nothing to forget") for a person who has a choice of their own on a view, or offered for one who has only the view's
+      // own columns, which are not theirs to forget (D-198).
+      it("keeps a choice of its own on a view apart from the view's own columns: only the first is something to go back from", async () => {
+        const has = () => screen.getByTestId("has-choice").textContent;
+        rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
+          name === "my_table_columns" ? { data: [{ columns: ["company", "states"], source: "mine_for_view" }], error: null } : database(name, args));
+        const { unmount } = render(tree(view));
+        await waitFor(() => expect(shownIds()).toBe("company,states"));
+        expect(has()).toBe("true");
+        unmount();
+        rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
+          name === "my_table_columns" ? { data: [{ columns: ["company", "quotes"], source: "view" }], error: null } : database(name, args));
+        client = new QueryClient();
+        render(tree(view));
+        await waitFor(() => expect(shownIds()).toBe("company,quotes"));
+        expect(has()).toBe("false");
+        await userEvent.setup().click(screen.getByRole("button", { name: "Choose" }));
+        expect(has()).toBe("true");
+      });
+
+      // Catches: a choice made on one view being undone when another view is chosen and the first is opened again, which draws the first's answer from before
+      // the change (CRM-S3.1a review, D-196): the same cause as leaving the table and coming back.
+      it("shows a choice made on a view again when another view has been chosen in between and the first is opened again", async () => {
+        const other: TableView<typeof QUEUE_FIELDS> = { id: "view-2", label: "Other", filters: [], columns: ["company", "status"] };
+        const { rerender } = render(tree(view));
+        await waitFor(() => expect(shownIds()).toBe("company,quotes"));
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "Choose" }));
+        expect(shownIds()).toBe("company,states");
+        rerender(tree(other));
+        await waitFor(() => expect(shownIds()).toBe("company,status"));
+        await user.click(screen.getByRole("button", { name: "Choose" }));
+        rerender(tree(view));
+        expect(shownIds()).toBe("company,states");
       });
 
       // Catches: "back to default columns" on a saved view showing the table's defaults for a view that has the person's own choice for the table behind

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { BellRing } from "lucide-react";
 import {
@@ -9,7 +10,7 @@ import { US_STATE_CODES } from "@/data/chamberValidation";
 import { RECOMMENDED_ITEMS, REQUIRED_ITEMS } from "@/data/readiness";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 import { INBOX_PARAM } from "@/components/workspace/menu";
-import type { ColumnDefinition, FieldChoice, FieldDefinitions, TableDefinition, TableQuery, TableView } from "@/components/workspace/table";
+import { useSavedViews, type ColumnDefinition, type FieldChoice, type FieldDefinitions, type TableDefinition, type TableQuery, type TableView } from "@/components/workspace/table";
 import { QUEUE_FIELDS, listQueue, type QueueField, type QueueFilter, type QueuePage, type QueueRow } from "@/lib/queueApi";
 import type { EmailProblem } from "@/lib/advisorApi";
 
@@ -310,10 +311,16 @@ export const QUEUE_TABLE: QueueTableDefinition = {
 };
 
 /**
- * The queue's definition. A hook so that CRM-S3.4a can add the firm's saved views to it once they have loaded (with `viewsStatus`
- * "loading" until then); today everything is in code and it is always ready.
+ * The queue's definition: its built-in views (today's status tabs, in code) and, after them, the firm's saved views the person may open (CRM-S3.4a, D-141's
+ * contract): a memoized definition that is "loading" its views until the first answer and keeps the last list while it asks again.
  */
-export const useQueueTable = (): QueueTableDefinition => QUEUE_TABLE;
+export const useQueueTable = (): QueueTableDefinition => {
+  const saved = useSavedViews<Fields>(QUEUE_TABLE);
+  return useMemo(
+    () => (saved.views.length === 0 && saved.status === "ready" ? QUEUE_TABLE : { ...QUEUE_TABLE, views: [...QUEUE_VIEWS, ...saved.views], viewsStatus: saved.status }),
+    [saved.views, saved.status],
+  );
+};
 
 /** The page's one call to the database: the effective query (the view's filters and the address's together). */
 export const fetchQueuePage = (query: TableQuery<Fields>): Promise<QueuePage> => listQueue(query);
