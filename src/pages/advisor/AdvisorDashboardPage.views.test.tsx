@@ -706,6 +706,39 @@ describe("a change that is still on its way when the person moves on", () => {
     expect(where()).toBe("?view=won");
   });
 
+  // Catches: a save finishing while the person only searched meanwhile, and so leaving the saved filters in the address of a view that already holds them (the screen says "changed" over a view it was just saved as).
+  it("opens the new view and clears what was saved from the address even when the person only searched while the save was on its way", async () => {
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw("/advisor?filter=waiting_on_peo:is:true");
+    const dialog = await ask(user);
+    await typeName(user, dialog, "Soon");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search" }), "acme");
+    await waitFor(() => expect(where()).toContain("q=acme"));
+    api.listSavedViews.mockResolvedValue([view({ id: "new-1", name: "Soon", filters: [yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=new-1&q=acme"));
+  });
+
+  // Catches: the same when the person only went to another page of the rows.
+  it("opens the new view even when the person only went to another page while the save was on its way", async () => {
+    listQueue.mockResolvedValue({ rows: [row()], total: 120 });
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw("/advisor?filter=waiting_on_peo:is:true");
+    const dialog = await ask(user);
+    await typeName(user, dialog, "Soon");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.click(await screen.findByRole("link", { name: /^Next/ }));
+    await waitFor(() => expect(where()).toContain("page=2"));
+    api.listSavedViews.mockResolvedValue([view({ id: "new-1", name: "Soon", filters: [yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=new-1"));
+  });
+
   // Catches: an owner who stops sharing a colleague's view they have open being told it isn't available (it went private, to its saver).
   it("goes to all statuses, quietly, when an owner stops sharing a colleague's view that is open", async () => {
     api.listSavedViews.mockResolvedValue([view({ id: "v9", name: "Team's", shared: true, mine: false, canChange: false, canUnshare: true })]);
