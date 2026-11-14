@@ -73,6 +73,8 @@ export interface SavedViewRights {
   canShare: boolean;
   /** May stop sharing it (an owner, on any shared view). */
   canUnshare: boolean;
+  /** When the view was last changed (its definition: name, filters, sort, columns, sharing). Anything kept per view is asked again when it moves. */
+  updatedAt: string;
 }
 
 /**
@@ -98,6 +100,20 @@ export interface TableView<K extends TableFields> {
   columns?: string[] | null;
   /** Present on a saved view only: built-in views can't be renamed, shared or deleted. */
   saved?: SavedViewRights;
+}
+
+/**
+ * A saved view the table can't open: it names a field the table no longer has, or a choice its field no longer lists, so the database would refuse
+ * the question (and, asked in the one call that counts every tab, would blank the count of every tab). It is drawn as a tab that can't be opened,
+ * with its reason, and keeps what the person may do with it (delete their own, stop sharing a shared one); it is not in `views`, so no address can
+ * name it and no count is asked for it.
+ */
+export interface UnavailableView {
+  id: string;
+  label: string;
+  /** In words, why it can't be opened. */
+  reason: string;
+  saved: SavedViewRights;
 }
 
 /**
@@ -137,6 +153,8 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
   views: TableView<K>[];
   /** Whether every view the address may name is in `views` yet. Absent means ready. */
   viewsStatus?: Readiness;
+  /** Saved views the table can't open (CRM-S3.4a), drawn after the tabs. Absent means none. */
+  unavailableViews?: UnavailableView[];
   /** The words on the tab that is no view at all ("All statuses"). */
   allViewLabel: string;
   /**

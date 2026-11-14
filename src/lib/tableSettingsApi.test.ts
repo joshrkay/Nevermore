@@ -78,10 +78,22 @@ describe("saved views", () => {
   });
 
   it("says only the person who saved a view can change it", async () => {
-    rpc.mockResolvedValue(refused("42501"));
-    await expect(renameSavedView("v1", "x")).rejects.toThrow("Only the person who saved this view can rename it.");
-    await expect(changeSavedView("v1", { filters: [], sort: null, columns: null })).rejects.toThrow("Only the person who saved this view can change it.");
-    await expect(deleteSavedView("v1")).rejects.toThrow("Only the person who saved this view can delete it.");
+    rpc.mockResolvedValue(refused("42501", "Only the person who saved a view can rename it"));
+    await expect(renameSavedView("v1", "x")).rejects.toThrow("Only the person who saved a view can rename it");
+    rpc.mockResolvedValue(refused("42501", "Only the person who saved a view can change it"));
+    await expect(changeSavedView("v1", { filters: [], sort: null, columns: null })).rejects.toThrow("Only the person who saved a view can change it");
+    rpc.mockResolvedValue(refused("42501", "Only the person who saved a view can delete it"));
+    await expect(deleteSavedView("v1")).rejects.toThrow("Only the person who saved a view can delete it");
+  });
+
+  // Catches: a demoted owner who renames their own shared view being told only its saver may (they are the saver): the database's sentence is the true one.
+  it("shows the database's own sentence for a change it refuses to a person who is not allowed, not a reworded one", async () => {
+    rpc.mockResolvedValue(refused("42501", "A shared view is the firm's: only an owner can rename it"));
+    await expect(renameSavedView("v1", "x")).rejects.toThrow("A shared view is the firm's: only an owner can rename it");
+    rpc.mockResolvedValue(refused("42501", "A shared view is the firm's: only an owner can change it"));
+    await expect(changeSavedView("v1", { filters: [], sort: null, columns: null })).rejects.toThrow("A shared view is the firm's: only an owner can change it");
+    rpc.mockResolvedValue(refused("42501", "A shared view is the firm's: only an owner can delete it"));
+    await expect(deleteSavedView("v1")).rejects.toThrow("A shared view is the firm's: only an owner can delete it");
   });
 
   it("shares and unshares, and says only an owner can", async () => {
@@ -90,9 +102,10 @@ describe("saved views", () => {
     expect(rpc).toHaveBeenLastCalledWith("share_saved_view", { p_view_id: "v1" });
     await unshareSavedView("v1");
     expect(rpc).toHaveBeenLastCalledWith("unshare_saved_view", { p_view_id: "v1" });
-    rpc.mockResolvedValue(refused("42501"));
-    await expect(shareSavedView("v1")).rejects.toThrow("Only an owner of the firm can share a view.");
-    await expect(unshareSavedView("v1")).rejects.toThrow("Only an owner of the firm can stop sharing a view.");
+    rpc.mockResolvedValue(refused("42501", "Only an owner of the firm can share a view"));
+    await expect(shareSavedView("v1")).rejects.toThrow("Only an owner of the firm can share a view");
+    rpc.mockResolvedValue(refused("42501", "Only an owner of the firm can stop sharing a view"));
+    await expect(unshareSavedView("v1")).rejects.toThrow("Only an owner of the firm can stop sharing a view");
     rpc.mockResolvedValue(refused("PT409", 'The firm already shares a view called "Open" on this table'));
     await expect(shareSavedView("v1")).rejects.toThrow('The firm already shares a view called "Open" on this table');
   });

@@ -19,29 +19,34 @@ vi.mock("@/lib/tableSettingsApi", () => ({
 
 type Row = { id: string };
 const col = (id: string, header: string, isName = false) => ({ id, header, isName, cell: () => id });
-const rights = { mine: true, shared: false, canChange: true, canShare: false, canUnshare: false };
-const demo = {
+const rights = { mine: true, shared: false, canChange: true, canShare: false, canUnshare: false, updatedAt: "2026-11-01T00:00:00Z" };
+const make = (updatedAt = rights.updatedAt) => ({
   id: "submissions",
   noun: { singular: "submission", plural: "submissions" },
   fields: {},
   columns: [col("company", "Company", true), col("contact", "Contact"), col("states", "States"), col("status", "Status")],
   rowKey: (r: Row) => r.id,
-  views: [{ id: "won", label: "Won", filters: [] }, { id: "saved-1", label: "Mine", filters: [], columns: ["company", "status"], saved: rights }],
-} as unknown as TableDefinition<Record<string, never>, Row, undefined>;
+  views: [
+    { id: "won", label: "Won", filters: [] },
+    { id: "saved-1", label: "Mine", filters: [], columns: ["company", "status"], saved: { ...rights, updatedAt } },
+    { id: "saved-2", label: "Other", filters: [], columns: ["company", "states"], saved: rights },
+  ],
+}) as unknown as TableDefinition<Record<string, never>, Row, undefined>;
+const demo = make();
 
-function Harness({ viewId }: { viewId: string | null }) {
-  const mine = useMyColumns(demo, viewId);
+function Harness({ viewId, table }: { viewId: string | null; table: typeof demo }) {
+  const mine = useMyColumns(table, viewId);
   return (
     <>
-      <ColumnsMenu table={demo} mine={mine} />
-      <ul aria-label="Shown">{shownColumns(demo, mine.kept).map((c) => <li key={c.id}>{c.header}</li>)}</ul>
+      <ColumnsMenu table={table} mine={mine} />
+      <ul aria-label="Shown">{shownColumns(table, mine.kept).map((c) => <li key={c.id}>{c.header}</li>)}</ul>
     </>
   );
 }
-const page = (viewId: string | null) => (
+const page = (viewId: string | null, table = demo) => (
   <QueryClientProvider client={client}>
     <WorkspaceContext.Provider value={{ firm: { id: "firm-1", name: "Firm", address: "firm" }, role: "Owner", isOwner: true, isSupport: false, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: false, person: "Pat" }}>
-      <Harness viewId={viewId} />
+      <Harness viewId={viewId} table={table} />
     </WorkspaceContext.Provider>
   </QueryClientProvider>
 );
@@ -153,5 +158,44 @@ describe("the columns on a saved view", () => {
     await within(menu).findByRole("alert");
     rerender(page(null));
     await waitFor(() => expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull());
+  });
+});
+
+describe("writes and answers on more than one view", () => {
+  const later = () => { let release: (error?: Error) => void = () => {}; const p = new Promise<void>((res, rej) => { release = (e) => (e ? rej(e) : res()); }); return { p, release }; };
+
+  // Catches: a refusal of a write on one view being lost because the person moved to another view and wrote there (the first view then shows rejected columns as kept).
+  it("rolls back and says so on a view whose write is refused after the person wrote on another view", async () => {
+    fetchMyColumns.mockImplementation(async (_f: string, _t: string, view: string | null) => ({ columns: view === "saved-2" ? ["company", "states"] : ["company", "status"], source: "view" }));
+    const first = later();
+    setMyColumns.mockReset().mockImplementation((_f: string, _t: string, view: string | null) => (view === "saved-1" ? first.p : Promise.resolve()));
+    const user = userEvent.setup();
+    const { rerender } = render(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    let menu = await open(user);
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    expect(shown()).toEqual(["Company", "Status", "Contact"]);
+    rerender(page("saved-2"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "States"]));
+    menu = screen.getByRole("dialog");
+    await user.click(within(menu).getByRole("checkbox", { name: "Status" }));
+    await waitFor(() => expect(setMyColumns).toHaveBeenCalledWith("firm-1", "submissions", "saved-2", ["company", "states", "status"]));
+    first.release(new Error("This firm is closing, so nothing in it can be changed."));
+    await waitFor(() => expect(setMyColumns).toHaveBeenCalledTimes(2));
+    rerender(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("This firm is closing, so nothing in it can be changed.");
+  });
+
+  // Catches: a shared view's new own columns, arriving with the next refresh of the views, never replacing the cached ones (new filters, old columns).
+  it("asks again for the columns when the view's definition has changed", async () => {
+    fetchMyColumns.mockResolvedValue({ columns: ["company", "status"], source: "view" });
+    const { rerender } = render(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    expect(fetchMyColumns).toHaveBeenCalledTimes(1);
+    fetchMyColumns.mockResolvedValue({ columns: ["company", "contact"], source: "view" });
+    rerender(page("saved-1", make("2026-11-02T09:00:00Z")));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Contact"]));
+    expect(fetchMyColumns).toHaveBeenCalledTimes(2);
   });
 });
