@@ -26,9 +26,23 @@ describe("BrokerCallbackPage", () => {
     expect(finishBrokerSignIn).toHaveBeenCalledWith("abc");
   });
 
-  it("takes a broker whose mailbox couldn't be connected to where they can try again", async () => {
+  // Catches: a failed mailbox connection replacing the page the sign-in was for (an export's step-up) with the mailbox page, losing its filters and its firm.
+  it("keeps the page the broker came from when their mailbox couldn't be connected, and carries the failure to it", async () => {
     finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "failed" });
     renderAt("?code=abc&next=%2Fadvisor%2Fheld");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor/held?connect=failed"));
+  });
+
+  it("adds the failure to the page's own filters, keeping them", async () => {
+    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "failed" });
+    renderAt(`?code=abc&next=${encodeURIComponent("/advisor/activity?firm=f1&kind=send_recorded")}`);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor/activity?firm=f1&kind=send_recorded&connect=failed"));
+  });
+
+  // Catches: a broker who signed in for no page in particular being left on the queue with no way to try the mailbox again.
+  it("takes a broker who came for no page in particular to the mailbox page, where they can try again", async () => {
+    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "failed" });
+    renderAt("?code=abc");
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor/mailbox?connect=failed"));
   });
 
