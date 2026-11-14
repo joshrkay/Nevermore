@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Inbox, RefreshCw, SearchX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  FilterRow, inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  ColumnsMenu, FilterRow, inForceInWords, isNarrowed, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
@@ -37,6 +37,10 @@ const AdvisorDashboardPage = () => {
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
   const refresh = useRefreshTable(table);
+  // The columns this person chose for the queue, kept in the database (CRM-S3.1a, D-43); the table and its grey loading rows draw the same list.
+  // CRM-S3.4a passes the active saved view's id here (the database already keeps a choice per view); CRM-X3.1's custom fields join the table's `columns`.
+  const mine = useMyColumns(table);
+  const columns = useMemo(() => shownColumns(table, mine.kept), [table, mine.kept]);
   // The row's "Add filter": where focus goes when filters are cleared, from the row or from the empty state (D-170).
   const addFilterRef = useRef<HTMLButtonElement>(null);
 
@@ -64,6 +68,7 @@ const AdvisorDashboardPage = () => {
         >
           <RefreshCw className="w-4 h-4" />
         </button>
+        <ColumnsMenu table={table} mine={mine} />
         {loading && <span id="refresh-unavailable" className="sr-only">Available when the list has loaded</span>}
       </div>
     </div>
@@ -118,6 +123,7 @@ const AdvisorDashboardPage = () => {
           location={location}
           data={data}
           context={context}
+          columns={columns}
           caption="Submissions"
           toolbar={toolbar}
           views={views}
