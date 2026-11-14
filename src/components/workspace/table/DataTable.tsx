@@ -4,8 +4,10 @@ import type { TableFields, TableSort } from "@/lib/tableQuery";
 import { cn } from "@/lib/utils";
 import type { ColumnDefinition, TableDefinition } from "./columns";
 
-interface Props<K extends TableFields, Row> {
-  table: TableDefinition<K, Row>;
+interface Props<K extends TableFields, Row, Context> {
+  table: TableDefinition<K, Row, Context>;
+  /** What the page hands every cell besides its row. */
+  context: Context;
   rows: Row[];
   /** Names the table to a screen reader; not drawn. */
   caption: string;
@@ -19,11 +21,11 @@ interface Props<K extends TableFields, Row> {
    * What a column header holds. The default is its words. CRM-S3.2a puts the sort control here; CRM-S3.3a puts nothing here (its
    * filters are a row of their own); CRM-S3.1a's columns menu is beside the table, not in it.
    */
-  renderHeader?: (column: ColumnDefinition<Row, keyof K & string>, sort: TableSort<keyof K & string> | null) => ReactNode;
+  renderHeader?: (column: ColumnDefinition<Row, keyof K & string, Context>, sort: TableSort<keyof K & string> | null) => ReactNode;
 }
 
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
-export function DataTable<K extends TableFields, Row>({ table, rows, caption, sort, busy, onOpenRow, renderHeader }: Props<K, Row>) {
+export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, caption, sort, busy, onOpenRow, renderHeader }: Props<K, Row, Context>) {
   const openRow = (e: MouseEvent, row: Row) => {
     if (!onOpenRow || (e.target as HTMLElement).closest("a, button, input, select, label")) return;
     onOpenRow(row);
@@ -69,7 +71,7 @@ export function DataTable<K extends TableFields, Row>({ table, rows, caption, so
             >
               {/* CRM-S3.6 (D-47): the row's checkbox goes here, before the first column. Nothing selects rows yet. */}
               {table.columns.map((column, i) => {
-                const cell = column.cell(row);
+                const cell = column.cell(row, context);
                 const className = cn("px-4 py-3 align-top", column.align === "right" && "text-right");
                 // The first column names the row, so a screen reader reading a cell can say whose it is.
                 return i === 0 ? (

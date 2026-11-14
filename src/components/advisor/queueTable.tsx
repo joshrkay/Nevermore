@@ -1,14 +1,14 @@
 import { Link } from "react-router-dom";
 import { BellRing } from "lucide-react";
 import {
-  completenessOf, formatStates, isPipelineStatus, NEEDS_ACTION_LABEL, PIPELINE_LABELS, PIPELINE_STATUSES, referenceOf, type Completeness,
+  completenessOf, formatStates, isPipelineStatus, NEEDS_ACTION_LABEL, PIPELINE_LABELS, PIPELINE_STATUSES, QUEUE_SEARCH_MIN_CHARS, referenceOf, type Completeness,
 } from "@/data/advisor";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { formatDay, waitingLabel } from "@/data/quoteRequests";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 import { INBOX_PARAM } from "@/components/workspace/menu";
-import type { BuiltInView, ColumnDefinition, TableAddress, TableDefinition } from "@/components/workspace/table";
-import { QUEUE_FIELDS, listQueue, type QueueFilter, type QueuePage, type QueueRow } from "@/lib/queueApi";
+import type { ColumnDefinition, FieldChoice, FieldDefinitions, TableDefinition, TableQuery, TableView } from "@/components/workspace/table";
+import { QUEUE_FIELDS, listQueue, type QueueField, type QueueFilter, type QueuePage, type QueueRow } from "@/lib/queueApi";
 import type { EmailProblem } from "@/lib/advisorApi";
 
 // The submissions queue as a workspace table (story CRM-S3.5a): its columns, its built-in views (today's status tabs), and the one call
@@ -47,19 +47,76 @@ export const QUEUE_SORTS = [
 ] as const;
 
 /** Today's status tabs, as the queue's built-in views: the view's id is the status. */
-export const QUEUE_VIEWS: BuiltInView<Fields>[] = PIPELINE_STATUSES.map((status) => ({
+export const QUEUE_VIEWS: TableView<Fields>[] = PIPELINE_STATUSES.map((status) => ({
   id: status,
   label: PIPELINE_LABELS[status],
   filters: [{ field: "pipeline_status", op: "any_of", value: [status] }],
 }));
 
-const queueColumns = (problems: Map<string, EmailProblem>): ColumnDefinition<QueueRow, keyof Fields>[] => [
+const FIELD_LABELS: Record<QueueField, string> = {
+  company_name: "Company",
+  contact_name: "Contact",
+  signer_name: "Signer",
+  file_id: "File ID",
+  needs_action_note: "Advisor's note",
+  start_month: "Target start",
+  employee_count: "Employees",
+  open_fields: "Open items",
+  flagged_fields: "Flagged items",
+  verified_fields: "Verified items",
+  quote_requests_sent: "Quote requests sent",
+  quotes_received: "Quotes received",
+  new_peo_mail_requests: "Quote requests with new PEO mail",
+  submitted_at: "Submitted",
+  created_at: "Started",
+  updated_at: "Last changed",
+  oldest_waiting_on: "Waiting on a PEO since",
+  earliest_quote_expires_on: "Earliest quote expiry",
+  pipeline_status: "Status",
+  intake_status: "Intake",
+  states: "States",
+  missing_required: "Missing required items",
+  needs_action: NEEDS_ACTION_LABEL,
+  sent_older_version: "A PEO has an older version",
+  has_new_peo_mail: "Has new PEO mail",
+  waiting_on_peo: "Waiting on a PEO",
+};
+
+/** The values of the queue's choice fields, as the database lists them (queue_field_choices), with their words. */
+const FIELD_CHOICES: Partial<Record<QueueField, readonly FieldChoice[]>> = {
+  pipeline_status: PIPELINE_STATUSES.map((value) => ({ value, label: PIPELINE_LABELS[value] })),
+  intake_status: [
+    { value: "in_progress", label: "In progress" },
+    { value: "submitted", label: "Submitted" },
+    { value: "expired", label: "Expired (idle draft)" },
+    { value: "archived", label: "Archived by prospect" },
+    { value: "revoked", label: "Revoked" },
+  ],
+};
+
+/** The queue's fields: each id and kind from the list the database holds (`QUEUE_FIELDS`), with its words and choices. */
+const queueFields = Object.fromEntries(
+  (Object.keys(QUEUE_FIELDS) as QueueField[]).map((id) => [id, { label: FIELD_LABELS[id], kind: QUEUE_FIELDS[id], ...(FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id] } : {}) }]),
+) as FieldDefinitions<Fields>;
+
+/** What the queue's cells need besides their row: which contacts' confirmations bounced. */
+export interface QueueContext {
+  problems: Map<string, EmailProblem>;
+}
+
+const submittedText = (row: QueueRow) =>
+  row.submitted_at
+    ? formatDate(row.submitted_at)
+    : CLOSED_INTAKE_LABELS[row.intake_status ?? ""] ?? (row.intake_status === "submitted" ? "Date not recorded" : row.signer_name ? "Needs re-certification" : "Not certified");
+
+const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
   {
     id: "company",
     header: "Company",
     isName: true,
     sortField: "company_name",
-    kind: "text",
+    filterField: "company_name",
+    text: (row) => row.company_name ?? "Company not provided",
     cell: (row) => (
       <>
         <Link to={`/advisor/submissions/${row.session_id}`} className="font-medium text-foreground hover:text-primary">
@@ -73,8 +130,9 @@ const queueColumns = (problems: Map<string, EmailProblem>): ColumnDefinition<Que
     id: "contact",
     header: "Contact",
     sortField: "contact_name",
-    kind: "text",
-    cell: (row) => {
+    filterField: "contact_name",
+    text: (row) => row.contact_name ?? "",
+    cell: (row, { problems }) => {
       const problem = problems.get(row.session_id);
       return (
         <div className="text-sm">
@@ -91,31 +149,24 @@ const queueColumns = (problems: Map<string, EmailProblem>): ColumnDefinition<Que
       );
     },
   },
-  { id: "states", header: "States", sortField: "states", kind: "choices", cell: (row) => <span className="text-sm">{formatStates(row.states) ?? dash}</span> },
-  { id: "employees", header: "Employees", align: "right", sortField: "employee_count", kind: "number", cell: (row) => <span className="font-mono text-sm">{row.employee_count ?? "—"}</span> },
+  { id: "states", header: "States", sortField: "states", filterField: "states", text: (row) => row.states.join(", "), cell: (row) => <span className="text-sm">{formatStates(row.states) ?? dash}</span> },
+  { id: "employees", header: "Employees", align: "right", sortField: "employee_count", filterField: "employee_count", text: (row) => (row.employee_count === null ? "" : String(row.employee_count)), cell: (row) => <span className="font-mono text-sm">{row.employee_count ?? "—"}</span> },
   {
     id: "submitted",
     header: "Submitted",
     sortField: "submitted_at",
-    kind: "date",
+    filterField: "submitted_at",
+    text: submittedText,
     cell: (row) => (
-      <span className="text-sm">
-        {row.submitted_at ? (
-          formatDate(row.submitted_at)
-        ) : (
-          <span className="text-muted-foreground">
-            {CLOSED_INTAKE_LABELS[row.intake_status ?? ""]
-              ?? (row.intake_status === "submitted" ? "Date not recorded" : row.signer_name ? "Needs re-certification" : "Not certified")}
-          </span>
-        )}
-      </span>
+      <span className="text-sm">{row.submitted_at ? submittedText(row) : <span className="text-muted-foreground">{submittedText(row)}</span>}</span>
     ),
   },
   {
     id: "status",
     header: "Status",
     sortField: "pipeline_status",
-    kind: "choice",
+    filterField: "pipeline_status",
+    text: (row) => (isPipelineStatus(row.pipeline_status) ? PIPELINE_LABELS[row.pipeline_status] : row.pipeline_status),
     cell: (row) => (
       <>
         <PipelineBadge status={isPipelineStatus(row.pipeline_status) ? row.pipeline_status : "draft"} />
@@ -135,8 +186,7 @@ const queueColumns = (problems: Map<string, EmailProblem>): ColumnDefinition<Que
   {
     id: "completeness",
     header: "Completeness",
-    sortField: null,
-    kind: null,
+    text: (row) => completenessOf(row).label,
     cell: (row) => {
       const completeness = completenessOf(row);
       return (
@@ -150,8 +200,8 @@ const queueColumns = (problems: Map<string, EmailProblem>): ColumnDefinition<Que
   {
     id: "quotes",
     header: "Quotes",
-    sortField: null,
-    kind: null,
+    filterField: "quote_requests_sent",
+    text: (row) => (row.quote_requests_sent > 0 ? `${row.quotes_received} / ${row.quote_requests_sent} quoted` : ""),
     cell: (row) => (
       <div className="text-sm space-y-1">
         {row.quote_requests_sent > 0 && <p>{`${row.quotes_received} / ${row.quote_requests_sent} quoted`}</p>}
@@ -173,13 +223,15 @@ const queueColumns = (problems: Map<string, EmailProblem>): ColumnDefinition<Que
   },
 ];
 
+type QueueTableDefinition = TableDefinition<Fields, QueueRow, QueueContext>;
+
 /**
  * The queue's old address parameters, mapped onto the table address (so today's links, bookmarks and the menu's Inbox link land on
  * the right thing): status=<stage> is view=<stage>; action=1 is the filter "needs advisor action is yes"; waiting=1 is "waiting on a
  * PEO is yes"; mail=new is "has new PEO mail is yes"; sort=oldest_waiting and sort=earliest_expiry are the sorts by those dates, oldest first.
  * q and page are unchanged.
  */
-const legacy: NonNullable<TableDefinitionOf["legacy"]> = (params) => {
+const legacy: NonNullable<QueueTableDefinition["legacy"]> = (params) => {
   const status = params.get("status");
   const sort = params.get("sort");
   const filters: QueueFilter[] = [];
@@ -193,29 +245,24 @@ const legacy: NonNullable<TableDefinitionOf["legacy"]> = (params) => {
   };
 };
 
-type TableDefinitionOf = TableDefinition<Fields, QueueRow>;
-
-/** The queue as a table; `problems` marks a contact whose confirmation bounced. */
-export const queueTable = (problems: Map<string, EmailProblem>): TableDefinitionOf => ({
+/** The queue as a table: a constant, so nothing is rebuilt when a lookup the cells use arrives (that goes in `QueueContext`). */
+export const QUEUE_TABLE: QueueTableDefinition = {
   id: "submissions",
-  fields: QUEUE_FIELDS,
-  columns: queueColumns(problems),
+  noun: { singular: "submission", plural: "submissions" },
+  fields: queueFields,
+  columns: queueColumns,
   rowKey: (row) => row.session_id,
-  builtInViews: QUEUE_VIEWS,
-  isView: (id) => QUEUE_VIEWS.some((v) => v.id === id),
-  searchMinChars: 3,
+  views: QUEUE_VIEWS,
+  allViewLabel: "All statuses",
+  searchMinChars: QUEUE_SEARCH_MIN_CHARS,
   legacy,
-});
+};
 
-/** The filters the database is asked for: the view's own, then the address's. */
-export const queueFiltersOf = (address: TableAddress<Fields>): QueueFilter[] => [
-  ...(QUEUE_VIEWS.find((v) => v.id === address.view)?.filters ?? []),
-  ...address.filters,
-];
+/**
+ * The queue's definition. A hook so that CRM-S3.4a can add the firm's saved views to it once they have loaded (with `viewsStatus`
+ * "loading" until then); today everything is in code and it is always ready.
+ */
+export const useQueueTable = (): QueueTableDefinition => QUEUE_TABLE;
 
-/** The page's one call to the database. */
-export const fetchQueuePage = (address: TableAddress<Fields>): Promise<QueuePage> =>
-  listQueue({ filters: queueFiltersOf(address), sort: address.sort, page: address.page, search: address.search });
-
-export const hasFilter = (address: TableAddress<Fields>, filter: QueueFilter) =>
-  address.filters.some((f) => JSON.stringify(f) === JSON.stringify(filter));
+/** The page's one call to the database: the effective query (the view's filters and the address's together). */
+export const fetchQueuePage = (query: TableQuery<Fields>): Promise<QueuePage> => listQueue(query);

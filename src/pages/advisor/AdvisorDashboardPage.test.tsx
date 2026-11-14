@@ -3,9 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { QueueRow } from "@/lib/queueApi";
+import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
+import { changeAddress, judgeAddress, readAddress, sameAddress } from "@/components/workspace/table";
 
 // The submissions queue on the workspace's table frame (story CRM-S3.5a). The database cuts the pages and runs the filters (supabase/tests/
-// queue_query.sql); these tests are what a person sees and does through the page: the rows, "1 to 50 of 375", the pager's links, every
+// queue_query.sql); these tests are what a person sees and does through the page: the rows, "1 to 50 of 375 submissions", the pager's links, every
 // old address, a garbage address, the Inbox filter, a refused filter, and that the rows stay while the next arrive (D-49, D-50).
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
@@ -29,6 +31,24 @@ vi.mock("@/lib/queueApi", async (original) => ({
 const query = (over: Record<string, unknown> = {}) => ({ filters: [], sort: null, page: 1, search: "", ...over });
 const pipeline = (...values: string[]) => ({ field: "pipeline_status", op: "any_of", value: values });
 const yes = (field: string) => ({ field, op: "is", value: true });
+
+// A test can stand in for the definition the page reads, so a table whose views or fields arrive late can be tried through the page
+// (the queue's own definition is in code and always ready).
+const lateTable = vi.hoisted(() => ({ table: null as unknown, version: 0, listeners: new Set<() => void>() }));
+vi.mock("@/components/advisor/queueTable", async (original) => {
+  const real = await original<typeof import("@/components/advisor/queueTable")>();
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...real,
+    useQueueTable: () => {
+      useSyncExternalStore((cb) => { lateTable.listeners.add(cb); return () => lateTable.listeners.delete(cb); }, () => lateTable.version);
+      return (lateTable.table as typeof real.QUEUE_TABLE | null) ?? real.QUEUE_TABLE;
+    },
+  };
+});
+const { QUEUE_TABLE, QUEUE_VIEWS } = await vi.importActual<typeof import("@/components/advisor/queueTable")>("@/components/advisor/queueTable");
+const setTable = (table: typeof QUEUE_TABLE | null) =>
+  act(() => { lateTable.table = table; lateTable.version++; lateTable.listeners.forEach((l) => l()); });
 
 const { default: AdvisorDashboardPage } = await import("./AdvisorDashboardPage");
 
@@ -94,12 +114,13 @@ const pageOf = (page: number, total: number) => ({
 
 describe("AdvisorDashboardPage", () => {
   beforeEach(() => {
+    lateTable.table = null;
     listQueue.mockReset();
     countQueueViews.mockReset().mockResolvedValue([]);
     listEmailProblems.mockReset().mockResolvedValue([]);
     signOut.mockReset().mockResolvedValue(undefined);
   });
-  afterEach(() => cleanup());
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
 
   describe("the Inbox", () => {
     // Catches: Inbox (the menu's "Inbox, 2 with new mail") opening the whole queue, so the number and the rows disagree (D-133).
@@ -364,12 +385,12 @@ describe("AdvisorDashboardPage", () => {
       [
         "?status=won&action=1&waiting=1&mail=new&q=pat+gamma&sort=oldest_waiting&page=3",
         query({
-          filters: [pipeline("won"), yes("needs_action"), yes("waiting_on_peo"), yes("has_new_peo_mail")],
+          filters: [pipeline("won"), yes("has_new_peo_mail"), yes("needs_action"), yes("waiting_on_peo")],
           search: "pat gamma",
           sort: { field: "oldest_waiting_on", direction: "asc" },
           page: 3,
         }),
-        "?view=won&q=pat+gamma&filter=needs_action:is:true&filter=waiting_on_peo:is:true&filter=has_new_peo_mail:is:true&sort=oldest_waiting_on&page=3",
+        "?view=won&q=pat+gamma&filter=has_new_peo_mail:is:true&filter=needs_action:is:true&filter=waiting_on_peo:is:true&sort=oldest_waiting_on&page=3",
       ],
     ])("%s", async (url, expected, rewritten) => {
       listQueue.mockImplementation(async (o: { page: number }) => ({ ...pageOf(o.page, 200) }));
@@ -419,30 +440,42 @@ describe("AdvisorDashboardPage", () => {
     expect(listQueue).toHaveBeenLastCalledWith(query({
       filters: [
         { field: "company_name", op: "contains", value: "Smith, Jones: Co" },
-        { field: "states", op: "any_of", value: ["CA", "NY"] },
         { field: "employee_count", op: "between", value: [5, 50] },
-        { field: "submitted_at", op: "in_last_days", value: 30 },
         { field: "missing_required", op: "is_empty" },
+        { field: "states", op: "any_of", value: ["CA", "NY"] },
+        { field: "submitted_at", op: "in_last_days", value: 30 },
       ],
     }));
-    // An address that already means this is left as it is (no rewrite), the escapes intact, so a copied link means the same.
-    await waitFor(() => expect(where()).toBe("?filter=company_name:contains:Smith%5C,%20Jones%5C:%20Co&filter=states:any_of:CA,NY&filter=employee_count:between:5,50&filter=submitted_at:in_last_days:30&filter=missing_required:is_empty"));
+    // Written back in the one canonical order, with the comma and colon inside the text still escaped, so a copied link means the same.
+    await waitFor(() => expect(where()).toBe("?filter=company_name:contains:Smith%5C,+Jones%5C:+Co&filter=employee_count:between:5,50&filter=missing_required:is_empty&filter=states:any_of:CA,NY&filter=submitted_at:in_last_days:30"));
   });
 
-  // Catches: a filter the database refuses leaving a blank page or a "try again" that can never work.
-  it("shows the database's reason plainly when it refuses a filter, and a way back to every submission", async () => {
-    listQueue.mockImplementation(async (o: { filters: unknown[] }) => {
-      if (o.filters.length) throw Object.assign(new Error('The filter "My team" can\'t be used until records have an owner.'), { code: "22023" });
-      return [row()];
+  describe("when the database refuses the query", () => {
+    // Catches: a refused filter leaving a blank page or a "try again" that can never work. The codes and words are the database's (queue_query.sql).
+    it.each([
+      ["22023", 'The filter "pipeline_status any_of" can\'t match "nonsense": it isn\'t one of the field\'s values'],
+      ["0A000", "Filters on a person arrive with CRM-A1.1, when records have an owner"],
+    ])("shows the reason of a %s refusal plainly, with a way back to every submission and no retry", async (code, reason) => {
+      listQueue.mockImplementation(async (o: { filters: unknown[] }) => {
+        if (o.filters.length) throw Object.assign(new Error(reason), { code });
+        return [row()];
+      });
+      renderAt("/advisor?filter=pipeline_status:any_of:nonsense");
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("These filters can't be used.");
+      expect(alert).toHaveTextContent(reason);
+      expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+      fireEvent.click(within(alert).getByRole("link", { name: "Show all submissions" }));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(where()).toBe("");
     });
-    renderAt("/advisor?filter=needs_action:is:true");
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("These filters can't be used.");
-    expect(alert).toHaveTextContent('The filter "My team" can\'t be used until records have an owner.');
-    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
-    fireEvent.click(within(alert).getByRole("link", { name: "Show all submissions" }));
-    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-    expect(where()).toBe("");
+
+    it("keeps today's panel, with a retry, for any other failure", async () => {
+      listQueue.mockRejectedValueOnce(Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" }));
+      renderAt();
+      expect(await screen.findByRole("alert")).toHaveTextContent("canceling statement due to statement timeout");
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
   });
 
   it("reads the needs-action filter from the URL", async () => {
@@ -515,6 +548,18 @@ describe("AdvisorDashboardPage", () => {
       expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
     });
 
+
+    // Catches: spaces counting toward the 3-character minimum, so "a b" would search for almost everything.
+    it("doesn't count spaces toward the minimum", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "a b" } });
+      expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "a bc" } });
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "a bc" })));
+    });
+
     // Catches: a link with a search too short to run being sent to the database, or left in the address.
     it("treats a link with a search under 3 characters as no search, and takes it out of the address", async () => {
       listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
@@ -522,7 +567,7 @@ describe("AdvisorDashboardPage", () => {
       await screen.findByRole("link", { name: "Beta Works" });
       expect(listQueue).toHaveBeenCalledWith(query());
       expect(listQueue).not.toHaveBeenCalledWith(query({ search: "ga" }));
-      expect(screen.getByText("1 to 3 of 3")).toBeInTheDocument();
+      expect(screen.getByText("1 to 3 of 3 submissions")).toBeInTheDocument();
       await waitFor(() => expect(where()).toBe(""));
     });
 
@@ -530,9 +575,9 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt();
       await screen.findByRole("link", { name: "Acme Holdings" });
-      expect(screen.getByText("1 to 3 of 3")).toBeInTheDocument();
+      expect(screen.getByText("1 to 3 of 3 submissions")).toBeInTheDocument();
       fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat" } });
-      expect(await screen.findByText("1 to 2 of 2")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 2 of 2 submissions matching “pat”")).toBeInTheDocument();
     });
 
     it("reads the search from the URL", async () => {
@@ -562,18 +607,18 @@ describe("AdvisorDashboardPage", () => {
   });
 
   describe("pages", () => {
-    // Catches: the range line or the pager not saying what the story says: 50 a page, "1 to 50 of 375", Previous and Next as links with addresses.
+    // Catches: the range line or the pager not saying what the story says: 50 a page, "1 to 50 of 375 submissions", Previous and Next as links with addresses.
     it("shows 50 at a time as '1 to 50 of 375', with Previous and Next as real links that keep the rest of the address", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt("/advisor?view=won&q=acme");
-      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 50 of 375 submissions matching “acme”")).toBeInTheDocument();
       expect(screen.getAllByRole("row")).toHaveLength(51);
       const next = screen.getByRole("link", { name: "Next" });
       expect(next).toHaveAttribute("href", "/advisor?view=won&q=acme&page=2");
       expect(screen.queryByRole("link", { name: "Previous" })).not.toBeInTheDocument();
       expect(screen.getByText("Previous").closest("[aria-disabled]")).toHaveAttribute("aria-disabled", "true");
       fireEvent.click(next);
-      expect(await screen.findByText("51 to 100 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("51 to 100 of 375 submissions matching “acme”")).toBeInTheDocument();
       expect(listQueue).toHaveBeenLastCalledWith(query({ page: 2, filters: [pipeline("won")], search: "acme" }));
       expect(screen.getByRole("link", { name: "Previous" })).toHaveAttribute("href", "/advisor?view=won&q=acme");
       expect(screen.getByRole("link", { name: "Next" })).toHaveAttribute("href", "/advisor?view=won&q=acme&page=3");
@@ -582,13 +627,13 @@ describe("AdvisorDashboardPage", () => {
     it("disables Next on the last page, and Back undoes a page change", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt("/advisor?page=7");
-      expect(await screen.findByText("301 to 350 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("301 to 350 of 375 submissions")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
-      expect(await screen.findByText("351 to 375 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("351 to 375 of 375 submissions")).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "Next" })).not.toBeInTheDocument();
       expect(screen.getByText("Next").closest("[aria-disabled]")).toHaveAttribute("aria-disabled", "true");
       fireEvent.click(screen.getByRole("link", { name: "Previous" }));
-      expect(await screen.findByText("301 to 350 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("301 to 350 of 375 submissions")).toBeInTheDocument();
     });
 
     it("lets the browser's Back undo a page change", async () => {
@@ -606,18 +651,18 @@ describe("AdvisorDashboardPage", () => {
           </MemoryRouter>
         </QueryClientProvider>,
       );
-      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 50 of 375 submissions")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
-      expect(await screen.findByText("51 to 100 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("51 to 100 of 375 submissions")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Browser back" }));
-      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 50 of 375 submissions")).toBeInTheDocument();
     });
 
     // Catches: a page number past the end showing an empty table, or leaving the address lying.
     it("lands on the last page when the address names one past the end, and rewrites the address", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt("/advisor?page=99");
-      expect(await screen.findByText("351 to 375 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("351 to 375 of 375 submissions")).toBeInTheDocument();
       expect(listQueue).toHaveBeenLastCalledWith(query({ page: 8 }));
       expect(where()).toBe("?page=8");
     });
@@ -633,23 +678,23 @@ describe("AdvisorDashboardPage", () => {
     it("starts from the first page when the search, a tab, a filter or the sort changes", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt("/advisor?page=3");
-      expect(await screen.findByText("101 to 150 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("101 to 150 of 375 submissions")).toBeInTheDocument();
       fireEvent.change(screen.getByLabelText("Search"), { target: { value: "acme" } });
       await waitFor(() => expect(where()).toBe("?q=acme"));
-      expect(await screen.findByText("1 to 50 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("1 to 50 of 375 submissions matching “acme”")).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
-      await screen.findByText("51 to 100 of 375");
+      await screen.findByText("51 to 100 of 375 submissions matching “acme”");
       fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
       await waitFor(() => expect(where()).toBe("?view=won&q=acme"));
 
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
-      await screen.findByText("51 to 100 of 375");
+      await screen.findByText("51 to 100 of 375 submissions matching “acme”");
       fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
       await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=waiting_on_peo:is:true"));
 
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
-      await screen.findByText("51 to 100 of 375");
+      await screen.findByText("51 to 100 of 375 submissions matching “acme”");
       fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "1" } });
       await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=waiting_on_peo:is:true&sort=oldest_waiting_on"));
       expect(listQueue).toHaveBeenLastCalledWith(query({
@@ -784,12 +829,312 @@ describe("AdvisorDashboardPage", () => {
     });
   });
 
+  describe("an address that can't break the page", () => {
+    const soon = () => new Promise((r) => setTimeout(r, 50));
+    // Catches: a link whose search ends in an emoji at the 200th place crashing the page (a cut in the middle of the emoji made the address unwritable).
+    it("opens a link whose search runs to 200 characters and ends in an emoji, whole", async () => {
+      listQueue.mockResolvedValue([row()]);
+      const term = `${"a".repeat(199)}😀`;
+      renderAt(`/advisor?q=${encodeURIComponent(term)}`);
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ search: term }));
+    });
+
+    it("cuts a longer search at 200 whole characters, never in the middle of one", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt(`/advisor?q=${encodeURIComponent(`${"a".repeat(199)}😀😀😀`)}`);
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ search: `${"a".repeat(199)}😀` }));
+      await waitFor(() => expect(where()).toBe(`?q=${"a".repeat(199)}%F0%9F%98%80`));
+    });
+
+    // Catches: half a character typed or pasted into the box (a lone surrogate) breaking the address, so the search never applies.
+    it("searches for what is typed even when it holds half a character", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat\ud800gamma" } });
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ search: "pat�gamma" })));
+      expect(screen.getByRole("link", { name: "Acme" })).toBeInTheDocument();
+      await soon();
+      expect(where()).toBe("?q=pat%EF%BF%BDgamma");
+    });
+
+    it("reads and writes any address without throwing", () => {
+      const nasty = ["\ud800", "q=\ud800", `filter=${"x".repeat(5000)}`, "filter=%00:is:%00", "page=%", "view=\udc00x", "sort=-\ud83d", "filter=a:b:c:d:e"];
+      for (const text of nasty) {
+        const params = new URLSearchParams(text);
+        expect(() => readAddress(QUEUE_TABLE, params)).not.toThrow();
+      }
+      const params = new URLSearchParams();
+      params.set("q", `pat\ud800${"\ud83d"}`);
+      expect(readAddress(QUEUE_TABLE, params).search).toBe("pat��");
+    });
+
+    // Catches: a page above the database's limit reaching it and showing "These filters can't be used", instead of being corrected.
+    it.each(["100001", "200000"])("treats page=%s, above the database's limit, as the first page", async (bad) => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt(`/advisor?page=${bad}`);
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(listQueue.mock.calls.every(([o]) => o.page === 1)).toBe(true);
+      await waitFor(() => expect(where()).toBe(""));
+    });
+
+    // Catches: a filter the database would refuse for its shape (blank text, blank list values) being sent, or text not trimmed as the database trims it.
+    it("drops a filter whose text or list values are blank, and trims the text it keeps", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?filter=company_name:contains:%20%20&filter=contact_name:is:%20Pat%20&filter=states:any_of:CA,%20&filter=file_id:contains:" + encodeURIComponent("x".repeat(201)));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "contact_name", op: "is", value: "Pat" }] }));
+      await waitFor(() => expect(where()).toBe("?filter=contact_name:is:Pat"));
+    });
+
+    // Catches: the same filters written in another order being another address, key and bookmark.
+    it("writes filters in one canonical order, so the same filters are one address", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?filter=waiting_on_peo:is:true&filter=needs_action:is:true");
+      await screen.findByRole("link", { name: "Acme" });
+      await waitFor(() => expect(where()).toBe("?filter=needs_action:is:true&filter=waiting_on_peo:is:true"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action"), yes("waiting_on_peo")] }));
+      // Never asked for in the order it was written, not even once before the address was tidied.
+      expect(listQueue.mock.calls.every(([o]) => o.filters[0].field === "needs_action")).toBe(true);
+      const a = readAddress(QUEUE_TABLE, new URLSearchParams("filter=waiting_on_peo:is:true&filter=needs_action:is:true"));
+      const b = readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true&filter=waiting_on_peo:is:true"));
+      expect(sameAddress(a, b)).toBe(true);
+      expect(sameAddress(a, readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true")))).toBe(false);
+    });
+
+    // Catches: an old parameter and a new filter on the same field both applying, so "yes" and "no" together match nothing.
+    it("lets a new filter win over an old parameter that names the same field", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?filter=needs_action:is:false&action=1&waiting=1");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "needs_action", op: "is", value: false }, yes("waiting_on_peo")] }));
+    });
+
+    // Catches: a change that holds more than the page keeping the page ("no control can forget" is the writer's job).
+    it("goes back to the first page for any change that holds more than the page", () => {
+      const at = readAddress(QUEUE_TABLE, new URLSearchParams("page=3&view=won"));
+      expect(changeAddress(at, { page: 4 }).page).toBe(4);
+      expect(changeAddress(at, { page: 3, filters: [] }).page).toBe(1);
+      expect(changeAddress(at, { search: "acme" }).page).toBe(1);
+      expect(changeAddress(at, { view: null, page: 5 }).page).toBe(1);
+    });
+
+    // Catches: more filters than the database takes (20 in all, the tab's own counting first) being sent, which it refuses.
+    it("counts the tab's own filters against the 20 the database takes, and rewrites the address to what is used", async () => {
+      listQueue.mockResolvedValue([row()]);
+      const many = Array.from({ length: 20 }, (_, i) => `filter=employee_count:is:${i + 1}`).join("&");
+      renderAt(`/advisor?view=won&${many}`);
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      const sent = listQueue.mock.calls.at(-1)![0].filters;
+      expect(sent).toHaveLength(20);
+      expect(sent[0]).toEqual(pipeline("won"));
+      await waitFor(() => expect(where().match(/filter=/g)).toHaveLength(19));
+      // And the numbers on every tab were asked for within the limit too.
+      expect(countQueueViews.mock.calls.at(-1)![0].every((v: { filters: unknown[] }) => v.filters.length <= 20)).toBe(true);
+    });
+
+    it("keeps all 20 filters when no view is chosen", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt(`/advisor?${Array.from({ length: 21 }, (_, i) => `filter=employee_count:is:${i + 1}`).join("&")}`);
+      await screen.findByRole("link", { name: "Acme" });
+      expect(listQueue.mock.calls.at(-1)![0].filters).toHaveLength(20);
+      await waitFor(() => expect(where().match(/filter=/g)).toHaveLength(20));
+    });
+  });
+
+  describe("a table whose views or fields arrive late (CRM-S3.4a, CRM-X3.1 will)", () => {
+    const saved = { id: "saved-1", label: "My saved view", filters: [{ field: "needs_action", op: "is", value: true }] } as const;
+    const custom = { label: "Custom", kind: "text" as const };
+    const loadingViews = () => ({ ...QUEUE_TABLE, viewsStatus: "loading" as const });
+    const readyViews = () => ({ ...QUEUE_TABLE, views: [...QUEUE_VIEWS, { ...saved, filters: [...saved.filters] }], viewsStatus: "ready" as const });
+
+    // Catches: a bookmark of a saved view landing on "All" because the view was not known on the first draw and was dropped.
+    it("keeps a view it can't judge yet, asks for no rows until it can, then honours it", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable(loadingViews());
+      renderAt("/advisor?view=saved-1");
+      expect(await screen.findByRole("status")).toHaveTextContent("Loading submissions");
+      await new Promise((r) => setTimeout(r, 80));
+      expect(listQueue).not.toHaveBeenCalled();
+      expect(countQueueViews).not.toHaveBeenCalled();
+      expect(where()).toBe("?view=saved-1");
+      setTable(readyViews());
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action")] }));
+      expect(where()).toBe("?view=saved-1");
+      expect(screen.getByRole("link", { name: /^My saved view/ })).toHaveAttribute("aria-current", "page");
+    });
+
+    // Catches: a view that never existed being kept for ever once the table knows its views.
+    it("drops a view that is not there once the views have arrived, and rewrites the address once", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable(loadingViews());
+      renderAt("/advisor?view=gone");
+      await screen.findByRole("status");
+      expect(where()).toBe("?view=gone");
+      setTable(readyViews());
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      await waitFor(() => expect(where()).toBe(""));
+      expect(screen.queryByText(/isn't available/)).not.toBeInTheDocument();
+    });
+
+    // Catches: a filter on a custom field being thrown away before the custom fields are known, or kept after they are known not to include it.
+    it("keeps a filter on a field it doesn't know yet as written, then sends it once the field is known (a field id with a colon is escaped)", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
+      renderAt("/advisor?filter=a%5C:b:contains:acme&sort=-a:b&filter=needs_action:is:true");
+      await screen.findByRole("status");
+      await new Promise((r) => setTimeout(r, 80));
+      expect(listQueue).not.toHaveBeenCalled();
+      expect(where()).toBe("?filter=a%5C:b:contains:acme&filter=needs_action:is:true&sort=-a:b");
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "ready", fields: { ...QUEUE_TABLE.fields, "a:b": custom } as never });
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "a:b", op: "contains", value: "acme" }, yes("needs_action")], sort: { field: "a:b", direction: "desc" } }));
+      expect(where()).toBe("?filter=a%5C:b:contains:acme&filter=needs_action:is:true&sort=-a:b");
+    });
+
+    it("drops a filter on a field that is not there once the fields have arrived", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
+      renderAt("/advisor?filter=nope:contains:acme");
+      await screen.findByRole("status");
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "ready" });
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      await waitFor(() => expect(where()).toBe(""));
+    });
+
+    // Catches: a failed load of the views leaving the person on a view that can't be shown, or dropping it without a word.
+    it("falls back to what it has when the views fail to load, drops the view and says so in one line", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, viewsStatus: "failed" });
+      renderAt("/advisor?view=saved-1");
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(listQueue).toHaveBeenLastCalledWith(query());
+      expect(screen.getByText("That view isn't available, so this shows every submission.")).toBeInTheDocument();
+      await waitFor(() => expect(where()).toBe(""));
+    });
+
+    it("says so when the fields fail to load and a filter had to be left out", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, fieldsStatus: "failed" });
+      renderAt("/advisor?filter=nope:contains:acme");
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(screen.getByText("A filter on a field that isn't available was left out.")).toBeInTheDocument();
+    });
+
+    it("judges a held address the same way the page does", () => {
+      const params = new URLSearchParams("view=saved-1&filter=a:contains:x");
+      const held = judgeAddress({ ...QUEUE_TABLE, viewsStatus: "loading", fieldsStatus: "loading" }, params);
+      expect(held.address.held).toEqual({ view: "saved-1", sort: null, filters: ["a:contains:x"] });
+      expect(held.dropped).toEqual({ view: null, filterFields: [] });
+      const settled = judgeAddress(QUEUE_TABLE, params);
+      expect(settled.address.held).toEqual({ view: null, sort: null, filters: [] });
+      expect(settled.dropped).toEqual({ view: "saved-1", filterFields: ["a"] });
+    });
+  });
+
+  describe("each request is made once", () => {
+    const firm = (id: string | null): Workspace => ({
+      firm: id ? { id, name: "Alpha", address: "alpha" } : null, role: "Agent", isOwner: false, isSupport: false, supportEndsAt: null,
+      supportSessionId: null, isPlatformAdmin: false, person: "Sam",
+    });
+    // Catches: every load asking for the rows, the counts and the bounced emails twice, once for "no firm" and once for the firm (and showing the first answer).
+    it("asks for the rows, the counts and the bounced emails once each, and only once the firm is known", async () => {
+      listQueue.mockResolvedValue([row()]);
+      const client = new QueryClient();
+      const tree = (id: string | null) => (
+        <WorkspaceContext.Provider value={firm(id)}>
+          <QueryClientProvider client={client}>
+            <MemoryRouter initialEntries={["/advisor"]}>
+              <Routes><Route path="/advisor" element={<AdvisorDashboardPage />} /></Routes>
+            </MemoryRouter>
+          </QueryClientProvider>
+        </WorkspaceContext.Provider>
+      );
+      const { rerender } = render(tree(null));
+      await new Promise((r) => setTimeout(r, 80));
+      expect(listQueue).not.toHaveBeenCalled();
+      expect(countQueueViews).not.toHaveBeenCalled();
+      expect(listEmailProblems).not.toHaveBeenCalled();
+      rerender(tree("firm-1"));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 80));
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      expect(countQueueViews).toHaveBeenCalledTimes(1);
+      expect(listEmailProblems).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks once each outside the shell too", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      await new Promise((r) => setTimeout(r, 80));
+      expect(listQueue).toHaveBeenCalledTimes(1);
+      expect(countQueueViews).toHaveBeenCalledTimes(1);
+      expect(listEmailProblems).toHaveBeenCalledTimes(1);
+    });
+
+    // Catches: Refresh asking again only for the rows, leaving the tab numbers and the bounced-email marks as they were.
+    it("asks again for the rows, the tab numbers and the bounced emails when Refresh is pressed", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      const range = screen.getByText("1 to 1 of 1 submission");
+      await new Promise((r) => setTimeout(r, 50));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(listQueue).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(countQueueViews).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(listEmailProblems).toHaveBeenCalledTimes(2));
+      // The same words in the same place: a polite live region doesn't announce a refresh that changed nothing.
+      expect(screen.getByText("1 to 1 of 1 submission")).toBe(range);
+    });
+  });
+
+  describe("the tab numbers through a failure (D-134, D-137)", () => {
+    // Catches: a failed refresh blanking the tab numbers at once, or keeping a number nobody can confirm for ever.
+    it("keeps the last numbers through a failed refresh, and drops them once refreshes have failed for five minutes", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-16T15:00:00Z"));
+      listQueue.mockResolvedValue([row()]);
+      countQueueViews.mockResolvedValue([{ name: "all", total: 9 }, { name: "won", total: 3 }]);
+      renderAt();
+      expect(await screen.findByRole("link", { name: "Won 3" })).toBeInTheDocument();
+      countQueueViews.mockRejectedValue(new Error("down"));
+      const refresh = () => act(async () => { fireEvent.click(screen.getByRole("button", { name: "Refresh" })); await new Promise((r) => setTimeout(r, 30)); });
+      await refresh();
+      expect(countQueueViews).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("link", { name: "Won 3" })).toBeInTheDocument();
+      vi.setSystemTime(new Date("2026-11-16T15:06:00Z"));
+      await refresh();
+      expect(screen.queryByRole("link", { name: "Won 3" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Won" })).toBeInTheDocument();
+      vi.useRealTimers();
+    });
+  });
+
+  it("gives each column's plain text for an export, and leaves out a column that has none", () => {
+    const r = row({ needs_action: true });
+    const text = Object.fromEntries(QUEUE_TABLE.columns.map((c) => [c.id, c.text?.(r, { problems: new Map() })]));
+    expect(text).toEqual({
+      company: "Acme", contact: "Pat Prospect", states: "CA, NY", employees: "12", submitted: "Oct 1, 2026", status: "Submitted",
+      completeness: "Complete", quotes: "",
+    });
+  });
+
   describe("staying fresh (D-49)", () => {
     // Catches: the rows disappearing into a spinner while the next page loads, which loses the reader's place.
     it("keeps the rows on screen while the next page loads, and says the range once it arrives", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt();
-      await screen.findByText("1 to 50 of 375");
+      await screen.findByText("1 to 50 of 375 submissions");
       let arrive!: (v: unknown) => void;
       listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
@@ -799,9 +1144,9 @@ describe("AdvisorDashboardPage", () => {
       expect(screen.queryByText(/Loading submissions/)).not.toBeInTheDocument();
       expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
       // The range is a polite live region.
-      expect(screen.getByText("1 to 50 of 375")).toHaveAttribute("aria-live", "polite");
+      expect(screen.getByText("1 to 50 of 375 submissions")).toHaveAttribute("aria-live", "polite");
       await act(async () => arrive(pageOf(2, 375)));
-      expect(await screen.findByText("51 to 100 of 375")).toBeInTheDocument();
+      expect(await screen.findByText("51 to 100 of 375 submissions")).toBeInTheDocument();
       expect(screen.getByText("Company 51")).toBeInTheDocument();
     });
 

@@ -9,6 +9,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 const { countQueueViews, listQueue, QUEUE_FIELDS, QUEUE_LIST_PAGE_SIZE } = await import("./queueApi");
 const { AdvisorApiError } = await import("./advisorApi");
+const { FILTER_DAYS_MAX, FILTER_LIST_MAX, FILTER_TEXT_MAX, MAX_TABLE_PAGE, TABLE_FILTER_LIMIT } = await import("@/components/workspace/table/columns");
 type QueueFilter = import("./queueApi").QueueFilter;
 
 const caught = async (call: () => Promise<unknown>) => {
@@ -112,6 +113,17 @@ describe("the queue's fields agree with the database", () => {
   it("names the same fields with the same kinds", () => {
     const server = Object.fromEntries([...block("queue_fields").matchAll(/WHEN '(\w+)' THEN '(\w+)'/g)].map((m) => [m[1], m[2]]));
     expect(server).toEqual(QUEUE_FIELDS);
+  });
+
+  // Catches: the address codec letting through (or cutting short) what the database takes: its limits are the migration's figures.
+  it("reads the address by the database's own limits", () => {
+    const firstNumber = (re: RegExp) => Number(sql.match(re)?.[1]);
+    expect(MAX_TABLE_PAGE).toBe(firstNumber(/A page number is 1 to (\d+)/));
+    expect(TABLE_FILTER_LIMIT).toBe(firstNumber(/A table takes at most (\d+) filters/));
+    expect(FILTER_TEXT_MAX).toBe(firstNumber(/takes at most (\d+) characters/));
+    expect(FILTER_TEXT_MAX).toBe(firstNumber(/takes values of 1 to (\d+) characters/));
+    expect(FILTER_LIST_MAX).toBe(firstNumber(/needs 1 to (\d+) values/));
+    expect(FILTER_DAYS_MAX).toBe(firstNumber(/whole number of days, 0 to (\d+)/));
   });
 
   it("offers the pipeline's stages as the stage filter's values, in order", () => {
