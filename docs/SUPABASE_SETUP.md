@@ -463,9 +463,16 @@ to `20261119090600_epic3_export_pause_end.sql`. Before pushing the Epic 3 branch
   data and applies every migration in order. **Never `supabase migration repair` `main`'s export files as
   applied to get past it:** `20261118180000` would then drop Epic 3's own `row_count` column and its rule, which
   the recorded `20261119090000` never adds back, so Epic 3's export and the record's counts break.
-- **A database that already records `20261119090500`** (the Epic 3 branch pushed after #161, before the pause
-  existed) pushes once with `supabase db push --include-all --linked`: `20261118180500` is older than what is
-  recorded. Its holding table is gone, so the pause does nothing there, and `20261119090600` takes it out.
+- **A database that records `20261118180000` and a migration later than `20261118180500`, but not
+  `20261118180500` itself, pushes once with `supabase db push --include-all --linked`.** A normal push won't
+  apply `20261118180500`, because it is older than what is recorded. Two states lead here, and the push is right
+  for both:
+  - The Epic 3 branch was pushed after #161, before the pause existed, so `20261119090500` is recorded. The
+    holding table is gone, so the pause does nothing and `20261119090600` takes it out.
+  - A push was interrupted after `20261119090000` and before `20261119090500`. The holding table still holds
+    `main`'s exports, so the pause is on from `20261118180500` until `20261119090500` puts them back. Until
+    this push runs there is no pause, and exports are counted without `main`'s. Push soon, and make again an
+    export of the record taken in between.
 
 ## If a step fails
 
