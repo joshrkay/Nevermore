@@ -116,6 +116,25 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await expect(page.getByText("Order: Newest first")).toBeVisible();
   });
 
+  await test.step("a hidden column stays hidden after a reload, because the choice is kept in the database for this person", async () => {
+    await expect(page.getByRole("columnheader", { name: "Completeness" })).toBeVisible();
+    await page.getByRole("button", { name: "Columns" }).click();
+    await page.getByRole("checkbox", { name: "Completeness" }).click();
+    await expect(page.getByRole("columnheader", { name: "Completeness" })).toHaveCount(0);
+    // Company is the name column: always shown, and it cannot be hidden.
+    await expect(page.getByRole("checkbox", { name: "Company" })).toHaveAttribute("aria-disabled", "true");
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await expect(page.getByRole("columnheader", { name: "Company" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Completeness" })).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "Quotes" })).toBeVisible();
+    // Back to the usual columns, so the steps after this see the table as they always did.
+    await page.getByRole("button", { name: "Columns" }).click();
+    await page.getByRole("button", { name: "Show the usual columns" }).click();
+    await expect(page.getByRole("columnheader", { name: "Completeness" })).toBeVisible();
+    await page.keyboard.press("Escape");
+  });
+
   await test.step("Inbox opens exactly the one row with new PEO mail, and the menu marks Inbox", async () => {
     await page.getByRole("link", { name: "Inbox, 1 with new mail" }).click();
     await expect(page).toHaveURL(/\?filter=has_new_peo_mail:is:true$|\?filter=has_new_peo_mail%3Ais%3Atrue$/);
