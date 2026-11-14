@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -42,6 +42,15 @@ export interface PeoMailArrived {
   companyName: string | null;
   /** The PEO the quote request is with. */
   peoName: string;
+}
+
+/** The notice to a firm's owners that a member left (public.leave_firm): who, from which firm, and when. Nothing else is read. */
+export interface MemberLeft {
+  /** The address of the person who left. */
+  memberEmail: string;
+  firmName: string;
+  /** When their membership ended, as `YYYY-MM-DDTHH:MM:SSZ` (UTC). */
+  leftAt: string;
 }
 
 export interface ProspectConfirmation {
@@ -146,6 +155,16 @@ export function parsePeoMailArrived(raw: unknown): PeoMailArrived | null {
   const peoName = p && oneLine(p.peo_name, 80);
   if (!p || !reference || !peoName) return null;
   return { reference, companyName: oneLine(p.company_name, 200), peoName };
+}
+
+/** The leaving notice's fields, or null without all three. Only these are ever read: no role, no reason, nothing the person made. */
+export function parseMemberLeft(raw: unknown): MemberLeft | null {
+  const p = asObject(raw);
+  const memberEmail = p && asEmail(p.member_email);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const leftAt = p && oneLine(p.left_at, 20);
+  if (!p || !memberEmail || !firmName || leftAt === null || !CERTIFIED_AT.test(leftAt) || !Number.isFinite(Date.parse(leftAt))) return null;
+  return { memberEmail, firmName, leftAt };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -366,6 +385,15 @@ export function renderPeoMailArrived(n: PeoMailArrived, ctx: AdvisorContext): Re
 ${button(ctx.reviewUrl, "Open the thread")}
 ${small(`Advisor sign-in is required. ${footnote}`)}`,
   );
+  return { subject, text, html };
+}
+
+/** The email to a firm's owners that a member left: who and when, and nothing else (no role, no reason, no link into the firm's records). */
+export function renderMemberLeft(n: MemberLeft): RenderedEmail {
+  const subject = `${n.memberEmail} left ${n.firmName}`;
+  const headline = `${n.memberEmail} left ${n.firmName} on ${utcStamp(n.leftAt)}.`;
+  const text = [headline, "", SIGN_OFF].join("\n");
+  const html = layout(subject, headline, `<p style="margin:0;">${escapeHtml(headline)}</p>`);
   return { subject, text, html };
 }
 

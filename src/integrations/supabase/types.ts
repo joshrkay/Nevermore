@@ -1089,6 +1089,10 @@ export type Database = {
         Args: { p_invitation_id: string }
         Returns: undefined
       }
+      leave_firm: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
       remove_member: {
         Args: { p_firm_id: string; p_user_id: string }
         Returns: undefined

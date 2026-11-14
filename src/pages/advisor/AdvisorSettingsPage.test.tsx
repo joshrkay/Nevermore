@@ -6,6 +6,8 @@ const auth = { user: { id: "u1", email: "sam@example.com" }, session: { access_t
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchMyFirms: vi.fn(), fetchOwnedFirms: vi.fn(), fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
+// The page also holds the "Leave this firm" action, which reaches the database through its own module; leaving is tested in AdvisorSettingsLeave.test.tsx.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 

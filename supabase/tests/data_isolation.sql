@@ -175,6 +175,7 @@
 \i supabase/migrations/20261117120000_table_settings.sql
 \i supabase/migrations/20261117120500_table_settings_fixes.sql
 \i supabase/migrations/20261117160000_epics_reconciled.sql
+\i supabase/migrations/20261118090000_leave_a_firm.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1021,6 +1022,7 @@ INSERT INTO callable VALUES
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('sign_up_firm(p_name text, p_address text)', 'own',     NULL, 'a signed-in person with a verified email makes a firm of their own and becomes its owner; refuses guests and unverified accounts; acts only for the caller'),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (supabase/tests/firm_invitations.sql)'),
+  ('leave_firm(p_firm_id uuid)', 'own', NULL, 'a current member of the firm ends their own membership now; acts only on the caller''s own membership, so it refuses everyone who is not a member of that firm (supabase/tests/leave_a_firm.sql)'),
   ('remove_member(p_firm_id uuid, p_user_id uuid)', 'own', NULL, 'a current owner of the firm ends a member''s membership now (or closes a suspended person''s); refused for every other caller, another firm''s owner, a platform admin who is no member, a former member and a suspended one included (supabase/tests/firm_members.sql)'),
   ('suspend_member(p_firm_id uuid, p_user_id uuid)', 'own', NULL, 'a current owner of the firm suspends a member: the membership ends now and the suspension is kept so it can be lifted; refused for every other caller (supabase/tests/firm_members.sql)'),
   ('lift_member_suspension(p_firm_id uuid, p_user_id uuid)', 'own', NULL, 'a current owner of the firm lifts a suspension: a membership begins now with the role and team the person had; refused for every other caller, the suspended person included (supabase/tests/firm_members.sql)'),
@@ -1223,6 +1225,8 @@ BEGIN
     format('SELECT public.finish_held_mail_discard(0, %L)', nobody),
     'SELECT count(*) FROM public.held_mail_due(1)',
     format('SELECT public.outbox_alert_recipients(%L)', nobody),
+    format('SELECT public.outbox_owner_recipients(%L)', nobody),
+    format('SELECT public.end_membership_now(0, %L)', 'probe'),
     format('SELECT public.mailbox_store(%L, ''google'', ''advisor@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')', pg_temp.id('advisor')),
     format('SELECT public.mailbox_secret(%L)', nobody),
     format('SELECT public.mailbox_delete(%L)', nobody),
@@ -3274,6 +3278,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_belongs_to_firm', 'service_only', 'whether the caller is a current member of a firm, suspended or not: the helper the platform admin''s rule asks'),
   ('person_is_member_of_a_firm_in_good_standing', 'service_only', 'whether a person is a current member of a firm that is not suspended: the mailbox functions ask it'),
   ('admin_decide_firm', 'platform_wide', 'a platform admin approves or refuses a waiting firm'),
+  ('leave_firm', 'own', 'a current member of the firm ends their own membership now and the firm''s owners are told; acts only on the caller''s own membership of the named firm (supabase/tests/leave_a_firm.sql)'),
   ('accept_invitation', 'own', 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
@@ -3347,7 +3352,7 @@ SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
   'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'guard_invitation_mail_rate', 'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
-  'complete_outbox_event', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
+  'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',

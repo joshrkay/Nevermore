@@ -122,6 +122,7 @@
 \i supabase/migrations/20261117120000_table_settings.sql
 \i supabase/migrations/20261117120500_table_settings_fixes.sql
 \i supabase/migrations/20261117160000_epics_reconciled.sql
+\i supabase/migrations/20261118090000_leave_a_firm.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
