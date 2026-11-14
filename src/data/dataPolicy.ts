@@ -413,9 +413,9 @@ export const DATA_CLASSES: DataClass[] = [
     label: "Firms, teams and who belongs to them",
     sensitivity: "confidential",
     examples: "A brokerage's name and address in the web address, who sees its records, its teams, and which accounts are members of it, in what role and from and until when, and which members are suspended and since when. Nothing about an intake's answers.",
-    stored: { tables: ["firms", "firm_teams", "firm_memberships", "firm_member_suspensions", "firm_suspensions"], buckets: [], elsewhere: [] },
+    stored: { tables: ["firms", "firm_teams", "firm_memberships", "firm_member_suspensions", "firm_suspensions", "firm_closures"], buckets: [], elsewhere: [] },
     retention: "For good: a membership is never changed, only ended, so who could see a record on a given day can always be answered.",
-    deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. Closing a firm is built in a later story (docs/DATA_HANDLING.md).",
+    deletion: "A member's account deleted at their request removes their memberships; a firm's last current owner can't be removed. A closed firm's own working data (invitations, listed organisations, requests to join, saved views, column choices, referral partners and teams) is deleted 30 days after an owner asked; every membership is ended, not deleted, and the platform keeps a record of the closing with a count per table and no content (CRM-P1.7). Intakes are never deleted by it (docs/DATA_HANDLING.md).",
   },
   {
     id: "firm_invitations",
@@ -433,7 +433,7 @@ export const DATA_CLASSES: DataClass[] = [
     examples: "The Google domains and Microsoft tenants a firm's owners listed (a domain or tenant ID and the name the owner gave it), and each request to join: which account asked, when, which listed organisation vouched, and whether an owner approved it (with the role) or declined it, and who decided. Nothing about an intake.",
     stored: { tables: ["firm_organisations", "join_requests"], buckets: [], elsewhere: [] },
     retention: "Kept with the firm, as the record of how a person joined or was turned away. A declined request is kept so the same person is not listed again each time they sign in. A rule to clear old requests is not built yet (docs/DATA_HANDLING.md).",
-    deletion: "A person's account deleted at their request removes their requests; a firm's listing is removed by an owner. Closing a firm is built in a later story (docs/DATA_HANDLING.md).",
+    deletion: "A person's account deleted at their request removes their requests; a firm's listing is removed by an owner. A closed firm's own working data (invitations, listed organisations, requests to join, saved views, column choices, referral partners and teams) is deleted 30 days after an owner asked; every membership is ended, not deleted, and the platform keeps a record of the closing with a count per table and no content (CRM-P1.7). Intakes are never deleted by it (docs/DATA_HANDLING.md).",
   },
   {
     id: "firm_activity",

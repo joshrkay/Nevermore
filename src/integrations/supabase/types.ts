@@ -1024,7 +1024,25 @@ export type Database = {
           suspended: boolean
           suspended_at: string | null
           suspension_reason: string | null
+          closing_on: string | null
+          closed_on: string | null
+          closure_asked_at: string | null
+          closure_asked_by: string | null
+          closure_deleted: { [key: string]: number } | null
         }[]
+      }
+      // Closing a firm (20261118110000).
+      request_firm_closure: {
+        Args: { p_firm_id: string; p_firm_name: string }
+        Returns: string
+      }
+      withdraw_firm_closure: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      my_firm_closure: {
+        Args: { p_firm_id: string }
+        Returns: { asked_at: string; closes_at: string }[]
       }
       admin_suspend_firm: {
         Args: { p_firm_id: string; p_reason: string }

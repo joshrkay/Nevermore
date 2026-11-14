@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -51,6 +51,16 @@ export interface MemberLeft {
   firmName: string;
   /** When their membership ended, as `YYYY-MM-DDTHH:MM:SSZ` (UTC). */
   leftAt: string;
+}
+
+/** The notice to a firm's owners that an owner asked to close the firm, or withdrew the request (public.request_firm_closure, withdraw_firm_closure). */
+export interface FirmClosing {
+  event: "asked" | "withdrawn";
+  /** The address of the owner who asked or withdrew. */
+  byEmail: string;
+  firmName: string;
+  /** When the firm closes, as `YYYY-MM-DDTHH:MM:SSZ` (UTC); only for a request just made. */
+  closesAt: string | null;
 }
 
 export interface ProspectConfirmation {
@@ -165,6 +175,18 @@ export function parseMemberLeft(raw: unknown): MemberLeft | null {
   const leftAt = p && oneLine(p.left_at, 20);
   if (!p || !memberEmail || !firmName || leftAt === null || !CERTIFIED_AT.test(leftAt) || !Number.isFinite(Date.parse(leftAt))) return null;
   return { memberEmail, firmName, leftAt };
+}
+
+/** The closing notice's fields, or null without who, which firm and what happened (and, for a request, when it closes). Only these are ever read. */
+export function parseFirmClosing(raw: unknown): FirmClosing | null {
+  const p = asObject(raw);
+  const byEmail = p && asEmail(p.by_email);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const closesAt = p && oneLine(p.closes_at, 20);
+  const event = p && p.event;
+  if (!p || !byEmail || !firmName || (event !== "asked" && event !== "withdrawn")) return null;
+  if (event === "asked" && (closesAt === null || !CERTIFIED_AT.test(closesAt) || !Number.isFinite(Date.parse(closesAt)))) return null;
+  return { event, byEmail, firmName, closesAt: event === "asked" ? closesAt : null };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -394,6 +416,24 @@ export function renderMemberLeft(n: MemberLeft): RenderedEmail {
   const headline = `${n.memberEmail} left ${n.firmName} on ${utcStamp(n.leftAt)}.`;
   const text = [headline, "", SIGN_OFF].join("\n");
   const html = layout(subject, headline, `<p style="margin:0;">${escapeHtml(headline)}</p>`);
+  return { subject, text, html };
+}
+
+/**
+ * The email to a firm's owners that a request to close the firm was made or withdrawn: who, which firm, and when it closes. It says what
+ * the 30 days mean and how to take the request back, and nothing of the firm's records.
+ */
+export function renderFirmClosing(n: FirmClosing): RenderedEmail {
+  const asked = n.event === "asked";
+  const subject = asked ? `${n.byEmail} asked to close ${n.firmName}` : `${n.byEmail} withdrew the request to close ${n.firmName}`;
+  const headline = asked
+    ? `${n.byEmail} asked to close ${n.firmName}. It closes on ${n.closesAt ? utcStamp(n.closesAt).slice(0, 10) : ""} unless an owner withdraws the request first.`
+    : `${n.byEmail} withdrew the request to close ${n.firmName}. The firm stays open and nothing was deleted.`;
+  const detail = asked
+    ? "Until then the firm is read-only: everyone can read it and nothing can be changed, added, sent or deleted. An owner can withdraw the request in Settings before that day."
+    : "The firm can be changed again.";
+  const text = [headline, "", detail, "", SIGN_OFF].join("\n");
+  const html = layout(subject, headline, `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p><p style="margin:0;">${escapeHtml(detail)}</p>`);
   return { subject, text, html };
 }
 

@@ -179,6 +179,7 @@
 \i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 \i supabase/migrations/20261118100000_join_by_organisation.sql
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
+\i supabase/migrations/20261118110000_close_a_firm.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -376,6 +377,11 @@ BEGIN
   INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, suspended_by, lifted_at, lifted_by) VALUES
     (firm_a, 'fixture', now() - interval '2 days', adm, now() - interval '1 day', adm),
     (firm_b, 'fixture', now() - interval '2 days', adm, now() - interval '1 day', adm);
+
+  -- A request to close each firm that was withdrawn (20261118110000): the history is kept, and neither firm is closing.
+  INSERT INTO public.firm_closures (firm_id, asked_at, asked_by, closes_at, withdrawn_at, withdrawn_by) VALUES
+    (firm_a, now() - interval '3 days', adm, now() + interval '27 days', now() - interval '2 days', adm),
+    (firm_b, now() - interval '3 days', adm, now() + interval '27 days', now() - interval '2 days', adm);
 
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
@@ -748,6 +754,8 @@ INSERT INTO matrix VALUES
   -- The platform's record of each suspension and its reason (20261116230000): nobody reads it through the API, firm owners and
   -- platform admins included; admins reach it through admin_firm_states().
   ('public.firm_suspensions',                           '{}', NULL),
+  -- The platform's record of requests to close a firm (CRM-P1.7): nobody reads it through the API; admins reach it through admin_firm_states().
+  ('public.firm_closures',                              '{}', NULL),
   -- A firm's suspended members (CRM-P1.5): closed to the API; an owner reads them through firm_members() (supabase/tests/firm_members.sql).
   ('public.firm_member_suspensions',                    '{}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
@@ -1051,6 +1059,9 @@ INSERT INTO callable VALUES
   ('firm_join_requests(p_firm_id uuid)', 'own', NULL, 'a current owner reads their own firm''s open requests to join; 42501 for every other caller'),
   ('approve_join_request(p_request_id uuid, p_role text)', 'own', NULL, 'a current owner of the request''s firm approves it with a role and the person becomes a member; the same refusal for another firm''s request as for one that does not exist'),
   ('decline_join_request(p_request_id uuid)', 'own', NULL, 'a current owner of the request''s firm declines it; the same refusal for another firm''s request as for one that does not exist'),
+  ('request_firm_closure(p_firm_id uuid, p_firm_name text)', 'own', NULL, 'a current owner of the firm, who types its name, asks to close it: it is read-only for 30 days; refused for every other caller, a platform admin, the owner of a refused or a suspended firm and another firm''s owner included (supabase/tests/close_a_firm.sql)'),
+  ('withdraw_firm_closure(p_firm_id uuid)', 'own', NULL, 'a current owner of the firm withdraws its open request to close before the 30 days end; refused for every other caller (supabase/tests/close_a_firm.sql)'),
+  ('my_firm_closure(p_firm_id uuid)', 'own', NULL, 'when the caller''s own firm closes, only for a current member of a firm with an open request; no row for anyone else (supabase/tests/close_a_firm.sql)'),
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
   ('admin_suspend_firm(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_suspend_firm(%2$L, ''probe'')', 'a platform admin who is no member of the firm suspends it with a reason (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
@@ -2709,6 +2720,10 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   -- row is a lifted one, so making it suspends neither firm.
   ('public.firm_suspensions', 'firm', 'its own firm_id; closed to the API, platform admins reach it through functions',
    $m$INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, lifted_at) VALUES ({firm}, 'probe-{tag}', now() - interval '1 hour', now()) RETURNING ctid::text$m$, false),
+  -- The platform's record of requests to close a firm (20261118110000): its own firm_id, read by no member. The probe's row is a withdrawn
+  -- one, so making it neither closes nor locks either firm.
+  ('public.firm_closures', 'firm', 'its own firm_id; closed to the API, platform admins reach it through admin_firm_states()',
+   $m$INSERT INTO public.firm_closures (firm_id, asked_at, closes_at, withdrawn_at) VALUES ({firm}, now() - interval '2 hours', now() - interval '1 hour', now() - interval '1 hour') RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
@@ -2733,7 +2748,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -3082,6 +3097,35 @@ BEGIN
   RAISE NOTICE 'data_isolation: % firm tables and buckets probed with two firms', (SELECT count(*) FROM probe_ran WHERE ran);
 END $$;
 
+-- ---------- 5b2. closing a firm says what it does with every firm table (CRM-P1.7) ----------
+-- A table registered above as a firm's data must be named in public.firm_closing_plan(): to be deleted when the firm closes, or kept, with the
+-- reason. A story that adds a firm table (leads, accounts, contacts, opportunities, custom fields, imports, conversations) fails here until it
+-- says which. And a plan line for something no longer registered is a stale line, which fails too.
+CREATE FUNCTION pg_temp.closing_gaps() RETURNS text LANGUAGE sql AS $$
+  SELECT nullif(concat_ws(E'\n',
+    (SELECT 'registered as a firm''s data, but closing a firm neither deletes it nor lists it as kept (add a line to public.firm_closing_plan()): '
+            || string_agg(r.src, ', ' ORDER BY r.src)
+     FROM registry r WHERE r.scope = 'firm' AND NOT EXISTS (SELECT 1 FROM public.firm_closing_plan() p WHERE p.src = r.src)),
+    (SELECT 'public.firm_closing_plan() names something that is not registered as a firm''s data: ' || string_agg(p.src, ', ' ORDER BY p.src)
+     FROM public.firm_closing_plan() p WHERE NOT EXISTS (SELECT 1 FROM registry r WHERE r.scope = 'firm' AND r.src = p.src))), '')
+$$;
+
+DO $$
+BEGIN
+  IF pg_temp.closing_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: closing a firm and the registry disagree:\n%', pg_temp.closing_gaps(); END IF;
+  -- The check can fail: a firm table nobody told closing about is caught, and so is a stale line.
+  INSERT INTO registry (src, scope, why) VALUES ('public.probe_new_firm_table', 'firm', 'a table a later story adds');
+  IF pg_temp.closing_gaps() IS NULL OR pg_temp.closing_gaps() NOT LIKE '%probe_new_firm_table%' THEN RAISE EXCEPTION 'FAIL: a firm table closing says nothing about passes'; END IF;
+  DELETE FROM registry WHERE src = 'public.probe_new_firm_table';
+  DELETE FROM registry WHERE src = 'public.referral_partners';
+  IF pg_temp.closing_gaps() IS NULL OR pg_temp.closing_gaps() NOT LIKE '%not registered%referral_partners%' THEN RAISE EXCEPTION 'FAIL: a stale line in the closing plan passes'; END IF;
+  INSERT INTO registry (src, scope, why, make_row) VALUES ('public.referral_partners', 'firm', 'its own firm_id',
+   $m$INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES ({firm}, 'probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$);
+  UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src = 'public.referral_partners';
+  IF pg_temp.closing_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the registry was not put back:\n%', pg_temp.closing_gaps(); END IF;
+  RAISE NOTICE 'data_isolation: closing a firm covers every firm table';
+END $$;
+
 -- ---------- 5c. the gate can fail ----------
 -- Each of these is a table (or bucket) the gate must refuse, and one the gate must accept. The first two are the shapes
 -- reviewers used to fool a check that read policy text: the policy mentions a firm helper, never ties it to the row read.
@@ -3311,6 +3355,15 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_lift_firm_suspension', 'platform_wide', 'a platform admin lifts a firm''s suspension'),
   ('admin_firm_states', 'platform_wide', 'every firm''s state and suspension for the platform admin''s page: no firm''s member reads it'),
   ('my_suspended_firm_at_address', 'own', 'whether the caller''s own firm at an address is suspended'),
+  ('request_firm_closure', 'own', 'a current owner of the firm asks to close it; acts only for the caller and the firm they own (supabase/tests/close_a_firm.sql)'),
+  ('withdraw_firm_closure', 'own', 'a current owner of the firm withdraws its request to close; acts only for the caller and the firm they own'),
+  ('my_firm_closure', 'own', 'when the caller''s own firm closes, for a current member of it only'),
+  ('firm_is_read_only', 'service_only', 'whether a firm is closing or closed: the helper the write paths ask, as the database''s own question; no API role can call it'),
+  ('firm_is_closed', 'service_only', 'whether a firm has been closed by the daily job: the address and alert functions ask it'),
+  ('firm_is_being_closed', 'service_only', 'whether the closing is running for a firm whose request is open and past its 30 days: the two triggers that let it end the last owner and clear a team ask it'),
+  ('assert_firm_writable', 'service_only', 'refuses a current member of a closing firm with a plain message; every function that changes a firm''s data calls it first'),
+  ('close_firm_now', 'service_only', 'closes one firm whose request is due, as the service role: deletes its working data, ends every membership and records what was deleted without content (supabase/tests/close_a_firm.sql)'),
+  ('close_due_firms', 'service_only', 'the daily job''s step: closes every firm whose request is due'),
   ('firm_is_suspended', 'service_only', 'whether a firm is suspended now: the helper every policy and function asks, as the database''s own question; no API role can call it'),
   ('admin_belongs_to_firm', 'service_only', 'whether the caller is a current member of a firm, suspended or not: the helper the platform admin''s rule asks'),
   ('person_is_member_of_a_firm_in_good_standing', 'service_only', 'whether a person is a current member of a firm that is not suspended: the mailbox functions ask it'),
@@ -3403,7 +3456,7 @@ INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
   'record_membership_change', 'record_send_activity', 'keep_suspension', 'drop_mailbox_when_membership_ends',
-  'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
+  'refuse_note_on_closing_firm', 'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',
   'snapshot_certified_evidence', 'stamp_message_firm', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',
