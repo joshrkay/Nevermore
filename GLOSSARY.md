@@ -179,8 +179,20 @@ _Avoid_: linked account, email integration, inbox connection
 A dated entry an advisor adds to a quote request's timeline for something that happened outside the product, with its kind: a call, a portal entry, an email sent elsewhere, an underwriter's question, or other. It changes nothing else: it never records a send or changes the quote request status, and it can be added to a closed quote request, which stays closed. It can be corrected, and each correction is logged. The quote request's own single note stays beside it, as the request's summary.
 _Avoid_: activity, log entry, comment
 
+**Reply address**:
+The address a quote request's replies are sent to, `<File ID>.<PEO short name>.<16 hex characters>` at the receiving subdomain. The first two parts are for an advisor to recognise it by; only the last is the secret: 64 bits from the database's random generator, so there are 2^64 addresses for one File ID and PEO, and nothing in it is a quote request's id, a counter or a time. One is live per quote request; a revoked one is never issued again. Mail for an address with no live quote request goes to the **Holding list**.
+_Avoid_: inbound address, reply-to token
+
+**Signed link**:
+The only way a stored file reaches a browser: a link made for one file at one click by Supabase Storage, lasting 60 seconds, made only if the person asking could read that file under row security, which asks the same current-membership question every table policy asks (a member of another firm, a former or suspended member, a platform admin and a signed-out caller get none). Saved as a download, under the file's cleaned name, and never kept, logged or put in an address. There is no public bucket and no long-lived link to a firm's file. A browser-built object link (a PDF or bundle made in the page) and the mail provider's link to an inbound attachment (followed by a server function, never handed on) are not signed links and are listed as exempt in `src/lib/fileLinks.test.ts`.
+_Avoid_: public URL, download URL, share link
+
+**Stored secret**:
+A token, key or ciphertext the product keeps for someone, listed column by column in the isolation tests' secrets list: a broker's mailbox refresh token (sealed by the mailbox function with a key only it holds, so the database holds ciphertext it can't read) and an invitation's link secret (kept only as a hash). No policy, view, publication or function returns one to a browser; only the server function that sends reads a mailbox token back. A table added later with a column named like a secret fails the build until it is listed, closed to the API and swept. A linked CRM's token does not exist yet.
+_Avoid_: credential, API key (for what a person's mailbox lets the product do)
+
 **Holding list**:
-Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Mail to a firm's own revoked address, or moved off its thread, is **held for that firm**: its current members read it. Mail to an address nobody held belongs to no firm. A platform admin, who belongs to no firm, sees only a File ID and a PEO for each (never a sender, subject or text). Only a platform admin assigns a held message to a quote request (of the same firm, if it has one) or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
+Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Mail to a firm's own revoked address, or moved off its thread, is **held for that firm**: its current members read it. Mail to an address nobody held belongs to no firm, and so does mail sent to addresses of two firms at once: a message is held for a firm only when every reply address of ours on it belonged to that one firm, whatever else it was sent to (CRM-P2.2). A platform admin, who belongs to no firm, sees only a File ID and a PEO for each (never a sender, subject or text). Only a platform admin assigns a held message to a quote request (of the same firm, if it has one) or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
 _Avoid_: unmatched inbox, spam folder, quarantine (quarantine holds files waiting for or failing a malware scan)
 
 **Market authorization**:
@@ -304,8 +316,26 @@ A named group inside one firm, with an optional parent team of the same firm and
 _Avoid_: department, office
 
 **Membership** (code: `firm_memberships`):
-A person's place in a firm, with a role, an optional team and the dates it began and ended. It is never changed: a change ends one row and adds another, so who could see a record on a given day can be answered. A person holds one membership of a firm at a time, and a firm always keeps at least one current owner. A **current member** is one whose membership has begun and not ended; `is_firm_member` and `firm_role` answer for the caller.
+A person's place in a firm, with a role, an optional team and the dates it began and ended. It is never changed: a change ends one row and adds another, so who could see a record on a given day can be answered. A person holds one membership of a firm at a time, and a firm always keeps at least one current, unsuspended owner. A **current member** is one whose membership has begun and not ended; `is_firm_member` and `firm_role` answer for the caller.
 _Avoid_: seat, user (for a member)
+
+**Removing a member** (code: `remove_member`):
+An owner of the firm ends a member's membership now. The membership is dated and kept, never deleted, so who could see what on a given day can still be answered. The person stops seeing or changing anything of the firm at once, through every table policy and every firm-scoped function, and stops being told the firm's alerts, a retried alert included (D-35). Their sign-in is kept; at the firm's address they see "You aren't a member of this firm" (D-27). What they created stays with the firm. A mailbox they connected is deleted when their last current membership anywhere ends. Pending invitations they sent stay valid, and they can no longer manage them. Only a current owner of that firm can do it (D-18), never a platform admin who is not a member (D-16), and not to oneself (leaving is CRM-P1.6). The firm's last owner cannot be removed, even when two owners remove each other at the same moment.
+_Avoid_: delete a member, deprovision, kick
+
+**Suspension** (code: `suspend_member`, `lift_member_suspension`, `firm_member_suspensions`):
+A member kept on the firm's list who grants nothing until an owner lifts it. It is stored as the membership ended (so every rule that asks "is this a current member" already refuses the person, with no second condition to forget) plus a suspension record of the role and team to give back; lifting begins a new membership from that moment with them (ADR 0016). At most one suspension is open per person and firm (a unique index, D-29), and a suspended person cannot be added again by an invitation or an insert: only lifting brings them back. A suspended person keeps a connected mailbox stored but cannot use it. A suspended owner does not count as an owner the firm keeps. Removing a suspended person closes the suspension as removed.
+_Avoid_: pause, lock out, disabled (a suspended firm is CRM-P1.8's, a different thing)
+
+**First recipients** (code: `outbox_events.first_recipients`):
+The addresses an advisor alert was first prepared for, written on the outbox event by the first freeze and never cleared or rewritten, even when the frozen message is thrown away. Every retry sends only to those of them who are still current members; when none is, the alert goes to the firm's current members under a new key (D-35, D-102). Nobody who joined after the first preparation is added.
+_Avoid_: frozen recipients (the frozen message is disposable, this is not)
+
+**Mailbox cleanup** (code: `drop_mailboxes_of_former_members`, `lock_mailbox_owner`):
+The hourly job that deletes the stored **connected mailbox** of anyone with no current membership and no open suspension, which catches a last membership that ended by reaching its date (no change fires then). Storing a mailbox and every ending of a membership take the same per-person lock first, so concurrent endings or a concurrent store cannot leave a mailbox for a non-member (D-32).
+
+**Members page** (code: `AdvisorMembersPage`, `/advisor/members`, `firm_members`):
+The console page where an owner sees the current and suspended members of the firm with their role and state, and removes, suspends or lifts a suspension, each after a confirmation in plain words. It is for the owners of the **current firm**, reached from the console menu. A removed person is not listed; the firm's record says they were.
 
 **Invitation** (code: `firm_invitations`, `invite_member`, `accept_invitation`):
 An owner's offer of a place in a firm to an email address, with a role (and, in the database, a team). It is single-use and lasts seven days. It is **pending** until it is accepted or withdrawn; one that has run out stays pending, shown as expired, for an owner to resend or withdraw. Only a hash of its token is stored. An owner of that firm, a current one, alone can make, resend or withdraw it (D-18). Accepting it, as the person signed in with that email (verified), adds a dated membership. At most one is pending per firm and email (D-29). A firm still waiting for approval can invite and be joined, but holds at most five pending invitations until it is approved, and sends at most twenty invitation emails (first sends and resends together) in any twenty-four hours, the next being refused with the time it can send again (D-34, D-36; there is no lifetime limit, and both limits end on approval); a refused firm cannot invite or resend, and a pending invitation to it cannot be accepted (D-34).
@@ -394,7 +424,7 @@ Which columns a person shows on a table, in what order, kept in the database per
 _Avoid_: layout, column settings, preferences (on its own)
 
 **Entry kind** (code: `firm_activity.kind`):
-What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
+What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. Removing a member writes `member_removed`, suspending one `member_suspended` and lifting it `member_restored`, each with who did it and to whom (and instead of, not as well as, the `member_ended` or `owner_added` that ending and beginning a membership would write). A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
 
 ### Advisors
 
@@ -454,8 +484,12 @@ A person or firm outside the advisory team who sends employers to the site with 
 _Avoid_: partner on its own, affiliate, referrer
 
 **Referral code**:
-The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
+The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. A partner and its code belong to one firm, and two firms may each use the same code for their own partner. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted. A code is matched to a partner only within the intake's own firm, so another firm's code on an intake attributes it to nobody. See **Referral link**.
 _Avoid_: promo code, tracking code
+
+**Referral link** (code: `partnerLink`, `referralLinksWork`):
+The site's front page with a referral partner's code. Every intake a browser starts belongs to the default firm (D-101), so a link reaches only the default firm: the Referral Partners page shows and copies one only for that firm. For any other firm it keeps the partner and its code and says links come when the firm can take intakes (New quote, Epic 5).
+_Avoid_: tracking link, affiliate link
 
 **Second factor**:
 The extra step, after a password, that proves it is the advisor signing in: the 6-digit code from an authenticator app. It is required when *this sign-in* used a password, not whenever the account has one; a sign-in through Google or Microsoft relies on that provider's and is never asked. Without it a password sign-in opens nothing of the Advisor Console, and the database refuses it, not only the screen. Prospects and guests are never asked: no employer is ever asked for a second factor.

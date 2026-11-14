@@ -6,7 +6,8 @@ U_A=00000000-0000-0000-0000-00000000000a; U_G=00000000-0000-0000-0000-0000000000
 PROSPECT=$($J authenticated $U_A jo@acme.example false); GUEST=$($J authenticated $U_G "" true); OTHER=$($J authenticated $U_C pat@globex.example false)
 SVC=$($J service_role); ANON=$($J anon)
 export REST=http://127.0.0.1:54321/rest/v1
-sql() { echo "$1" | su postgres -c "psql -d verify -A -F ' | '" ; }
+export PGHOST=${PGHOST:-localhost} PGPORT=${PGPORT:-5432} PGUSER=${PGUSER:-postgres} PGPASSWORD=${PGPASSWORD:-postgres}
+sql() { echo "$1" | psql -d verify -A -F ' | ' ; }
 invoke() { curl -s -w "  [http %{http_code}]\n" -X ${1:-POST} ${2:+-H "Authorization: Bearer $2"} http://127.0.0.1:8000/ ; }
 newsession() { # token user_id data-json -> session id
   curl -s -X POST "$REST/chamber_sessions" -H "Authorization: Bearer $1" -H "Content-Type: application/json" -H "Prefer: return=representation" \

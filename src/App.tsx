@@ -38,6 +38,7 @@ const AdvisorMailboxPage = lazy(() => import("./pages/advisor/AdvisorMailboxPage
 const AdvisorOrganisationsPage = lazy(() => import("./pages/advisor/AdvisorOrganisationsPage"));
 const AdvisorActivityPage = lazy(() => import("./pages/advisor/AdvisorActivityPage"));
 const AdvisorSettingsPage = lazy(() => import("./pages/advisor/AdvisorSettingsPage"));
+const AdvisorMembersPage = lazy(() => import("./pages/advisor/AdvisorMembersPage"));
 const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
 const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
 const JoinFirmPage = lazy(() => import("./pages/JoinFirmPage"));
@@ -87,6 +88,7 @@ const AppRoutes = () => (
                   <Route path="/advisor/peos" element={<AdvisorPeosPage />} />
                   <Route path="/advisor/mailbox" element={<AdvisorMailboxPage />} />
                   <Route path="/advisor/activity" element={<RequireFirm as="owner"><AdvisorActivityPage /></RequireFirm>} />
+                  <Route path="/advisor/members" element={<RequireFirm as="owner" ownersOnly="see and change its members"><AdvisorMembersPage /></RequireFirm>} />
                   <Route path="/firm/invitations" element={<FirmInvitationsPage />} />
                   <Route path="/settings" element={<AdvisorSettingsPage />} />
                 </Route>

@@ -24,13 +24,14 @@ const renderPage = async (role: string) => {
 beforeEach(() => { firmAddress = { status: "none" }; api.fetchIsAdmin.mockResolvedValue(false); });
 
 describe("the Settings page", () => {
-  it("links an owner to Mailbox, Invitations, Activity, Referral partners, PEOs and Outbox", async () => {
+  it("links an owner to Mailbox, Invitations, Members, Activity, Referral partners, PEOs and Outbox", async () => {
     const list = await renderPage("owner");
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     const links = list.getAllByRole("link").map((l) => [l.querySelector("span span")?.textContent, l.getAttribute("href")]);
     expect(links).toEqual([
       ["Mailbox", "/advisor/mailbox"],
       ["Invitations", "https://alpha.nevermorepeo.com/firm/invitations"],
+      ["Members", "/advisor/members"],
       ["Activity", "/advisor/activity"],
       ["Referral partners", "/advisor/partners"],
       ["PEOs", "/advisor/peos"],

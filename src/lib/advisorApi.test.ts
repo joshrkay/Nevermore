@@ -11,12 +11,26 @@ const createSignedUrl = vi.fn();
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
 const inFilters: { table: string; column: string; values: unknown[] }[] = [];
+/** Each `.eq(column, value)` filter a query asked for, by table. */
+const eqFilters: { table: string; column: string; value: unknown }[] = [];
+/** Each `.select(columns)` and `.order(column)` a query asked for, by table. */
+const selects: { table: string; columns: unknown }[] = [];
+const orders: { table: string; column: string }[] = [];
 const query = (table: string) => {
+  /** `.eq(column, value)` filters of a referral-partner lookup, applied as the database does (the other tables' rows are returned whole). */
+  const eqs: [string, unknown][] = [];
   let rows = () => tables[table] ?? [];
   const result = () => ({ data: rows(), error: null });
   const chain: Record<string, unknown> = {
-    select: () => chain,
-    eq: () => chain,
+    select: (columns?: unknown) => {
+      selects.push({ table, columns });
+      return chain;
+    },
+    eq: (column: string, value: unknown) => {
+      eqs.push([column, value]);
+      eqFilters.push({ table, column, value });
+      return chain;
+    },
     is: () => chain,
     in: (column: string, values: unknown[]) => {
       inFilters.push({ table, column, values });
@@ -24,9 +38,17 @@ const query = (table: string) => {
       rows = () => before().filter((r) => values.includes((r as Record<string, unknown>)[column]));
       return chain;
     },
-    order: () => chain,
+    order: (column: string) => {
+      orders.push({ table, column });
+      return chain;
+    },
     limit: () => chain,
-    maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
+    maybeSingle: async () => {
+      // Like PostgREST: more than one row where at most one is expected is an error.
+      const found = table === "referral_partners" ? rows().filter((r) => eqs.every(([c, v]) => (r as Record<string, unknown>)[c] === v)) : rows();
+      if (table === "referral_partners" && found.length > 1) return { data: null, error: { code: "PGRST116", message: "multiple rows" } };
+      return { data: found[0] ?? null, error: null };
+    },
     then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => Promise.resolve(result()).then(ok, ko),
   };
   return chain;
@@ -79,6 +101,12 @@ const {
   mailAttachmentUrl,
   recordActivity,
   fetchOwnedFirms,
+  listMyFirms,
+  loadIntakeSources,
+  loadIntakeSourcesOfMyFirms,
+  listReferralPartners,
+  addReferralPartner,
+  updateReferralPartner,
   listFirmActivity,
   listFirmActivityPeople,
   NEVERMORE_FILTER,
@@ -408,6 +436,17 @@ describe("loadSubmission", () => {
     rpc.mockClear();
     await loadSubmission("s1");
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  // The partner key is (firm, code): two firms may use the same code, and a member of both opens either one's submissions.
+  it("names the referral partner of the submission's own firm when two of the caller's firms use the same code", async () => {
+    tables.chamber_sessions = [row({ firm_id: "firm-b", referral_code: "acme" })];
+    tables.referral_partners = [
+      { firm_id: "firm-a", code: "acme", name: "Acme of A" },
+      { firm_id: "firm-b", code: "acme", name: "Acme of B" },
+    ];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.sourcePartnerName).toBe("Acme of B");
   });
 
   it("finds nothing when the database hands over no row on opening", async () => {
@@ -824,5 +863,54 @@ describe("the firm's record of who did what", () => {
     rpc.mockResolvedValue({ data: [{ user_id: "u1", email: "a@x.test", is_nevermore: false }], error: null });
     await expect(listFirmActivityPeople("firm-1")).resolves.toEqual([{ user_id: "u1", email: "a@x.test", is_nevermore: false }]);
     expect(rpc).toHaveBeenCalledWith("firm_activity_people", { p_firm_id: "firm-1" });
+  });
+});
+
+describe("referral partners belong to a firm", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    eqFilters.length = 0;
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+
+  it("reads one firm's partners", async () => {
+    tables.referral_partners = [{ firm_id: "firm-a", code: "x", name: "X" }];
+    await listReferralPartners("firm-a");
+    expect(eqFilters).toContainEqual({ table: "referral_partners", column: "firm_id", value: "firm-a" });
+  });
+
+  it("adds and renames a partner for the firm named", async () => {
+    rpc.mockResolvedValue({ data: { firm_id: "firm-b", code: "x" }, error: null });
+    await addReferralPartner("firm-b", "x", "X", "other");
+    expect(rpc).toHaveBeenCalledWith("advisor_add_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "X", p_kind: "other" });
+    await updateReferralPartner("firm-b", "x", "Y", "other");
+    expect(rpc).toHaveBeenCalledWith("advisor_update_referral_partner", { p_firm_id: "firm-b", p_code: "x", p_name: "Y", p_kind: "other" });
+  });
+
+  it("lists the firms the caller belongs to, by name", async () => {
+    tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }];
+    selects.length = 0;
+    orders.length = 0;
+    await expect(listMyFirms()).resolves.toEqual([{ id: "firm-a", name: "Alpha", address: "alpha" }]);
+    expect(selects).toContainEqual({ table: "firms", columns: "id, name, address" });
+    expect(orders).toContainEqual({ table: "firms", column: "name" });
+  });
+
+  it("asks for one firm's funnel by source, so another membership's volume cannot push its rows out", async () => {
+    rpc.mockResolvedValue({ data: [{ referral_code: "x", firm_id: "firm-b" }], error: null });
+    const from = new Date("2026-10-01T00:00:00Z");
+    const to = new Date("2026-11-01T00:00:00Z");
+    await expect(loadIntakeSources(from, to, "firm-b")).resolves.toEqual([{ referral_code: "x", firm_id: "firm-b" }]);
+    expect(rpc).toHaveBeenCalledWith("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString(), p_firm_id: "firm-b" });
+  });
+
+  it("asks once for each of the caller's firms when no single firm is the page's, and joins the answers with the firms, the busiest source first", async () => {
+    tables.firms = [{ id: "firm-a", name: "Alpha", address: "alpha" }, { id: "firm-b", name: "Beta", address: "beta" }];
+    const started: Record<string, number> = { "firm-a": 2, "firm-b": 7 };
+    rpc.mockImplementation(async (_fn: string, args: { p_firm_id: string }) => ({ data: [{ referral_code: "x", firm_id: args.p_firm_id, started: started[args.p_firm_id] }], error: null }));
+    const { firms, rows } = await loadIntakeSourcesOfMyFirms(new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z"));
+    expect(firms.map((f) => f.name)).toEqual(["Alpha", "Beta"]);
+    expect(rows.map((r) => r.firm_id)).toEqual(["firm-b", "firm-a"]);
+    expect(rpc.mock.calls.map((c) => (c[1] as { p_firm_id: string }).p_firm_id)).toEqual(["firm-a", "firm-b"]);
   });
 });
