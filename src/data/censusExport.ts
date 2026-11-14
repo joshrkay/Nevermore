@@ -4,6 +4,7 @@
 // CSV is written here; an xlsx, and the PEO's own template filled, in src/lib/censusWorkbook.ts.
 import { CENSUS_TEMPLATE_COLUMNS, type CensusEmployee, type CensusTemplateColumn } from "./census";
 import { findPeo, type PeoRecord } from "./peoCatalog";
+import { csvField, csvLines } from "@/lib/csv";
 
 /** Which of a PEO's own templates the census fills, and where: the sheet, its header row and its first row of data. */
 export interface TemplateWorkbookRef {
@@ -33,33 +34,22 @@ export const OUR_CENSUS_LAYOUT: PeoCensusLayout = {
   template: null,
 };
 
-/** One CSV field, defused if it would run as a formula, then quoted with its quotes doubled when it holds a comma,
- * a quote or a line break (RFC 4180). */
-function cell(value: unknown): string {
-  // A yes-or-no fact (COBRA status) is written as the census template takes it, so the file reads back the same.
-  const raw = value === undefined || value === null ? "" : typeof value === "boolean" ? (value ? "yes" : "no") : String(value);
-  // A leading =, +, -, @, tab or carriage return makes a spreadsheet run the value as a formula: the prospect
-  // typed it, and an underwriter opens the file. An apostrophe keeps it text (OWASP, CSV injection).
-  const text = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 /** The census in a layout, as CSV (CRLF rows, a header row first), and the headers it leaves blank. */
 export function censusExport(census: readonly CensusEmployee[], layout: PeoCensusLayout): { csv: string; blankColumns: string[] } {
   const listsDependents = layout.columns.some((c) => c.from === "relationship");
   const rows = [
-    layout.columns.map((c) => cell(c.header)),
+    layout.columns.map((c) => csvField(c.header)),
     ...census.flatMap((e) => [
       // An employee's own row leaves the relationship blank, as the census template takes it.
-      layout.columns.map((c) => (c.from && c.from !== "relationship" ? cell(e[c.from]) : "")),
+      layout.columns.map((c) => (c.from && c.from !== "relationship" ? csvField(e[c.from]) : "")),
       // Their dependents follow directly under them (K-2.3), each with what is held of them (name, relationship, date of
       // birth) and so nothing of the employee's. A layout with no relationship column could not tell them from employees, so leaves them out.
       ...(listsDependents ? (e.dependents ?? []) : []).map((d) =>
-        layout.columns.map((c) => (c.from ? cell((d as unknown as Record<string, unknown>)[c.from]) : "")),
+        layout.columns.map((c) => (c.from ? csvField((d as unknown as Record<string, unknown>)[c.from]) : "")),
       ),
     ]),
   ];
-  return { csv: rows.map((r) => r.join(",")).join("\r\n") + "\r\n", blankColumns: blankColumnsOf(layout) };
+  return { csv: csvLines(rows), blankColumns: blankColumnsOf(layout) };
 }
 
 /** The census's values in a layout, row by row: a number as a number, a blank column or missing fact as "". */

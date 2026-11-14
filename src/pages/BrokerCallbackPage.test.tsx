@@ -38,6 +38,12 @@ describe("BrokerCallbackPage", () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor/held"));
   });
 
+  it("goes back to the page's filters and firm, as the sign-in carried them", async () => {
+    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "connected" });
+    renderAt(`?code=abc&next=${encodeURIComponent("/advisor/activity?firm=f1&kind=send_recorded")}`);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor/activity?firm=f1&kind=send_recorded"));
+  });
+
   it("ignores a next that leaves the console", async () => {
     finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "connected" });
     renderAt("?code=abc&next=https%3A%2F%2Fevil.example");
