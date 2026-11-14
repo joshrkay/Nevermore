@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { QueueRow } from "@/lib/queueApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
 
@@ -151,6 +151,38 @@ const renderAt = (url = "/advisor") =>
 const where = () => screen.getByTestId("location").textContent;
 const filterRowGroup = () => screen.getByRole("group", { name: "Filters" });
 const tabs = () => screen.getByRole("navigation", { name: "Views" });
+
+// A queue that can be left for a row and come back to (a row opens /advisor/submissions/:id), as the app's routes do. `goTo` leaves or comes back the way a
+// row's link, the browser's Back button or a typed address does, for the moments when a question over the page (Radix's alert dialog) makes the page's own links
+// unreachable; `path` says where the person is now.
+const ShowId = () => <p>Detail page for {useParams().id}</p>;
+const GoBack = () => { const go = useNavigate(); return <button type="button" onClick={() => go(-1)}>Go back</button>; };
+const PathProbe = () => { const { pathname, search } = useLocation(); return <p data-testid="path">{pathname}{search}</p>; };
+let goTo: (to: string | number) => void = () => {};
+const Navigator = () => { const go = useNavigate(); goTo = (to) => (typeof to === "number" ? go(to) : go(to)); return null; };
+const renderWithRows = (client: QueryClient, url = "/advisor") =>
+  render(
+    <WorkspaceContext.Provider value={workspace()}>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[url]}>
+          <Routes>
+            <Route path="/advisor" element={<AdvisorDashboardPage />} />
+            <Route path="/advisor/submissions/:id" element={<><ShowId /><GoBack /></>} />
+          </Routes>
+          <PathProbe />
+          <Navigator />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </WorkspaceContext.Provider>,
+  );
+const path = () => screen.getByTestId("path").textContent;
+/** Makes the database's answer to one function wait until the test lets it through (it is made, as the database would, when it is let through). */
+const holdAnswerTo = (fn: string) => {
+  const held = { answer: () => {} };
+  rpc.mockImplementation((name: string, args: Record<string, unknown>) =>
+    name === fn ? new Promise((resolve) => { held.answer = () => resolve(database(name, args)); }) : database(name, args));
+  return held;
+};
 
 describe("saved views on the queue (CRM-S3.4a)", () => {
   beforeEach(() => {
@@ -1259,6 +1291,83 @@ describe("saved views on the queue (CRM-S3.4a)", () => {
       await screen.findByRole("link", { name: "Acme" });
       await waitFor(() => expect(asksOf("my_table_columns").length).toBeGreaterThan(0));
       expect(asksOf("my_table_columns").every((a) => a.p_view_id === null)).toBe(true);
+    });
+  });
+
+  describe("an action that is answered after the person has left the queue", () => {
+    // The database can take a while to answer; the person may have opened a row meanwhile. What the action does to the address belongs to the queue they were
+    // looking at, and they are not there any more.
+    const leaveThenAnswer = async (held: { answer: () => void }) => {
+      act(() => goTo("/advisor/submissions/s1"));
+      await screen.findByText("Detail page for s1");
+      await act(async () => { held.answer(); await new Promise((r) => setTimeout(r, 50)); });
+    };
+    // Back lands on the queue they left, not on the row they opened: nothing was added to the history on the way.
+    const backToTheQueue = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "Go back" }));
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+    };
+
+    // Catches: a view saved while the person opened a row pulling them back to the queue, on the new view, when the database answers (and a history entry
+    // pushed, so Back lands on the row again).
+    it("leaves them on the row they opened when the view they were saving is saved", async () => {
+      const held = holdAnswerTo("save_view");
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient(), "/advisor?filter=needs_action:is:true");
+      await user.click(await screen.findByRole("button", { name: "Save this as a view" }));
+      await user.type(within(await screen.findByRole("dialog", { name: "Save this as a view" })).getByRole("textbox", { name: "View name" }), "Hot leads");
+      await user.click(screen.getByRole("button", { name: "Save view" }));
+      await waitFor(() => expect(asksOf("save_view")).toHaveLength(1));
+      await leaveThenAnswer(held);
+      expect(path()).toBe("/advisor/submissions/s1");
+      await backToTheQueue(user);
+      expect(path()).toBe("/advisor?filter=needs_action:is:true");
+    });
+
+    // Catches: the same for "Save changes to this view".
+    it("leaves them on the row they opened when the changes they were saving are saved", async () => {
+      stored = [stored1({ name: "Hot leads", filters: [yes("needs_action")] })];
+      const held = holdAnswerTo("change_saved_view");
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient(), "/advisor?view=view-1&filter=waiting_on_peo:is:true");
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(screen.getByRole("group", { name: "This view" })).getByRole("button", { name: "Save changes to this view" }));
+      await waitFor(() => expect(asksOf("change_saved_view")).toHaveLength(1));
+      await leaveThenAnswer(held);
+      expect(path()).toBe("/advisor/submissions/s1");
+      await backToTheQueue(user);
+      expect(path()).toBe("/advisor?view=view-1&filter=waiting_on_peo:is:true");
+    });
+
+    // Catches: the same for a delete: the address is moved to "all statuses" under a person who is looking at a row.
+    it("leaves them on the row they opened when the view they were deleting is deleted", async () => {
+      stored = [stored1({ name: "Hot leads" })];
+      const held = holdAnswerTo("delete_saved_view");
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient(), "/advisor?view=view-1");
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(screen.getByRole("group", { name: "This view" })).getByRole("button", { name: "Delete" }));
+      await user.click(within(await screen.findByRole("alertdialog", { name: "Delete the view “Hot leads”?" })).getByRole("button", { name: "Delete view" }));
+      await waitFor(() => expect(asksOf("delete_saved_view")).toHaveLength(1));
+      await leaveThenAnswer(held);
+      expect(path()).toBe("/advisor/submissions/s1");
+      await backToTheQueue(user);
+    });
+
+    // Catches: the same for stopping to share a colleague's view, which also leaves for "all statuses".
+    it("leaves them on the row they opened when they stop sharing a colleague's view", async () => {
+      role = "owner";
+      stored = [stored1({ name: "Their view", owner: SOMEONE, shared: true })];
+      const held = holdAnswerTo("unshare_saved_view");
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient(), "/advisor?view=view-1");
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(screen.getByRole("group", { name: "This view" })).getByRole("button", { name: "Stop sharing" }));
+      await user.click(within(await screen.findByRole("alertdialog", { name: "Stop sharing “Their view”?" })).getByRole("button", { name: "Stop sharing" }));
+      await waitFor(() => expect(asksOf("unshare_saved_view")).toHaveLength(1));
+      await leaveThenAnswer(held);
+      expect(path()).toBe("/advisor/submissions/s1");
+      await backToTheQueue(user);
     });
   });
 

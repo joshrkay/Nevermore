@@ -1,4 +1,4 @@
-import { useContext, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
 import { changeSavedView, deleteSavedView, renameSavedView, saveView, shareSavedView, unshareSavedView, type SavedView, type ViewFilter, type WorkspaceTable } from "@/lib/tableSettingsApi";
@@ -71,6 +71,15 @@ export function useViewActions<K extends TableFields, Row, Context>(
   // search meanwhile), not the one drawn when the button was pressed.
   const changeNow = useRef(change);
   changeNow.current = change;
+  // It may also end after the person has left the queue altogether (opened a row, pressed Back): what an action does to the address belongs to the page they were
+  // looking at, and putting it on the address of whatever page they are on now would pull them back (D-253). The list and the caches are still written: they are
+  // the firm's, not the page's, and the queue is drawn from them when the person returns.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const moveAddress: typeof change = (patch, options) => { if (mounted.current) changeNow.current(patch, options); };
   const focus = useRef<string | null | undefined>(undefined);
   // No firm, no views to keep (every hook is above this line).
   if (!firmId) return null;
@@ -93,7 +102,7 @@ export function useViewActions<K extends TableFields, Row, Context>(
     void client.invalidateQueries({ queryKey: viewsKey });
     setSaid(`Saved the view “${name}”. It is open now.`);
     focus.current = id;
-    changeNow.current({ view: id, filters: [], sort: null }, { push: true });
+    moveAddress({ view: id, filters: [], sort: null }, { push: true });
   };
 
   const rename = async (view: TableView<K>, name: string) => {
@@ -119,7 +128,7 @@ export function useViewActions<K extends TableFields, Row, Context>(
     } else {
       // A colleague's view goes back to being private to them, so it is no longer one the person may open: they leave it first, as for a deleted view.
       setSaid(`Stopped sharing “${view.label}”. It is private to whoever saved it, so it is no longer in your views.`);
-      changeNow.current({ view: null }, { push: true });
+      moveAddress({ view: null }, { push: true });
       client.setQueryData<SavedView[]>(viewsKey, (old) => (old ?? []).filter((v) => v.id !== view.id));
     }
     void client.invalidateQueries({ queryKey: viewsKey });
@@ -130,7 +139,7 @@ export function useViewActions<K extends TableFields, Row, Context>(
     setSaid(`Deleted the view “${view.label}”. Showing ${table.allViewLabel.toLowerCase()}.`);
     // The address leaves the view FIRST: a view the table no longer lists is dropped from the address with a line saying it isn't available, which is not
     // what a person who has just deleted it should be told.
-    changeNow.current({ view: null }, { push: true });
+    moveAddress({ view: null }, { push: true });
     client.setQueryData<SavedView[]>(viewsKey, (old) => (old ?? []).filter((v) => v.id !== view.id));
     void client.invalidateQueries({ queryKey: viewsKey });
   };
@@ -143,7 +152,7 @@ export function useViewActions<K extends TableFields, Row, Context>(
     setSaid(`Saved the changes to “${view.label}”.`);
     // The button that was pressed goes with the change (nothing is left over the view), so focus goes to the view's tab.
     focus.current = view.id;
-    changeNow.current({ filters: [], sort: null }, { push: true });
+    moveAddress({ filters: [], sort: null }, { push: true });
   };
 
   return {
