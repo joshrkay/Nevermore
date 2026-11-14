@@ -953,8 +953,8 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert"]);
     // The emails that link to the intake need the app's address; the confirmation doesn't.
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
@@ -1185,6 +1185,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
       ["member_left", "EMAIL_FROM is not set to a valid sender address"],
       ["firm_closing", "EMAIL_FROM is not set to a valid sender address"],
+      ["export_alert", "EMAIL_FROM is not set to a valid sender address"],
       ["prospect_confirmation", "EMAIL_FROM is not set to a valid sender address"],
       ["information_request", "EMAIL_FROM is not set to a valid sender address"],
       ["draft_expiry_reminder", "EMAIL_FROM is not set to a valid sender address"],
@@ -1200,6 +1201,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "member_left", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "firm_closing", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "export_alert", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
@@ -1212,11 +1214,12 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
       { kind: "member_left", problem: "RESEND_API_KEY is not set" },
       { kind: "firm_closing", problem: "RESEND_API_KEY is not set" },
+      { kind: "export_alert", problem: "RESEND_API_KEY is not set" },
       { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[4].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[5].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1232,7 +1235,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(7);
+    expect(note).toHaveBeenCalledTimes(8);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
@@ -1705,5 +1708,92 @@ describe("dispatching the email that Nevermore stopped a closing", () => {
     const summary = await dispatchEvents([closingRow({ payload: { event: "stopped" } })], deps);
     expect(sent).toHaveLength(0);
     expect(summary.dead).toBe(1);
+  });
+});
+
+// The email to a firm's owners that a member made a large export or their third within an hour (story CRM-S3.8b, D-206). A firm's own
+// email, like the leaving and closing notices: it goes to the firm's owners, asked for by the event's firm, with the same rules.
+const exportPayload = {
+  member_email: "alex@firm-a.example", firm_name: "Acme Brokers", table: "referral_partners", row_count: 1250,
+  exported_at: "2026-11-14T09:30:00Z", large: true, exports_in_hour: 1,
+};
+const exportRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-export",
+  kind: "export_alert",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: exportPayload,
+  ...over,
+});
+
+describe("dispatching the email that a member made a large or repeated export", () => {
+  // Catches: the owners are not the ones told (the intake members' list, or nobody), or who, what, how many or when is left out.
+  it("tells the firm's owners who exported how many rows of which table, and when", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    await dispatchEvents([exportRow()], deps);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    expect(sent[0].message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(sent[0].message.subject).toBe("alex@firm-a.example exported 1,250 rows of referral partners from Acme Brokers");
+    expect(sent[0].message.text).toContain("on 2026-11-14 09:30 UTC.");
+    expect(sent[0].message.text).toContain("It holds more than 500 rows.");
+    expect(sent[0].message.text).not.toContain("within an hour");
+  });
+
+  // Catches: a repeated export reads like a large one, or the firm's record is named wrongly.
+  it("says when it is the member's third export within an hour", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportRow({ payload: { ...exportPayload, table: "firm_activity", row_count: 1, large: false, exports_in_hour: 3 } })], deps);
+    expect(sent[0].message.subject).toBe("alex@firm-a.example exported 1 row of the firm's record of who did what from Acme Brokers");
+    expect(sent[0].message.text).toContain("It is their third export within an hour.");
+    expect(sent[0].message.text).not.toContain("more than 500");
+  });
+
+  // Catches: the email picks up rows or columns that a payload should never hold, or the firm's name reaches the HTML unescaped.
+  it("escapes a firm's name in the HTML and carries nothing else the payload held", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([exportRow({ payload: { ...exportPayload, firm_name: "<b>Evil</b> & Co", rows: [["Acme CFO"]], columns: ["name"] } })], deps);
+    expect(sent[0].message.html).toContain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co");
+    expect(sent[0].message.html).not.toContain("<b>Evil</b>");
+    expect(sent[0].message.text).not.toContain("Acme CFO");
+    expect(sent[0].message.html).not.toContain("Acme CFO");
+  });
+
+  // Catches: an event that cannot say who, what, how many or when is sent as an empty email, or retried for ever; a table the product
+  // does not export (the queue) is named in an email.
+  it.each([
+    ["no person", { member_email: null }],
+    ["no firm", { firm_name: "" }],
+    ["a table that is not exported", { table: "submissions" }],
+    ["no count", { row_count: "many" }],
+    ["a date that is not one", { exported_at: "today" }],
+    ["no reason", { large: undefined }],
+    ["no count of the hour", { exports_in_hour: 0 }],
+  ])("gives up on a payload with %s, sending nothing", async (_why, change) => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([exportRow({ payload: { ...exportPayload, ...change } })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-export", "invalid_payload", null, 1, false);
+  });
+
+  // D-35 for this kind: an owner who is no longer one is not sent it on a retry.
+  it("on a retry drops an owner who is no longer one", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["stayer@firm-a.example", "gone@firm-a.example"] } });
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => ["stayer@firm-a.example"]) });
+    await dispatchEvents([exportRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+  });
+
+  // Catches: the kind is not sendable (it would wait for ever) or is sent when the sender isn't set up.
+  it("is sent whenever the advisor sender is set up, and waits with the reason when it is not", async () => {
+    expect(sendableKinds(config)).toContain("export_alert");
+    const { deps, sent } = harness({ config: configFrom({ ...env, EMAIL_FROM: "" }) });
+    await dispatchEvents([exportRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-export", "not_configured", 60, 1, false);
   });
 });

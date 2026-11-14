@@ -140,6 +140,7 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261118170000_export.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1263,6 +1264,7 @@ DECLARE
     'advisor_open_quote_request_thread', 'marks a thread read, which is what reading is; allowed while a firm is closing',
     'archive_chamber_session', 'the employer''s own intake: not the firm''s to freeze',
     'consume_ai_quota', 'the caller''s own allowance',
+    'export_table', 'an export (CRM-S3.8b, D-208) changes none of the firm''s data: it only appends to the firm''s record of who did what and may queue the owners'' alert, both of which go on while a firm is closing; a closing firm''s owners are offered a full export first (PRD 8.5), so it must stay allowed',
     'end_support_session', 'a platform admin''s own support session (CRM-P2.4): no member''s change to the firm''s data, and a support session itself is refused every guarded write',
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',

@@ -445,6 +445,22 @@ _Avoid_: audit log, activity (the firm's record of who did what is a different t
 A whole number on each editable record (today a referral partner; later an account, contact, lead or opportunity) that says how many times its own fields have really changed, starting at 1. A trigger owns it: it is raised by exactly one when one of the fields the record's history tracks (a partner's name or kind) really changes, and by nothing else, so saving a form without changing it, or changing only a stamp such as when it was saved, leaves it alone. Nobody sets it: whatever a statement writes into it is put back, and a new row is 1 whatever it said. A save names the version it started from (`p_version`); a save that names none is refused. The record's history also says which version each entry produced, so "what changed since version N" is exact. It is the whole-record counter of D-46, not a record's history and not an intake's `schema_version`.
 _Avoid_: revision, etag, timestamp (it is not a time), history
 
+**Export** (code: `export_table`, recorded as the entry kind `export_made`):
+The rows of one of a firm's tables that a person may see and that match what they asked (the filters in force, or the rows they selected), in the columns they chose, handed over by the database in the same step that writes it to the firm's record: who, when, which table, how many rows. Today referral partners (any current member) and the firm's record itself (its owners). Never the queue, whose columns are an intake's answers, and never an intake's answers, a census, a FEIN or a file. At most 10,000 rows; a larger one is refused, never cut short. A Nevermore support session can't make one.
+_Avoid_: download (a file of a submission is a download), report, dump, backup
+
+**Whole-table export**:
+An export that holds every row the person may see in that table (and at least one), whatever filters or selection were used to get there. It needs a **recent sign-in**.
+_Avoid_: full export (that is what a closing firm's owners are offered: every table, made of exports), bulk export
+
+**Recent sign-in** (code: `signed_in_within`):
+A sign-in made, or a second factor completed, within the last 12 hours, read from when the sign-in token says it was proved (its `amr` times), never from when the token was last refreshed. A whole-table export asks for one; "Sign in again" is what the screen offers when it is missing.
+_Avoid_: fresh session, re-authentication, step-up
+
+**Export alert** (code: outbox kind `export_alert`):
+The email to a firm's current owners that a member made an export of more than 500 rows, or their third export within an hour: who, which table, how many rows, when, and which of the two. It holds nothing that was exported. One email per export that calls for it, queued in the same step as the export, through the outbox like the firm's other emails.
+_Avoid_: export notification, security alert
+
 **Conflict** (answered by `advisor_update_referral_partner` as `conflict: true`):
 What a save is answered with when the record's version is no longer the one the person started from: someone else changed it while they were editing. Nothing is saved. The answer carries the current version, the current values of the editable fields, and for each field whose value now differs from what the person started from, the value now, who changed it last and when. Who is named the way the record's history names people (a member's email, "Nevermore" for Nevermore's own people, "System" for the server), never an id (D-33). It is a normal answer, not an error, and it is only given to someone the save would have let through: a person who is refused (not a member, suspended, a support session, a closing firm) gets that refusal whatever version they send. The partners form opens the conflict dialog on it (see Conflict dialog).
 _Avoid_: collision, merge conflict, stale write, error
