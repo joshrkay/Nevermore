@@ -53,6 +53,7 @@ export function ViewTabs<K extends TableFields, Row, Context>({ table, address, 
         const link = (
           <Link
             key={tab.key}
+            data-view={tab.key}
             to={hrefFor({ view: tab.id, ...(tab.view?.sort ? { sort: null } : {}) })}
             aria-current={current ? "page" : undefined}
             className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm ${current ? "border-primary bg-accent font-semibold text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}
@@ -70,7 +71,21 @@ export function ViewTabs<K extends TableFields, Row, Context>({ table, address, 
           </span>
         ) : link;
       })}
-      {saved && <SaveViewButton onSave={saved.save} />}
+      {(table.unavailableViews ?? []).map((v) => (
+        <span key={v.id} className="inline-flex items-center gap-1">
+          <span
+            aria-disabled="true"
+            aria-describedby={`${v.id}-reason`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground"
+          >
+            {v.label}
+            {v.saved.shared && <><Users className="h-3.5 w-3.5" aria-hidden="true" /><span className="sr-only">Shared with the firm</span></>}
+          </span>
+          <span id={`${v.id}-reason`} className="text-xs text-muted-foreground">{v.reason}</span>
+          {saved && <ViewMenu view={v} control={{ ...saved, remove: remove! }} />}
+        </span>
+      ))}
+      {saved && <SaveViewButton onSave={saved.save} blocked={saved.saveBlocked} />}
       {saved?.failed && (
         <p className="text-sm text-muted-foreground">
           Your saved views couldn't be loaded. <button type="button" onClick={saved.retry} className="text-primary underline">Try again</button>
@@ -78,7 +93,20 @@ export function ViewTabs<K extends TableFields, Row, Context>({ table, address, 
       )}
     </nav>
     {saved && open?.saved && changedOnScreen && (
-      <KeepChanges view={open} onKeep={() => saved.update(open.id)} />
+      <KeepChanges
+        view={open}
+        blocked={saved.keepBlocked}
+        onKeep={async () => {
+          await saved.update(open.id);
+          // The line (and the button that had focus) goes with the change; the open view's tab is where a keyboard person lands, unless they have gone
+          // elsewhere meanwhile (another view, or a control they moved focus to): focus is theirs then.
+          setTimeout(() => {
+            const here = document.activeElement;
+            if (here && here !== document.body && !(here instanceof HTMLElement && here.dataset.keepChanges !== undefined)) return;
+            nav.current?.querySelector<HTMLElement>(`a[data-view="${open.id}"][aria-current="page"]`)?.focus();
+          }, 0);
+        }}
+      />
     )}
     </>
   );

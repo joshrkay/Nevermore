@@ -90,6 +90,12 @@ describe("AuthPage", () => {
     expect(screen.getByRole("heading", { name: "Advisor Sign In" })).toBeInTheDocument();
   });
 
+  it("says why an advisor is asked to sign in again for an export, not that the session expired", () => {
+    renderLogin({ audience: "advisor", reason: "step_up", from: { pathname: "/advisor/activity", search: "?kind=sign_in" } });
+    expect(screen.getByRole("status")).toHaveTextContent("Sign in again to export a whole table.");
+    expect(screen.getByRole("status")).not.toHaveTextContent("expired");
+  });
+
   it("confirms a deliberate sign-out", () => {
     renderLogin({ audience: "advisor", reason: "signed_out" });
     expect(screen.getByRole("status")).toHaveTextContent("You've been signed out.");

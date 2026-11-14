@@ -10,7 +10,7 @@ import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  ColumnsMenu, FilterRow, useSavedViewsControl, inForceInWords, isNarrowed, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  ColumnsMenu, FilterRow, refusedQueryReason, useSavedViewsControl, inForceInWords, isNarrowed, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
@@ -41,8 +41,9 @@ const AdvisorDashboardPage = () => {
   // On a saved view it is the person's choice for that view (CRM-S3.4a); CRM-X3.1's custom fields join the table's `columns`.
   const mine = useMyColumns(table, address.view);
   const columns = useMemo(() => shownColumns(table, mine.kept), [table, mine.kept]);
-  // Saving, renaming, sharing and deleting views (CRM-S3.4a); a new view keeps the columns the person sees now, when they have kept a choice.
-  const savedViews = useSavedViewsControl(table, location, mine.status === "ready" ? mine.kept : null);
+  // Saving, renaming, sharing and deleting views (CRM-S3.4a); a new view keeps the columns the person sees now, once those have arrived, and nothing the
+  // database refuses is kept.
+  const savedViews = useSavedViewsControl(table, location, { columns: mine.kept, columnsStatus: mine.status, refused: !!data.error && refusedQueryReason(data.error) !== null });
   // The row's "Add filter": where focus goes when filters are cleared, from the row or from the empty state (D-170).
   const addFilterRef = useRef<HTMLButtonElement>(null);
 

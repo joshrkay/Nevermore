@@ -58,9 +58,11 @@ const NOT_MEMBER = "You aren't a member of this firm.";
 const NOT_AVAILABLE = "That view isn't available.";
 
 /** The database words these refusals plainly itself (a name taken, the ceiling, something that can't be kept); anything else gets `fallback`. */
-function refusal(error: DbError, words: { notAllowed: string; fallback: string }): Error {
+function refusal(error: DbError, words: { notAllowed: string; fallback: string; databaseWords?: boolean }): Error {
   switch (error.code) {
-    case "42501": return new Error(words.notAllowed);
+    // For a change to a view, the database says which rule it was (only its saver; a shared view is the firm's and only an owner changes it), and a
+    // person told the wrong one can't act on it: its sentence shows. Elsewhere "not allowed" can only mean not a member.
+    case "42501": return new Error(words.databaseWords && error.message ? error.message : words.notAllowed);
     case "PT404": return new Error(NOT_AVAILABLE);
     // A closing firm and a support session can change nothing (ADR 0023, ADR 0024): trying again cannot work, so the database's own words show (D-178).
     case "PT423":
@@ -116,7 +118,7 @@ export async function saveView(input: {
 /** Renames the person's own view. */
 export async function renameSavedView(viewId: string, name: string): Promise<void> {
   const { error } = await supabase.rpc("rename_saved_view", { p_view_id: viewId, p_name: name });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can rename it.", fallback: "Couldn't rename the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can rename it.", fallback: "Couldn't rename the view. Try again.", databaseWords: true });
 }
 
 /** Replaces the person's own view's filters, sort and columns with what the page shows. */
@@ -127,25 +129,25 @@ export async function changeSavedView(viewId: string, view: { filters: ViewFilte
     p_sort: view.sort as unknown as Json,
     p_columns: view.columns,
   });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can change it.", fallback: "Couldn't change the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can change it.", fallback: "Couldn't change the view. Try again.", databaseWords: true });
 }
 
 /** Deletes the person's own view. Built-in views are not rows and are never deleted. */
 export async function deleteSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("delete_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can delete it.", fallback: "Couldn't delete the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only the person who saved this view can delete it.", fallback: "Couldn't delete the view. Try again.", databaseWords: true });
 }
 
 /** Shares one of the owner's own views with the firm. Owners only. */
 export async function shareSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("share_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can share a view.", fallback: "Couldn't share the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can share a view.", fallback: "Couldn't share the view. Try again.", databaseWords: true });
 }
 
 /** Stops sharing a view; it goes back to being its saver's own. Owners only. */
 export async function unshareSavedView(viewId: string): Promise<void> {
   const { error } = await supabase.rpc("unshare_saved_view", { p_view_id: viewId });
-  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can stop sharing a view.", fallback: "Couldn't stop sharing the view. Try again." });
+  if (error) throw refusal(error, { notAllowed: "Only an owner of the firm can stop sharing a view.", fallback: "Couldn't stop sharing the view. Try again.", databaseWords: true });
 }
 
 const SOURCES: readonly ColumnsSource[] = ["mine_for_view", "view", "mine", "default"];
