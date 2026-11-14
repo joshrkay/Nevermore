@@ -13,6 +13,9 @@
 -- A trigger only on an export's entry (WHEN kind = 'export_made'): every other entry of the record goes in as before, without the function
 -- being called. An export whose entry waits for the holding table while 20261119090500 drops it fails on the missing table, and is refused
 -- all the same, recording nothing. Nothing reads the holding table but this and 20261119090500, as the owner, so no API role is given it.
+-- Creating the trigger locks the record, so the wait for that lock is bounded, as in 20261118180000 and 20261119090500.
+
+SET lock_timeout = '5s';
 
 CREATE FUNCTION public.epic3_export_pause()
 RETURNS trigger

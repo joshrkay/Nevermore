@@ -450,7 +450,11 @@ to `20261119090600_epic3_export_pause_end.sql`. Before pushing the Epic 3 branch
   `/advisor/outbox` once Epic 3's dispatcher is deployed.
 - **Exports pause for the few seconds of the push.** From `20261118180500` to `20261119090500`, while `main`'s
   exports are set aside, an export is refused and records nothing; the person sees "Couldn't export. Try
-  again." `20261119090600` takes the pause out.
+  again." `20261119090600` takes the pause out. One export can still get past it: one that reads its rows
+  before `20261119090500` commits and writes its entry after, a gap the length of one export's read (seconds,
+  for a large firm's export of the record). Its count, and so the owners' alert, is still right: the count is
+  read after the carried entries are back. Only an owner's export of the firm's record can come out without
+  `main`'s exports, so **an export of the record started during the push should be made again**.
 - **A database that had the Epic 3 branch pushed before 2026-11-14 is reset, not pushed.** It records
   `20261119090000` and not `20261118180000` (`supabase migration list --linked`); the founder's check of which
   databases these are is in #141. Production runs `main` and never had it. A push stops before changing anything: without
