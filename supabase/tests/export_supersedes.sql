@@ -5,7 +5,8 @@
 -- exports it recorded and the owners' alert it queued survive 20261118180000_epic3_export_supersedes.sql, Epic 3's
 -- 20261119090000_export.sql and 20261119090500_epic3_export_carried.sql, in Epic 3's shape: each entry with the same number, key, time,
 -- actor, table and count, under Epic 3's rule that ties a count to an export; the alert with the table in words, as Epic 3's dispatcher
--- reads it. main's functions are gone and Epic 3's work on the carried entries.
+-- reads it. main's functions are gone and Epic 3's work on the carried entries. An export main's export_table is making while the upgrade
+-- starts (two more connections) is carried too, and the upgrade leaves the record's guard on and the holding table closed to the API.
 -- Every migration loads in filename order; the exports are made between main's last and the supersedes migration.
 \set ON_ERROR_STOP 1
 SET client_min_messages = warning;
@@ -191,7 +192,7 @@ BEGIN
 END $$;
 
 -- The agent exports the partners three times within the hour (the third queues the owners' alert), the owner exports the firm's
--- record, and the other firm's owner exports its partners: five entries, in two firms, by three people, of both tables.
+-- record, and the other firm's owner exports its partners twice: six entries, in two firms, by three people, of both tables.
 DO $$
 BEGIN
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
@@ -203,10 +204,11 @@ BEGIN
   PERFORM pg_temp.is((public.export_table(pg_temp.id('acme'), 'firm_activity', '["at","kind","rows"]') ->> 'row_count')::int, 5, 'main: the record, its two members joining and the three exports');
   PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
   PERFORM pg_temp.is((public.export_table(pg_temp.id('zenith'), 'referral_partners', '["code"]') ->> 'row_count')::int, 1, 'main: the other firm');
+  PERFORM pg_temp.is((public.export_table(pg_temp.id('zenith'), 'referral_partners', '["code"]', '[]', '["zen-cpa"]') ->> 'row_count')::int, 1, 'main: the other firm again');
   RESET ROLE;
 END $$;
 
--- What main recorded and queued, as the superuser, to compare with after the upgrade. The five were made in one transaction, so they
+-- What main recorded and queued, as the superuser, to compare with after the upgrade. The six were made in one transaction, so they
 -- share a time; they are told apart by their number.
 CREATE TEMP TABLE main_entries AS
   SELECT id, entry_key, firm_id, at, actor_id, actor_is_staff, kind, record_type, record_id, subject_user_id, role, row_count
@@ -215,16 +217,76 @@ CREATE TEMP TABLE main_alerts AS SELECT id, kind, firm_id, dedupe_key, status, p
 
 DO $$
 BEGIN
-  PERFORM pg_temp.is((SELECT count(*) FROM main_entries), 5::bigint, 'main recorded five exports');
+  PERFORM pg_temp.is((SELECT count(*) FROM main_entries), 6::bigint, 'main recorded six exports');
   PERFORM pg_temp.is((SELECT string_agg(record_id || ':' || row_count, ' ' ORDER BY id) FROM main_entries),
-    'referral_partners:3 referral_partners:1 referral_partners:2 firm_activity:5 referral_partners:1', 'main recorded each table and count');
+    'referral_partners:3 referral_partners:1 referral_partners:2 firm_activity:5 referral_partners:1 referral_partners:1', 'main recorded each table and count');
   PERFORM pg_temp.is((SELECT count(*) FROM main_alerts), 1::bigint, 'main queued one alert, for the third export in the hour');
   PERFORM pg_temp.is((SELECT payload ->> 'table' FROM main_alerts), 'referral_partners', 'main''s alert names the table by its name');
   PERFORM pg_temp.is((SELECT payload ? 'table_label' FROM main_alerts), false, 'main''s alert has no words for the table');
 END $$;
 
+-- ---------- the upgrade starts while main's export_table is making two exports ----------
+-- Break caught: the supersedes migration reads the record before it locks it, so an export written and not yet committed when it starts
+-- is not copied, then loses its count with the column; Epic 3's rule then refuses the record (20261119090000 fails: "firm_activity_export_check
+-- ... is violated by some row"), leaving main's entries held and no export function. Two more real connections (dblink) each make an
+-- export and hold its transaction open while this connection runs the migration, which must wait for both and copy both: the other firm's
+-- owner's third export in the hour (its entry and the owners' alert), committed two seconds on, and the acme owner's second (an entry and
+-- no alert), committed three seconds on. The second is the one only the lock on the record waits for: an export that writes no alert
+-- holds nothing in the outbox.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- Makes an export as `n` at the firm's address on connection `conn`, leaves it uncommitted, and has the connection commit `secs` later.
+CREATE FUNCTION pg_temp.export_held(conn text, n text, addr text, firm text, secs integer) RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'), split_part(current_setting('unix_socket_directories'), ',', 1));
+  claims text := jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false, 'email', n || '@example.test',
+    'aal', 'aal1', 'amr', jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', floor(extract(epoch FROM now() - interval '1 hour'))::bigint)))::text;
+  answer text;
+BEGIN
+  PERFORM race.dblink_connect(conn, dsn);
+  PERFORM race.dblink_exec(conn, 'BEGIN');
+  PERFORM race.dblink_exec(conn, 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec(conn, format('SET LOCAL request.jwt.claims = %L', claims));
+  PERFORM race.dblink_exec(conn, format('SET LOCAL request.headers = %L', jsonb_build_object('x-firm-address', addr)::text));
+  SELECT r INTO answer FROM race.dblink(conn, format($q$SELECT public.export_table(%L, 'referral_partners', '["name"]')::text$q$, pg_temp.id(firm))) AS t(r text);
+  PERFORM race.dblink_send_query(conn, format('SELECT pg_sleep(%s); COMMIT', secs));
+  RETURN (answer::jsonb ->> 'row_count')::integer;
+END $$;
+DO $$
+BEGIN
+  PERFORM pg_temp.is(pg_temp.export_held('zenith_exporting', 'zenith_owner', 'zenith-benefits', 'zenith', 2), 1, 'the other firm''s concurrent export is made');
+  PERFORM pg_temp.is(pg_temp.export_held('acme_exporting', 'acme_owner', 'acme-brokers', 'acme', 3), 3, 'and the acme owner''s');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), 6::bigint, 'neither committed: this connection sees neither');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert'), 1::bigint, 'nor the alert');
+END $$;
+
 -- ---------- the upgrade: the supersedes migration, Epic 3's export, the carried entries, and what follows ----------
 \i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+
+DO $$
+DECLARE conn text;
+BEGIN
+  -- Each concurrent connection's two results (the sleep, the commit), then nothing.
+  FOREACH conn IN ARRAY ARRAY['zenith_exporting', 'acme_exporting'] LOOP
+    WHILE (SELECT count(*) FROM race.dblink_get_result(conn) AS t(r text)) > 0 LOOP END LOOP;
+    PERFORM race.dblink_disconnect(conn);
+  END LOOP;
+END $$;
+DROP SCHEMA race CASCADE;
+
+-- Break caught: the supersedes migration leaves the record's append-only guard off, or the holding table readable by an API role
+-- (Supabase grants every new table in public to them) or without row security.
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'public.firm_activity'::regclass AND tgname = 'firm_activity_append_only'), 'O'::"char",
+    'the record''s append-only guard is on again');
+  PERFORM pg_temp.is((SELECT string_agg(r, ' ') FROM unnest(ARRAY['public', 'anon', 'authenticated', 'service_role']) r
+    WHERE has_table_privilege(r, 'public.epic3_carried_exports', 'SELECT') OR has_any_column_privilege(r, 'public.epic3_carried_exports', 'SELECT')), NULL,
+    'no API role can read the holding table');
+  PERFORM pg_temp.is((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.epic3_carried_exports'::regclass), true, 'and it has row security');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.epic3_carried_exports), 8::bigint, 'it holds every export, the two concurrent ones too');
+END $$;
+
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
@@ -234,13 +296,16 @@ END $$;
 -- migration is missing, puts back fewer, renumbers them, or loses a column; Epic 3's rule is not the one checking them.
 DO $$
 BEGIN
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), 5::bigint, 'the five exports are in the record');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), 8::bigint, 'the eight exports are in the record');
   PERFORM pg_temp.is((
     SELECT count(*) FROM main_entries m JOIN public.firm_activity a
       ON a.id = m.id AND a.entry_key = m.entry_key AND a.firm_id = m.firm_id AND a.at = m.at AND a.actor_id IS NOT DISTINCT FROM m.actor_id
      AND a.actor_is_staff = m.actor_is_staff AND a.kind = m.kind AND a.record_type = m.record_type AND a.record_id = m.record_id
-     AND a.subject_user_id IS NOT DISTINCT FROM m.subject_user_id AND a.role IS NOT DISTINCT FROM m.role AND a.row_count = m.row_count), 5::bigint,
+     AND a.subject_user_id IS NOT DISTINCT FROM m.subject_user_id AND a.role IS NOT DISTINCT FROM m.role AND a.row_count = m.row_count), 6::bigint,
     'each with the same number, key, firm, time, actor, table and count');
+  PERFORM pg_temp.is((SELECT string_agg(f.name || ':' || a.record_id || ':' || a.row_count, ' ' ORDER BY f.name) FROM public.firm_activity a JOIN fx f ON f.id = a.actor_id
+    WHERE a.kind = 'export_made' AND NOT EXISTS (SELECT 1 FROM main_entries m WHERE m.id = a.id)),
+    'acme_owner:referral_partners:3 zenith_owner:referral_partners:1', 'and the two made while the upgrade started, with their counts');
   PERFORM pg_temp.is(to_regclass('public.epic3_carried_exports'), NULL::regclass, 'the holding table is gone');
   PERFORM pg_temp.is((SELECT convalidated FROM pg_constraint WHERE conrelid = 'public.firm_activity'::regclass AND conname = 'firm_activity_export_check'), true,
     'Epic 3''s rule ties the count to the kind, validated over every entry');
@@ -252,12 +317,15 @@ END $$;
 -- never told; or the rewrite changes anything else of it.
 DO $$
 BEGIN
-  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert'), 1::bigint, 'main''s alert is still queued');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert'), 2::bigint, 'main''s alert is still queued, and the concurrent one''s');
   PERFORM pg_temp.is((SELECT e.payload FROM public.outbox_events e JOIN main_alerts m ON m.id = e.id AND m.dedupe_key = e.dedupe_key AND m.status = e.status AND m.firm_id = e.firm_id),
     (SELECT (payload - 'table') || '{"table_label":"Referral partners"}'::jsonb FROM main_alerts),
     'in Epic 3''s shape: the table in words, and nothing else changed');
-  PERFORM pg_temp.is((SELECT array_agg(k ORDER BY k) FROM public.outbox_events e, jsonb_object_keys(e.payload) k WHERE e.kind = 'export_alert'),
-    ARRAY['exported_at', 'exports_in_hour', 'firm_name', 'large', 'member_email', 'row_count', 'table_label'], 'the keys Epic 3''s export_rows writes');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events e WHERE e.kind = 'export_alert'
+    AND (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(e.payload) k) = ARRAY['exported_at', 'exports_in_hour', 'firm_name', 'large', 'member_email', 'row_count', 'table_label']),
+    2::bigint, 'each with the keys Epic 3''s export_rows writes');
+  PERFORM pg_temp.is((SELECT string_agg(e.payload ->> 'firm_name' || ':' || (e.payload ->> 'table_label'), ' ' ORDER BY e.payload ->> 'firm_name') FROM public.outbox_events e WHERE e.kind = 'export_alert'),
+    'Acme Brokers:Referral partners Zenith Benefits:Referral partners', 'the table in words in both');
 END $$;
 
 -- Break caught: main's functions are left beside Epic 3's (two ways to export, one of them unrecorded by Epic 3's rules and tests).
@@ -275,16 +343,17 @@ DECLARE r jsonb;
 BEGIN
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
   PERFORM pg_temp.is((SELECT string_agg(l.record_id || ':' || l.row_count, ' ' ORDER BY l.record_id || ':' || l.row_count) FROM public.firm_activity_list(pg_temp.id('acme'), p_kind => 'export_made') l),
-    'firm_activity:5 referral_partners:1 referral_partners:2 referral_partners:3', 'the owners read each carried export with its count');
+    'firm_activity:5 referral_partners:1 referral_partners:2 referral_partners:3 referral_partners:3', 'the owners read each carried export with its count');
   r := public.export_rows(pg_temp.id('acme'), 'firm_activity', '{"kind":"export_made"}');
   PERFORM pg_temp.is((SELECT string_agg((x ->> 'record_id') || ':' || (x ->> 'row_count'), ' ' ORDER BY (x ->> 'record_id') || ':' || (x ->> 'row_count')) FROM jsonb_array_elements(r -> 'rows') x),
-    'firm_activity:5 referral_partners:1 referral_partners:2 referral_partners:3', 'and Epic 3''s export of the record carries them, with their counts');
+    'firm_activity:5 referral_partners:1 referral_partners:2 referral_partners:3 referral_partners:3', 'and Epic 3''s export of the record carries them, with their counts');
   -- That export is recorded by Epic 3's export_rows after the carried ones, numbered after them.
   RESET ROLE;
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = pg_temp.id('acme')), 5::bigint, 'Epic 3 records its own export beside them');
-  PERFORM pg_temp.is((SELECT max(id) FROM public.firm_activity WHERE kind = 'export_made') > (SELECT max(id) FROM main_entries), true, 'numbered after the carried ones');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = pg_temp.id('acme')), 6::bigint, 'Epic 3 records its own export beside them');
+  PERFORM pg_temp.is((SELECT max(id) FROM public.firm_activity WHERE kind = 'export_made' AND record_id = 'firm_activity') > (SELECT max(id) FROM public.firm_activity WHERE kind = 'export_made' AND record_id = 'referral_partners'),
+    true, 'numbered after the carried ones');
   PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('zenith'), p_kind => 'export_made')), 1::bigint, 'each firm reads only its own');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity_list(pg_temp.id('zenith'), p_kind => 'export_made')), 3::bigint, 'each firm reads only its own');
   RESET ROLE;
 END $$;
 

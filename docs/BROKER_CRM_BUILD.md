@@ -422,9 +422,10 @@ order.
 
 ## Superseded by Epic 3 (founder, 2026-11-14)
 
-Epic 2's last four rows (its build order's rows 16 to 19: CRM-S3.1a, CRM-S3.4a, CRM-S3.8b and CRM-S3.8a) were built twice, on
-`main` (#142 and #147) and on the Epic 3 branch (#144, #145 and #150, as Epic 3's rows 1, 2, 4 and 5). The founder decided Epic 3's
-versions win. The decisions `main` recorded for its versions, numbered D-185 to D-242 there (D-185 to D-195 the Columns menu, D-200
+Epic 2's last four rows (its build order's rows 16 to 19: CRM-S3.1a, CRM-S3.4a, CRM-S3.8b and CRM-S3.8a) were built on two lines
+that did not see each other. `main` built CRM-S3.1a, CRM-S3.8b and CRM-S3.8a (#142 and #147). The Epic 3 branch built CRM-S3.1a,
+CRM-S3.8b and CRM-S3.4a, its rows 1, 2 and 4 (#144, #145 and #150); its row 5, CRM-S3.8a, is #160, which is not merged yet, so after
+this merge the Epic 3 branch has no Export button until #160 lands. The founder decided Epic 3's versions win. The decisions `main` recorded for its versions, numbered D-185 to D-242 there (D-185 to D-195 the Columns menu, D-200
 to D-214 and D-241 to D-242 the export in the database, D-230 to D-240 the Export button and the CSV; `main` built no saved views),
 described the implementation Epic 3 replaced. They are kept below as they were, renumbered M-185 to M-242 so that they cannot be
 mistaken for Epic 3's D-185 to D-221, with their references to each other renumbered the same way; a number below D-185 in them is
@@ -436,7 +437,8 @@ production and are not edited: where their comments cite D-200 to D-214 or D-241
 recorded in the firm's record keep their number, key, time, actor, table and count: `20261118180000` sets them aside and
 `20261119090500_epic3_export_carried.sql` puts them back under Epic 3's rule once `20261119090000_export.sql` has added it, and the
 owners' alerts they queued are rewritten into Epic 3's payload (the table in words). `supabase/tests/export_supersedes.sql` makes
-exports with `main`'s functions, applies the rest, and checks they survived.
+exports with `main`'s functions, two of them still being made on other connections as the upgrade starts (the supersedes migration locks
+the record and the outbox before it reads them, and waits for those), applies the rest, and checks they survived.
 
 | # | Decision (superseded) |
 |---|---|
