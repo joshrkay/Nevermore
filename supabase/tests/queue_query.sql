@@ -428,8 +428,10 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261118170500_export_fixes.sql
 \i supabase/migrations/20261118171000_export_fixes_again.sql
 \i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
