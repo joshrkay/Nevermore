@@ -532,6 +532,14 @@ _Avoid_: status (an account has a status, an opportunity a stage), pipeline stag
 An account's website reduced to what the duplicate match compares: lower case, without the scheme, a login, the path, query or port, a trailing dot or a leading `www.`. Worked out from the website, never typed. Whether it is a free-mail domain is the duplicate match's question, not stored here.
 _Avoid_: URL, host
 
+**Accounts table** (code: `accounts_list`, `accounts_view_counts`, `accounts_rows`; story CRM-A1.1b, D-44, D-173):
+The accounts a person may see in one firm, as the Accounts page draws them, worked out in the database: 50 a page with the total, sorted by any listed column but the main contact (default: last activity, newest first; empty values last), filtered by the table's listed fields, searched by account name, trade name, web domain and a contact's name or email, and counted for each view's tab under the same filters. An archived account is in no view unless a filter on archived asks for it (the Archived view). Each row carries its worked-out columns: the owner (only while a current member), the **main contact** with email or phone, the **open opportunity** and how many are open, the quotes, the status and the last activity.
+_Avoid_: accounts list (the list is the table's rows), grid
+
+**Open opportunity** (the Opportunity column of the accounts table):
+Of the opportunities of an account that are not Won or Lost, the one with the nearest target start (the earliest; one with no start after one with; the one made first when they tie), shown with its name and stage, and "+N more" for the others that are open. The Quotes column is not limited to it: it counts across every opportunity of the account the quotes asked for that are not closed, how many came back and the nearest expiry of one that did.
+_Avoid_: current opportunity, main opportunity
+
 **Activity tab**:
 The tab of an account's page that lists, newest first, its calls, notes and tasks (from Epic 6 its emails) together with its record history, with a filter for All, Calls, Notes, Tasks and Changes (D-212). It is never the **Firm activity** record.
 _Avoid_: activity feed, audit log, timeline (on its own)
@@ -564,7 +572,7 @@ What an agent logs on an account or a contact (later on a lead or an opportunity
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
 **Last activity**:
-When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity.
+When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity. Until CRM-E1.5 it is the newest of the account's creation and a status change of a quote request on one of its opportunities' intakes (code: `account_activity_times(firm)`, the one function that gains a branch for calls, notes and tasks, and later for email).
 _Avoid_: last modified, updated
 
 ### Advisors
@@ -632,7 +640,7 @@ A table's whole state, kept in the page's search parameters (D-43): the page (fr
 _Avoid_: URL state, query string (in code comments; say "address")
 
 **Filter** (code: `{field, op, value}`, checked by `workspace_filter_check`):
-One condition on one field of a table, by an operator its kind takes: text (contains, is, is empty), number (is, more than, less than, between), date (on, before, after, between, in the next or last N days, each a day in the person's time zone), one or several choices (any of, none of, is empty), yes or no (is), person (any of, me, my team: refused until records have an owner, CRM-A1.1). Text and choices ignore case; a between takes its ends in either order. A table's filters combine with "and" (at most 20 in all, a tab's own filters counted first). A filter is set from the **filter row**, which shows each one as a **filter chip**.
+One condition on one field of a table, by an operator its kind takes: text (contains, is, is empty), number (is, more than, less than, between), date (on, before, after, between, in the next or last N days, each a day in the person's time zone), one or several choices (any of, none of, is empty), yes or no (is), person (any of a list of people by their id, me, my team: the accounts table's Owner, CRM-A1.1b, D-173; "my team" is every current member of the caller's team and of the teams under it, and a person on no team has none). Text and choices ignore case; a between takes its ends in either order. A table's filters combine with "and" (at most 20 in all, a tab's own filters counted first). A filter is set from the **filter row**, which shows each one as a **filter chip**.
 
 **Filter row** (code: `FilterRow`, `FilterEditor`, `src/components/workspace/table/`; story CRM-S3.3a, D-166 to D-173):
 The labelled group ("Filters") above a table where a person narrows it. It holds the table's **listed filters** (the few fields a table names in `listedFilters`, each a button always there, ready to set: "Filter by Needs advisor action"), "Add filter" (every other field of the table, searchable by its words), a **filter chip** for each filter in the address, and "Clear filters" once there is one. Setting a filter opens a small editor under the button: the condition (the operators of the field's kind, in plain words, from the one list the codec and the database share) and the value (a text box, a number, a date, a number of days, or a searchable list of the field's choices by their words). Nothing is applied until "Apply" or Enter, and what is typed is checked first by the same limits as the address and the database (200 characters, 100 list values, 0 to 3660 days, real dates), with the reason under the field. Escape or a click away closes it and changes nothing. A field carries one filter in the row: once it has a chip, its button and its place in "Add filter" are gone and the chip is its control. "Add filter" is unavailable, with the reason "A table takes up to 20 filters.", at the limit. Adding, changing, removing and clearing each push a history entry and start at page 1.

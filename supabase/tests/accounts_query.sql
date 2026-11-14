@@ -1048,3 +1048,18 @@ BEGIN
   END;
   RAISE NOTICE 'accounts_query: stages passed';
 END $$;
+
+-- ---------- how it is run ----------
+-- Break caught: the query goes back to nested loops or the database's JIT, which together took 40 seconds to list 5,000 accounts whose tables the database had not
+-- yet looked at (see the migration), or the functions the browser calls are open to a signed-out caller.
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT p.proconfig @> ARRAY['enable_nestloop=off', 'jit=off'] FROM pg_proc p WHERE p.proname = 'accounts_rows' AND p.pronamespace = 'public'::regnamespace), true, 'the rows are joined by hash and not compiled');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('accounts_list', 'accounts_view_counts', 'firm_member_choices')
+                       AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR NOT has_function_privilege('authenticated', p.oid, 'EXECUTE'))), 0::bigint, 'the three calls are for signed-in callers and no one else');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('accounts_rows', 'accounts_filters_checked', 'accounts_row_passes', 'accounts_row_filters_pass',
+                       'account_activity_times', 'accounts_field_kind', 'accounts_field_choices', 'accounts_words', 'person_display_name', 'workspace_filter_match_person')
+                       AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE') OR has_function_privilege('service_role', p.oid, 'EXECUTE'))), 0::bigint,
+                     'the helpers are run by no API role');
+  RAISE NOTICE 'accounts_query: how it is run passed';
+END $$;
