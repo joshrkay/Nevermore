@@ -40,8 +40,9 @@ export function ViewMenu({ view, control }: Props) {
     setProblem(null);
     setBusy(false);
   };
-  /** The name offered is the view's name as it is NOW, whenever the dialog opens or the rename step starts (it may have been renamed since this was drawn). */
+  /** The name offered is the view's name as it is NOW, every time the rename step starts (it may have been renamed, or half typed over, since). */
   const startRename = () => {
+    setName(view.label);
     setProblem(null);
     setStep("rename");
   };
@@ -71,7 +72,7 @@ export function ViewMenu({ view, control }: Props) {
   };
 
   return (
-    <Popover open={open} onOpenChange={(next) => (next ? (setName(view.label), setOpen(true)) : close())}>
+    <Popover open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
       <PopoverTrigger asChild>
         <button type="button" aria-label={`Options for ${view.label}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           <MoreHorizontal className="h-4 w-4" aria-hidden="true" />

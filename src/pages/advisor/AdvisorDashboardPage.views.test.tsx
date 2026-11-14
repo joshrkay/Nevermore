@@ -698,6 +698,21 @@ describe("the options dialog, step by step", () => {
     expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" })).toHaveValue("Needs me");
   });
 
+  // Catches: Rename offering what was half typed the time before instead of the view's name (the reset on entering the step is lost).
+  it("offers the view's name, not a half-typed one, when Rename is chosen again after Cancel", async () => {
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    dialog = screen.getByRole("dialog");
+    await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Half typed");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" })).toHaveValue("Chasing");
+  });
+
   // Catches: focus left on the page body when a step replaces the button that was pressed (D-170: opening an editor puts focus in its first control).
   it("puts focus in the rename box, and on Cancel in the delete question", async () => {
     const user = userEvent.setup();
@@ -718,6 +733,34 @@ describe("the options dialog, step by step", () => {
     await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
     await waitFor(() => expect(screen.queryByText("Changed on screen, not kept.")).toBeNull());
     await waitFor(() => expect(screen.getByRole("link", { name: /^Chasing/ })).toHaveFocus());
+  });
+
+  // Catches: focus jumping from the search box (or any other place the person went) to the tab when the keep finishes late.
+  it("leaves focus where the person put it when keeping the changes finishes after they went to the search box", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(screen.getByRole("searchbox", { name: "Search" }));
+    pending.release();
+    await waitFor(() => expect(api.listSavedViews.mock.calls.length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByRole("searchbox", { name: "Search" })).toHaveFocus();
+  });
+
+  it("does not move focus to a tab that is no longer the open one", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    screen.getByRole("link", { name: /^Won/ }).blur();
+    pending.release();
+    await waitFor(() => expect(api.listSavedViews.mock.calls.length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByRole("link", { name: /^Chasing/ })).not.toHaveFocus();
   });
 
   // Catches: Cancel while a rename is on its way, then its refusal arriving in the next, clean dialog.
@@ -761,6 +804,8 @@ describe("the options dialog, step by step", () => {
 describe("a saved view the table can't open", () => {
   const bogus = view({ id: "v7", name: "Old chasing", filters: [{ field: "pipeline_status", op: "any_of", value: ["bogus"] }] as SavedView["filters"] });
   const gone = view({ id: "v8", name: "Old field", filters: [{ field: "nope", op: "is", value: true }] as SavedView["filters"] });
+  const badOp = view({ id: "v5", name: "Wrong operator", filters: [{ field: "needs_action", op: "contains", value: "x" }] as SavedView["filters"] });
+  const badSort = view({ id: "v6", name: "Wrong sort", sort: { field: "nope", direction: "asc" } });
   beforeEach(() => {
     api.listSavedViews.mockResolvedValue([view(), bogus, gone]);
     for (const f of [api.deleteSavedView, api.unshareSavedView]) f.mockResolvedValue(undefined);
@@ -779,6 +824,29 @@ describe("a saved view the table can't open", () => {
     expect(names).toContain("v1");
     expect(names).not.toContain("v7");
     expect(names).not.toContain("v8");
+  });
+
+  // Catches: a filter the table won't read being sent on as a null filter, and a sort on a field it lacks, either of which the database refuses for every tab's count.
+  it("also can't open a view whose operator the field doesn't take or whose sort names a field the table lacks", async () => {
+    api.listSavedViews.mockResolvedValue([view(), badOp, badSort]);
+    countQueueViews.mockResolvedValue([{ name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    expect(screen.getByText("Wrong operator").closest("a")).toBeNull();
+    expect(screen.getByText("Wrong operator").closest("[aria-disabled]")).toHaveAccessibleDescription("This view uses a filter this table no longer takes.");
+    expect(screen.getByText("Wrong sort").closest("a")).toBeNull();
+    expect(screen.getByText("Wrong sort").closest("[aria-disabled]")).toHaveAccessibleDescription("This view is sorted by a field this table no longer has.");
+    const names = (countQueueViews.mock.calls.at(-1)![0] as { name: string }[]).map((v) => v.name);
+    expect(names).not.toContain("v5");
+    expect(names).not.toContain("v6");
+  });
+
+  // Catches: a choice written in another case being called unlisted: the database trims and lowercases before it compares, and runs this view fine.
+  it("opens a view whose choice differs from the listed one only in case or spaces, as the database reads it", async () => {
+    api.listSavedViews.mockResolvedValue([view({ id: "v4", name: "Loud", filters: [{ field: "pipeline_status", op: "any_of", value: [" WON "] }] as SavedView["filters"] })]);
+    draw();
+    const tab = await screen.findByRole("link", { name: /^Loud/ });
+    expect(tab).toBeInTheDocument();
   });
 
   // Catches: a view that can't be read being given no way out (it can't be deleted or unshared on screen once it is hidden).

@@ -9,9 +9,10 @@ function whyUnavailable<K extends TableFields>(table: TableDefinition<K, never, 
   for (const f of view.filters) {
     if (!has(table.fields, f.field)) return "This view uses a field this table no longer has.";
     if (!readStoredFilter(table, f)) return "This view uses a filter this table no longer takes.";
-    // The database refuses a choice a field doesn't list, for the whole question.
+    // The database refuses a choice a field doesn't list, for the whole question; it trims and lowercases a value before it compares, so this does too.
     const choices = table.fields[f.field as keyof K & string].choices;
-    if (choices && Array.isArray(f.value) && f.value.some((v) => !choices.some((c) => c.value === v))) return "This view uses a choice its field no longer lists.";
+    const named = (v: unknown) => String(v).trim().toLowerCase();
+    if (choices && Array.isArray(f.value) && f.value.some((v) => !choices.some((c) => named(c.value) === named(v)))) return "This view uses a choice its field no longer lists.";
   }
   if (view.sort && !has(table.fields, view.sort.field)) return "This view is sorted by a field this table no longer has.";
   return null;

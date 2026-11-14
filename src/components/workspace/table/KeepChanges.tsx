@@ -37,7 +37,7 @@ export function KeepChanges<K extends TableFields>({ view, onKeep, blocked = nul
       <span>Changed on screen, not kept.</span>
       {view.saved?.canChange && (
         <>
-          <button type="button" onClick={keep} aria-disabled={busy || blocked ? true : undefined} aria-describedby={blocked ? `${id}-blocked` : undefined} className={`text-primary underline ${blocked ? "opacity-50" : ""}`}>
+          <button type="button" data-keep-changes onClick={keep} aria-disabled={busy || blocked ? true : undefined} aria-describedby={blocked ? `${id}-blocked` : undefined} className={`text-primary underline ${blocked ? "opacity-50" : ""}`}>
             {`Keep the changes to ${view.label}`}
           </button>
           {blocked && <span id={`${id}-blocked`} className="sr-only">{blocked}</span>}
