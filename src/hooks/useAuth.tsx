@@ -5,8 +5,11 @@ import { clearAllBackups } from "@/data/intakeBackup";
 import { authCallbackUrl } from "@/lib/authRedirect";
 import { firmAddressFromHost } from "@/lib/firmHost";
 
-/** Why a signed-in session is gone: the person signed out, or it ended on its own (expiry, another tab). */
-export type SessionEnded = "signed_out" | "expired";
+/**
+ * Why a signed-in session is gone: the person signed out, it ended on its own (expiry, another tab), or the app ended this device's session so the
+ * person signs in again for an export of a whole table (`step_up`, story CRM-S3.8a): they come back to the page they were on.
+ */
+export type SessionEnded = "signed_out" | "expired" | "step_up";
 
 interface AuthContextType {
   user: User | null;
@@ -43,7 +46,10 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   /** Why the last signed-in session ended; null while signed in, and until someone has signed in. */
   sessionEnded: SessionEnded | null;
-  /** `"expired"` records that the app is ending a session the server no longer accepts. */
+  /**
+   * `"expired"` records that the app is ending a session the server no longer accepts. `"step_up"` ends this device's session only (never the person's
+   * others), to sign in again for an export.
+   */
   signOut: (reason?: SessionEnded) => Promise<void>;
 }
 
@@ -164,7 +170,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // On a firm's address (D-27) a session belongs to that address: sign-out ends it only, never the person's session
     // at another firm's address (the default scope revokes every refresh token they hold). The bare domain and www
     // keep the plain sign-out they always had, which ends every session of that person.
-    if (firmAddressFromHost(window.location.hostname)) await supabase.auth.signOut({ scope: "local" });
+    // A sign-in again for an export is never a reason to end the person's sessions on their other devices.
+    if (reason === "step_up" || firmAddressFromHost(window.location.hostname)) await supabase.auth.signOut({ scope: "local" });
     else await supabase.auth.signOut();
   };
 

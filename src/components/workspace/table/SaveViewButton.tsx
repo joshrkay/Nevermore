@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { BookmarkPlus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { VIEW_NAME_MAX } from "./columns";
@@ -9,6 +9,8 @@ const BUTTON = "inline-flex min-h-9 items-center gap-1 rounded-md border border-
 interface Props {
   /** Keeps the screen as a new view of this name. Rejects with the words to show. */
   onSave: (name: string) => Promise<void>;
+  /** Why it can't be done now, in words (the columns haven't loaded, the database refuses what is on screen): the button stays in the tab order, says why, and ignores the click. */
+  blocked?: string | null;
 }
 
 /**
@@ -16,17 +18,21 @@ interface Props {
  * open, with what was typed, when the database refuses (a name taken, the ceiling of 30, a closing firm, a support session), and says why in the
  * database's words; it opens clean each time.
  */
-export function SaveViewButton({ onSave }: Props) {
+export function SaveViewButton({ onSave, blocked = null }: Props) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const ids = useId();
+  // The attempt that is on its way: closing the dialog ends it, so a refusal that arrives afterwards is not shown in the next, clean dialog.
+  const attempt = useRef(0);
 
   const close = () => {
+    attempt.current++;
     setOpen(false);
     setName("");
     setProblem(null);
+    setSaving(false);
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -35,26 +41,36 @@ export function SaveViewButton({ onSave }: Props) {
       setProblem("Give the view a name.");
       return;
     }
+    const mine = ++attempt.current;
     setSaving(true);
     setProblem(null);
     try {
       await onSave(name.trim());
-      close();
+      if (attempt.current === mine) close();
     } catch (error) {
-      setProblem(wordsOf(error, "Couldn't save the view. Try again."));
-    } finally {
-      setSaving(false);
+      if (attempt.current === mine) {
+        setProblem(wordsOf(error, "Couldn't save the view. Try again."));
+        setSaving(false);
+      }
     }
   };
 
   return (
     <Popover open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
       <PopoverTrigger asChild>
-        <button type="button" className={BUTTON}>
+        <button
+          type="button"
+          // Not disabled (a disabled button leaves the tab order): it says why, and the click opens nothing.
+          aria-disabled={blocked ? true : undefined}
+          aria-describedby={blocked ? `${ids}-blocked` : undefined}
+          onClick={(e) => { if (blocked) e.preventDefault(); }}
+          className={`${BUTTON} ${blocked ? "opacity-50" : ""}`}
+        >
           <BookmarkPlus className="h-4 w-4" aria-hidden="true" />
           Save this as a view
         </button>
       </PopoverTrigger>
+      {blocked && <span id={`${ids}-blocked`} className="sr-only">{blocked}</span>}
       <PopoverContent align="start" className="w-80" aria-label="Save this as a view">
         <form onSubmit={submit} noValidate>
           <p className="mb-2 text-sm text-muted-foreground">

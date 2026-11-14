@@ -438,15 +438,17 @@ describe("a person's own views", () => {
   describe("a view that was changed on screen", () => {
     // Catches: no way to keep a changed view (the person has to delete it and save it again), or chips left over a view that now holds them.
     it("offers to keep the chips and the sort as the view's own, and keeps them", async () => {
+      api.listSavedViews.mockResolvedValue([view({ columns: ["company", "contact"] })]);
       api.fetchMyColumns.mockResolvedValue({ columns: ["company", "status"], source: "mine_for_view" });
       const user = userEvent.setup();
       draw("/advisor?view=v1&filter=waiting_on_peo:is:true&sort=-employee_count");
       await screen.findByRole("link", { name: "Acme" });
       expect(screen.getByText("Changed on screen, not kept.")).toBeInTheDocument();
-      api.listSavedViews.mockResolvedValue([view({ filters: [yes("needs_action"), yes("waiting_on_peo")] as SavedView["filters"], sort: { field: "employee_count", direction: "desc" } })]);
+      api.listSavedViews.mockResolvedValue([view({ filters: [yes("needs_action"), yes("waiting_on_peo")] as SavedView["filters"], sort: { field: "employee_count", direction: "desc" }, columns: ["company", "contact"] })]);
       await waitFor(() => expect(screen.getByRole("button", { name: "Keep the changes to Chasing" })).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: "Keep the changes to Chasing" }));
-      expect(api.changeSavedView).toHaveBeenCalledWith("v1", { filters: [yes("needs_action"), yes("waiting_on_peo")], sort: { field: "employee_count", direction: "desc" }, columns: ["company", "status"] });
+      // The view keeps ITS columns: the person's own choice on it is theirs alone, and a shared view is not for one person's columns to rewrite.
+      expect(api.changeSavedView).toHaveBeenCalledWith("v1", { filters: [yes("needs_action"), yes("waiting_on_peo")], sort: { field: "employee_count", direction: "desc" }, columns: ["company", "contact"] });
       await waitFor(() => expect(where()).toBe("?view=v1"));
       await waitFor(() => expect(screen.queryByText("Changed on screen, not kept.")).toBeNull());
     });
@@ -543,5 +545,369 @@ describe("what a view brings with it", () => {
     await client.refetchQueries({ queryKey: ["table", "firm-1", "submissions", "saved-views"] });
     expect(await screen.findByText("That view isn't available, so this shows all statuses.")).toBeInTheDocument();
     await waitFor(() => expect(where()).toBe(""));
+  });
+});
+
+const later = () => { let release: (error?: Error) => void = () => {}; const p = new Promise<void>((res, rej) => { release = (e) => (e ? rej(e) : res()); }); return { p, release }; };
+
+describe("what is in the way of saving", () => {
+  const refusedQuery = () => Object.assign(new Error('A "choice" filter on pipeline_status takes only its listed values'), { code: "22023" });
+
+  // Catches: a view saved with no columns because the person's columns had not loaded, so it erases what the view had (or pins none for a shared view).
+  it("won't save a view until the person's columns have arrived, and says why", async () => {
+    let arrive: (v: unknown) => void = () => {};
+    api.fetchMyColumns.mockReturnValue(new Promise((r) => { arrive = r; }));
+    const user = userEvent.setup();
+    draw();
+    await screen.findByRole("link", { name: "Acme" });
+    const save = screen.getByRole("button", { name: "Save this as a view" });
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(save).toHaveAccessibleDescription("Available once your columns have loaded.");
+    await user.click(save);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    arrive({ columns: null, source: "default" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).not.toHaveAttribute("aria-disabled"));
+  });
+
+  it("says the columns couldn't be loaded when they failed, and saves nothing", async () => {
+    api.fetchMyColumns.mockRejectedValue(new Error("Couldn't load your columns."));
+    const user = userEvent.setup();
+    draw();
+    await screen.findByRole("link", { name: "Acme" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAccessibleDescription("Couldn't load your columns, so a view can't be saved yet."));
+    await user.click(screen.getByRole("button", { name: "Save this as a view" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.saveView).not.toHaveBeenCalled();
+  });
+
+  // Catches: a refused query (a choice the field doesn't list) being kept as a view, whose count then blanks every tab's.
+  it("offers neither Save nor Keep over a query the database refuses", async () => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    listQueue.mockRejectedValue(refusedQuery());
+    draw("/advisor?view=v1&filter=pipeline_status:any_of:bogus");
+    expect(await screen.findByText(/takes only its listed values/)).toBeInTheDocument();
+    const reason = "This view of the submissions can't be shown, so it can't be saved.";
+    expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAccessibleDescription(reason);
+    expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Keep the changes to Chasing" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Keep the changes to Chasing" })).toHaveAccessibleDescription(reason);
+  });
+});
+
+describe("a change that is still on its way when the person moves on", () => {
+  beforeEach(() => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    for (const f of [api.renameSavedView, api.shareSavedView, api.unshareSavedView]) f.mockResolvedValue(undefined);
+  });
+
+  // Catches: a delete finishing over a place the person has since moved to (the stale address sends them back to All).
+  it("does not send a person back to all statuses after they went to another tab while a delete was on its way", async () => {
+    const pending = later();
+    api.deleteSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1");
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete view" }));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    expect(where()).toBe("?view=won");
+    api.listSavedViews.mockResolvedValue([]);
+    pending.release();
+    await waitFor(() => expect(screen.queryByRole("link", { name: /^Chasing/ })).toBeNull());
+    expect(where()).toBe("?view=won");
+  });
+
+  // Catches: keeping the changes finishing over a new filter the person added meanwhile.
+  it("does not clear what the person added on screen while keeping the changes was on its way", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    expect(where()).toBe("?view=won&filter=waiting_on_peo:is:true");
+    pending.release();
+    await waitFor(() => expect(api.listSavedViews.mock.calls.length).toBeGreaterThan(1));
+    expect(where()).toBe("?view=won&filter=waiting_on_peo:is:true");
+  });
+
+  // Catches: a save finishing by moving the person from wherever they went to the new view.
+  it("stays where the person went when a save finishes after they moved on", async () => {
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw();
+    const dialog = await ask(user);
+    await typeName(user, dialog, "Soon");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    expect(where()).toBe("?view=won");
+    api.listSavedViews.mockResolvedValue([view({ id: "new-1", name: "Soon" })]);
+    pending.release();
+    expect(await screen.findByRole("link", { name: /^Soon/ })).toBeInTheDocument();
+    expect(where()).toBe("?view=won");
+  });
+
+  // Catches: an owner who stops sharing a colleague's view they have open being told it isn't available (it went private, to its saver).
+  it("goes to all statuses, quietly, when an owner stops sharing a colleague's view that is open", async () => {
+    api.listSavedViews.mockResolvedValue([view({ id: "v9", name: "Team's", shared: true, mine: false, canChange: false, canUnshare: true })]);
+    const user = userEvent.setup();
+    draw("/advisor?view=v9");
+    const dialog = await options(user, "Team's");
+    api.listSavedViews.mockResolvedValue([]);
+    await user.click(within(dialog).getByRole("button", { name: "Stop sharing" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: /^Team's/ })).toBeNull());
+    expect(where()).toBe("");
+    expect(screen.queryByText(/isn't available/)).toBeNull();
+  });
+
+  // Catches: stopping sharing one's own view sending the person away from a view that is still theirs.
+  it("stays on the person's own view when they stop sharing it", async () => {
+    api.listSavedViews.mockResolvedValue([view({ shared: true, canUnshare: true })]);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1");
+    const dialog = await options(user, "Chasing");
+    api.listSavedViews.mockResolvedValue([view()]);
+    await user.click(within(dialog).getByRole("button", { name: "Stop sharing" }));
+    await waitFor(() => expect(api.unshareSavedView).toHaveBeenCalled());
+    expect(where()).toBe("?view=v1");
+  });
+});
+
+describe("the options dialog, step by step", () => {
+  beforeEach(() => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    for (const f of [api.renameSavedView, api.deleteSavedView, api.shareSavedView, api.unshareSavedView, api.changeSavedView]) f.mockResolvedValue(undefined);
+  });
+
+  // Catches: a rename box that offers the old name after a rename, so pressing Rename view puts the old name back.
+  it("offers the view's current name the next time Rename is chosen, after it was renamed", async () => {
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    dialog = screen.getByRole("dialog");
+    await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Needs me");
+    api.listSavedViews.mockResolvedValue([view({ name: "Needs me" })]);
+    await user.click(within(dialog).getByRole("button", { name: "Rename view" }));
+    await screen.findByRole("link", { name: /^Needs me/ });
+    dialog = await options(user, "Needs me");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" })).toHaveValue("Needs me");
+  });
+
+  // Catches: Rename offering what was half typed the time before instead of the view's name (the reset on entering the step is lost).
+  it("offers the view's name, not a half-typed one, when Rename is chosen again after Cancel", async () => {
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    dialog = screen.getByRole("dialog");
+    await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Half typed");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" })).toHaveValue("Chasing");
+  });
+
+  // Catches: focus left on the page body when a step replaces the button that was pressed (D-170: opening an editor puts focus in its first control).
+  it("puts focus in the rename box, and on Cancel in the delete question", async () => {
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" })).toHaveFocus());
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" })).toHaveFocus());
+  });
+
+  // Catches: the keyboard person losing their place when the line with "Keep the changes" goes (the button that had focus is gone).
+  it("puts focus on the open view's tab once the changes are kept", async () => {
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await waitFor(() => expect(screen.queryByText("Changed on screen, not kept.")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("link", { name: /^Chasing/ })).toHaveFocus());
+  });
+
+  // Catches: focus jumping from the search box (or any other place the person went) to the tab when the keep finishes late.
+  it("leaves focus where the person put it when keeping the changes finishes after they went to the search box", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(screen.getByRole("searchbox", { name: "Search" }));
+    pending.release();
+    await waitFor(() => expect(api.listSavedViews.mock.calls.length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByRole("searchbox", { name: "Search" })).toHaveFocus();
+  });
+
+  it("does not move focus to a tab that is no longer the open one", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    screen.getByRole("link", { name: /^Won/ }).blur();
+    pending.release();
+    await waitFor(() => expect(api.listSavedViews.mock.calls.length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByRole("link", { name: /^Chasing/ })).not.toHaveFocus();
+  });
+
+  // Catches: Cancel while a rename is on its way, then its refusal arriving in the next, clean dialog.
+  it("shows no late refusal of an attempt that was cancelled in the next dialog", async () => {
+    let refuse: (e: Error) => void = () => {};
+    api.renameSavedView.mockReturnValue(new Promise((_, rej) => { refuse = rej; }));
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    dialog = screen.getByRole("dialog");
+    await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Taken");
+    await user.click(within(dialog).getByRole("button", { name: "Rename view" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    refuse(new Error('You already have a view called "Taken" on this table'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull();
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename view" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("shows no late refusal of a cancelled save in the next dialog", async () => {
+    let refuse: (e: Error) => void = () => {};
+    api.saveView.mockReturnValue(new Promise((_, rej) => { refuse = rej; }));
+    const user = userEvent.setup();
+    draw();
+    let dialog = await ask(user);
+    await typeName(user, dialog, "Taken");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await ask(user);
+    refuse(new Error('You already have a view called "Taken" on this table'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull();
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Save view" })).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("a saved view the table can't open", () => {
+  const bogus = view({ id: "v7", name: "Old chasing", filters: [{ field: "pipeline_status", op: "any_of", value: ["bogus"] }] as SavedView["filters"] });
+  const gone = view({ id: "v8", name: "Old field", filters: [{ field: "nope", op: "is", value: true }] as SavedView["filters"] });
+  const badOp = view({ id: "v5", name: "Wrong operator", filters: [{ field: "needs_action", op: "contains", value: "x" }] as SavedView["filters"] });
+  const badSort = view({ id: "v6", name: "Wrong sort", sort: { field: "nope", direction: "asc" } });
+  beforeEach(() => {
+    api.listSavedViews.mockResolvedValue([view(), bogus, gone]);
+    for (const f of [api.deleteSavedView, api.unshareSavedView]) f.mockResolvedValue(undefined);
+  });
+
+  // Catches: one view the database would refuse (a choice its field doesn't list) blanking every tab's count, because the count is one call.
+  it("is drawn as a tab that can't be opened, says why, and is left out of the counts so the other tabs still count", async () => {
+    countQueueViews.mockResolvedValue([{ name: "all", total: 20 }, { name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    const tab = screen.getByText("Old chasing");
+    expect(tab.closest("a")).toBeNull();
+    expect(tab.closest("[aria-disabled]")).toHaveAccessibleDescription("This view uses a choice its field no longer lists.");
+    expect(screen.getByText("Old field").closest("[aria-disabled]")).toHaveAccessibleDescription("This view uses a field this table no longer has.");
+    const names = (countQueueViews.mock.calls.at(-1)![0] as { name: string }[]).map((v) => v.name);
+    expect(names).toContain("v1");
+    expect(names).not.toContain("v7");
+    expect(names).not.toContain("v8");
+  });
+
+  // Catches: a filter the table won't read being sent on as a null filter, and a sort on a field it lacks, either of which the database refuses for every tab's count.
+  it("also can't open a view whose operator the field doesn't take or whose sort names a field the table lacks", async () => {
+    api.listSavedViews.mockResolvedValue([view(), badOp, badSort]);
+    countQueueViews.mockResolvedValue([{ name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    expect(screen.getByText("Wrong operator").closest("a")).toBeNull();
+    expect(screen.getByText("Wrong operator").closest("[aria-disabled]")).toHaveAccessibleDescription("This view uses a filter this table no longer takes.");
+    expect(screen.getByText("Wrong sort").closest("a")).toBeNull();
+    expect(screen.getByText("Wrong sort").closest("[aria-disabled]")).toHaveAccessibleDescription("This view is sorted by a field this table no longer has.");
+    const names = (countQueueViews.mock.calls.at(-1)![0] as { name: string }[]).map((v) => v.name);
+    expect(names).not.toContain("v5");
+    expect(names).not.toContain("v6");
+  });
+
+  // Catches: a choice written in another case being called unlisted: the database trims and lowercases before it compares, and runs this view fine.
+  it("opens a view whose choice differs from the listed one only in case or spaces, as the database reads it", async () => {
+    api.listSavedViews.mockResolvedValue([view({ id: "v4", name: "Loud", filters: [{ field: "pipeline_status", op: "any_of", value: [" WON "] }] as SavedView["filters"] })]);
+    draw();
+    const tab = await screen.findByRole("link", { name: /^Loud/ });
+    expect(tab).toBeInTheDocument();
+  });
+
+  // Catches: a view that can't be read being given no way out (it can't be deleted or unshared on screen once it is hidden).
+  it("keeps what the person may do with it: delete their own, stop sharing a colleague's", async () => {
+    api.listSavedViews.mockResolvedValue([bogus, view({ ...gone, id: "v8", shared: true, mine: false, canChange: false, canUnshare: true })]);
+    const user = userEvent.setup();
+    draw();
+    const dialog = await options(user, "Old chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    api.listSavedViews.mockResolvedValue([]);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete view" }));
+    expect(api.deleteSavedView).toHaveBeenCalledWith("v7");
+    await waitFor(() => expect(screen.queryByText("Old chasing")).toBeNull());
+  });
+
+  it("offers a colleague's shared view that can't be read the one thing an owner may do with it", async () => {
+    api.listSavedViews.mockResolvedValue([view({ ...gone, id: "v8", shared: true, mine: false, canChange: false, canUnshare: true })]);
+    const user = userEvent.setup();
+    draw();
+    const dialog = await options(user, "Old field");
+    expect(within(dialog).queryByRole("button", { name: "Delete" })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Stop sharing" }));
+    expect(api.unshareSavedView).toHaveBeenCalledWith("v8");
+  });
+
+  // Catches: an address naming it opening unfiltered rows under a tab that says it is open.
+  it("is not a place the address can name: it is dropped, with the usual line", async () => {
+    draw("/advisor?view=v7");
+    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+    expect(await screen.findByText("That view isn't available, so this shows all statuses.")).toBeInTheDocument();
+    expect(listQueue).toHaveBeenLastCalledWith(query());
+  });
+});
+
+describe("a view's own order in the address", () => {
+  // Catches: a header click on a view being ignored for the view's own order.
+  it("gives way to a sort the address holds", async () => {
+    api.listSavedViews.mockResolvedValue([view({ sort: { field: "oldest_waiting_on", direction: "asc" } })]);
+    draw("/advisor?view=v1&sort=-company_name");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action")], sort: { field: "company_name", direction: "desc" } }));
+  });
+
+  // Catches: an address that only repeats the view's own order being a "modified" view, or being written into the address.
+  it("drops a sort that only repeats the view's own, and keeps the opposite one as a change", async () => {
+    api.listSavedViews.mockResolvedValue([view({ sort: { field: "employee_count", direction: "asc" } })]);
+    const { unmount } = draw("/advisor?view=v1&sort=employee_count");
+    await screen.findByRole("link", { name: "Acme" });
+    await waitFor(() => expect(where()).toBe("?view=v1"));
+    expect(screen.queryByText("Changed on screen, not kept.")).toBeNull();
+    unmount();
+    draw("/advisor?view=v1&sort=-employee_count");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(where()).toBe("?view=v1&sort=-employee_count");
+    expect(screen.getByText("Changed on screen, not kept.")).toBeInTheDocument();
+  });
+
+  // Catches: the view's sort in the address of a tab that has none, or a view with none asking for an order nobody chose.
+  it("asks for no order from a view that has none", async () => {
+    draw("/advisor?view=won");
+    await screen.findByRole("link", { name: "Acme" });
+    expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "pipeline_status", op: "any_of", value: ["won"] }] }));
   });
 });
