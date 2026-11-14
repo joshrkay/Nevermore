@@ -18,9 +18,19 @@ export function useTableColumns<K extends TableFields, Row, Context>(table: Tabl
   const viewId = savedView?.id ?? null;
   const key = useTableContextKey(table, "columns");
   const client = useQueryClient();
+  const columnKey = [...key, viewId] as const;
   const kept = useQuery({
-    queryKey: [...key, viewId],
-    queryFn: () => fetchMyColumns(firmId!, table.id as WorkspaceTable, viewId),
+    queryKey: columnKey,
+    queryFn: async () => {
+      const written = () => client.getQueryState(columnKey)?.dataUpdateCount;
+      const before = written();
+      const answer = await fetchMyColumns(firmId!, table.id as WorkspaceTable, viewId);
+      // What the person chose on the page wins over what was read (D-189), in what the query library keeps as well as on screen (D-196): an answer that was on its
+      // way while they chose, or while a choice of theirs was kept, may be from before it, so what the page wrote stays. A person who opens a row and comes back
+      // would otherwise be shown (and build their next change from) the columns they had before, whichever read it was: Refresh's, or the one that follows
+      // "Back to this view's columns".
+      return written() === before ? answer : client.getQueryData<ColumnChoice>(columnKey) ?? answer;
+    },
     enabled: ready && firmId !== null,
     staleTime: Infinity,
     retry: false,
@@ -52,7 +62,8 @@ export function useTableColumns<K extends TableFields, Row, Context>(table: Tabl
     setChosen({ viewId, ids: shown, own: next !== null });
     // The query library keeps what was read and asks again for nothing (`staleTime`): leaving the table and coming back, or choosing another view and coming back to
     // this one, would draw that answer from BEFORE this change. So what the person chose is what it holds (D-196), in the shape a read answers with.
-    client.setQueryData<ColumnChoice>([...key, viewId], { columns: shown, source: next ? (viewId ? "mine_for_view" : "mine") : shown ? "view" : "default" });
+    const choice: ColumnChoice = { columns: shown, source: next ? (viewId ? "mine_for_view" : "mine") : shown ? "view" : "default" };
+    client.setQueryData<ColumnChoice>(columnKey, choice);
     if (!firmId) return;
     const save = saves.current.then(() => setMyColumns(firmId, table.id as WorkspaceTable, viewId, next));
     saves.current = save.catch(() => {});
@@ -60,6 +71,10 @@ export function useTableColumns<K extends TableFields, Row, Context>(table: Tabl
       () => {
         setNotKept(null);
         // Only if nothing has been chosen since: what the person chose after wins over this answer.
+        if (token !== latest.current) return;
+        // A read that was asked while this was on its way (Refresh asks for the person's columns too) may have answered before the database held it, and what it
+        // read is in the library now: it is the choice that is kept, so it is written again.
+        client.setQueryData<ColumnChoice>(columnKey, choice);
         if (forgettingOnView) void kept.refetch().then((r) => { if (r.data && token === latest.current) setChosen({ viewId, ids: r.data.columns, own: false }); });
       },
       (e: Error) => setNotKept(e.message),

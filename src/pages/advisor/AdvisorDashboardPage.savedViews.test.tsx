@@ -1463,6 +1463,132 @@ describe("saved views on the queue (CRM-S3.4a)", () => {
     });
   });
 
+  describe("a column choice and the answers that come after it", () => {
+    const headers = () => screen.getAllByRole("columnheader").map((h) => h.textContent);
+    const DEFAULT_IDS = ["company", "contact", "states", "employees", "submitted", "status", "completeness", "quotes", "waiting_since", "quote_expires"];
+    const openColumns = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "Columns" }));
+      return screen.findByRole("dialog", { name: "Columns" });
+    };
+    // Opens the first row and comes back to the queue, which draws the page again from what the query library holds (D-196).
+    const openARowAndComeBack = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("link", { name: "Acme" }));
+      await screen.findByText("Detail page for s1");
+      await user.click(screen.getByRole("button", { name: "Go back" }));
+      await screen.findByRole("link", { name: "Acme" });
+    };
+
+    // Catches: the database's answer to "Back to this view's columns" (asked once the choice is forgotten) arriving after the person had chosen another column,
+    // and replacing what the query library holds: they open a row and come back to the view's own columns, and the next change they make is built from those
+    // and takes the column they chose out of the database as well (CRM-S3.1a review, D-196, which was fixed for the page being drawn and not for coming back).
+    it("keeps a column chosen before the view's own columns were read again, when the person opens a row and comes back", async () => {
+      stored = [stored1({ name: "Short", columns: ["company", "quotes", "status"] })];
+      keptOnView.set("view-1", ["company", "states"]);
+      let release = () => {};
+      let reads = 0;
+      rpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+        if (name === "my_table_columns" && args.p_view_id === "view-1" && ++reads === 2) {
+          // What the database said when the read ran: the choice forgotten, so the view's own columns.
+          const said = database(name, args);
+          return new Promise((resolve) => { release = () => resolve(said); });
+        }
+        return database(name, args);
+      });
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient(), "/advisor?view=view-1");
+      await waitFor(() => expect(headers()).toEqual(["Company", "States"]));
+      const menu = await openColumns(user);
+      await user.click(within(menu).getByRole("button", { name: "Back to this view's columns" }));
+      await waitFor(() => expect(reads).toBe(2));
+      await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+      await waitFor(() => expect(keptOnView.get("view-1")).toEqual(["company", "quotes", "status", "contact"]));
+      await act(async () => { release(); await new Promise((r) => setTimeout(r, 20)); });
+      expect(headers()).toEqual(["Company", "Quotes", "Status", "Contact"]);
+      // They have a choice of their own again, which the late answer (the database's, from before it) does not undo: the way back is still offered.
+      expect(within(menu).getByRole("button", { name: "Back to this view's columns" })).not.toHaveAttribute("aria-disabled");
+      await openARowAndComeBack(user);
+      expect(headers()).toEqual(["Company", "Quotes", "Status", "Contact"]);
+      await user.click(within(await openColumns(user)).getByRole("checkbox", { name: "States" }));
+      await waitFor(() => expect(asksOf("set_my_table_columns")).toHaveLength(3));
+      expect(keptOnView.get("view-1")).toEqual(["company", "quotes", "status", "contact", "states"]);
+    });
+
+    // Catches: Refresh (which asks again for everything the table shows, the person's columns too) answering before the database had the change that was on
+    // its way, and what it read replacing the change in the query library: the person opens a row and comes back to the columns they had, and the next change is
+    // built from those (D-189: what the person chose on the page wins over what was read).
+    it("keeps a column change when Refresh was pressed while it was being kept and answered first, and the person opens a row and comes back", async () => {
+      const held = holdAnswerTo("set_my_table_columns");
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient());
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(await openColumns(user)).getByRole("checkbox", { name: "Contact" }));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(asksOf("set_my_table_columns")).toHaveLength(1));
+      await user.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(asksOf("my_table_columns")).toHaveLength(2));
+      await act(async () => { held.answer(); await new Promise((r) => setTimeout(r, 20)); });
+      expect(keptColumns).toEqual(DEFAULT_IDS.filter((id) => id !== "contact"));
+      await openARowAndComeBack(user);
+      expect(headers()).not.toContain("Contact");
+      rpc.mockImplementation(database);
+      await user.click(within(await openColumns(user)).getByRole("checkbox", { name: "States" }));
+      await waitFor(() => expect(keptColumns).toEqual(DEFAULT_IDS.filter((id) => id !== "contact" && id !== "states")));
+    });
+
+    // Catches: the answer to a change that was made first being written over a change made after it when the later one could not be kept (the library then holds
+    // the earlier one): the table stays as the person last set it for the visit (D-188), also when they open a row and come back.
+    it("keeps the last change on the table for the visit when it could not be kept, and the answer to the one before it comes later", async () => {
+      let keep = () => {};
+      let writes = 0;
+      rpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+        if (name !== "set_my_table_columns") return database(name, args);
+        return ++writes === 1 ? new Promise((resolve) => { keep = () => resolve(database(name, args)); }) : Promise.resolve(refused("PT423", "Nevermore support can look, not change"));
+      });
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient());
+      await screen.findByRole("link", { name: "Acme" });
+      const menu = await openColumns(user);
+      await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+      await user.click(within(menu).getByRole("checkbox", { name: "States" }));
+      await act(async () => { keep(); await new Promise((r) => setTimeout(r, 20)); });
+      expect(await screen.findByRole("alert")).toHaveTextContent("so your columns weren't kept");
+      expect(headers()).not.toContain("States");
+      await openARowAndComeBack(user);
+      expect(headers()).not.toContain("Contact");
+      expect(headers()).not.toContain("States");
+    });
+
+    // Catches: the same, when the answer to Refresh comes after the database has the change (it was asked before, and the network brought it late): it must not
+    // replace what the person chose either.
+    it("keeps a column change when the answer to Refresh arrives after the change was kept", async () => {
+      let keep = () => {};
+      let release = () => {};
+      let reads = 0;
+      rpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+        if (name === "set_my_table_columns") return new Promise((resolve) => { keep = () => resolve(database(name, args)); });
+        if (name === "my_table_columns" && ++reads === 2) {
+          const said = database(name, args);
+          return new Promise((resolve) => { release = () => resolve(said); });
+        }
+        return database(name, args);
+      });
+      const user = userEvent.setup();
+      renderWithRows(new QueryClient());
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(await openColumns(user)).getByRole("checkbox", { name: "Contact" }));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(asksOf("set_my_table_columns")).toHaveLength(1));
+      await user.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(reads).toBe(2));
+      await act(async () => { keep(); await new Promise((r) => setTimeout(r, 20)); });
+      await act(async () => { release(); await new Promise((r) => setTimeout(r, 20)); });
+      expect(keptColumns).toEqual(DEFAULT_IDS.filter((id) => id !== "contact"));
+      await openARowAndComeBack(user);
+      expect(headers()).not.toContain("Contact");
+    });
+  });
+
   describe("a bookmark of a saved view", () => {
     // Catches: a bookmark of a saved view landing on "All statuses" (and asking for the wrong rows first) because the views had not arrived on the first draw.
     it("asks for no rows until the views have arrived, then shows the view's rows and keeps it in the address", async () => {
