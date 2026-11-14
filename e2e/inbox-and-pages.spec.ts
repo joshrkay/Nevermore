@@ -83,6 +83,30 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await expect(page.getByText("1 to 50 of 52")).toBeVisible();
   });
 
+  await test.step("a column header sorts the whole queue, the address carries the sort, the next click reverses it, and Back undoes page and sort", async () => {
+    const firstRow = () => page.getByRole("row").nth(1).getByRole("link").first();
+    await page.getByRole("button", { name: /^Company,/ }).click();
+    await expect(page).toHaveURL(/\?sort=company_name$/);
+    await expect(page.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "ascending");
+    await expect(firstRow()).toHaveText(/Filler Co 03/);
+    await page.getByRole("button", { name: /^Company,/ }).click();
+    await expect(page).toHaveURL(/\?sort=-company_name$/);
+    await expect(page.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "descending");
+    await expect(firstRow()).toHaveText(/Quiet Co/);
+    await page.getByRole("link", { name: "Next" }).click();
+    await expect(page.getByText("51 to 52 of 52")).toBeVisible();
+    await expect(page).toHaveURL(/page=2/);
+    await expect(page).toHaveURL(/sort=-company_name/);
+    await page.goBack();
+    await expect(page.getByText("1 to 50 of 52")).toBeVisible();
+    await expect(page).toHaveURL(/\?sort=-company_name$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\?sort=company_name$/);
+    await page.getByRole("button", { name: "Back to newest first" }).click();
+    await expect(page).not.toHaveURL(/sort=/);
+    await expect(page.getByText("Order: Newest first")).toBeVisible();
+  });
+
   await test.step("Inbox opens exactly the one row with new PEO mail, and the menu marks Inbox", async () => {
     await page.getByRole("link", { name: "Inbox, 1 with new mail" }).click();
     await expect(page).toHaveURL(/\?filter=has_new_peo_mail:is:true$|\?filter=has_new_peo_mail%3Ais%3Atrue$/);

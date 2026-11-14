@@ -5,6 +5,7 @@ import type { TableFields } from "@/lib/tableQuery";
 import { hasHeld, type TableAddress } from "./address";
 import { TABLE_PAGE_SIZE, type ColumnDefinition, type TableDefinition } from "./columns";
 import { DataTable } from "./DataTable";
+import { OrderLine } from "./OrderLine";
 import { Pager } from "./Pager";
 import { refusedQueryReason } from "./refusal";
 import { tableIsLoading } from "./tableIsLoading";
@@ -44,7 +45,7 @@ interface Props<K extends TableFields, Row, Context> {
   error: (error: Error, retry: () => void, address: TableAddress<K>) => ReactNode;
   /** A click anywhere on a row, outside its links, opens it. */
   onOpenRow?: (row: Row) => void;
-  /** What a column header holds; CRM-S3.2a puts the sort control here. Default: the header's words. */
+  /** What a column header holds, in place of the sort button (CRM-S3.2a: every column with a `sortField` gets one by itself). Default: the header's words and that button. */
   renderHeader?: ComponentProps<typeof DataTable<K, Row, Context>>["renderHeader"];
 }
 
@@ -89,6 +90,11 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
     />
   );
   const refusal = data.error ? refusedQueryReason(data.error) : null;
+  // The sort the headers show: the address's, or else the table's own when one column shows it. With neither, no header is marked and the
+  // line over the table says what the order is.
+  const shownSort = address.sort ?? table.defaultSort;
+  // A sort is a place a person comes back to (Back undoes it, as it does a page), not a correction of one: it pushes a history entry.
+  const sortBy = (sort: NonNullable<typeof shownSort>) => change({ sort }, { push: true });
   return (
     <div>
       {typeof toolbar === "function" ? toolbar({ loading: loadingNow, slowLine }) : <>{toolbar}{slowLine}</>}
@@ -108,6 +114,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       ) : placeholdering || page.rows.length > 0 ? (
         <>
           {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
+          <OrderLine table={table} sort={address.sort} onReset={() => change({ sort: null }, { push: true })} />
           <DataTable
             table={table}
             context={context}
@@ -115,7 +122,8 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             rows={placeholdering ? [] : page.rows}
             placeholder={placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} /> : undefined}
             caption={caption}
-            sort={address.sort ?? table.defaultSort}
+            sort={shownSort}
+            onSort={sortBy}
             // Rows on screen are dimmed and marked busy only while they answer a different question than the address now asks (the next page,
             // tab or filter, D-144); a refresh of the same question changes nothing on screen.
             busy={placeholdering || data.isPlaceholder}

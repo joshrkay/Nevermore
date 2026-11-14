@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { FieldKind, TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
+import type { FieldKind, SortDirection, TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
 
 // The table frame's shapes (story CRM-S3.5a). Every workspace table (the queue now; leads, accounts, quotes, the inbox and the
 // lists inside a record later) describes itself with a TableDefinition and gets its address, rows, table and pager from the frame.
@@ -24,7 +24,16 @@ export interface FieldDefinition<Kind extends FieldKind = FieldKind> {
   kind: Kind;
   /** The values of a choice field, when the table lists them. */
   choices?: readonly FieldChoice[];
+  /**
+   * The direction a first click on a column of this field sorts in (CRM-S3.2a). Left out, it follows the kind: a date starts newest first
+   * (what a person expects of "Submitted"), everything else ascending (A to Z, smallest first, and a choice in its own order). A date that
+   * reads better soonest first ("Quote expires", "Waiting since": the longest wait is the oldest day) says "asc".
+   */
+  firstDirection?: SortDirection;
 }
+
+/** The direction a first click on a field's header sorts in. */
+export const firstSortDirection = (field: FieldDefinition): SortDirection => field.firstDirection ?? (field.kind === "date" ? "desc" : "asc");
 
 /** A table's fields: its field list (`TableFields`, the kinds) with each one's words and choices. */
 export type FieldDefinitions<K extends TableFields> = { readonly [F in keyof K & string]: FieldDefinition<K[F]> };
@@ -39,7 +48,7 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
   cell: (row: Row, context: Context) => ReactNode;
   /** The plain value of the cell, for an export (CRM-S3.8a writes it to the CSV). A column without one is left out of an export. */
   text?: (row: Row, context: Context) => string;
-  /** The field the database sorts this column by, or none when the column has no sort. */
+  /** The field the database sorts this column by (CRM-S3.2a gives it a header button), or none when the column has no sort: a plain header. */
   sortField?: Field;
   /** The field the column's filter is on (CRM-S3.3a's filter row), when it has one: usually the same field. */
   filterField?: Field;
@@ -102,10 +111,10 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
   /**
    * The sort the table has when the address holds none, when one column shows it. `null` means the table's own order, which no single
    * column shows (the queue's: certified submissions first, newest certification first, then latest change); the header then shows no
-   * sort and the sort box says `defaultSortLabel`.
+   * sort and the frame says `defaultSortLabel` in a line over the table (CRM-S3.2a), with the way back to it once a column is sorted.
    */
   defaultSort: TableSort<keyof K & string> | null;
-  /** The words for the table's own order, where a sort is chosen ("Newest first"). */
+  /** The words for the table's own order ("Newest first"): the line over the table, and the way back to it ("Back to newest first"). */
   defaultSortLabel: string;
   /** Searches shorter than this (spaces left out) are not run. */
   searchMinChars: number;

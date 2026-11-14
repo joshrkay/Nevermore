@@ -8,7 +8,7 @@ import { listEmailProblems, type EmailProblem } from "@/lib/advisorApi";
 import { countQueueViews, type QueueFilter } from "@/lib/queueApi";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import {
-  fetchQueuePage, NEEDS_ACTION_FILTER, NEW_PEO_MAIL_FILTER, QUEUE_SORTS, useQueueTable, WAITING_FILTER, type QueueContext,
+  fetchQueuePage, NEEDS_ACTION_FILTER, NEW_PEO_MAIL_FILTER, useQueueTable, WAITING_FILTER, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
   SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
@@ -51,9 +51,8 @@ const AdvisorDashboardPage = () => {
   const filtered = `${viewLabel ? `${viewLabel.toLowerCase()} ` : ""}submissions${needsAction ? " that need advisor action" : ""}${waiting ? " waiting on a PEO" : ""}${newMail ? " with new PEO mail" : ""}`;
   const ownControls = [NEEDS_ACTION_FILTER, WAITING_FILTER, NEW_PEO_MAIL_FILTER];
   const otherFilters = address.filters.some((f) => !ownControls.some((o) => same(o, f)));
-  const sortChoice = QUEUE_SORTS.findIndex((s) => (s.sort?.field ?? null) === (address.sort?.field ?? null) && (s.sort?.direction ?? null) === (address.sort?.direction ?? null));
 
-  // While the first rows are on their way, what changes the QUERY stays usable (search, the two checkboxes, Sort, the tabs: a person can
+  // While the first rows are on their way, what changes the QUERY stays usable (search, the two checkboxes, the sort headers, the tabs: a person can
   // correct a slow search); what needs the rows is not (Refresh, and the pager, which the frame draws only once there are rows).
   const toolbar = ({ loading, slowLine }: { loading: boolean; slowLine: ReactNode }) => (
     <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
@@ -74,16 +73,6 @@ const AdvisorDashboardPage = () => {
           <input type="checkbox" checked={waiting} onChange={(e) => toggle(WAITING_FILTER, e.target.checked)} className="accent-primary" />
           Waiting on a PEO only
         </label>
-        <label htmlFor="queue-sort" className="text-sm text-muted-foreground">Sort</label>
-        <select
-          id="queue-sort"
-          value={sortChoice === -1 ? "other" : String(sortChoice)}
-          onChange={(e) => change({ sort: QUEUE_SORTS[Number(e.target.value)].sort ? { ...QUEUE_SORTS[Number(e.target.value)].sort! } : null })}
-          className="bg-muted border border-border rounded-md px-3 py-2 text-sm text-foreground"
-        >
-          {QUEUE_SORTS.map((s, i) => <option key={s.label} value={i}>{s.label}</option>)}
-          {sortChoice === -1 && <option value="other" disabled>Sorted by the address</option>}
-        </select>
         {/* Not usable until there are rows to ask again for. It stays in the tab order, says why, and ignores the click. */}
         <button
           onClick={loading ? undefined : refresh}

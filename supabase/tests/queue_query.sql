@@ -648,6 +648,11 @@ SELECT pg_temp.is(pg_temp.names(pg_temp.q('[]', 'created_at', 'asc', 1)) || pg_t
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'earliest_quote_expires_on', 'desc', 1)))[1:2], ARRAY['zeta', 'cert_a'], 'days sort by day, latest first');
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'oldest_waiting_on', 'desc', 1)))[1], 'acme_upper', 'the one day waited sorts first, descending');
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'oldest_waiting_on', 'desc', 2)))[8], (pg_temp.fillers())[52], 'empty days after it, in the queue''s order');
+-- CRM-S3.2a re-checks the three sort rules on every kind of field the headers sort: a date field with empty values (only cert_a is
+-- certified) has its empties last both ways, a moment descending is the latest first, and text compares ignoring case (the Acmes).
+SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'submitted_at', 'asc', 1)))[1], 'cert_a', 'a date with empty values: the one date first, ascending');
+SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'submitted_at', 'desc', 1)))[1], 'cert_a', 'a date with empty values: the one date first, descending too (empties last both ways)');
+SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'created_at', 'desc', 1)))[1:2], ARRAY['cert_a', 'zeta'], 'moments sort by time, latest first');
 -- A stage sorts by where it is in the pipeline, not alphabetically: under review, then ready for market, then quoted.
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'pipeline_status', 'asc', 2)))[6:8], ARRAY['acme_upper', 'cert_a', 'zeta'], 'stages in pipeline order');
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'pipeline_status', 'desc', 1)))[1:3], ARRAY['zeta', 'cert_a', 'acme_upper'], 'stages in pipeline order, reversed');
