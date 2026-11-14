@@ -237,26 +237,27 @@ GRANT EXECUTE ON FUNCTION public.firm_member_choices(uuid) TO authenticated;
 
 -- ---------- 3. Last activity, in one place (D-201) ----------
 
--- Every moment something happened on an account of the firm: the newest of them is its last activity. Today: the account's making, and a status change of a
+-- Every moment something happened on one account of the firm: the newest of them is its last activity. Today: the account's making, and a status change of a
 -- quote request on one of its opportunities' intakes (its sending, a quote back, a decline). Editing a field is not activity. Calls, notes and tasks
 -- logged or completed on the account, its contacts or its opportunities join in CRM-E1.5, and an email in Epic 6, each by one more branch of this
--- one function (CREATE OR REPLACE, with every branch it has): nothing else reads these moments. Internal: the table's query asks it.
-CREATE FUNCTION public.account_activity_times(p_firm_id uuid)
-RETURNS TABLE (account_id uuid, at timestamptz)
+-- one function (CREATE OR REPLACE, with every branch it has, each found by the firm and the account so that it is read by an index): nothing else reads these
+-- moments. Internal: the table's query asks it once for each account it shows. It has no SET clause, so the database folds it into that query.
+CREATE FUNCTION public.account_activity_times(p_firm_id uuid, p_account_id uuid)
+RETURNS TABLE (at timestamptz)
 LANGUAGE sql
 STABLE
-SET search_path = public, pg_temp
 AS $$
-  SELECT a.id, a.created_at FROM public.accounts a WHERE a.firm_id = p_firm_id
+  SELECT a.created_at FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = p_account_id
   UNION ALL
-  SELECT o.account_id, e.changed_at
-  FROM public.opportunities o
+  SELECT e.changed_at
+  -- OFFSET 0: the account's own opportunities are found first (by the account), and only then their quote requests, by intake: left to itself the database
+  -- may start from every firm's quote requests and look each one's opportunity up.
+  FROM (SELECT o.intake_id FROM public.opportunities o WHERE o.firm_id = p_firm_id AND o.account_id = p_account_id AND o.intake_id IS NOT NULL OFFSET 0) o
   JOIN public.quote_requests q ON q.session_id = o.intake_id
   JOIN public.quote_request_events e ON e.quote_request_id = q.id AND e.field = 'status'
-  WHERE o.firm_id = p_firm_id
 $$;
 
-REVOKE ALL ON FUNCTION public.account_activity_times(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.account_activity_times(uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
 
 -- A quote request's status changes by the quote request, for the branch above.
 CREATE INDEX quote_request_events_status_idx ON public.quote_request_events (quote_request_id, changed_at) WHERE field = 'status';
@@ -337,8 +338,9 @@ $$;
 --   main_contact_*                the contact marked main; the phone is its phone or else its mobile
 --   opportunity_*, target_start   the open opportunity with the nearest target start (an opportunity is open until it is won or lost, D-206)
 --   open_opportunities            how many are open, so the page can say "+N more" for the others
---   quote_requests_sent, ...      across every opportunity of the account: those asked for that are not closed, how many came back (quoted), the nearest
---                                 expiry of a quote that came back, and whether any is still waiting on a PEO
+--   quote_requests_sent, ...      the quote requests of that same opportunity's intake (CRM-A1.1: the Opportunity and Quotes columns are for the open
+--                                 opportunity shown): those that are not closed, how many came back (quoted), the nearest expiry of a quote that came
+--                                 back, and whether any is still waiting on a PEO. None when it has no intake yet
 --   last_activity_at              account_activity_times()'s newest
 CREATE TYPE public.accounts_row AS (
   id uuid,
@@ -495,6 +497,14 @@ $$;
 -- and keeping the accounts of those: the same rule row security applies, asked a few times and not for every account (supabase/tests/accounts_query.sql
 -- compares the two). `p_ids`, when given, keeps only those accounts (an export of a selection).
 --
+-- What belongs to an account is found for each account by its own id (a LATERAL lookup, through the table's index on the account), never by joining a
+-- set built from the firm's rows: such a join reads every row the sets hold, whoever's, and the planner, with no counts for a set built inside the query,
+-- joined them one by one (5,000 accounts took 40 seconds before the database had looked at a freshly imported table). Looked up by account, a firm reads
+-- its own rows only, with or without counts, and a firm of ten sharing tables with a firm of 5,000 reads ten accounts' worth.
+--
+-- The Opportunity and Quotes columns are for one opportunity (CRM-A1.1): the open one (not Won or Lost, D-206) with the nearest target start, an opportunity
+-- with no start after one with, the one made first when they tie. The quotes are those of that opportunity's intake.
+--
 -- Search: every word must be somewhere in the account's name, trade name or web domain, or in the name or email of one of its contacts (a word that is
 -- an address, "www.acme.com", also finds the domain "acme.com"), ignoring case.
 CREATE FUNCTION public.accounts_rows(p_firm_id uuid, p_search text, p_ids uuid[] DEFAULT NULL)
@@ -502,11 +512,6 @@ RETURNS SETOF public.accounts_row
 LANGUAGE plpgsql
 STABLE
 SET search_path = public, pg_temp
--- Joins by hash, never by nested loop, and no JIT: the sets joined here are built inside the query, so the planner has no counts for them (and none at all for
--- a table just filled by an import until the database has looked at it), and thought of as one row each they were joined one by one, 5,000 accounts taking
--- 40 seconds. A plan with nested loops ruled out costs more than the limit above which the database compiles it, which cost another second.
-SET enable_nestloop = off
-SET jit = off
 AS $$
 DECLARE
   seen_owners uuid[];
@@ -520,82 +525,72 @@ BEGIN
   WHERE public.can_see_firm_record(p_firm_id, o.owner_id);
 
   RETURN QUERY
-  WITH vis AS MATERIALIZED (
-    SELECT a.*
-    FROM public.accounts a
-    WHERE a.firm_id = p_firm_id
-      AND (a.owner_id = ANY (seen_owners) OR (a.owner_id IS NULL AND seen_unowned))
-      AND (p_ids IS NULL OR a.id = ANY (p_ids))
-  ),
-  opp AS MATERIALIZED (
-    SELECT o.id, o.account_id, o.name, o.target_start, o.created_at, o.intake_id, public.opportunity_stage(o.id) AS stage
-    FROM public.opportunities o
-    JOIN vis ON vis.id = o.account_id
-    WHERE o.firm_id = p_firm_id
-  ),
-  open_opp AS (
-    SELECT DISTINCT ON (o.account_id) o.account_id, o.id, o.name, o.target_start, o.stage, (count(*) OVER (PARTITION BY o.account_id))::integer AS n
-    FROM opp o
-    WHERE o.stage NOT IN ('won', 'lost')
-    ORDER BY o.account_id, o.target_start NULLS LAST, o.created_at, o.id
-  ),
-  quotes AS (
-    SELECT o.account_id,
-           (count(*) FILTER (WHERE q.status <> 'closed'))::integer AS sent,
-           (count(*) FILTER (WHERE q.status = 'quoted'))::integer AS received,
-           min(q.quote_expires_on) FILTER (WHERE q.status = 'quoted') AS expires,
-           COALESCE(bool_or(q.status = 'sent'), false) AS waiting
-    FROM opp o
-    JOIN public.quote_requests q ON q.session_id = o.intake_id
-    GROUP BY o.account_id
-  ),
-  main_contact AS (
-    SELECT c.account_id, c.id, btrim(concat_ws(' ', c.first_name, c.last_name)) AS name, NULLIF(btrim(c.email), '') AS email,
-           COALESCE(NULLIF(btrim(c.phone), ''), NULLIF(btrim(c.mobile), '')) AS phone
-    FROM public.contacts c
-    JOIN vis ON vis.id = c.account_id
-    WHERE c.is_main
-  ),
-  activity AS (
-    SELECT t.account_id, max(t.at) AS at
-    FROM public.account_activity_times(p_firm_id) t
-    JOIN vis ON vis.id = t.account_id
-    GROUP BY t.account_id
-  ),
-  contact_text AS (
-    SELECT c.account_id, lower(string_agg(concat_ws(' ', c.first_name, c.last_name, c.email), E'\n')) AS t
-    FROM public.contacts c
-    JOIN vis ON vis.id = c.account_id
-    WHERE cardinality(terms) > 0
-    GROUP BY c.account_id
-  ),
-  members AS (
-    SELECT m.user_id, public.person_display_name(u.raw_user_meta_data, u.email::text) AS name
-    FROM public.firm_memberships m
-    JOIN auth.users u ON u.id = m.user_id
-    WHERE m.firm_id = p_firm_id AND public.membership_is_current(m.valid_from, m.valid_until)
-  )
   SELECT (ROW(
     a.id, a.name, a.trade_name, a.website, a.city, a.state, a.industry, a.employees, a.states_of_operation, a.current_provider, a.source,
-    public.account_status(a.id), a.archived_at IS NOT NULL, a.archived_at, a.created_at,
+    CASE WHEN won.is_won THEN 'client' ELSE 'prospect' END, a.archived_at IS NOT NULL, a.archived_at, a.created_at,
     mem.user_id, mem.name,
     mc.id, mc.name, mc.email, mc.phone,
     oo.id, oo.name, oo.stage, oo.target_start, COALESCE(oo.n, 0),
     COALESCE(q.sent, 0), COALESCE(q.received, 0), COALESCE(q.waiting, false), q.expires,
     act.at
   )::public.accounts_row).*
-  FROM vis a
-  LEFT JOIN members mem ON mem.user_id = a.owner_id
-  LEFT JOIN main_contact mc ON mc.account_id = a.id
-  LEFT JOIN open_opp oo ON oo.account_id = a.id
-  LEFT JOIN quotes q ON q.account_id = a.id
-  LEFT JOIN activity act ON act.account_id = a.id
-  LEFT JOIN contact_text ct ON ct.account_id = a.id
-  WHERE NOT EXISTS (
-    SELECT 1 FROM unnest(terms, domains) AS w (term, dom)
-    WHERE strpos(lower(concat_ws(E'\n', a.name, a.trade_name, a.web_domain)) || E'\n' || COALESCE(ct.t, ''), w.term) = 0
-      AND (w.dom IS NULL OR a.web_domain IS NULL OR strpos(a.web_domain, w.dom) = 0)
-  );
+  FROM public.accounts a
+  LEFT JOIN LATERAL (
+    SELECT m.user_id, public.person_display_name(u.raw_user_meta_data, u.email::text) AS name
+    FROM public.firm_memberships m
+    JOIN auth.users u ON u.id = m.user_id
+    WHERE m.firm_id = p_firm_id AND m.user_id = a.owner_id AND public.membership_is_current(m.valid_from, m.valid_until)
+    LIMIT 1
+  ) mem ON true
+  -- The account's status (D-197): a client once an opportunity of it is Won. account_status() says the same for any account by its id alone, which no index
+  -- serves (opportunities are indexed by firm and account), so asked for each account of a firm it reads every opportunity of every firm; this asks by firm
+  -- and account. supabase/tests/accounts_query.sql compares the two for every account.
+  LEFT JOIN LATERAL (
+    SELECT EXISTS (
+      SELECT 1 FROM public.opportunities w
+      WHERE w.firm_id = p_firm_id AND w.account_id = a.id AND w.intake_id IS NOT NULL AND public.submission_opportunity_stage(w.intake_id) = 'won') AS is_won
+  ) won ON true
+  LEFT JOIN LATERAL (
+    SELECT c.id, btrim(concat_ws(' ', c.first_name, c.last_name)) AS name, NULLIF(btrim(c.email), '') AS email,
+           COALESCE(NULLIF(btrim(c.phone), ''), NULLIF(btrim(c.mobile), '')) AS phone
+    FROM public.contacts c
+    WHERE c.account_id = a.id AND c.is_main
+  ) mc ON true
+  LEFT JOIN LATERAL (
+    SELECT x.id, x.name, x.target_start, x.stage, x.intake_id, (count(*) OVER ())::integer AS n
+    FROM (
+      SELECT o.id, o.name, o.target_start, o.created_at, o.intake_id, public.opportunity_stage(o.id) AS stage
+      FROM public.opportunities o
+      WHERE o.firm_id = p_firm_id AND o.account_id = a.id
+    ) x
+    WHERE x.stage NOT IN ('won', 'lost')
+    ORDER BY x.target_start NULLS LAST, x.created_at, x.id
+    LIMIT 1
+  ) oo ON true
+  LEFT JOIN LATERAL (
+    SELECT (count(*) FILTER (WHERE r.status <> 'closed'))::integer AS sent,
+           (count(*) FILTER (WHERE r.status = 'quoted'))::integer AS received,
+           min(r.quote_expires_on) FILTER (WHERE r.status = 'quoted') AS expires,
+           COALESCE(bool_or(r.status = 'sent'), false) AS waiting
+    FROM public.quote_requests r
+    WHERE r.session_id = oo.intake_id
+  ) q ON true
+  LEFT JOIN LATERAL (
+    SELECT max(t.at) AS at FROM public.account_activity_times(p_firm_id, a.id) t
+  ) act ON true
+  LEFT JOIN LATERAL (
+    SELECT lower(string_agg(concat_ws(' ', c.first_name, c.last_name, c.email), E'\n')) AS t
+    FROM public.contacts c
+    WHERE cardinality(terms) > 0 AND c.account_id = a.id
+  ) ct ON true
+  WHERE a.firm_id = p_firm_id
+    AND (a.owner_id = ANY (seen_owners) OR (a.owner_id IS NULL AND seen_unowned))
+    AND (p_ids IS NULL OR a.id = ANY (p_ids))
+    AND NOT EXISTS (
+      SELECT 1 FROM unnest(terms, domains) AS w (term, dom)
+      WHERE strpos(lower(concat_ws(E'\n', a.name, a.trade_name, a.web_domain)) || E'\n' || COALESCE(ct.t, ''), w.term) = 0
+        AND (w.dom IS NULL OR a.web_domain IS NULL OR strpos(a.web_domain, w.dom) = 0)
+    );
 END;
 $$;
 
@@ -623,7 +618,6 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
-SET jit = off
 AS $$
 DECLARE
   page_size constant integer := 50;
@@ -734,7 +728,6 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
-SET jit = off
 AS $$
 DECLARE
   firm uuid;

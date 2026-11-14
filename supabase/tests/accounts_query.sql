@@ -987,9 +987,9 @@ BEGIN
     PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'waiting_on_peo', 'false', 'nothing is waiting any more');
     PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'quote_requests_sent', '2', 'a decline is still a quote asked for');
     -- The one place later stories extend: a branch added to account_activity_times is last activity, and nothing else was changed.
-    CREATE OR REPLACE FUNCTION public.account_activity_times(p_firm_id uuid) RETURNS TABLE (account_id uuid, at timestamptz) LANGUAGE sql STABLE AS $f$
-      SELECT a.id, a.created_at FROM public.accounts a WHERE a.firm_id = p_firm_id
-      UNION ALL SELECT a.id, timestamptz '2030-01-01 00:00+00' FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.name = 'Echo Co'
+    CREATE OR REPLACE FUNCTION public.account_activity_times(p_firm_id uuid, p_account_id uuid) RETURNS TABLE (at timestamptz) LANGUAGE sql STABLE AS $f$
+      SELECT a.created_at FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = p_account_id
+      UNION ALL SELECT timestamptz '2030-01-01 00:00+00' FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = p_account_id AND a.name = 'Echo Co'
     $f$;
     PERFORM pg_temp.is((pg_temp.row_as_owner('echo') ->> 'last_activity_at')::timestamptz, timestamptz '2030-01-01 00:00+00', 'a story that adds a source of activity changes that one function');
     PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
@@ -1049,12 +1049,118 @@ BEGIN
   RAISE NOTICE 'accounts_query: stages passed';
 END $$;
 
+-- ---------- the Quotes column is for the shown opportunity (CRM-A1.1) ----------
+-- Break caught: the quotes (and "waiting on a PEO") are counted across every opportunity of the account, so an account with a won opportunity and a new
+-- open one shows last year's "1 back of 1, expires 2025-12-31"; or they are the other open opportunity's, not the one the Opportunity column shows.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  BEGIN
+    -- Renewing: last year's opportunity is won and holds a quote that came back; this year's is open and has one request, still waiting.
+    PERFORM pg_temp.acct('renew', 'acme', 'acme_owner', 'Renewing Co', date '2026-10-16');
+    PERFORM pg_temp.intake('i_old', 'acme'); PERFORM pg_temp.intake('i_new', 'acme');
+    INSERT INTO public.opportunities (firm_id, account_id, name, target_start, intake_id)
+    VALUES (pg_temp.id('acme'), pg_temp.id('renew'), 'Last year', date '2025-09-01', pg_temp.id('i_old')), (pg_temp.id('acme'), pg_temp.id('renew'), 'This year', date '2026-12-01', pg_temp.id('i_new'));
+    UPDATE public.submission_workflow SET status = 'won' WHERE session_id = pg_temp.id('i_old');
+    UPDATE public.submission_workflow SET status = 'sent_to_carrier' WHERE session_id = pg_temp.id('i_new');
+    PERFORM pg_temp.quote('i_old', 'PEO Old', 'quoted', date '2025-12-31', date '2025-10-01');
+    PERFORM pg_temp.quote('i_new', 'PEO New', 'sent', NULL, date '2026-10-30');
+    r := pg_temp.row_as_owner('renew');
+    PERFORM pg_temp.is(r ->> 'status', 'client', 'the account is a client (last year''s was won)');
+    PERFORM pg_temp.is(r ->> 'opportunity_name', 'This year', 'and shows this year''s opportunity');
+    PERFORM pg_temp.is(r ->> 'quote_requests_sent', '1', 'with its one quote asked for, not last year''s too');
+    PERFORM pg_temp.is(r ->> 'quotes_received', '0', 'none back: last year''s quote is not this year''s');
+    PERFORM pg_temp.is(r ->> 'earliest_quote_expires_on', NULL, 'and no expiry of last year''s');
+    PERFORM pg_temp.is(r ->> 'waiting_on_peo', 'true', 'it is waiting on a PEO');
+    -- A filter on quotes back reads the same: this account has none.
+    PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+    PERFORM pg_temp.is(pg_temp.f('[{"field":"quotes_received","op":"more_than","value":0}]'), ARRAY['alpha'], 'only the account whose shown opportunity has a quote back has one');
+    RESET ROLE;
+    -- This year's opportunity has no intake yet (Qualifying): it has no quotes, whatever last year's had.
+    UPDATE public.opportunities SET intake_id = NULL WHERE account_id = pg_temp.id('renew') AND name = 'This year';
+    r := pg_temp.row_as_owner('renew');
+    PERFORM pg_temp.is(r ->> 'opportunity_stage', 'qualifying', 'an open opportunity with no intake is Qualifying');
+    PERFORM pg_temp.is(r ->> 'quote_requests_sent', '0', 'and has asked for no quotes');
+    PERFORM pg_temp.is(r ->> 'waiting_on_peo', 'false', 'and waits on no PEO');
+    -- Of two open opportunities, the quotes are the shown one's (the nearer start): Alpha's other opportunity holds none, and takes the lead.
+    UPDATE public.opportunities SET intake_id = pg_temp.id('i_new') WHERE account_id = pg_temp.id('renew') AND name = 'This year';
+    UPDATE public.opportunities SET target_start = date '2027-06-01' WHERE id = pg_temp.id('opp_alpha_sooner');
+    UPDATE public.opportunities SET target_start = date '2027-05-01' WHERE id = pg_temp.id('opp_alpha_later');
+    r := pg_temp.row_as_owner('alpha');
+    PERFORM pg_temp.is(r ->> 'opportunity_name', 'Alpha later search', 'the other open opportunity is nearer now');
+    PERFORM pg_temp.is(r ->> 'quote_requests_sent', '0', 'so the quotes are its (none), not the other''s');
+    PERFORM pg_temp.is(r ->> 'quotes_received', '0', 'none back');
+    PERFORM pg_temp.is(r ->> 'earliest_quote_expires_on', NULL, 'no expiry');
+    PERFORM pg_temp.is(r ->> 'waiting_on_peo', 'false', 'and no waiting');
+    PERFORM pg_temp.is(r ->> 'open_opportunities', '2', 'with both still open');
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999';
+  EXCEPTION WHEN SQLSTATE 'ZZ999' THEN NULL;
+  END;
+  RAISE NOTICE 'accounts_query: the quotes of the shown opportunity passed';
+END $$;
+
+-- ---------- a small firm's list reads a few rows, not every firm's ----------
+-- Break caught: the query joins whole tables (a planner override that forces hash joins, or a join of a built set), so listing 6 accounts reads every
+-- firm's quote requests, main contacts and status events: 13 ms for a firm of 10 accounts beside one of 5,000, against 7. Asked by what the listing reads:
+-- a second firm of 400 accounts, each with a main contact and an opportunity, and 400 quote requests on one intake, with their status events, all
+-- counted; Acme's owner lists Acme's 6 accounts, and each table the query reads must give up only a few rows (a list reads 2 contacts, 6 quote requests and
+-- 3 events, and some 60 opportunities by the account's and the stage's lookups, against the 400 of each a scan of the big firm gives), planned once first,
+-- with sequential scans priced out, as the history functions' test does.
+CREATE FUNCTION pg_temp.rows_read(t text) RETURNS bigint LANGUAGE sql AS $$
+  SELECT s.seq_tup_read + COALESCE(s.idx_tup_fetch, 0) FROM pg_stat_xact_user_tables s WHERE s.relid = ('public.' || t)::regclass
+$$;
+DO $$
+DECLARE big uuid; i uuid; opp uuid; t text; before bigint; spent text := ''; j jsonb;
+BEGIN
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Big Brokers', 'big-brokers', now()) RETURNING id INTO big;
+  INSERT INTO fx VALUES ('big', big);
+  INSERT INTO public.accounts (source, firm_id, name, created_at)
+  SELECT 'import', big, 'Big ' || lpad(n::text, 3, '0'), timestamptz '2026-01-01 00:00+00' + (n || ' minutes')::interval FROM generate_series(1, 400) n;
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email, is_main) SELECT big, a.id, 'Big contact', 'big-' || a.id || '@example.test', true FROM public.accounts a WHERE a.firm_id = big;
+  INSERT INTO public.opportunities (firm_id, account_id, name, target_start) SELECT big, a.id, 'Big search', date '2027-01-01' FROM public.accounts a WHERE a.firm_id = big;
+  i := pg_temp.intake('big_intake', 'big');
+  UPDATE public.opportunities SET intake_id = i WHERE id = (SELECT o.id FROM public.opportunities o WHERE o.firm_id = big ORDER BY o.account_id LIMIT 1);
+  INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) SELECT i, 'Big PEO ' || n, 'sent', date '2026-10-01' FROM generate_series(1, 400) n;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_events WHERE session_id = i AND field = 'status'), 400::bigint, 'the big firm''s quote requests have their events');
+END $$;
+ANALYZE public.accounts, public.contacts, public.opportunities, public.quote_requests, public.quote_request_events, public.submission_workflow;
+
+DO $$
+DECLARE t text; before bigint; used bigint; j jsonb;
+BEGIN
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.al('acme');
+  PERFORM pg_temp.al('acme', '[]', NULL, 'asc', 1, 'zebra');
+  FOREACH t IN ARRAY ARRAY['contacts', 'opportunities', 'quote_requests', 'quote_request_events'] LOOP
+    before := pg_temp.rows_read(t);
+    j := pg_temp.al('acme');
+    used := pg_temp.rows_read(t) - before;
+    PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), 6, 'the list is whole');
+    PERFORM pg_temp.is(used < CASE t WHEN 'opportunities' THEN 150 ELSE 30 END, true, 'listing 6 accounts read ' || used || ' rows of ' || t || ', not every firm''s');
+    before := pg_temp.rows_read(t);
+    PERFORM pg_temp.al('acme', '[]', NULL, 'asc', 1, 'zebra');
+    used := pg_temp.rows_read(t) - before;
+    PERFORM pg_temp.is(used < CASE t WHEN 'opportunities' THEN 150 ELSE 30 END, true, 'a search read ' || used || ' rows of ' || t);
+    before := pg_temp.rows_read(t);
+    PERFORM public.accounts_view_counts(pg_temp.id('acme'), pg_temp.views());
+    used := pg_temp.rows_read(t) - before;
+    PERFORM pg_temp.is(used < CASE t WHEN 'opportunities' THEN 150 ELSE 30 END, true, 'the tabs read ' || used || ' rows of ' || t);
+  END LOOP;
+  -- The measure can see a scan: the big firm's own list reads its 400 contacts.
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  RESET ROLE;
+  before := pg_temp.rows_read('contacts');
+  PERFORM count(*) FROM public.contacts c WHERE c.firm_id = pg_temp.id('big');
+  PERFORM pg_temp.is(pg_temp.rows_read('contacts') - before >= 400, true, 'a scan of the big firm''s contacts is seen by the count');
+  RAISE NOTICE 'accounts_query: few rows read passed';
+END $$;
+
 -- ---------- how it is run ----------
--- Break caught: the query goes back to nested loops or the database's JIT, which together took 40 seconds to list 5,000 accounts whose tables the database had not
--- yet looked at (see the migration), or the functions the browser calls are open to a signed-out caller.
+-- Break caught: the functions the browser calls are open to a signed-out caller, or a helper is.
 DO $$
 BEGIN
-  PERFORM pg_temp.is((SELECT p.proconfig @> ARRAY['enable_nestloop=off', 'jit=off'] FROM pg_proc p WHERE p.proname = 'accounts_rows' AND p.pronamespace = 'public'::regnamespace), true, 'the rows are joined by hash and not compiled');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('accounts_list', 'accounts_view_counts', 'firm_member_choices')
                        AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR NOT has_function_privilege('authenticated', p.oid, 'EXECUTE'))), 0::bigint, 'the three calls are for signed-in callers and no one else');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('accounts_rows', 'accounts_filters_checked', 'accounts_row_passes', 'accounts_row_filters_pass',

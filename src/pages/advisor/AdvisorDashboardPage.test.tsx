@@ -1468,10 +1468,10 @@ describe("AdvisorDashboardPage", () => {
   });
 
   describe("when the database refuses the query", () => {
-    // Catches: a refused filter leaving a blank page or a "try again" that can never work. The codes and words are the database's (queue_query.sql).
+    // Catches: a refused filter leaving a blank page or a "try again" that can never work. The code and words are the database's (queue_query.sql, accounts_table_query.sql).
     it.each([
       ["22023", 'The filter "pipeline_status any_of" can\'t match "nonsense": it isn\'t one of the field\'s values'],
-      ["0A000", "Filters on a person arrive with CRM-A1.1, when records have an owner"],
+      ["22023", 'The filter "owner any_of" takes people by their id'],
     ])("shows the reason of a %s refusal plainly, with a way back to every submission and no retry", async (code, reason) => {
       listQueue.mockImplementation(async (o: { filters: unknown[] }) => {
         if (o.filters.length) throw Object.assign(new Error(reason), { code });

@@ -549,7 +549,7 @@ The accounts a person may see in one firm, as the Accounts page draws them, work
 _Avoid_: accounts list (the list is the table's rows), grid
 
 **Open opportunity** (the Opportunity column of the accounts table):
-Of the opportunities of an account that are not Won or Lost, the one with the nearest target start (the earliest; one with no start after one with; the one made first when they tie), shown with its name and stage, and "+N more" for the others that are open. The Quotes column is not limited to it: it counts across every opportunity of the account the quotes asked for that are not closed, how many came back and the nearest expiry of one that did.
+Of the opportunities of an account that are not Won or Lost, the one with the nearest target start (the earliest; one with no start after one with; the one made first when they tie), shown with its name and stage, and "+N more" for the others that are open. The Quotes column is for the same opportunity (CRM-A1.1): the quote requests on its intake that are not closed, how many came back and the nearest expiry of one that did, and whether one still waits on a PEO. An account whose last opportunity was won and whose new one is open shows the new one's quotes, never last year's; an open opportunity with no intake yet has none.
 _Avoid_: current opportunity, main opportunity
 
 **Level rule** (code: `can_change_firm_record(firm, owner)`; story CRM-A2.1a, D-209):
@@ -596,7 +596,7 @@ What an agent logs on an account or a contact (later on a lead or an opportunity
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
 **Last activity**:
-When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity. Until CRM-E1.5 it is the newest of the account's creation and a status change of a quote request on one of its opportunities' intakes (code: `account_activity_times(firm)`, the one function that gains a branch for calls, notes and tasks, and later for email).
+When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity. Until CRM-E1.5 it is the newest of the account's creation and a status change of a quote request on one of its opportunities' intakes (code: `account_activity_times(firm, account)`, the one function that gains a branch for calls, notes and tasks, and later for email).
 _Avoid_: last modified, updated
 
 ### Advisors
