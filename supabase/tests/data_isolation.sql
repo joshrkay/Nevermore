@@ -185,6 +185,7 @@
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 \i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -3397,6 +3398,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_history_list', 'firm_scoped', 'a current member reads the history of a record of their own firm that they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
   ('record_history_capture', 'trigger', 'writes a tracked record''s creation and each change of a field the trigger was told to track, inside the write that made it; no API role can run it or write the table'),
   ('record_history_can_see', 'service_only', 'whether the caller may see a record of a firm, per table: the reading function asks it; no API role can call it'),
+  ('record_history_remove', 'service_only', 'the one function that deletes history, owned by the role that may (ADR 0012): a record''s once the record is gone, a firm''s only while it closes; no API role can run it'),
+  ('record_history_record_exists', 'service_only', 'whether a record still exists, per table: record_history_remove asks it; no API role can call it'),
   ('firm_actor_is_staff', 'service_only', 'whether an actor was Nevermore''s own person acting on a firm they were not a member of (D-33): the firm''s record and the history of a record stamp it; no API role can call it');
 
 INSERT INTO fn_class (fn, class, why) VALUES

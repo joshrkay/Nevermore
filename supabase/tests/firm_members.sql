@@ -1031,6 +1031,7 @@ $$;
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 \i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

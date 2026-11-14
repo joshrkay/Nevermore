@@ -143,6 +143,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 \i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1014,7 +1015,7 @@ DECLARE
   reads text[] := ARRAY['advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
-    'queue_list_submissions', 'queue_view_counts', 'retention_review_due', 'session_verified_fields'];
+    'queue_list_submissions', 'queue_view_counts', 'record_history_list', 'retention_review_due', 'session_verified_fields'];
   writes text[] := ARRAY['add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
@@ -1025,15 +1026,25 @@ DECLARE
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
-  own_or_platform text[] := ARRAY['admin_decide_firm', 'leave_firm', 'report_client_event'];
+  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event'];
   unplaced text; stale text; lost text; weak text;
 BEGIN
   RESET ROLE;
+  -- Transitive: a function that calls a function that asks a helper asks it too (record_history_list reaches is_firm_member through
+  -- record_history_can_see, which no API role can run, so a source-only scan never saw it).
+  WITH RECURSIVE asks (name) AS (
+    SELECT p.proname FROM pg_proc p
+    WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f'
+      AND p.prosrc ~ ('\m(' || array_to_string(helpers || ARRAY['firm_to_act_for', 'current_member_firm_ids', 'caller_is_firm_member', 'require_advisor', 'require_intake_in_my_firm'], '|') || ')\M')
+    UNION
+    SELECT p.proname FROM pg_proc p JOIN asks a ON p.prosrc ~ ('\m' || a.name || '\M')
+    WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f'
+  )
   SELECT string_agg(DISTINCT p.proname, ', ' ORDER BY p.proname) INTO unplaced
   FROM pg_proc p
   WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f'
     AND (has_function_privilege('authenticated', p.oid, 'EXECUTE') OR has_function_privilege('anon', p.oid, 'EXECUTE'))
-    AND p.prosrc ~ ('\m(' || array_to_string(helpers || ARRAY['firm_to_act_for', 'current_member_firm_ids', 'caller_is_firm_member', 'require_advisor', 'require_intake_in_my_firm'], '|') || ')\M')
+    AND p.proname IN (SELECT name FROM asks)
     AND p.proname <> ALL (helpers || reads || writes || owner_only || own_or_platform);
   PERFORM pg_temp.is(unplaced, NULL::text, 'every function that asks a membership helper is classified (read, write, owner-only, or the caller''s own)');
   SELECT string_agg(k, ', ' ORDER BY k) INTO stale FROM unnest(helpers || reads || writes || owner_only || own_or_platform) k

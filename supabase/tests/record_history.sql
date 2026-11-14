@@ -142,6 +142,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 \i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -344,8 +345,7 @@ DO $$
 DECLARE acme uuid := pg_temp.id('acme'); h record;
 BEGIN
   CREATE TABLE public.history_probe (firm_id uuid NOT NULL, code text NOT NULL, a text, n numeric, d date, b boolean, secret text, PRIMARY KEY (firm_id, code));
-  CREATE TRIGGER history_probe_history AFTER INSERT OR UPDATE OR DELETE ON public.history_probe
-    FOR EACH ROW EXECUTE FUNCTION public.record_history_capture('referral_partners', 'code', 'a', 'n', 'd', 'b');
+  PERFORM public.record_history_track('public.history_probe', 'referral_partners', ARRAY['code'], ARRAY['a', 'n', 'd', 'b']);
   INSERT INTO public.history_probe VALUES (acme, 'typed', 'text', 12.50, DATE '2026-11-18', true, 's1');
   UPDATE public.history_probe SET a = NULL, n = 7, d = DATE '2027-01-02', b = false, secret = 's2' WHERE code = 'typed';
   UPDATE public.history_probe SET a = 'back', n = NULL, d = NULL, b = NULL WHERE code = 'typed';
@@ -363,10 +363,15 @@ BEGIN
   DROP TRIGGER history_probe_typo ON public.history_probe;
   -- The key and the firm of a record with a history can't change: its history would be left behind.
   PERFORM pg_temp.is(pg_temp.attempt($q$UPDATE public.history_probe SET code = 'renamed' WHERE code = 'typed'$q$), '23514', 'the key of a tracked record can''t change');
-  -- A table that is not on the list can't be given a history.
-  CREATE TRIGGER history_probe_unknown AFTER INSERT ON public.history_probe
-    FOR EACH ROW EXECUTE FUNCTION public.record_history_capture('chamber_sessions', 'code', 'a');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.history_probe (firm_id, code) VALUES (%L, 'x')$q$, acme)), '22023', 'a table name that is not on the list is refused');
+  -- Attaching is checked then, not at the first change: a table that is not on the list, a field or key that is not a column, a repeat.
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.record_history_track('public.history_probe', 'chamber_sessions', ARRAY['code'], ARRAY['a'])$q$), '22023', 'a table name that is not on the list can''t be given a history');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.record_history_track('public.history_probe', 'referral_partners', ARRAY['code'], ARRAY['a', 'no_such_column'])$q$), '42703', 'a field that is not a column is refused when it is attached');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.record_history_track('public.history_probe', 'referral_partners', ARRAY['no_such_key'], ARRAY['a'])$q$), '42703', 'and a key column that is not one');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.record_history_track('public.history_probe', 'referral_partners', ARRAY['code'], ARRAY['a', 'code'])$q$), '22023', 'and a field that is also the key');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.record_history_track('public.firms', 'referral_partners', ARRAY['id'], ARRAY['name'])$q$), '42703', 'and a table with no firm');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.record_history_track('public.history_probe', 'referral_partners', ARRAY['code'], ARRAY[]::text[])$q$), '22023', 'and no field at all');
+  -- Emptying a tracked table is refused, so a record made later with the same key can't inherit a history.
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.history_probe$q$), '42501', 'a table with a history can''t be emptied');
   DELETE FROM public.history_probe WHERE code = 'typed';
   PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, 'typed')), 0::bigint, 'deleting the record takes its history with it');
   DROP TABLE public.history_probe;
@@ -444,27 +449,31 @@ BEGIN
   RAISE NOTICE 'record_history: nobody edits passed';
 END $$;
 
+-- Break caught: a setting a caller can make lets the owner (or anyone who can run a statement) delete a history, as ADR 0012 rejected for the
+-- firm's record; the function that deletes works for a record that still exists, or for a firm that is not closing; the role that deletes can
+-- log in, belongs to an API role or holds more than read and delete.
 DO $$
-DECLARE acme uuid := pg_temp.id('acme'); zenith uuid := pg_temp.id('zenith'); n bigint;
+DECLARE acme uuid := pg_temp.id('acme'); n bigint;
 BEGIN
-  -- The firm's closing is allowed for the firm it is closing and for no other; a record's cleanup is allowed for that record and no other.
-  PERFORM set_config('nevermore.closing_firm', zenith::text, true);
-  BEGIN
-    DELETE FROM public.record_history WHERE firm_id = acme;
-    RAISE EXCEPTION 'FAIL: a closing of one firm deleted another firm''s history';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
+  PERFORM set_config('nevermore.closing_firm', acme::text, true);
+  PERFORM set_config('nevermore.record_history_cleanup', acme::text || '/referral_partners/acme-cfo', true);
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$DELETE FROM public.record_history WHERE firm_id = %L$q$, acme)), '42501', 'the owner can''t delete with either setting set');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$DELETE FROM public.record_history WHERE firm_id = %L AND record_key = 'acme-cfo'$q$, acme)), '42501', 'not even the one record the setting names');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.record_history_remove(%L)$q$, acme)), '42501', 'nor through the function, for a firm that is not closing, whatever is set');
   PERFORM set_config('nevermore.closing_firm', '', true);
-  PERFORM set_config('nevermore.record_history_cleanup', acme::text || '/referral_partners/another-record', true);
-  BEGIN
-    DELETE FROM public.record_history WHERE firm_id = acme AND record_key = 'acme-cfo';
-    RAISE EXCEPTION 'FAIL: the cleanup of one record deleted another record''s history';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
   PERFORM set_config('nevermore.record_history_cleanup', '', true);
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.record_history_remove(%L, 'referral_partners', 'acme-cfo')$q$, acme)), '42501', 'nor the history of a record that still exists');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.record_history_remove(%L, 'referral_partners', NULL)$q$, acme)), '22023', 'a record is named by its table and key together');
   SELECT count(*) INTO n FROM pg_temp.held(acme, 'acme-cfo');
   PERFORM pg_temp.is(n > 0, true, 'and nothing was lost by those tries');
-  RAISE NOTICE 'record_history: the two deletions that are allowed are narrow';
+  -- The role.
+  PERFORM pg_temp.is((SELECT r.rolcanlogin OR r.rolsuper OR r.rolbypassrls OR r.rolinherit FROM pg_roles r WHERE r.rolname = 'record_history_remover'), false, 'the removing role can''t log in, bypasses nothing and inherits nothing');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
+                      WHERE g.rolname = 'record_history_remover' AND u.rolname IN ('anon', 'authenticated', 'service_role', 'authenticator')), 0::bigint, 'no API role belongs to it');
+  PERFORM pg_temp.is((SELECT string_agg(privilege_type, ',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE grantee = 'record_history_remover' AND table_schema = 'public'), 'DELETE,SELECT', 'it holds read and delete on this table and nothing on any other');
+  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',') FROM pg_proc p WHERE p.proowner = 'record_history_remover'::regrole), 'record_history_remove', 'and owns the one function that deletes');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc p WHERE p.proname = 'record_history_remove' AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE') OR has_function_privilege('service_role', p.oid, 'EXECUTE'))), 0::bigint, 'no API role can run it');
+  RAISE NOTICE 'record_history: deleting is by a role, not a setting';
 END $$;
 
 -- The table is closed by the catalogue too, not only by what the tests tried.
@@ -472,7 +481,7 @@ DO $$
 BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = 'record_history' AND grantee IN ('anon', 'authenticated', 'PUBLIC')), 0::bigint, 'no browser role holds any privilege on the table');
   PERFORM pg_temp.is((SELECT string_agg(privilege_type, ',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = 'record_history' AND grantee = 'service_role'), 'SELECT', 'the service role may read it and nothing else');
-  PERFORM pg_temp.is((SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'record_history'), 0::bigint, 'and no policy opens it');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'record_history' AND roles && ARRAY['public', 'anon', 'authenticated', 'service_role']::name[]), 0::bigint, 'and no policy opens it to a browser role or the service role');
   PERFORM pg_temp.is((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.record_history'::regclass), true, 'row security is on');
 END $$;
 
@@ -664,6 +673,93 @@ BEGIN
   PERFORM pg_temp.is(current_setting('nevermore.closing_firm', true), '', 'and the closing''s permission to delete is not left on');
   PERFORM pg_temp.is(pg_temp.attempt($q$DELETE FROM public.record_history$q$), '42501', 'so the owner is refused again afterwards');
   RAISE NOTICE 'record_history: closing passed';
+END $$;
+
+-- ---------- a composite key can't be confused ----------
+-- Break caught: ('a/b','c') and ('a','b/c') are stored under one key, so two records share a history (or one reads the other's).
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  CREATE TABLE public.history_probe2 (firm_id uuid NOT NULL, a text NOT NULL, b text NOT NULL, x text, PRIMARY KEY (firm_id, a, b));
+  PERFORM public.record_history_track('public.history_probe2', 'referral_partners', ARRAY['a', 'b'], ARRAY['x']);
+  INSERT INTO public.history_probe2 VALUES (acme, 'a/b', 'c', '1'), (acme, 'a', 'b/c', '1');
+  UPDATE public.history_probe2 SET x = '2' WHERE b = 'c';
+  PERFORM pg_temp.is((SELECT string_agg(DISTINCT record_key, ' ' ORDER BY record_key) FROM public.record_history WHERE firm_id = acme AND record_key LIKE '[%'), '["a","b/c"] ["a/b","c"]', 'two records, two keys: the parts of a composite key are a JSON array');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, '["a/b","c"]')), 2::bigint, 'one record has its creation and its change');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, '["a","b/c"]')), 1::bigint, 'and the other only its creation');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.record_history_list(%L, 'referral_partners', %L)$q$, acme, '["a/b","c"]')), 'PT404: That record isn''t available', 'asked for through the function, a record that is not a partner is not available');
+  RESET ROLE;
+  DELETE FROM public.history_probe2;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history WHERE firm_id = acme AND record_key LIKE '[%'), 0::bigint, 'both are cleaned up with their records');
+  DROP TABLE public.history_probe2;
+  RAISE NOTICE 'record_history: composite keys passed';
+END $$;
+
+-- ---------- timestamps and jsonb nulls ----------
+-- Break caught: the same instant reads differently depending on the writer's time zone; a JSON null and SQL null in a jsonb column are
+-- recorded as a change (they are the same to the history, and the glossary says so).
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  CREATE TABLE public.history_probe3 (firm_id uuid NOT NULL, code text NOT NULL, at_time timestamptz, doc jsonb, PRIMARY KEY (firm_id, code));
+  PERFORM public.record_history_track('public.history_probe3', 'referral_partners', ARRAY['code'], ARRAY['at_time', 'doc']);
+  SET LOCAL timezone = 'America/New_York';
+  INSERT INTO public.history_probe3 VALUES (acme, 'tz', '2026-11-18 05:00:00-05', NULL);
+  UPDATE public.history_probe3 SET at_time = '2026-11-18 11:00:00+01' WHERE code = 'tz';
+  SET LOCAL timezone = 'Asia/Tokyo';
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, 'tz') WHERE field = 'at_time'), 0::bigint, 'the same instant written from another zone is no change');
+  UPDATE public.history_probe3 SET at_time = '2026-11-19 19:00:00+09' WHERE code = 'tz';
+  PERFORM pg_temp.is((SELECT old_value::text || '>' || new_value::text FROM pg_temp.held(acme, 'tz') WHERE field = 'at_time'), '"2026-11-18T10:00:00+00:00">"2026-11-19T10:00:00+00:00"', 'a time is stored in UTC, in one fixed form, whatever the writer''s zone');
+  SET LOCAL timezone = 'UTC';
+  UPDATE public.history_probe3 SET doc = 'null'::jsonb WHERE code = 'tz';
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.held(acme, 'tz') WHERE field = 'doc'), 0::bigint, 'a JSON null and no value are the same to the history');
+  UPDATE public.history_probe3 SET doc = '{"k":1}' WHERE code = 'tz';
+  PERFORM pg_temp.is((SELECT COALESCE(old_value::text, '~') || '>' || new_value::text FROM pg_temp.held(acme, 'tz') WHERE field = 'doc'), '~>{"k": 1}', 'and a real value is recorded from nothing');
+  DELETE FROM public.history_probe3;
+  DROP TABLE public.history_probe3;
+  RAISE NOTICE 'record_history: timestamps passed';
+END $$;
+
+-- ---------- a table with a history can't be emptied ----------
+-- Break caught: the service role (which holds TRUNCATE on referral partners) or the owner empties the table and a partner made later with the
+-- same code inherits the old history.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '42501', 'referral partners can''t be emptied');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '42501', 'not by the service role either');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.referral_partners WHERE firm_id = acme AND code = 'acme-cfo'), 1::bigint, 'and the partners are still there');
+  RAISE NOTICE 'record_history: no emptying passed';
+END $$;
+
+-- ---------- standing: every table with a history is attached whole ----------
+-- Break caught: a later migration attaches the capture trigger by hand and leaves out the truncate guard, or names a field or key that is not a
+-- column (which would fail only at the first change, and then block every update of the table), or a table that is not on the list.
+DO $$
+DECLARE bad text;
+BEGIN
+  SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO bad
+  FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+  WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal
+    AND NOT EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = t.tgrelid AND NOT g.tgisinternal AND g.tgfoid = 'public.record_history_refuse_truncate()'::regprocedure
+                    AND (g.tgtype & 32) = 32 AND (g.tgtype & 1) = 0);
+  PERFORM pg_temp.is(bad, NULL::text, 'every table that carries the capture trigger also carries the guard that refuses TRUNCATE (attach both with record_history_track)');
+  SELECT string_agg(c.relname || ' (' || x.col || ')', ', ' ORDER BY c.relname, x.col) INTO bad
+  FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+  CROSS JOIN LATERAL (
+    SELECT unnest(ARRAY['firm_id'] || string_to_array((string_to_array(encode(t.tgargs, 'escape'), '\000'))[2], ',') || (string_to_array(encode(t.tgargs, 'escape'), '\000'))[3:]) AS col) x
+  WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal AND x.col <> ''
+    AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = t.tgrelid AND a.attname = x.col AND a.attnum > 0 AND NOT a.attisdropped);
+  PERFORM pg_temp.is(bad, NULL::text, 'every key column and tracked field a capture trigger names is a column of its table');
+  SELECT string_agg(c.relname, ', ') INTO bad
+  FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+  WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.contypid = 'public.record_history_table'::regtype AND pg_get_constraintdef(k.oid) LIKE '%''' || (string_to_array(encode(t.tgargs, 'escape'), '\000'))[1] || '''%');
+  PERFORM pg_temp.is(bad, NULL::text, 'and its table name is on the list');
+  RAISE NOTICE 'record_history: standing attachment checks passed';
 END $$;
 
 SELECT 'record_history: all cases passed' AS result;

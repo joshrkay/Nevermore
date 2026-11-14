@@ -134,6 +134,7 @@
 \i supabase/migrations/20261118120000_help_from_nevermore.sql
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 \i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1301,6 +1302,7 @@ DECLARE
     'public.documents | Users can delete documents in their own sessions', 'the employer''s own documents',
     'public.profiles | Users can insert their own profile', 'a person''s own profile',
     'public.profiles | Users can update their own profile', 'a person''s own profile',
+    'public.record_history | record_history_remover_delete', 'the removing role (no login, no API role belongs to it) that deletes a record''s history once the record is gone and a firm''s while it closes (ADR 0012)',
     'public.firm_activity | firm_activity_pruner_delete', 'the retention role (no login) that prunes the firm''s record after ninety days',
     'storage.objects | Users can delete documents in their own sessions', 'the employer''s own folder in the documents bucket');
   unplaced text; lost text; stale text;

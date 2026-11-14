@@ -840,25 +840,6 @@ export type Database = {
           subject_user_id: string | null
         }[]
       }
-      // The history of one record (20261118130000): newest first, for a current member of the record's firm (or a support session). The table is
-      // closed to the API; this is the only way in. No actor id and no email: who is a member's email, "Nevermore" or "System" (D-33, D-45).
-      record_history_list: {
-        Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
-        Returns: {
-          at: string
-          change_id: string
-          entry_key: string
-          field: string | null
-          // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
-          from_value: Json | null
-          // 'created' (no field, no values) or 'changed' (one field).
-          kind: string
-          to_value: Json | null
-          who: string
-          // 'member', 'nevermore' or 'system'.
-          who_kind: string
-        }[]
-      }
       firm_activity_people: {
         Args: { p_firm_id: string }
         Returns: { email: string | null; is_nevermore: boolean; user_id: string | null }[]
@@ -1274,6 +1255,25 @@ export type Database = {
       queue_view_counts: {
         Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
+      }
+      // The history of one record (20261118130000): newest first, for a current member of the record's firm (or a support session). The table is
+      // closed to the API; this is the only way in. No id at all: who is a member's email, "Nevermore" or "System" (D-33, D-45).
+      record_history_list: {
+        Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
+        Returns: {
+          at: string
+          change_id: string
+          entry_key: string
+          field: string | null
+          // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
+          from_value: Json | null
+          // 'created' (no field, no values) or 'changed' (one field).
+          kind: string
+          to_value: Json | null
+          who: string
+          // 'member', 'nevermore' or 'system'.
+          who_kind: string
+        }[]
       }
       record_intake_consent: {
         Args: { p_text: string; p_version: string }

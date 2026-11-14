@@ -35,7 +35,7 @@ export type RecordHistoryPage = {
 };
 
 /**
- * One page of a record's history, newest first. `key` names the record within its firm (a referral partner's code). The page is full when
+ * One page of a record's history, newest first. `key` names the record within its firm (a referral partner's code; several columns are a compact JSON array of the parts). The page is full when
  * `next` is set, so the caller asks again with it until it is null.
  */
 export async function listRecordHistory(
