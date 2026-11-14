@@ -47,18 +47,20 @@ type Load =
  */
 function useSubmissionAccount(submissionId: string, attempt: number): { id: string; name: string } | null {
   const firmId = useContext(WorkspaceContext)?.firm?.id ?? null;
-  const [account, setAccount] = useState<{ id: string; name: string } | null>(null);
+  const key = `${firmId}|${submissionId}`;
+  // What was last read, and for which firm and submission. It is shown only for that pair, so another submission never shows this one's account, and a
+  // refresh of the same pair keeps it on screen: only a successful answer replaces it (null included), and a failed lookup leaves it as it was.
+  const [read, setRead] = useState<{ key: string; account: { id: string; name: string } | null } | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setAccount(null);
     if (!firmId) return;
     Promise.resolve()
       .then(() => getSubmissionAccount(firmId, submissionId))
-      .then((found) => !cancelled && setAccount(found))
-      .catch(() => !cancelled && setAccount(null));
+      .then((found) => !cancelled && setRead({ key, account: found }))
+      .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [firmId, submissionId, attempt]);
-  return account;
+  }, [firmId, submissionId, attempt, key]);
+  return read?.key === key ? read.account : null;
 }
 
 const AdvisorSubmissionPage = () => {

@@ -11,7 +11,7 @@ export function AccountOverview({ firmId, page, onSaved }: { firmId: string; pag
   const { account, canChange, tabs } = page;
   return (
     <div className="grid gap-6 lg:grid-cols-[22rem_minmax(0,1fr)] items-start">
-      <AccountDetailsPanel firmId={firmId} account={account} canChange={canChange} onSaved={onSaved} />
+      <AccountDetailsPanel key={account.id} firmId={firmId} account={account} canChange={canChange} onSaved={onSaved} />
       <div className="space-y-6 min-w-0">
         <ListPanel id="overview-contacts" heading="Contacts" count={tabs.contacts.count} seeAll={tabs.contacts.count > 0 ? <SeeAll to={tabAddress("contacts")} noun="contacts" /> : undefined}>
           {tabs.contacts.rows.length === 0 ? <EmptyLine>{EMPTY_WORDS.contacts}</EmptyLine> : <Rows caption="The first contacts" columns={contactColumns} rows={tabs.contacts.rows} rowKey={(r) => r.id} />}

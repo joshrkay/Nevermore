@@ -8,6 +8,9 @@ import { activityColumns, contactColumns, EMPTY_WORDS, opportunityColumns, quote
 import { EmptyLine, ListPanel, ListRowsLoading, Rows } from "./accountLists";
 import { useAccountTabQuery } from "./useAccountQueries";
 
+/** Pages (of fifty) the Contacts tab loads by itself looking for the contact named in the address. */
+const MAX_PAGES_FOR_A_CONTACT = 10;
+
 const NOUNS = { contacts: "the contacts", opportunities: "the opportunities", quotes: "the quotes", activity: "the activity", files: "the files" } as const;
 
 /**
@@ -37,10 +40,17 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   // A contact named in the address that is further down the list than what is loaded: load the next page, and the next, until it is in view. Not after a
   // failed page, which would ask for the same one again for ever.
   const loadedContacts = tab === "contacts" && data ? (data.rows as AccountTabRows["contacts"][]) : null;
-  const missing = contactId !== null && loadedContacts !== null && !loadedContacts.some((c) => c.id === contactId) && query.hasNextPage;
+  const notLoaded = contactId !== null && loadedContacts !== null && !loadedContacts.some((c) => c.id === contactId);
+  // By itself it loads at most ten pages (500 rows): a contact that is not on the account must not make it read the whole list. The person can go on with Show more.
+  const pagesLoaded = query.data?.pages.length ?? 0;
+  const keepLooking = notLoaded && query.hasNextPage && pagesLoaded < MAX_PAGES_FOR_A_CONTACT;
   useEffect(() => {
-    if (missing && !query.isFetching && !query.isError) void query.fetchNextPage();
-  }, [missing, query]);
+    if (keepLooking && !query.isFetching && !query.isError) void query.fetchNextPage();
+  }, [keepLooking, query]);
+  const contactNote = !notLoaded || query.isFetching || query.isError ? null
+    : !query.hasNextPage ? "That contact isn't on this account."
+    : pagesLoaded >= MAX_PAGES_FOR_A_CONTACT ? "That contact isn't in the first 500 here."
+    : null;
 
   if (!data) {
     return (
@@ -74,6 +84,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
           ))}
         </div>
       )}
+      {contactNote && <p role="status" className="mb-3 text-sm text-muted-foreground">{contactNote}</p>}
       {tabBody(tab, data, kind, contactId, emptyWords(tab, page))}
       {query.hasNextPage && (
         <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">

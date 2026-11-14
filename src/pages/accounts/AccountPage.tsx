@@ -43,7 +43,9 @@ const AccountPage = () => {
     setParams(next === "overview" ? {} : { tab: next }, { replace: true });
   };
 
-  if (waiting) return <Frame><AccountLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;
+  // Only the answer for this address is drawn: what is held for another account (or firm) is not shown under it.
+  const answered = query.data === null || query.data === undefined || query.data.account.id === id;
+  if (waiting || !answered) return <Frame><AccountLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;
 
   if (query.isError && query.data === undefined) {
     // An address whose id is no id at all (the database refuses it, 22P02) is an account that isn't there, not a load that could work next time.
@@ -78,11 +80,11 @@ const AccountPage = () => {
           ))}
         </TabsList>
         <TabsContent value="overview" className="mt-0">
-          {firmId && <AccountOverview firmId={firmId} page={page} onSaved={saved} />}
+          {firmId && <AccountOverview key={account.id} firmId={firmId} page={page} onSaved={saved} />}
         </TabsContent>
         {TAB_IDS.filter((t) => t !== "overview").map((t) => (
           <TabsContent key={t} value={t} className="mt-0">
-            {firmId && <AccountTabPanel firmId={firmId} accountId={id} tab={t as Exclude<TabId, "overview">} page={page} contactId={contactId} />}
+            {firmId && <AccountTabPanel key={`${account.id}-${t}`} firmId={firmId} accountId={id} tab={t as Exclude<TabId, "overview">} page={page} contactId={contactId} />}
           </TabsContent>
         ))}
       </Tabs>

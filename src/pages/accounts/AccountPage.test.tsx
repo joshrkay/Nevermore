@@ -97,6 +97,37 @@ beforeEach(() => {
   client.getAccountPage.mockResolvedValue(page());
 });
 
+describe("AccountPage: from one account to another", () => {
+  const bravo = { ...account, id: "a2", name: "Bravo Plumbing", tradeName: null, industry: "Plumbing", employees: 12, city: "Salem", website: null };
+
+  // Catches: the page keeping the previous account's data (and its open form and version) under the new account's address, so a Save names the new account with
+  // the old account's fields. Two new accounts are both at version 1.
+  it("shows nothing of the previous account while the next loads, and a save names the next account with its own fields", async () => {
+    const user = userEvent.setup();
+    let resolveB: (p: Page) => void = () => {};
+    client.getAccountPage.mockImplementation(async (_f: string, id: string) => (id === "a1" ? page() : new Promise<Page>((r) => { resolveB = r; })));
+    client.updateAccount.mockResolvedValue({ conflict: false, account: { ...bravo, version: 4 } });
+    const router = renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    expect(screen.getByLabelText("Account name")).toHaveValue("Harborview Dental Group");
+
+    await act(async () => { await router.navigate("/accounts/a2"); });
+    expect(screen.queryByLabelText("Account name")).toBeNull();
+    expect(screen.queryByText("Harborview Dental Group")).toBeNull();
+
+    await act(async () => { resolveB(page({ account: bravo })); });
+    expect(await screen.findByRole("heading", { level: 1, name: "Bravo Plumbing" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.getByLabelText("Account name")).toHaveValue("Bravo Plumbing");
+    await user.type(screen.getByLabelText("Industry"), "s");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.updateAccount).toHaveBeenCalledTimes(1));
+    expect(client.updateAccount.mock.calls[0][1]).toBe("a2");
+    expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ name: "Bravo Plumbing", industry: "Plumbings", employees: 12, city: "Salem" });
+  });
+});
+
 describe("AccountPage: the header and the tabs", () => {
   // Catches: a header that leaves out a fact the screen shows, or shows buttons that belong to later stories (D-186, no dead buttons).
   it("shows the name, status, industry, location, employees, website and owner, and no button that does nothing", async () => {
@@ -294,7 +325,64 @@ describe("AccountPage: paging when the list moves under the person", () => {
     expect(screen.getAllByText("Person1049 Abel")).toHaveLength(1);
     expect(screen.getAllByRole("row")).toHaveLength(1 + 79);
     expect(errors.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    // Asked again once, and not again while the list keeps repeating the row.
+    await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+    expect(client.listAccountTab.mock.calls.map((c) => c[3].offset)).toEqual([0, 50, 0, 50]);
     errors.mockRestore();
+  });
+});
+
+describe("AccountPage: a contact named in the address that is not in the list", () => {
+  // Catches: the loader fetching every page of a long list for a contact that is not on the account.
+  it("stops loading by itself after 500 rows, says so, and leaves Show more", { timeout: 20000 }, async () => {
+    const user = userEvent.setup();
+    serveTab(Array.from({ length: 700 }, (_, i) => contact(i + 1000)));
+    renderPage("/accounts/a1?tab=contacts&contact=nobody");
+    expect(await screen.findByText("That contact isn't in the first 500 here.", undefined, { timeout: 8000 })).toBeInTheDocument();
+    expect(client.listAccountTab).toHaveBeenCalledTimes(10);
+    expect(screen.getByText("Showing 500 of 700.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByText("Showing 550 of 700.")).toBeInTheDocument();
+    expect(client.listAccountTab).toHaveBeenCalledTimes(11);
+  });
+
+  it("says the contact isn't on the account once every row is loaded", async () => {
+    serveTab(Array.from({ length: 120 }, (_, i) => contact(i + 1000)));
+    renderPage("/accounts/a1?tab=contacts&contact=nobody");
+    expect(await screen.findByText("That contact isn't on this account.", undefined, { timeout: 4000 })).toBeInTheDocument();
+    expect(client.listAccountTab).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText(/first 500/)).toBeNull();
+  });
+
+  it("says nothing of the contact while the page they are on is still to come", async () => {
+    serveTab(Array.from({ length: 130 }, (_, i) => contact(i === 120 ? 2 : i + 1000)));
+    renderPage("/accounts/a1?tab=contacts&contact=c2");
+    await screen.findByText("Person2 Abel", undefined, { timeout: 4000 });
+    expect(screen.queryByText(/That contact isn't/)).toBeNull();
+  });
+});
+
+describe("AccountPage: a repeated row leaves a tab one row short", () => {
+  // Catches: two raw pages adding up to the count while holding count - 1 distinct rows, so Show more never offers the missing row.
+  it("asks the tab's pages again once, and every row is reachable afterwards", async () => {
+    const all = Array.from({ length: 60 }, (_, i) => contact(i + 1000));
+    // The second page, the first time it is read, repeats the last row of the first (a row shifted between the two reads); read again it is right.
+    let shiftedOnce = true;
+    client.listAccountTab.mockImplementation(async (_f: string, _a: string, _t: string, o?: { limit?: number; offset?: number }) => {
+      if (shiftedOnce && o?.offset === 50) {
+        shiftedOnce = false;
+        return tabOf([all[49], ...all.slice(50, 59)], 60);
+      }
+      return pageOf(all, o);
+    });
+    const user = userEvent.setup();
+    renderPage("/accounts/a1?tab=contacts");
+    await user.click(await screen.findByRole("button", { name: "Show more" }, { timeout: 4000 }));
+    expect(await screen.findByText("Person1059 Abel", undefined, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getAllByText("Person1049 Abel")).toHaveLength(1);
+    expect(screen.getAllByRole("row")).toHaveLength(1 + 60);
+    // The first page, the shifted second, then both read again once: no more.
+    expect(client.listAccountTab.mock.calls.map((c) => c[3].offset)).toEqual([0, 50, 0, 50]);
   });
 });
 

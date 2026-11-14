@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getAccountPage, listAccountFiles, listAccountTab, type AccountFile, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
 
 /** An account's page and its lists are asked again this often, and when the window gets focus (D-49). */
@@ -16,7 +17,7 @@ export function useAccountPageQuery(firmId: string | null, accountId: string) {
     queryKey: [...accountKey(firmId, accountId), "page"],
     queryFn: () => getAccountPage(firmId as string, accountId),
     enabled: firmId !== null,
-    placeholderData: keepPreviousData,
+    // No placeholder: the previous account's answer is never shown under another account's address (its open form and version would go with it).
     refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
     refetchOnWindowFocus: (q) => keepsAsking(q),
     refetchOnReconnect: (q) => keepsAsking(q),
@@ -64,6 +65,21 @@ export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: s
   const pages = query.data?.pages;
   // Any page that comes back null says the account is gone, or not theirs any more, since the first page was read: the whole answer is null.
   const gone = pages !== undefined && pages.some((page) => page === null);
-  const data = pages === undefined ? undefined : gone ? null : { count: (pages[pages.length - 1] as { count: number }).count, rows: distinct(pages.flatMap((page) => page?.rows ?? [])) as TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile>["rows"] };
+  const raw = pages === undefined || gone ? [] : pages.flatMap((page) => page?.rows ?? []);
+  const rows = distinct(raw);
+  const dropped = raw.length - rows.length;
+  const data = pages === undefined ? undefined : gone ? null : { count: (pages[pages.length - 1] as { count: number }).count, rows: rows as TabRows<T extends AccountListTab ? AccountTabRows[T] : AccountFile>["rows"] };
+
+  // A row repeated between two pages means the list shifted between the reads, so the pages may add up to the count while one row was never read. The loaded
+  // pages are asked again once, in one go (the rows stay on screen meanwhile), so they come from one ordering. If the list is still moving after that, the
+  // rows are shown once each as they are and nothing asks again until a read comes back clean.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (dropped === 0) asked.current = false;
+    else if (!asked.current && !query.isFetching) {
+      asked.current = true;
+      void query.refetch();
+    }
+  }, [dropped, query]);
   return { query, data };
 }
