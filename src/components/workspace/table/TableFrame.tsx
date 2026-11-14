@@ -2,7 +2,7 @@ import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
-import { hasHeld, type TableAddress } from "./address";
+import { hasHeld, viewOf, type TableAddress } from "./address";
 import { TABLE_PAGE_SIZE, type ColumnDefinition, type TableDefinition } from "./columns";
 import { DataTable } from "./DataTable";
 import { OrderLine } from "./OrderLine";
@@ -104,9 +104,10 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
   const refreshFailed = !!data.error && !!page && !placeholdering;
   const failure = refreshFailed ? null : data.error;
   const refusal = failure ? refusedQueryReason(failure) : null;
-  // The sort the headers show: the address's, or else the table's own when one column shows it. With neither, no header is marked and the
-  // line over the table says what the order is.
-  const shownSort = address.sort ?? table.defaultSort;
+  // The sort the headers show: the address's, or else the view's own (CRM-S3.4a), or else the table's own when one column shows it. With none of them, no
+  // header is marked and the line over the table says what the order is.
+  const view = viewOf(table, address.view);
+  const shownSort = address.sort ?? view?.sort ?? table.defaultSort;
   // A sort that puts a new column in the address is a place a person comes back to (Back undoes it, as it does a page): it pushes a history
   // entry. Reversing the column already in the address only corrects it, so it replaces the entry and asc, desc, asc is one Back.
   const sortBy = (sort: NonNullable<typeof shownSort>) => change({ sort }, address.sort?.field === sort.field ? { replace: true } : { push: true });
@@ -142,7 +143,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       ) : (
         <>
           {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
-          <OrderLine table={table} sort={address.sort} onReset={resetSort} />
+          <OrderLine table={table} view={view} sort={address.sort} onReset={resetSort} />
           <DataTable
             table={table}
             context={context}
