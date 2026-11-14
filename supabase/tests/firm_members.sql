@@ -1037,8 +1037,8 @@ $$;
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
-\i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119090000_export.sql
+\i supabase/migrations/20261119100000_crm_records.sql
 DO $$
 DECLARE job cron.job;
 BEGIN
