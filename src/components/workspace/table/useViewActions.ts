@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
 import { changeSavedView, deleteSavedView, renameSavedView, saveView, shareSavedView, unshareSavedView, type SavedView, type ViewFilter, type WorkspaceTable } from "@/lib/tableSettingsApi";
 import { WorkspaceContext } from "../workspaceContext";
-import { effectiveFilters, hasHeld, sortFor } from "./address";
+import { effectiveFilters, hasHeld, sortFor, writeFilter, type AddressChange } from "./address";
 import type { TableDefinition, TableView } from "./columns";
 import { usePrimeColumnChoice, type TableColumns } from "./useTableColumns";
 import type { useTableAddress } from "./useTableAddress";
@@ -71,6 +71,8 @@ export function useViewActions<K extends TableFields, Row, Context>(
   // search meanwhile), not the one drawn when the button was pressed.
   const changeNow = useRef(change);
   changeNow.current = change;
+  const addressNow = useRef(address);
+  addressNow.current = address;
   // It may also end after the person has left the queue altogether (opened a row, pressed Back): what an action does to the address belongs to the page they were
   // looking at, and putting it on the address of whatever page they are on now would pull them back (D-253). The list and the caches are still written: they are
   // the firm's, not the page's, and the queue is drawn from them when the person returns.
@@ -91,6 +93,15 @@ export function useViewActions<K extends TableFields, Row, Context>(
   };
   const unavailable = columns.loading ? "Available once your columns have loaded" : hasHeld(address) ? "Available once the table's views and fields have loaded" : null;
 
+  // What an answer takes off the address: the chips and the order the view now holds (`keeps`, as they were when the person pressed the button), and nothing the
+  // person has put there while the database was answering. They are over the view then, which is how a view with something added reads (D-218).
+  const takeOffWhatIsKept = (): AddressChange<K> => {
+    const kept = new Set(keeps.filters.map(writeFilter));
+    const sort = addressNow.current.sort;
+    const sortIsKept = !sort || (keeps.sort?.field === sort.field && keeps.sort.direction === sort.direction);
+    return { filters: addressNow.current.filters.filter((f) => !kept.has(writeFilter(f))), sort: sortIsKept ? null : sort };
+  };
+
   const save = async (name: string) => {
     const id = await saveView({ firmId, table: table.id as WorkspaceTable, name, filters: toApi(keeps.filters), sort: keeps.sort, columns: keeps.columns });
     const made: SavedView = {
@@ -102,7 +113,7 @@ export function useViewActions<K extends TableFields, Row, Context>(
     void client.invalidateQueries({ queryKey: viewsKey });
     setSaid(`Saved the view “${name}”. It is open now.`);
     focus.current = id;
-    moveAddress({ view: id, filters: [], sort: null }, { push: true });
+    moveAddress({ view: id, ...takeOffWhatIsKept() }, { push: true });
   };
 
   const rename = async (view: TableView<K>, name: string) => {
@@ -152,7 +163,7 @@ export function useViewActions<K extends TableFields, Row, Context>(
     setSaid(`Saved the changes to “${view.label}”.`);
     // The button that was pressed goes with the change (nothing is left over the view), so focus goes to the view's tab.
     focus.current = view.id;
-    moveAddress({ filters: [], sort: null }, { push: true });
+    moveAddress(takeOffWhatIsKept(), { push: true });
   };
 
   return {

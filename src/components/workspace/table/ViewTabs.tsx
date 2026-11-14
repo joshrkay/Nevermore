@@ -54,7 +54,10 @@ export function ViewTabs<K extends TableFields, Row, Context>({ table, address, 
     const link = [...(root.current?.querySelectorAll<HTMLElement>("[data-view-tab]") ?? [])].find((el) => el.dataset.viewTab === (wanted ?? "all"));
     if (link) {
       manage?.focusDone();
-      link.focus();
+      // Only while focus is still in the form that asked or nowhere (the button pressed went with the change): a person who has gone on to type in the search box,
+      // say, while the database was answering, keeps their focus there.
+      const at = document.activeElement;
+      if (!at || at === document.body || at.closest("[data-view-controls]")) link.focus();
     }
   });
 
@@ -105,6 +108,7 @@ export function ViewTabs<K extends TableFields, Row, Context>({ table, address, 
               align="start"
               className="w-96"
               aria-label="Save this as a view"
+              data-view-controls
             >
               <ViewNameForm
                 submitLabel="Save view"

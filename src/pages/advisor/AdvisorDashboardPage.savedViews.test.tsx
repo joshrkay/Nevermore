@@ -1294,6 +1294,98 @@ describe("saved views on the queue (CRM-S3.4a)", () => {
     });
   });
 
+  describe("what the person does while a view is being saved", () => {
+    const addChip = async (user: ReturnType<typeof userEvent.setup>, label: string) => {
+      await user.click(screen.getByRole("button", { name: `Filter by ${label}` }));
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+    };
+    const saveNamed = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+      await user.click(await screen.findByRole("button", { name: "Save this as a view" }));
+      await user.type(within(await screen.findByRole("dialog", { name: "Save this as a view" })).getByRole("textbox", { name: "View name" }), name);
+      await user.click(screen.getByRole("button", { name: "Save view" }));
+    };
+
+    // Catches: the answer to a save clearing every chip and the sort in the address, not only the ones the view now holds: a filter the person put on, and a
+    // column they sorted by, while the database was answering, vanish with no word and are not in the view either.
+    it("takes off only the filters and the sort the new view holds, and leaves what was added while it was being saved", async () => {
+      const held = holdAnswerTo("save_view");
+      const user = userEvent.setup();
+      renderAt("/advisor?filter=needs_action:is:true&sort=-employee_count");
+      await saveNamed(user, "Hot leads");
+      await waitFor(() => expect(asksOf("save_view")).toHaveLength(1));
+      await addChip(user, "Waiting on a PEO");
+      // The same column the view is saved in, the other way round: not the order the view holds.
+      await user.click(screen.getByRole("button", { name: "Employees" }));
+      await waitFor(() => expect(where()).toBe("?filter=needs_action:is:true&filter=waiting_on_peo:is:true&sort=employee_count"));
+      await act(async () => held.answer());
+      await waitFor(() => expect(where()).toBe("?view=view-1&filter=waiting_on_peo:is:true&sort=employee_count"));
+      expect(asksOf("save_view")[0]).toMatchObject({ p_filters: [yes("needs_action")], p_sort: { field: "employee_count", direction: "desc" } });
+      // What they added is over the view, which is changed now: the bar says so, and keeping it is a choice of theirs.
+      expect(await screen.findByText("This view has changes you haven't saved.")).toBeInTheDocument();
+    });
+
+    // Catches: the same for "Save changes to this view".
+    it("takes off only the filters and the sort the changed view holds, and leaves what was added while it was being saved", async () => {
+      stored = [stored1({ name: "Hot leads", filters: [yes("needs_action")] })];
+      const held = holdAnswerTo("change_saved_view");
+      const user = userEvent.setup();
+      renderAt("/advisor?view=view-1&filter=waiting_on_peo:is:true&sort=employee_count");
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(screen.getByRole("group", { name: "This view" })).getByRole("button", { name: "Save changes to this view" }));
+      await waitFor(() => expect(asksOf("change_saved_view")).toHaveLength(1));
+      await addChip(user, "Has new PEO mail");
+      // Another column, the same way round: not the order the view holds either.
+      await user.click(screen.getByRole("button", { name: "Company" }));
+      await waitFor(() => expect(where()).toBe("?view=view-1&filter=has_new_peo_mail:is:true&filter=waiting_on_peo:is:true&sort=company_name"));
+      await act(async () => held.answer());
+      await waitFor(() => expect(where()).toBe("?view=view-1&filter=has_new_peo_mail:is:true&sort=company_name"));
+      expect(asksOf("change_saved_view")[0]).toMatchObject({ p_filters: [yes("needs_action"), yes("waiting_on_peo")], p_sort: { field: "employee_count", direction: "asc" } });
+    });
+
+    // Catches: focus pulled to the new view's tab from the search box the person went on to type in while the view was being saved, so the rest of what they
+    // type goes nowhere (D-226 sends focus to the tab for the person who stayed on the form).
+    it("leaves focus where the person put it while the view was being saved", async () => {
+      const held = holdAnswerTo("save_view");
+      const user = userEvent.setup();
+      renderAt("/advisor?filter=needs_action:is:true");
+      await saveNamed(user, "Hot leads");
+      await waitFor(() => expect(asksOf("save_view")).toHaveLength(1));
+      await user.click(screen.getByRole("searchbox", { name: "Search" }));
+      await act(async () => held.answer());
+      await waitFor(() => expect(where()).toBe("?view=view-1"));
+      await within(tabs()).findByRole("link", { name: /^Hot leads/ });
+      expect(screen.getByRole("searchbox", { name: "Search" })).toHaveFocus();
+    });
+
+    // Catches: "Save changes to this view" leaving focus nowhere once its button goes with the change (D-226 sends it to the view's tab), which the check that
+    // leaves focus where the person put it must not turn into never moving it.
+    it("moves focus to the view's tab when its changes are saved and the person stayed on the button", async () => {
+      stored = [stored1({ name: "Hot leads", filters: [yes("needs_action")] })];
+      const user = userEvent.setup();
+      renderAt("/advisor?view=view-1&filter=waiting_on_peo:is:true");
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(screen.getByRole("group", { name: "This view" })).getByRole("button", { name: "Save changes to this view" }));
+      await waitFor(() => expect(where()).toBe("?view=view-1"));
+      await waitFor(() => expect(within(tabs()).getByRole("link", { name: /^Hot leads/ })).toHaveFocus());
+    });
+
+    // Catches: the same for "Save changes to this view", whose button goes with the change.
+    it("leaves focus where the person put it while the changes were being saved", async () => {
+      stored = [stored1({ name: "Hot leads", filters: [yes("needs_action")] })];
+      const held = holdAnswerTo("change_saved_view");
+      const user = userEvent.setup();
+      renderAt("/advisor?view=view-1&filter=waiting_on_peo:is:true");
+      await screen.findByRole("link", { name: "Acme" });
+      await user.click(within(screen.getByRole("group", { name: "This view" })).getByRole("button", { name: "Save changes to this view" }));
+      await waitFor(() => expect(asksOf("change_saved_view")).toHaveLength(1));
+      await user.click(screen.getByRole("searchbox", { name: "Search" }));
+      await act(async () => held.answer());
+      await waitFor(() => expect(where()).toBe("?view=view-1"));
+      await waitFor(() => expect(screen.queryByText("This view has changes you haven't saved.")).not.toBeInTheDocument());
+      expect(screen.getByRole("searchbox", { name: "Search" })).toHaveFocus();
+    });
+  });
+
   describe("an action that is answered after the person has left the queue", () => {
     // The database can take a while to answer; the person may have opened a row meanwhile. What the action does to the address belongs to the queue they were
     // looking at, and they are not there any more.
