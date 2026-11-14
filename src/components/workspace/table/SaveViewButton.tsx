@@ -26,32 +26,35 @@ export function SaveViewButton({ onSave, blocked = null }: Props) {
   const ids = useId();
   // The attempt that is on its way: closing the dialog ends it, so a refusal that arrives afterwards is not shown in the next, clean dialog.
   const attempt = useRef(0);
+  // A save that has been started is not over until its call settles, whatever the dialog does meanwhile: closing the dialog hides it but does not
+  // free the lock, so a reopened dialog cannot start a second save. A ref, because two submits can come before the next render.
+  const locked = useRef(false);
 
   const close = () => {
     attempt.current++;
     setOpen(false);
     setName("");
     setProblem(null);
-    setSaving(false);
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (saving) return;
+    if (locked.current) return;
     if (name.trim() === "") {
       setProblem("Give the view a name.");
       return;
     }
     const mine = ++attempt.current;
+    locked.current = true;
     setSaving(true);
     setProblem(null);
     try {
       await onSave(name.trim());
       if (attempt.current === mine) close();
     } catch (error) {
-      if (attempt.current === mine) {
-        setProblem(wordsOf(error, "Couldn't save the view. Try again."));
-        setSaving(false);
-      }
+      if (attempt.current === mine) setProblem(wordsOf(error, "Couldn't save the view. Try again."));
+    } finally {
+      locked.current = false;
+      setSaving(false);
     }
   };
 

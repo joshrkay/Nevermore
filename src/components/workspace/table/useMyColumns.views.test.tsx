@@ -198,4 +198,91 @@ describe("writes and answers on more than one view", () => {
     await waitFor(() => expect(shown()).toEqual(["Company", "Contact"]));
     expect(fetchMyColumns).toHaveBeenCalledTimes(2);
   });
+
+  // Catches: a write finishing under the revision it started under while the view moved to a new revision mid-write, so the new revision keeps showing the answer the
+  // database gave before the write landed (the person's change gone from the screen until some later refresh).
+  it("shows a kept change under the view's new revision when the view's definition moved while the write was on its way", async () => {
+    let server = ["company", "status"];
+    fetchMyColumns.mockImplementation(async () => ({ columns: server, source: "mine_for_view" }));
+    const write = later();
+    setMyColumns.mockReset().mockImplementation(async (_f: string, _t: string, _v: string | null, columns: string[]) => {
+      await write.p;
+      server = columns;
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    const menu = await open(user);
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    expect(shown()).toEqual(["Company", "Status", "Contact"]);
+    // The view's definition moves while the write is on its way; its columns are asked for under the new revision and the database still answers the old.
+    rerender(page("saved-1", make("2026-11-02T09:00:00Z")));
+    await waitFor(() => expect(fetchMyColumns).toHaveBeenCalledTimes(2));
+    write.release();
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status", "Contact"]));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(shown()).toEqual(["Company", "Status", "Contact"]);
+    // And a fresh look at the new revision agrees with what the database now holds.
+    expect(fetchMyColumns.mock.calls.length).toBeGreaterThan(2);
+  });
+
+  // Catches: the new revision's first fetch, already on its way when the write settled, being reused by the ask-again (it has no data yet, so the query library hands back the running
+  // request), so the answer from before the write lands and the person's kept change disappears.
+  it("asks again, and does not take the answer of a request begun before the write settled, for a revision whose first fetch was still on its way", async () => {
+    let server = ["company", "status"];
+    let calls = 0;
+    let answerOld: (v: unknown) => void = () => {};
+    fetchMyColumns.mockImplementation(() => {
+      calls++;
+      // The second ask is the new revision's first, and it is slow: its answer is the database's from before the write.
+      if (calls === 2) return new Promise((r) => { answerOld = r; });
+      return Promise.resolve({ columns: server, source: "mine_for_view" });
+    });
+    const write = later();
+    setMyColumns.mockReset().mockImplementation(async (_f: string, _t: string, _v: string | null, columns: string[]) => {
+      await write.p;
+      server = columns;
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    const menu = await open(user);
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    rerender(page("saved-1", make("2026-11-02T09:00:00Z")));
+    await waitFor(() => expect(fetchMyColumns).toHaveBeenCalledTimes(2));
+    write.release();
+    await waitFor(() => expect(fetchMyColumns).toHaveBeenCalledTimes(3));
+    // The old request answers last, with what the database held before the write.
+    answerOld({ columns: ["company", "status"], source: "mine_for_view" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(shown()).toEqual(["Company", "Status", "Contact"]);
+    await waitFor(() => expect(client.getQueryData(["table", "firm-1", "submissions", "columns", "saved-1", "2026-11-02T09:00:00Z"])).toEqual({ columns: ["company", "status", "contact"], source: "mine_for_view" }));
+  });
+
+  // Catches: a refused write rolling the screen back to the columns of ANOTHER revision of the view (the baseline was kept per view, the answers per revision).
+  it("rolls a refused write back to the columns of its own revision, not the last confirmed on an earlier one", async () => {
+    fetchMyColumns.mockImplementation(async () => ({ columns: ["company", "status"], source: "mine_for_view" }));
+    const first = later();
+    const second = later();
+    setMyColumns.mockReset().mockImplementation((_f: string, _t: string, _v: string | null, columns: string[]) => (columns.includes("contact") ? first.p : second.p));
+    const user = userEvent.setup();
+    const { rerender } = render(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    let menu = await open(user);
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    // A new revision of the view, whose own answer differs.
+    fetchMyColumns.mockImplementation(async () => ({ columns: ["company", "states"], source: "mine_for_view" }));
+    rerender(page("saved-1", make("2026-11-02T09:00:00Z")));
+    await waitFor(() => expect(shown()).toEqual(["Company", "States"]));
+    menu = screen.getByRole("dialog");
+    await user.click(within(menu).getByRole("checkbox", { name: "Status" }));
+    expect(shown()).toEqual(["Company", "States", "Status"]);
+    first.release();
+    await waitFor(() => expect(setMyColumns).toHaveBeenCalledTimes(2));
+    second.release(new Error("This firm is closing, so nothing in it can be changed."));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("This firm is closing");
+    // Back to what the database confirmed for THIS revision (Company, States), not the first revision's kept choice.
+    await waitFor(() => expect(shown()).toEqual(["Company", "States"]));
+  });
 });
+

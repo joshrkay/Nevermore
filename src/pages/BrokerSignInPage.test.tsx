@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 const auth = { user: null as { id: string } | null, loading: false, isAnonymous: false };
@@ -74,6 +74,23 @@ describe("BrokerSignInPage", () => {
     renderPage({ from: { pathname: "/advisor/activity", search: "?firm=f1&kind=send_recorded" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
     await waitFor(() => expect(startBrokerSignIn).toHaveBeenCalledWith("google", "/advisor/activity?firm=f1&kind=send_recorded"));
+  });
+
+  // Catches: a sign-in for the queue being sent as no page at all (or the other way round), so a failed mailbox can't be told on the queue.
+  it("names the queue as the page when the broker was sent from it, and no page when they came to sign in directly", async () => {
+    const { unmount } = renderPage({ from: { pathname: "/advisor", search: "?view=won" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    await waitFor(() => expect(startBrokerSignIn).toHaveBeenCalledWith("google", "/advisor?view=won"));
+    unmount();
+    startBrokerSignIn.mockClear();
+    renderPage({ from: { pathname: "/advisor", search: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    await waitFor(() => expect(startBrokerSignIn).toHaveBeenCalledWith("google", "/advisor"));
+    cleanup();
+    startBrokerSignIn.mockClear();
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    await waitFor(() => expect(startBrokerSignIn).toHaveBeenCalledWith("google", null));
   });
 
   it("says so, and lets the broker try again, when the sign-in can't start", async () => {

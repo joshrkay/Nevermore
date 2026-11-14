@@ -552,6 +552,14 @@ _Avoid_: permission, edit rights, ACL
 What the page of one account draws, read in one call: the account's own fields with its version, its worked-out status and source (with the referral partner's name when its first intake came by a partner's link), its owner by name, and for each tab its count and first five rows: Contacts, Opportunities (name, worked-out stage, target start, and the submission its name opens until the opportunity has a page of its own, D-187), Quotes (a quote request on an intake of its opportunities: PEO, status, sent, quote dates), Activity and Files. There is no Renewals tab (D-186). It answers only someone who may see the account, and answers the same nothing for an account that is not there. The save of the account's own fields (`update_account`) is edit in place, from a version, by the level rule; the owner, archiving and source are not among them.
 _Avoid_: account view, 360 view, detail page
 
+**Account's tab** (code: `account_tab(firm, account, tab, limit, offset)`; story CRM-A2.1b):
+One list of an account's page opened in full: Contacts, Opportunities, Quotes, Activity or Files, from any place and a page at a time (fifty on the screen, "Show more" for the next). The Overview shows the first five rows of each and "See all" opens its tab; the rows come from the one function the page's first five come from, so the two are never different lists. A contact's name opens the Contacts tab with that contact in view until a contact has a page of its own (CRM-C1.1); an opportunity's and a quote's name open their submission's page until the opportunity has one (D-187). It answers only someone who may see the account.
+_Avoid_: sub-page, panel (a panel is one box of the Overview)
+
+**Account line** (on a submission's page; story CRM-A2.1b, D-213):
+"Account: <name>" under the submission's source, linking to the account's page. Shown only when the submission is on an account the person may see; a submission that is on none, and an account the person's level does not reach, have no line.
+_Avoid_: company link, parent account
+
 **Account's files** (code: `account_files(firm, account)`; story CRM-A2.1a, D-199):
 The files of the account's intakes that passed the virus check (scan verdict clean; never one pending, quarantined, failed or not scanned), newest first, named and placed and never with what was read out of them. Each stays under its own access rule: the list gives no link, a link is a signed link made by Storage only to someone its file rule lets read the file, and a support session is given none. Uploading a file to an account is CRM-A2.5's.
 _Avoid_: attachments, documents (the intake's own word for what a prospect uploads)

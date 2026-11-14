@@ -149,6 +149,7 @@
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

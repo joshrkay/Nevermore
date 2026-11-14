@@ -580,6 +580,33 @@ describe("what is in the way of saving", () => {
     expect(api.saveView).not.toHaveBeenCalled();
   });
 
+  // Catches: Save and Keep being usable while the rows of the question on screen are still on their way, so a query the database is about to refuse is kept before the refusal arrives.
+  it("offers neither Save nor Keep until the rows of the question on screen have arrived", async () => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    listQueue.mockReturnValue(new Promise(() => {}));
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    const keep = await screen.findByRole("button", { name: "Keep the changes to Chasing" });
+    const save = screen.getByRole("button", { name: "Save this as a view" });
+    await waitFor(() => expect(save).toHaveAccessibleDescription("Available once the rows have loaded."));
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(keep).toHaveAttribute("aria-disabled", "true");
+    expect(keep).toHaveAccessibleDescription("Available once the rows have loaded.");
+  });
+
+  // Catches: the previous question's rows (kept on screen while the next load is on its way) counting as the new question's answer.
+  it("stays blocked while the previous tab's rows are still on screen and the next tab's are on their way", async () => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    const user = userEvent.setup();
+    draw("/advisor");
+    await screen.findByRole("link", { name: "Acme" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).not.toHaveAttribute("aria-disabled"));
+    listQueue.mockReturnValue(new Promise(() => {}));
+    await user.click(screen.getByRole("link", { name: /^Won/ }));
+    expect(screen.getByRole("link", { name: "Acme" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByRole("button", { name: "Save this as a view" })).toHaveAccessibleDescription("Available once the rows have loaded.");
+  });
+
   // Catches: a refused query (a choice the field doesn't list) being kept as a view, whose count then blanks every tab's.
   it("offers neither Save nor Keep over a query the database refuses", async () => {
     api.listSavedViews.mockResolvedValue([view()]);
@@ -632,6 +659,36 @@ describe("a change that is still on its way when the person moves on", () => {
     expect(where()).toBe("?view=won&filter=waiting_on_peo:is:true");
   });
 
+  // Catches: keeping the changes finishing while the person only searched meanwhile, and so leaving the kept filters in the address ("Changed on screen" stays, and keeping again would add them twice).
+  it("clears what was kept from the address even when the person only searched while keeping was on its way", async () => {
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search" }), "acme");
+    await waitFor(() => expect(where()).toContain("q=acme"));
+    api.listSavedViews.mockResolvedValue([view({ filters: [yes("needs_action"), yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=v1&q=acme"));
+    await waitFor(() => expect(screen.queryByText("Changed on screen, not kept.")).toBeNull());
+  });
+
+  // Catches: the same when the person only went to another page of the rows.
+  it("clears what was kept from the address even when the person only went to another page while keeping was on its way", async () => {
+    listQueue.mockResolvedValue({ rows: [row()], total: 120 });
+    const pending = later();
+    api.changeSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw("/advisor?view=v1&filter=waiting_on_peo:is:true");
+    await user.click(await screen.findByRole("button", { name: "Keep the changes to Chasing" }));
+    await user.click(await screen.findByRole("link", { name: /^Next/ }));
+    await waitFor(() => expect(where()).toContain("page=2"));
+    api.listSavedViews.mockResolvedValue([view({ filters: [yes("needs_action"), yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=v1"));
+  });
+
   // Catches: a save finishing by moving the person from wherever they went to the new view.
   it("stays where the person went when a save finishes after they moved on", async () => {
     const pending = later();
@@ -647,6 +704,39 @@ describe("a change that is still on its way when the person moves on", () => {
     pending.release();
     expect(await screen.findByRole("link", { name: /^Soon/ })).toBeInTheDocument();
     expect(where()).toBe("?view=won");
+  });
+
+  // Catches: a save finishing while the person only searched meanwhile, and so leaving the saved filters in the address of a view that already holds them (the screen says "changed" over a view it was just saved as).
+  it("opens the new view and clears what was saved from the address even when the person only searched while the save was on its way", async () => {
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw("/advisor?filter=waiting_on_peo:is:true");
+    const dialog = await ask(user);
+    await typeName(user, dialog, "Soon");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search" }), "acme");
+    await waitFor(() => expect(where()).toContain("q=acme"));
+    api.listSavedViews.mockResolvedValue([view({ id: "new-1", name: "Soon", filters: [yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=new-1&q=acme"));
+  });
+
+  // Catches: the same when the person only went to another page of the rows.
+  it("opens the new view even when the person only went to another page while the save was on its way", async () => {
+    listQueue.mockResolvedValue({ rows: [row()], total: 120 });
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw("/advisor?filter=waiting_on_peo:is:true");
+    const dialog = await ask(user);
+    await typeName(user, dialog, "Soon");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.click(await screen.findByRole("link", { name: /^Next/ }));
+    await waitFor(() => expect(where()).toContain("page=2"));
+    api.listSavedViews.mockResolvedValue([view({ id: "new-1", name: "Soon", filters: [yes("waiting_on_peo")] as SavedView["filters"] })]);
+    pending.release();
+    await waitFor(() => expect(where()).toBe("?view=new-1"));
   });
 
   // Catches: an owner who stops sharing a colleague's view they have open being told it isn't available (it went private, to its saver).
@@ -777,10 +867,12 @@ describe("the options dialog, step by step", () => {
     await user.click(within(dialog).getByRole("button", { name: "Rename view" }));
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     dialog = await options(user, "Chasing");
-    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    // The earlier rename is still on its way: the reopened menu offers nothing until it settles.
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toHaveAttribute("aria-disabled", "true");
     refuse(new Error('You already have a view called "Taken" on this table'));
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename" })).not.toHaveAttribute("aria-disabled"));
     expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename" }));
     expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename view" })).not.toHaveAttribute("aria-disabled");
   });
 
@@ -794,10 +886,78 @@ describe("the options dialog, step by step", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save view" }));
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     dialog = await ask(user);
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Saving…" })).toHaveAttribute("aria-disabled", "true");
     refuse(new Error('You already have a view called "Taken" on this table'));
     await new Promise((r) => setTimeout(r, 30));
     expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull();
     expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Save view" })).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("a change that is still on its way when its dialog is closed", () => {
+  beforeEach(() => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    for (const f of [api.renameSavedView, api.shareSavedView, api.unshareSavedView, api.changeSavedView]) f.mockResolvedValue(undefined);
+  });
+
+  // Catches: closing a pending save clearing its lock while the call goes on, so a reopened dialog saves the screen a second time.
+  it("does not start a second save from a reopened dialog while the first is still on its way", async () => {
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw();
+    let dialog = await ask(user);
+    await typeName(user, dialog, "First");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await ask(user);
+    await typeName(user, dialog, "Second");
+    await user.click(within(dialog).getByRole("button", { name: "Saving…" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "{Enter}");
+    expect(api.saveView).toHaveBeenCalledTimes(1);
+    pending.release();
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Save view" })).not.toHaveAttribute("aria-disabled"));
+  });
+
+  // Catches: closing a pending delete clearing the dialog's lock, so a reopened one starts a rename or a second delete of the same view.
+  it("does not start a rename or a second delete from a reopened dialog while a delete is still on its way", async () => {
+    const pending = later();
+    api.deleteSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete view" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toHaveAttribute("aria-disabled", "true");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("textbox", { name: "Name" })).toBeNull();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("button", { name: "Delete view" })).toBeNull();
+    expect(api.renameSavedView).not.toHaveBeenCalled();
+    expect(api.deleteSavedView).toHaveBeenCalledTimes(1);
+    pending.release();
+  });
+
+  // Catches: the same hole for sharing: a pending share, its dialog closed, then a stop-sharing or a second share started over it.
+  it("does not start a share from a reopened dialog while another change is still on its way", async () => {
+    const pending = later();
+    api.renameSavedView.mockReturnValue(pending.p);
+    api.listSavedViews.mockResolvedValue([view({ canShare: true })]);
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    dialog = screen.getByRole("dialog");
+    await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Other");
+    await user.click(within(dialog).getByRole("button", { name: "Rename view" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Share with the firm" }));
+    expect(api.shareSavedView).not.toHaveBeenCalled();
+    pending.release();
   });
 });
 
@@ -847,6 +1007,47 @@ describe("a saved view the table can't open", () => {
     draw();
     const tab = await screen.findByRole("link", { name: /^Loud/ });
     expect(tab).toBeInTheDocument();
+  });
+
+  // Catches: a stored single value (not a list) skipping the choice check because the check only looked at lists, so the count call reaches the database with a choice it refuses.
+  it("can't open a view whose choice is stored as one value rather than a list, when the field doesn't list it", async () => {
+    const scalar = view({ id: "v3", name: "Scalar", filters: [{ field: "pipeline_status", op: "any_of", value: "bogus" }] as unknown as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([view(), scalar]);
+    countQueueViews.mockResolvedValue([{ name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    expect(screen.getByText("Scalar").closest("a")).toBeNull();
+    expect(screen.getByText("Scalar").closest("[aria-disabled]")).toHaveAccessibleDescription("This view uses a choice its field no longer lists.");
+    expect((countQueueViews.mock.calls.at(-1)![0] as { name: string }[]).map((v) => v.name)).not.toContain("v3");
+  });
+
+  // Catches: a stored single value that IS listed being turned away, or read differently from the list the database would be sent.
+  it("opens a view whose listed choice is stored as one value", async () => {
+    const scalar = view({ id: "v3", name: "Scalar", filters: [{ field: "pipeline_status", op: "any_of", value: "won" }] as unknown as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([scalar]);
+    countQueueViews.mockResolvedValue([{ name: "v3", total: 2 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Scalar 2" })).toBeInTheDocument();
+    expect(countQueueViews.mock.calls.at(-1)![0]).toEqual(expect.arrayContaining([{ name: "v3", filters: [{ field: "pipeline_status", op: "any_of", value: ["won"] }] }]));
+  });
+
+  // Catches: the screen's own list of missing items being treated as the database's: the database lists no values for this field and takes any item, so a view naming one the screen doesn't list runs fine there.
+  it("opens a view on a field the database does not hold a list of values for, even when the screen lists some", async () => {
+    const free = view({ id: "v2", name: "Missing odd", filters: [{ field: "missing_required", op: "any_of", value: ["an_item_added_later"] }] as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([free]);
+    countQueueViews.mockResolvedValue([{ name: "v2", total: 3 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Missing odd 3" })).toBeInTheDocument();
+  });
+
+  // Catches: the state codes the database checks not being checked here (it refuses a code that isn't one).
+  it("can't open a view that names a state the database would refuse", async () => {
+    const zz = view({ id: "v9", name: "Nowhere", filters: [{ field: "states", op: "any_of", value: ["ZZ"] }] as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([view(), zz]);
+    countQueueViews.mockResolvedValue([{ name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    expect(screen.getByText("Nowhere").closest("a")).toBeNull();
   });
 
   // Catches: a view that can't be read being given no way out (it can't be deleted or unshared on screen once it is hidden).
