@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const auth = { user: { id: "u1", email: "owner@example.test" } as { id: string; email?: string } | null, loading: false, isAnonymous: false, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -12,10 +13,15 @@ vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current })
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 const api = { fetchMyFirm: vi.fn(), fetchPendingInvitations: vi.fn(), inviteMember: vi.fn(), resendInvitation: vi.fn(), cancelInvitation: vi.fn() };
 vi.mock("@/lib/invitationApi", () => api);
+// The organisations and requests to join have their own sections, tested in FirmInvitationsPage.join.test.tsx: here they are empty.
+vi.mock("@/lib/joinByOrganisationApi", () => ({
+  fetchOrganisations: vi.fn().mockResolvedValue([]), fetchJoinRequests: vi.fn().mockResolvedValue([]),
+  addOrganisation: vi.fn(), removeOrganisation: vi.fn(), approveJoinRequest: vi.fn(), declineJoinRequest: vi.fn(),
+}));
 
 const { default: FirmInvitationsPage } = await import("./FirmInvitationsPage");
 
-const renderPage = () => render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter>);
+const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter></QueryClientProvider>);
 const pending = (over: Record<string, unknown> = {}) => ({
   id: "i1", email: "newcomer@example.test", role: "agent", invitedAt: "2026-11-16T10:00:00Z", expiresAt: "2099-11-23T10:00:00Z", expired: false,
   resentAt: null, delivery: "sent", emailError: null, ...over,
@@ -178,7 +184,7 @@ describe("FirmInvitationsPage", () => {
     expect(about.length).toBeGreaterThanOrEqual(2);
     for (const sentence of new Set(about)) {
       api.inviteMember.mockReset().mockRejectedValue(new Error(sentence));
-      const { unmount } = render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /></Routes></MemoryRouter>);
+      const { unmount } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /></Routes></MemoryRouter></QueryClientProvider>);
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
       await user.click(screen.getByRole("button", { name: "Send invitation" }));
@@ -278,7 +284,7 @@ describe("FirmInvitationsPage", () => {
         ],
         { initialEntries: ["/firm/invitations"] },
       );
-      render(<RouterProvider router={router} />);
+      render(<QueryClientProvider client={new QueryClient()}><RouterProvider router={router} /></QueryClientProvider>);
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
       await user.click(screen.getByRole("link", { name: "Elsewhere" }));

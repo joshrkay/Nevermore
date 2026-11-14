@@ -32,7 +32,7 @@ const isInbox = (pathname: string, search: URLSearchParams) => isQueue(pathname)
 /** What Settings opens (D-38). Activity is for owners. `atFirmAddress`: the page works only at the firm's own address, so from the bare domain the link goes there. */
 export const SETTINGS_LINKS: { label: string; description: string; to: string; ownersOnly?: boolean; atFirmAddress?: boolean }[] = [
   { label: "Mailbox", description: "Connect the mailbox you send from and read replies in.", to: "/advisor/mailbox" },
-  { label: "Invitations", description: "Invite people to the firm and see who is still pending.", to: "/firm/invitations", atFirmAddress: true },
+  { label: "Invitations", description: "Invite people, list the firm's Google domain or Microsoft tenant, and approve who asked to join.", to: "/firm/invitations", atFirmAddress: true },
   { label: "Members", description: "The people who belong to the firm: remove or suspend one.", to: "/advisor/members", ownersOnly: true },
   { label: "Activity", description: "Who did what in the firm, and when.", to: "/advisor/activity", ownersOnly: true },
   { label: "Referral partners", description: "The partners who send you intakes, with their links and counts.", to: "/advisor/partners" },

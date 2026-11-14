@@ -95,12 +95,6 @@ const AdvisorHeader = () => {
           >
             Firms
           </NavLink>
-          <NavLink
-            to="/advisor/organisations"
-            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
-          >
-            Organisations
-          </NavLink>
             </>
           )}
           {ownsThisFirm && (

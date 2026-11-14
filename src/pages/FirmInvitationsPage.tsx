@@ -12,6 +12,7 @@ import {
   cancelInvitation, fetchMyFirm, fetchPendingInvitations, inviteMember, resendInvitation,
   type Delivery, type FirmRole, type PendingInvitation,
 } from "@/lib/invitationApi";
+import { AskedToJoinSection, OrganisationsSection } from "@/components/workspace/FirmJoinSections";
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 const ROLE_LABELS: Record<FirmRole, string> = { agent: "Agent", lead: "Lead", owner: "Owner" };
@@ -147,7 +148,8 @@ const FirmInvitationsPage = () => {
         <div>
           <h1 className="font-display text-3xl font-bold mb-1">Invitations</h1>
           <p className="text-sm text-muted-foreground">
-            Invite people by email. Each link works once, for seven days, and only for the person who signs in with that email address.
+            Invite people by email. Each link works once, for seven days, and only for the person who signs in with that email address. Or list
+            your firm's Google domain or Microsoft tenant, and approve the people who sign in from it.
           </p>
         </div>
         {!address && <p role="status" className="text-sm">Open this page at your firm's own address.</p>}
@@ -183,6 +185,8 @@ const FirmInvitationsPage = () => {
                 ))}
               </ul>
             )}
+            <OrganisationsSection firmId={load.firm.id} />
+            <AskedToJoinSection firmId={load.firm.id} firmName={load.firm.name} />
           </>
         )}
       </main>

@@ -177,6 +177,7 @@
 \i supabase/migrations/20261117160000_epics_reconciled.sql
 \i supabase/migrations/20261118090000_leave_a_firm.sql
 \i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
+\i supabase/migrations/20261118100000_join_by_organisation.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -363,6 +364,12 @@ BEGIN
   INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, invited_by, expires_at) VALUES
     (firm_a, 'invitee_a@example.test', 'agent', encode(extensions.digest('invitation-a', 'sha256'), 'hex'), adm, now() + interval '7 days'),
     (firm_b, 'invitee_b@example.test', 'agent', encode(extensions.digest('invitation-b', 'sha256'), 'hex'), owb, now() + interval '7 days');
+
+  -- A listed organisation and an open request to join for each firm (20261118100000): reached only through the functions, by nobody directly.
+  INSERT INTO public.firm_organisations (firm_id, provider, org_id, label, added_by) VALUES
+    (firm_a, 'google', 'fixture-a.example', 'Fixture A', adm), (firm_b, 'google', 'fixture-b.example', 'Fixture B', owb);
+  INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label) VALUES
+    (firm_a, pa, 'google', 'fixture-a.example', 'Fixture A'), (firm_b, pb, 'google', 'fixture-b.example', 'Fixture B');
 
   -- A suspension of each firm that has been lifted (20261116230000): the history is kept, and neither firm is suspended now.
   INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, suspended_by, lifted_at, lifted_by) VALUES
@@ -733,6 +740,10 @@ INSERT INTO matrix VALUES
   -- Invitations to join a firm (20261116190000): nobody reads them through the API, owners included; an owner reaches
   -- the pending ones through firm_pending_invitations(), and the token's hash is never returned (supabase/tests/firm_invitations.sql).
   ('public.firm_invitations',                           '{}', NULL),
+  -- The organisations a firm lists, and the requests to join it (CRM-P1.4, 20261118100000): closed to the API, owners included; an owner
+  -- reads and changes them through functions that check ownership (supabase/tests/join_by_organisation.sql).
+  ('public.firm_organisations',                         '{}', NULL),
+  ('public.join_requests',                              '{}', NULL),
   -- The platform's record of each suspension and its reason (20261116230000): nobody reads it through the API, firm owners and
   -- platform admins included; admins reach it through admin_firm_states().
   ('public.firm_suspensions',                           '{}', NULL),
@@ -1032,6 +1043,13 @@ INSERT INTO callable VALUES
   ('cancel_invitation(p_invitation_id uuid)', 'own',    NULL, 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist'),
   ('resend_invitation(p_invitation_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the invitation''s firm sends it again with a new token; the same refusal for another firm''s invitation as for one that does not exist'),
   ('accept_invitation(p_token_hash text, p_firm_address text)', 'own', NULL, 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
+  ('add_firm_organisation(p_firm_id uuid, p_provider text, p_org_id text, p_label text)', 'own', NULL, 'a current owner of the firm lists a Google domain or Microsoft tenant; refused for every other caller, a free-mail domain and a personal-account tenant included (supabase/tests/join_by_organisation.sql)'),
+  ('firm_organisations(p_firm_id uuid)', 'own', NULL, 'a current owner reads their own firm''s listed organisations; 42501 for every other caller'),
+  ('remove_firm_organisation(p_id uuid)', 'own', NULL, 'a current owner of the listing''s firm removes it; the same refusal for another firm''s listing as for one that does not exist'),
+  ('ask_to_join_firm(p_firm_address text)', 'own', NULL, 'a signed-in person at a firm''s address who is from an organisation the firm lists asks to join it; answers about the caller only: asked, or the same none for everyone else'),
+  ('firm_join_requests(p_firm_id uuid)', 'own', NULL, 'a current owner reads their own firm''s open requests to join; 42501 for every other caller'),
+  ('approve_join_request(p_request_id uuid, p_role text)', 'own', NULL, 'a current owner of the request''s firm approves it with a role and the person becomes a member; the same refusal for another firm''s request as for one that does not exist'),
+  ('decline_join_request(p_request_id uuid)', 'own', NULL, 'a current owner of the request''s firm declines it; the same refusal for another firm''s request as for one that does not exist'),
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
   ('admin_suspend_firm(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_suspend_firm(%2$L, ''probe'')', 'a platform admin who is no member of the firm suspends it with a reason (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
@@ -1141,9 +1159,6 @@ INSERT INTO callable VALUES
   ('advisor_update_referral_partner(p_code text, p_name text, p_kind text, p_firm_id uuid)', 'advisor',
                                                                      'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
-  ('admin_add_allowed_organisation(p_provider text, p_org_id text, p_label text)', 'admin', 'SELECT public.admin_add_allowed_organisation(''probe'', ''probe'', ''probe'')', 'adding an organisation whose members get the advisor role'),
-  ('admin_remove_allowed_organisation(p_id bigint)', 'admin', 'SELECT public.admin_remove_allowed_organisation(0)', 'removing one'),
-  ('claim_advisor_role_by_organisation()', 'own', NULL, 'the advisor role for a sign-in whose provider-vouched organisation an admin allowed; reads only the caller''s own sign-in claims, grants nothing to a guest or anyone else'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
   ('admin_held_mail()',                      'admin',   'SELECT count(*) FROM public.admin_held_mail()', 'the holding list for a platform admin: File ID and PEO only (D-16)'),
@@ -1643,7 +1658,15 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('remove_member', 'admin', 'by_id', $$SELECT public.remove_member({firm}, {agent})::text$$),
   ('suspend_member', 'admin', 'by_id', $$SELECT public.suspend_member({firm}, {agent})::text$$),
   ('lift_member_suspension', 'admin', 'by_id', $$SELECT public.lift_member_suspension({firm}, {suspended})::text$$),
-  ('firm_members', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_members({firm})$$);
+  ('firm_members', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_members({firm})$$),
+  -- Organisations and requests to join (CRM-P1.4): only a current owner of the firm lists, removes, reads, approves and declines. The
+  -- second firm's owner and the first firm's are those owners; every other caller is refused before anything is looked up (D-16, D-18).
+  ('add_firm_organisation', 'admin', 'by_id', $$SELECT public.add_firm_organisation({firm}, 'google', 'probe.example', 'Probe')::text$$),
+  ('firm_organisations', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_organisations({firm})$$),
+  ('remove_firm_organisation', 'admin', 'by_id', $$SELECT public.remove_firm_organisation({org})::text$$),
+  ('firm_join_requests', 'admin', 'by_id', $$SELECT count(*)::text FROM public.firm_join_requests({firm})$$),
+  ('approve_join_request', 'admin', 'by_id', $$SELECT public.approve_join_request({jreq}, 'agent')::text$$),
+  ('decline_join_request', 'admin', 'by_id', $$SELECT public.decline_join_request({jreq})::text$$);
 -- The second firm has nobody suspended: its owner is let in and finds nothing to lift, which is not a refusal.
 UPDATE fprobe SET refused = ARRAY['42501'], member_ok = '^(ok:.*|PT404)$' WHERE fn = 'lift_member_suspension';
 UPDATE fprobe SET refused = ARRAY['42501'] WHERE fn IN ('remove_member', 'suspend_member', 'firm_members');
@@ -1719,6 +1742,8 @@ BEGIN
       (f, 'qr', qr),
       (f, 'firm', pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)::text),
       (f, 'partner', CASE f WHEN 'a' THEN 'acme-cfo' ELSE 'beta-cfo' END),
+      (f, 'org', (SELECT o.id::text FROM public.firm_organisations o WHERE o.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY o.added_at LIMIT 1)),
+      (f, 'jreq', (SELECT r.id::text FROM public.join_requests r WHERE r.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY r.asked_at LIMIT 1)),
       (f, 'inv', (SELECT i.id::text FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY i.created_at LIMIT 1)),
       (f, 'agent', (SELECT m.user_id::text FROM public.firm_memberships m WHERE m.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END)
                     AND m.role = 'agent' AND m.valid_until IS NULL ORDER BY m.id LIMIT 1)),
@@ -2666,6 +2691,12 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   ('public.firm_invitations', 'firm', 'its own firm_id; closed to the API, owners read the pending ones through a function',
    $m$INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at)
       VALUES ({firm}, 'probe-{tag}@example.test', 'agent', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '7 days') RETURNING ctid::text$m$, false),
+  -- A firm's listed organisation and a request to join it (CRM-P1.4): its own firm_id. Closed to the API, owners included (an owner reaches
+  -- them through functions), so no positive control. The request's probe row is a declined one so it never meets the one-open-per-person index.
+  ('public.firm_organisations', 'firm', 'its own firm_id; closed to the API, owners read and change the list through functions',
+   $m$INSERT INTO public.firm_organisations (firm_id, provider, org_id, label) VALUES ({firm}, 'google', 'probe-{tag}.example', 'Probe') RETURNING ctid::text$m$, false),
+  ('public.join_requests', 'firm', 'its own firm_id; closed to the API, owners read the open ones through a function',
+   $m$INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label, status, decided_at) VALUES ({firm}, {u}, 'google', 'probe.example', 'Probe', 'declined', now()) RETURNING ctid::text$m$, false),
   -- A firm's suspension: its own firm_id. Closed to the API, owners included (an owner reads who is suspended through firm_members()), so no
   -- positive control. The probe row is an ended one so it never meets the one-open-per-person index of the fixtures' real suspension.
   ('public.firm_member_suspensions', 'firm', 'its own firm_id; closed to the API, owners read who is suspended through a function',
@@ -2701,7 +2732,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -3243,7 +3274,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('firm_members', 'firm_scoped', 'a current owner reads their own firm''s current and suspended members; 42501 for every other caller (4e; supabase/tests/firm_members.sql)'),
   ('resend_invitation', 'firm_scoped', 'a current owner of the invitation''s firm sends it again with a new link; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
   ('cancel_invitation', 'firm_scoped', 'a current owner of the invitation''s firm withdraws it; the same refusal for another firm''s invitation as for one that does not exist (4e)'),
-  ('firm_pending_invitations', 'firm_scoped', 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (4e)');
+  ('firm_pending_invitations', 'firm_scoped', 'a current owner reads their own firm''s pending invitations, never the token''s hash; refused for every other caller (4e)'),
+  ('add_firm_organisation', 'firm_scoped', 'a current owner of the firm lists a Google domain or Microsoft tenant; refused for every other caller, a platform admin and another firm''s owner included (4e; supabase/tests/join_by_organisation.sql)'),
+  ('firm_organisations', 'firm_scoped', 'a current owner reads their own firm''s listed organisations; 42501 for every other caller (4e)'),
+  ('remove_firm_organisation', 'firm_scoped', 'a current owner of the listing''s firm removes it; the same refusal for another firm''s listing as for one that does not exist (4e)'),
+  ('firm_join_requests', 'firm_scoped', 'a current owner reads their own firm''s open requests to join, with the person''s email; 42501 for every other caller (4e)'),
+  ('approve_join_request', 'firm_scoped', 'a current owner of the request''s firm approves it with a role and the person becomes a member; the same refusal for another firm''s request as for one that does not exist (4e)'),
+  ('decline_join_request', 'firm_scoped', 'a current owner of the request''s firm declines it; the same refusal for another firm''s request as for one that does not exist (4e)');
 
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000; supabase/tests/table_settings.sql) ----
 INSERT INTO fn_class (fn, class, why) VALUES
@@ -3258,9 +3295,6 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('set_my_table_columns', 'firm_scoped', 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else (4e)');
 
 INSERT INTO fn_class (fn, class, why) VALUES
-  ('admin_add_allowed_organisation', 'platform_wide', 'the organisations whose members get the advisor role: the platform''s, kept by platform admins'),
-  ('admin_remove_allowed_organisation', 'platform_wide', 'the same'),
-  ('claim_advisor_role_by_organisation', 'platform_wide', 'grants the advisor role to the caller''s own sign-in from an allowed organisation; reads no firm''s data'),
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),
   ('admin_discard_peo_draft', 'platform_wide', 'a PEO''s requirement profile: the same for every firm'),
   ('admin_publish_peo_profile', 'platform_wide', 'the same'),
@@ -3281,6 +3315,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('person_is_member_of_a_firm_in_good_standing', 'service_only', 'whether a person is a current member of a firm that is not suspended: the mailbox functions ask it'),
   ('admin_decide_firm', 'platform_wide', 'a platform admin approves or refuses a waiting firm'),
   ('leave_firm', 'own', 'a current member of the firm ends their own membership now and the firm''s owners are told; acts only on the caller''s own membership of the named firm (supabase/tests/leave_a_firm.sql)'),
+  ('ask_to_join_firm', 'own', 'a signed-in person at a firm''s address who is from an organisation the firm lists asks to join it; reads only the caller''s own sign-in claims and answers asked or none, the same none for everyone else; acts only for the caller (supabase/tests/join_by_organisation.sql)'),
   ('accept_invitation', 'own', 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),

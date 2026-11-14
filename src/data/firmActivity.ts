@@ -26,6 +26,10 @@ export const ENTRY_KINDS = [
   { value: "firm_suspended", label: "Suspended the firm" },
   { value: "firm_restored", label: "Lifted the firm's suspension" },
   { value: "member_left", label: "Left the firm" },
+  { value: "organisation_listed", label: "Listed an organisation" },
+  { value: "organisation_removed", label: "Removed an organisation" },
+  { value: "join_asked", label: "Asked to join" },
+  { value: "join_declined", label: "Declined a request to join" },
 ] as const;
 
 export const ENTRY_KIND_VALUES: string[] = ENTRY_KINDS.map((k) => k.value);

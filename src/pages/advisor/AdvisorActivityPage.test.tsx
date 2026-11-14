@@ -239,10 +239,10 @@ describe("AdvisorActivityPage", () => {
     renderPage();
     const kind = await screen.findByLabelText("Kind");
     const options = within(kind).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toHaveLength(23);
+    expect(options).toHaveLength(27);
     expect(options.slice(0, 3)).toEqual(["Every kind", "Signed in", "Opened a submission"]);
     // Removing, suspending and lifting a suspension (CRM-P1.5) are read by name, not as the database wrote them.
-    expect(options).toEqual(expect.arrayContaining(["Removed a member", "Suspended a member", "Lifted a member's suspension", "Left the firm"]));
+    expect(options).toEqual(expect.arrayContaining(["Removed a member", "Suspended a member", "Lifted a member's suspension", "Left the firm", "Listed an organisation", "Removed an organisation", "Asked to join", "Declined a request to join"]));
     fireEvent.change(kind, { target: { value: "packet_downloaded" } });
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "packet_downloaded", after: null }));
   });

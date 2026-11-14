@@ -430,8 +430,8 @@ export type Database = {
         Update: never
         Relationships: []
       }
-      // Organisations whose members get the advisor role without an admin (20261113100000). Admins read it; it is
-      // changed only through admin_add_allowed_organisation and admin_remove_allowed_organisation.
+      // The retired platform list of organisations whose members got the advisor role without an admin (20261113100000). Admins read it as
+      // history; nothing changes it since 20261118100000, which dropped the functions that did.
       allowed_organisations: {
         Row: {
           added_at: string
@@ -777,18 +777,6 @@ export type Database = {
         Args: { p_peo_id: number; p_template_id: number }
         Returns: string | null
       }
-      admin_add_allowed_organisation: {
-        Args: { p_provider: string; p_org_id: string; p_label: string }
-        Returns: Json
-      }
-      admin_remove_allowed_organisation: {
-        Args: { p_id: number }
-        Returns: Json
-      }
-      claim_advisor_role_by_organisation: {
-        Args: Record<PropertyKey, never>
-        Returns: Json
-      }
       // Whether the signed-in broker's own mailbox is connected, never the token (20261113090000).
       my_mailbox: {
         Args: Record<PropertyKey, never>
@@ -1087,6 +1075,36 @@ export type Database = {
       }
       cancel_invitation: {
         Args: { p_invitation_id: string }
+        Returns: undefined
+      }
+      // Join by organisation (20261118100000). The two tables are closed to the API; an owner reaches them through these.
+      add_firm_organisation: {
+        Args: { p_firm_id: string; p_provider: string; p_org_id: string; p_label: string }
+        Returns: Json
+      }
+      firm_organisations: {
+        Args: { p_firm_id: string }
+        Returns: { id: string; provider: string; org_id: string; label: string; added_at: string }[]
+      }
+      remove_firm_organisation: {
+        Args: { p_id: string }
+        Returns: undefined
+      }
+      // 'asked' or 'none': the same none for everyone who is not from an organisation the firm lists.
+      ask_to_join_firm: {
+        Args: { p_firm_address: string }
+        Returns: string
+      }
+      firm_join_requests: {
+        Args: { p_firm_id: string }
+        Returns: { request_id: string; email: string; asked_at: string; provider: string; org_label: string }[]
+      }
+      approve_join_request: {
+        Args: { p_request_id: string; p_role: string }
+        Returns: undefined
+      }
+      decline_join_request: {
+        Args: { p_request_id: string }
         Returns: undefined
       }
       leave_firm: {

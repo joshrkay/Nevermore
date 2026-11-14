@@ -95,7 +95,7 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
   });
 
   await test.step("the platform's pages are not the member's", async () => {
-    for (const path of ["firms", "organisations", "held"]) {
+    for (const path of ["firms", "held"]) {
       await page.goto(`${firmUrl(FIRM_B)}/advisor/${path}`);
       await expect(page.getByRole("heading", { name: "For Nevermore's platform admins" })).toBeVisible();
     }

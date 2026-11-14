@@ -53,7 +53,7 @@ describe("signing in with a provider", () => {
   beforeEach(() => {
     signInWithOAuth.mockReset().mockResolvedValue({ error: null });
     exchangeCodeForSession.mockReset();
-    rpc.mockReset().mockResolvedValue({ data: { granted: true }, error: null });
+    rpc.mockReset().mockResolvedValue({ data: [{ firm_id: "f1", name: "Acme Brokers", address: "acme-brokers", role: "agent", refused: false }], error: null });
   });
 
   it("uses the PKCE flow on its own client, which never reads a session out of the address", async () => {
@@ -93,28 +93,31 @@ describe("signing in with a provider", () => {
     error: null,
   });
 
-  it("claims the advisor role first: the database decides from what the provider vouched for, and the caller sends nothing", async () => {
+  // Catches: sign-in still asks the retired platform list for the advisor role (the function is gone), or lets a person with no firm
+  // connect a mailbox the database would refuse.
+  it("asks which firms the broker belongs to, and sends nothing with the question", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     exchangeCodeForSession.mockResolvedValueOnce(session());
     await finishBrokerSignIn("code-0");
-    expect(rpc).toHaveBeenCalledWith("claim_advisor_role_by_organisation");
+    expect(rpc).toHaveBeenCalledWith("my_firms");
+    expect(rpc).not.toHaveBeenCalledWith("claim_advisor_role_by_organisation");
     expect(rpc.mock.calls[0]).toHaveLength(1);
     vi.unstubAllGlobals();
   });
 
-  it("connects the mailbox of someone who already had the role", async () => {
-    rpc.mockResolvedValue({ data: { granted: false, reason: "already_has_role" }, error: null });
+  it("connects the mailbox of someone who belongs to a firm", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     exchangeCodeForSession.mockResolvedValueOnce(session());
     expect(await finishBrokerSignIn("code-7")).toEqual({ ok: true, mailbox: "connected" });
     vi.unstubAllGlobals();
   });
 
-  it("connects nothing, and keeps nothing, for someone with no role yet: they wait for an administrator", async () => {
+  // Catches: a broker who has asked to join a firm but isn't a member yet has a mailbox stored, or is told it failed.
+  it("connects nothing, and keeps nothing, for someone who belongs to no firm yet: they wait for an owner to approve them", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    for (const claimed of [{ data: { granted: false, reason: "no_match" }, error: null }, { data: null, error: new Error("down") }]) {
-      rpc.mockResolvedValueOnce(claimed);
+    for (const firms of [{ data: [], error: null }, { data: null, error: new Error("down") }]) {
+      rpc.mockResolvedValueOnce(firms);
       exchangeCodeForSession.mockResolvedValueOnce(session());
       expect(await finishBrokerSignIn("code-8")).toEqual({ ok: true, mailbox: "waiting" });
     }

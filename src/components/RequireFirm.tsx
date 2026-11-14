@@ -104,7 +104,7 @@ const RequireFirm = ({ children, as = "member", ownersOnly = "read its record of
 };
 
 /**
- * A page that is platform-wide (the firms waiting for approval, who gets in by organisation, held mail), for the platform's
+ * A page that is platform-wide (the firms waiting for approval, held mail), for the platform's
  * admins. An admin is no member of any firm (D-16), so this is never a way into a firm's console, and the console is never a
  * way into this.
  */

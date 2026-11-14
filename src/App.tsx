@@ -35,7 +35,6 @@ const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPa
 const AdvisorPeosPage = lazy(() => import("./pages/advisor/AdvisorPeosPage"));
 const AdvisorHeldMailPage = lazy(() => import("./pages/advisor/AdvisorHeldMailPage"));
 const AdvisorMailboxPage = lazy(() => import("./pages/advisor/AdvisorMailboxPage"));
-const AdvisorOrganisationsPage = lazy(() => import("./pages/advisor/AdvisorOrganisationsPage"));
 const AdvisorActivityPage = lazy(() => import("./pages/advisor/AdvisorActivityPage"));
 const AdvisorSettingsPage = lazy(() => import("./pages/advisor/AdvisorSettingsPage"));
 const AdvisorMembersPage = lazy(() => import("./pages/advisor/AdvisorMembersPage"));
@@ -95,7 +94,6 @@ const AppRoutes = () => (
                 {/* The platform's own pages stay outside the workspace, with the console header. */}
                 <Route path="/advisor/held" element={<RequirePlatformAdmin><AdvisorHeldMailPage /></RequirePlatformAdmin>} />
                 <Route path="/advisor/firms" element={<RequirePlatformAdmin><AdvisorFirmsPage /></RequirePlatformAdmin>} />
-                <Route path="/advisor/organisations" element={<RequirePlatformAdmin><AdvisorOrganisationsPage /></RequirePlatformAdmin>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
               </FirmAddressGate>

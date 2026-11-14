@@ -177,7 +177,7 @@ describe("the console header's menu", () => {
     for (const name of ["Submissions", "Outbox & Notifications", "Funnel", "Partners", "PEOs", "Mailbox"]) {
       expect(await screen.findByRole("link", { name })).toBeInTheDocument();
     }
-    for (const name of ["Held mail", "Firms", "Organisations"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    for (const name of ["Held mail", "Firms", "Organisations"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument(); // Organisations moved into each firm (CRM-P1.4)
   });
 
   it("offers a platform admin who belongs to no firm the platform's pages and none of a firm's (D-16)", async () => {
@@ -185,7 +185,9 @@ describe("the console header's menu", () => {
     api.fetchIsAdmin.mockResolvedValue(true);
     renderHeader();
     await settle();
-    for (const name of ["Held mail", "Firms", "Organisations"]) expect(await screen.findByRole("link", { name })).toBeInTheDocument();
+    for (const name of ["Held mail", "Firms"]) expect(await screen.findByRole("link", { name })).toBeInTheDocument();
+    // The platform's own list of organisations is retired (CRM-P1.4, D-23): each firm keeps its own on its Invitations page.
+    expect(screen.queryByRole("link", { name: "Organisations" })).not.toBeInTheDocument();
     for (const name of ["Submissions", "Outbox & Notifications", "Funnel", "Partners", "PEOs", "Mailbox", "Activity"]) {
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }

@@ -58,7 +58,7 @@ describe("page meta table", () => {
 describe("the title of each workspace page", () => {
   const PAGES = [
     "/settings", "/advisor", "/advisor/submissions/123", "/advisor/outbox", "/advisor/funnel", "/advisor/partners", "/advisor/peos",
-    "/advisor/mailbox", "/advisor/activity", "/advisor/held", "/advisor/firms", "/advisor/organisations", "/firm/invitations",
+    "/advisor/mailbox", "/advisor/activity", "/advisor/held", "/advisor/firms", "/firm/invitations",
   ];
   it("is different for each page and never the console's generic one", () => {
     const titles = PAGES.map((path) => pageMetaFor(path).title);

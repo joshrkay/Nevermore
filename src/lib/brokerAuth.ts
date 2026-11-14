@@ -54,8 +54,8 @@ export type BrokerSignInResult =
       ok: true;
       /**
        * What became of the mailbox: `connected` (the product keeps what lets it send), `not_granted` (the broker
-       * didn't allow sending, so there is nothing to keep), `waiting` (they have no advisor role yet, so there is no
-       * mailbox to connect until an administrator gives them access) or `failed` (they allowed it but it couldn't be kept).
+       * didn't allow sending, so there is nothing to keep), `waiting` (they belong to no firm yet, so there is no
+       * mailbox to connect until an owner approves them) or `failed` (they allowed it but it couldn't be kept).
        */
       mailbox: "connected" | "not_granted" | "waiting" | "failed";
     }
@@ -90,12 +90,11 @@ export async function finishBrokerSignIn(code: string): Promise<BrokerSignInResu
   const { data, error } = await pkceClient().auth.exchangeCodeForSession(code);
   if (error || !data.session) return { ok: false };
   const { session } = data;
-  // The advisor role by organisation (story M-4.2): the database reads what the provider vouched for in this sign-in, and
-  // grants the role only if the organisation is on an admin's list. Nothing here decides it; a failure just leaves the
-  // broker waiting for an administrator, as before.
-  const claimed = await pkceClient().rpc("claim_advisor_role_by_organisation");
-  const reason = (claimed.data as { granted?: boolean; reason?: string } | null)?.reason;
-  const hasRole = !claimed.error && ((claimed.data as { granted?: boolean } | null)?.granted === true || reason === "already_has_role");
+  // Whether they belong to a firm yet. A mailbox is kept only for a member of a firm (the database refuses anyone else), so a broker who has
+  // only asked to join one (CRM-P1.4: asking happens at the firm's address, not here) has nothing to connect until an owner approves them.
+  // A failure just leaves the broker waiting, as before.
+  const firms = await pkceClient().rpc("my_firms");
+  const hasRole = !firms.error && Array.isArray(firms.data) && firms.data.length > 0;
   const refreshToken = session.provider_refresh_token;
   if (!hasRole) return { ok: true, mailbox: "waiting" };
   if (!refreshToken) return { ok: true, mailbox: "not_granted" };
