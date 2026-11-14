@@ -804,10 +804,12 @@ describe("the options dialog, step by step", () => {
     await user.click(within(dialog).getByRole("button", { name: "Rename view" }));
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     dialog = await options(user, "Chasing");
-    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    // The earlier rename is still on its way: the reopened menu offers nothing until it settles.
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toHaveAttribute("aria-disabled", "true");
     refuse(new Error('You already have a view called "Taken" on this table'));
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename" })).not.toHaveAttribute("aria-disabled"));
     expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename" }));
     expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Rename view" })).not.toHaveAttribute("aria-disabled");
   });
 
@@ -821,10 +823,78 @@ describe("the options dialog, step by step", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save view" }));
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     dialog = await ask(user);
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Saving…" })).toHaveAttribute("aria-disabled", "true");
     refuse(new Error('You already have a view called "Taken" on this table'));
     await new Promise((r) => setTimeout(r, 30));
     expect(within(screen.getByRole("dialog")).queryByRole("alert")).toBeNull();
     expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Save view" })).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("a change that is still on its way when its dialog is closed", () => {
+  beforeEach(() => {
+    api.listSavedViews.mockResolvedValue([view()]);
+    for (const f of [api.renameSavedView, api.shareSavedView, api.unshareSavedView, api.changeSavedView]) f.mockResolvedValue(undefined);
+  });
+
+  // Catches: closing a pending save clearing its lock while the call goes on, so a reopened dialog saves the screen a second time.
+  it("does not start a second save from a reopened dialog while the first is still on its way", async () => {
+    const pending = later();
+    api.saveView.mockReturnValue(pending.p.then(() => "new-1"));
+    const user = userEvent.setup();
+    draw();
+    let dialog = await ask(user);
+    await typeName(user, dialog, "First");
+    await user.click(within(dialog).getByRole("button", { name: "Save view" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await ask(user);
+    await typeName(user, dialog, "Second");
+    await user.click(within(dialog).getByRole("button", { name: "Saving…" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "{Enter}");
+    expect(api.saveView).toHaveBeenCalledTimes(1);
+    pending.release();
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Save view" })).not.toHaveAttribute("aria-disabled"));
+  });
+
+  // Catches: closing a pending delete clearing the dialog's lock, so a reopened one starts a rename or a second delete of the same view.
+  it("does not start a rename or a second delete from a reopened dialog while a delete is still on its way", async () => {
+    const pending = later();
+    api.deleteSavedView.mockReturnValue(pending.p);
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete view" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toHaveAttribute("aria-disabled", "true");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("textbox", { name: "Name" })).toBeNull();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("button", { name: "Delete view" })).toBeNull();
+    expect(api.renameSavedView).not.toHaveBeenCalled();
+    expect(api.deleteSavedView).toHaveBeenCalledTimes(1);
+    pending.release();
+  });
+
+  // Catches: the same hole for sharing: a pending share, its dialog closed, then a stop-sharing or a second share started over it.
+  it("does not start a share from a reopened dialog while another change is still on its way", async () => {
+    const pending = later();
+    api.renameSavedView.mockReturnValue(pending.p);
+    api.listSavedViews.mockResolvedValue([view({ canShare: true })]);
+    const user = userEvent.setup();
+    draw();
+    let dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    dialog = screen.getByRole("dialog");
+    await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Other");
+    await user.click(within(dialog).getByRole("button", { name: "Rename view" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    dialog = await options(user, "Chasing");
+    await user.click(within(dialog).getByRole("button", { name: "Share with the firm" }));
+    expect(api.shareSavedView).not.toHaveBeenCalled();
+    pending.release();
   });
 });
 
