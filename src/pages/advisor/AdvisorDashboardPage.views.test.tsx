@@ -849,6 +849,47 @@ describe("a saved view the table can't open", () => {
     expect(tab).toBeInTheDocument();
   });
 
+  // Catches: a stored single value (not a list) skipping the choice check because the check only looked at lists, so the count call reaches the database with a choice it refuses.
+  it("can't open a view whose choice is stored as one value rather than a list, when the field doesn't list it", async () => {
+    const scalar = view({ id: "v3", name: "Scalar", filters: [{ field: "pipeline_status", op: "any_of", value: "bogus" }] as unknown as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([view(), scalar]);
+    countQueueViews.mockResolvedValue([{ name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    expect(screen.getByText("Scalar").closest("a")).toBeNull();
+    expect(screen.getByText("Scalar").closest("[aria-disabled]")).toHaveAccessibleDescription("This view uses a choice its field no longer lists.");
+    expect((countQueueViews.mock.calls.at(-1)![0] as { name: string }[]).map((v) => v.name)).not.toContain("v3");
+  });
+
+  // Catches: a stored single value that IS listed being turned away, or read differently from the list the database would be sent.
+  it("opens a view whose listed choice is stored as one value", async () => {
+    const scalar = view({ id: "v3", name: "Scalar", filters: [{ field: "pipeline_status", op: "any_of", value: "won" }] as unknown as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([scalar]);
+    countQueueViews.mockResolvedValue([{ name: "v3", total: 2 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Scalar 2" })).toBeInTheDocument();
+    expect(countQueueViews.mock.calls.at(-1)![0]).toEqual(expect.arrayContaining([{ name: "v3", filters: [{ field: "pipeline_status", op: "any_of", value: ["won"] }] }]));
+  });
+
+  // Catches: the screen's own list of missing items being treated as the database's: the database lists no values for this field and takes any item, so a view naming one the screen doesn't list runs fine there.
+  it("opens a view on a field the database does not hold a list of values for, even when the screen lists some", async () => {
+    const free = view({ id: "v2", name: "Missing odd", filters: [{ field: "missing_required", op: "any_of", value: ["an_item_added_later"] }] as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([free]);
+    countQueueViews.mockResolvedValue([{ name: "v2", total: 3 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Missing odd 3" })).toBeInTheDocument();
+  });
+
+  // Catches: the state codes the database checks not being checked here (it refuses a code that isn't one).
+  it("can't open a view that names a state the database would refuse", async () => {
+    const zz = view({ id: "v9", name: "Nowhere", filters: [{ field: "states", op: "any_of", value: ["ZZ"] }] as SavedView["filters"] });
+    api.listSavedViews.mockResolvedValue([view(), zz]);
+    countQueueViews.mockResolvedValue([{ name: "v1", total: 4 }]);
+    draw();
+    expect(await screen.findByRole("link", { name: "Chasing 4" })).toBeInTheDocument();
+    expect(screen.getByText("Nowhere").closest("a")).toBeNull();
+  });
+
   // Catches: a view that can't be read being given no way out (it can't be deleted or unshared on screen once it is hidden).
   it("keeps what the person may do with it: delete their own, stop sharing a colleague's", async () => {
     api.listSavedViews.mockResolvedValue([bogus, view({ ...gone, id: "v8", shared: true, mine: false, canChange: false, canUnshare: true })]);
