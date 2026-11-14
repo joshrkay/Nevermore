@@ -65,8 +65,8 @@ export interface FirmClosing {
 
 /** The notice to a firm's owners of a large export, or of the third by one member within an hour (public.export_rows): who, which table, how many, when. Never a row. */
 export interface ExportAlert {
-  /** The address of the member who exported. */
-  memberEmail: string;
+  /** The address of the member who exported; null for a member whose account has none (the email then says "A member"). */
+  memberEmail: string | null;
   firmName: string;
   /** The table in words ("Referral partners"). */
   tableLabel: string;
@@ -211,11 +211,12 @@ export function parseFirmClosing(raw: unknown): FirmClosing | null {
 /** The export alert's fields, or null without all of them. Only these are ever read: no row, no name of anything exported. */
 export function parseExportAlert(raw: unknown): ExportAlert | null {
   const p = asObject(raw);
-  const memberEmail = p && asEmail(p.member_email);
+  // The member's email may be empty on the account: the database then writes null, and the owners are told all the same. A key that is missing, or text that is not an address, is no alert.
+  const memberEmail = p && p.member_email === null ? null : p && asEmail(p.member_email);
   const firmName = p && oneLine(p.firm_name, 200);
   const tableLabel = p && oneLine(p.table_label, 80);
   const exportedAt = p && oneLine(p.exported_at, 20);
-  if (!p || !memberEmail || !firmName || !tableLabel || exportedAt === null || !CERTIFIED_AT.test(exportedAt) || !Number.isFinite(Date.parse(exportedAt))) return null;
+  if (!p || memberEmail === undefined || (p.member_email !== null && !memberEmail) || !firmName || !tableLabel || exportedAt === null || !CERTIFIED_AT.test(exportedAt) || !Number.isFinite(Date.parse(exportedAt))) return null;
   const { row_count: rowCount, exports_in_hour: exportsInHour, large } = p;
   if (typeof rowCount !== "number" || !Number.isInteger(rowCount) || rowCount < 0) return null;
   if (typeof exportsInHour !== "number" || !Number.isInteger(exportsInHour) || exportsInHour < 1) return null;
@@ -481,11 +482,15 @@ export function renderFirmClosing(n: FirmClosing): RenderedEmail {
  */
 export function renderExportAlert(n: ExportAlert): RenderedEmail {
   const rows = `${n.rowCount.toLocaleString("en-US")} ${n.rowCount === 1 ? "row" : "rows"}`;
-  const subject = n.large ? `${n.memberEmail} exported ${rows} from ${n.firmName}` : `${n.memberEmail} has made ${n.exportsInHour} exports from ${n.firmName} in an hour`;
-  const headline = `${n.memberEmail} exported ${n.tableLabel} (${rows}) from ${n.firmName} on ${utcStamp(n.exportedAt)}.`;
+  const who = n.memberEmail ?? "A member";
+  // The reasons are the database's own rules, said as they are: more than 500 rows, or exactly the third export in an hour. Anything else is not a reason.
+  const large = n.large && n.rowCount > 500;
+  const third = n.exportsInHour === 3;
+  const subject = large || !third ? `${who} exported ${rows} from ${n.firmName}` : `${who} has made 3 exports from ${n.firmName} in an hour`;
+  const headline = `${who} exported ${n.tableLabel} (${rows}) from ${n.firmName} on ${utcStamp(n.exportedAt)}.`;
   const why = [
-    n.large ? "You are told because it is more than 500 rows." : null,
-    n.exportsInHour >= 3 ? `You are told because it is their ${n.exportsInHour === 3 ? "third" : `${n.exportsInHour}th`} export in an hour.` : null,
+    large ? "You are told because it is more than 500 rows." : null,
+    third ? "You are told because it is their third export in an hour." : null,
   ].filter((line): line is string => line !== null);
   const detail = "Every export is in the firm's record of who did what, which an owner can read.";
   const text = [headline, "", ...why, "", detail, "", SIGN_OFF].join("\n");

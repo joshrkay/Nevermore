@@ -106,7 +106,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT * FROM (VALUES
     ('referral_partners', 'Referral partners', 'member',
-     '[{"id":"code","label":"Code"},{"id":"name","label":"Name"},{"id":"kind","label":"Kind"},{"id":"created_at","label":"Added"},{"id":"updated_at","label":"Last changed"}]'::jsonb),
+     '[{"id":"code","label":"Code"},{"id":"name","label":"Name"},{"id":"kind","label":"Kind"},{"id":"started_30d","label":"Started, 30 days"},{"id":"certified_30d","label":"Certified, 30 days"},{"id":"created_at","label":"Added"},{"id":"updated_at","label":"Last changed"}]'::jsonb),
     ('firm_activity', 'The firm''s record', 'owner',
      '[{"id":"at","label":"When"},{"id":"who","label":"Who"},{"id":"kind","label":"What"},{"id":"record_type","label":"Record type"},{"id":"record_id","label":"Record"},{"id":"subject","label":"About"},{"id":"role","label":"Role"},{"id":"row_count","label":"Rows"}]'::jsonb)
   ) t (name, label, who, columns)
@@ -117,6 +117,9 @@ GRANT EXECUTE ON FUNCTION public.export_table_registry() TO service_role;
 
 -- Referral partners: every current member of the firm sees them all (the table's policy is is_firm_member), so a member exports them all.
 -- Filters: `kind` (one of the partner kinds) and `search` (the name or the code, any case). The firm and the rights are export_rows's.
+-- The partners page's two counts are columns too (so a file can carry the columns showing): the intakes of the partner's code started in the last 30 days
+-- and, of those, how many certified, exactly as advisor_intake_sources counts them for that page (intake_milestones, by cohort start in [now - 30 days, now),
+-- summed over every campaign tag; the page's own list is cut at 200 sources, the export is not). Counts only: nothing an intake answered.
 CREATE FUNCTION public.export_source_referral_partners(p_firm_id uuid, p_filters jsonb, p_ids jsonb, p_limit integer)
 RETURNS SETOF jsonb
 LANGUAGE plpgsql
@@ -132,17 +135,22 @@ DECLARE
 BEGIN
   IF jsonb_typeof(p_filters) IS DISTINCT FROM 'object'
      OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_filters) k WHERE k NOT IN ('kind', 'search'))
-     OR (p_filters ? 'kind' AND (jsonb_typeof(p_filters -> 'kind') <> 'string' OR NOT COALESCE(public.is_referral_partner_kind(p_filters ->> 'kind'), false)))
-     OR (p_filters ? 'search' AND jsonb_typeof(p_filters -> 'search') <> 'string') THEN
+     OR (p_filters ? 'kind' AND (jsonb_typeof(p_filters -> 'kind') IS DISTINCT FROM 'string' OR NOT COALESCE(public.is_referral_partner_kind(p_filters ->> 'kind'), false)))
+     OR (p_filters ? 'search' AND jsonb_typeof(p_filters -> 'search') IS DISTINCT FROM 'string') THEN
     RAISE EXCEPTION 'Those filters don''t apply to this table' USING ERRCODE = '22023';
   END IF;
   kind_in := p_filters ->> 'kind';
   search_in := lower(btrim(COALESCE(p_filters ->> 'search', '')));
   IF p_ids IS NOT NULL THEN
-    SELECT COALESCE(array_agg(i), '{}') INTO ids FROM jsonb_array_elements_text(p_ids) i;
+    SELECT COALESCE(array_agg(lower(i)), '{}') INTO ids FROM jsonb_array_elements_text(p_ids) i;
   END IF;
   RETURN QUERY
-    SELECT jsonb_build_object('code', r.code, 'name', r.name, 'kind', r.kind, 'created_at', r.created_at, 'updated_at', r.updated_at)
+    SELECT jsonb_build_object('code', r.code, 'name', r.name, 'kind', r.kind,
+      'started_30d', (SELECT count(*) FROM public.intake_milestones m
+                      WHERE m.firm_id = r.firm_id AND m.referral_code = r.code AND m.milestone = 'started' AND m.started_at >= now() - interval '30 days' AND m.started_at < now()),
+      'certified_30d', (SELECT count(*) FROM public.intake_milestones m
+                        WHERE m.firm_id = r.firm_id AND m.referral_code = r.code AND m.milestone = 'certified' AND m.started_at >= now() - interval '30 days' AND m.started_at < now()),
+      'created_at', r.created_at, 'updated_at', r.updated_at)
     FROM public.referral_partners r
     WHERE r.firm_id = p_firm_id
       AND (kind_in IS NULL OR r.kind = kind_in)
@@ -157,7 +165,8 @@ REVOKE ALL ON FUNCTION public.export_source_referral_partners(uuid, jsonb, jsonb
 
 -- The firm's record: an owner's, and the same rows an owner reads on the page (firm_activity_list): who by the page's words (a person at Nevermore as
 -- "Nevermore", never their id or email, D-33), never the number of an entry or who stored it. Filters: `person` (a member's id, or "nevermore") and
--- `kind`. A selection names entries by the key the page pages by (entry_key).
+-- `kind`, and a period: `from` (included) and `to` (not), as ISO times, so a firm whose record is over the most one export holds takes it out in pieces.
+-- A selection names entries by the key the page pages by (entry_key).
 CREATE FUNCTION public.export_source_firm_activity(p_firm_id uuid, p_filters jsonb, p_ids jsonb, p_limit integer)
 RETURNS SETOF jsonb
 LANGUAGE plpgsql
@@ -169,17 +178,32 @@ AS $$
 DECLARE
   person_in text;
   kind_in text;
+  from_in timestamptz;
+  to_in timestamptz;
   ids text[];
+  iso constant text := '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$';
 BEGIN
   IF jsonb_typeof(p_filters) IS DISTINCT FROM 'object'
-     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_filters) k WHERE k NOT IN ('person', 'kind'))
-     OR (p_filters ? 'kind' AND jsonb_typeof(p_filters -> 'kind') <> 'string')
-     OR (p_filters ? 'person' AND (jsonb_typeof(p_filters -> 'person') <> 'string'
-         OR (p_filters ->> 'person' <> 'nevermore' AND p_filters ->> 'person' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))) THEN
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_filters) k WHERE k NOT IN ('person', 'kind', 'from', 'to'))
+     OR (p_filters ? 'kind' AND jsonb_typeof(p_filters -> 'kind') IS DISTINCT FROM 'string')
+     OR (p_filters ? 'person' AND (jsonb_typeof(p_filters -> 'person') IS DISTINCT FROM 'string'
+         OR (p_filters ->> 'person' <> 'nevermore' AND p_filters ->> 'person' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')))
+     OR (p_filters ? 'from' AND (jsonb_typeof(p_filters -> 'from') IS DISTINCT FROM 'string' OR p_filters ->> 'from' !~ iso))
+     OR (p_filters ? 'to' AND (jsonb_typeof(p_filters -> 'to') IS DISTINCT FROM 'string' OR p_filters ->> 'to' !~ iso)) THEN
     RAISE EXCEPTION 'Those filters don''t apply to this table' USING ERRCODE = '22023';
   END IF;
   person_in := lower(p_filters ->> 'person');
   kind_in := p_filters ->> 'kind';
+  -- A time that has the shape but is not a date (the 45th of the 13th month) is a filter the table doesn't take.
+  BEGIN
+    from_in := (p_filters ->> 'from')::timestamptz;
+    to_in := (p_filters ->> 'to')::timestamptz;
+  EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format OR invalid_text_representation THEN
+    RAISE EXCEPTION 'Those filters don''t apply to this table' USING ERRCODE = '22023';
+  END;
+  IF from_in IS NOT NULL AND to_in IS NOT NULL AND from_in >= to_in THEN
+    RAISE EXCEPTION 'The period must start before it ends' USING ERRCODE = '22023';
+  END IF;
   IF p_ids IS NOT NULL THEN
     SELECT COALESCE(array_agg(lower(i)), '{}') INTO ids FROM jsonb_array_elements_text(p_ids) i;
   END IF;
@@ -195,6 +219,7 @@ BEGIN
     LEFT JOIN auth.users su ON su.id = a.subject_user_id
     WHERE a.firm_id = p_firm_id
       AND (kind_in IS NULL OR a.kind = kind_in)
+      AND (from_in IS NULL OR a.at >= from_in) AND (to_in IS NULL OR a.at < to_in)
       AND (person_in IS NULL OR (person_in = 'nevermore' AND a.actor_is_staff) OR (person_in <> 'nevermore' AND a.actor_id = person_in::uuid AND NOT a.actor_is_staff))
       AND (ids IS NULL OR a.entry_key::text = ANY (ids))
     ORDER BY a.at DESC, a.entry_key DESC
@@ -274,7 +299,8 @@ BEGIN
     IF jsonb_array_length(p_ids) > (lim ->> 'most_ids')::integer THEN
       RAISE EXCEPTION 'Pick at most 1,000 records to export' USING ERRCODE = '22023';
     END IF;
-    SELECT count(DISTINCT e) INTO requested FROM jsonb_array_elements_text(p_ids) e;
+    -- An id is the record's own key, which is lower case in every listed table (a code, a uuid): ids that differ only in case are one record.
+    SELECT count(DISTINCT lower(e)) INTO requested FROM jsonb_array_elements_text(p_ids) e;
   END IF;
   -- 4. A whole table asks for a sign-in within the last 12 hours.
   IF p_ids IS NULL THEN
@@ -300,6 +326,8 @@ BEGIN
   RETURNING id INTO entry;
 
   -- The owners are told of a large export and of the third in an hour, in the same transaction.
+  -- The alert is never lost for want of a name: a member with no email address (the account's email may be empty) or no account row is told as nothing, and the
+  -- email says "A member".
   SELECT count(*)::integer INTO recent FROM public.firm_activity a
   WHERE a.firm_id = firm AND a.actor_id = auth.uid() AND a.kind = 'export_made'
     AND a.at > now() - make_interval(mins => (lim ->> 'alert_minutes')::integer);
@@ -309,8 +337,8 @@ BEGIN
     SELECT 'export_alert', firm, 'export_alert:' || entry,
            jsonb_build_object('member_email', lower(btrim(u.email)), 'table_label', reg.label, 'row_count', n, 'exports_in_hour', recent, 'large', large,
                               'exported_at', to_char(exported AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'firm_name', f.name)
-    FROM auth.users u, public.firms f
-    WHERE u.id = auth.uid() AND f.id = firm
+    FROM public.firms f LEFT JOIN auth.users u ON u.id = auth.uid()
+    WHERE f.id = firm
     ON CONFLICT (kind, dedupe_key) DO NOTHING;
   END IF;
 

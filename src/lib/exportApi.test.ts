@@ -18,6 +18,16 @@ const partners = {
   exportedAt: "2026-11-19T10:00:00+00:00",
 };
 
+const activity = {
+  table: "firm_activity",
+  label: "The firm's record",
+  columns: [{ id: "at", label: "When" }, { id: "subject", label: "About" }, { id: "row_count", label: "Rows" }, { id: "flag", label: "Flag" }],
+  rows: [{ at: "2026-11-19T10:00:00+00:00", subject: null, row_count: 3, flag: true }],
+  count: 1,
+  skipped: 0,
+  exportedAt: "2026-11-19T10:00:00+00:00",
+};
+
 describe("exportRows", () => {
   beforeEach(() => rpc.mockReset());
 
@@ -29,7 +39,7 @@ describe("exportRows", () => {
   });
 
   it("sends the filters as they are and a selection as the list of ids", async () => {
-    rpc.mockResolvedValue({ data: partners, error: null });
+    rpc.mockResolvedValue({ data: activity, error: null });
     await exportRows({ firmId: "f1", table: "firm_activity", filters: { kind: "sign_in", person: "nevermore" }, ids: ["k1", "k2"] });
     expect(rpc).toHaveBeenCalledWith("export_rows", { p_firm_id: "f1", p_table: "firm_activity", p_filters: { kind: "sign_in", person: "nevermore" }, p_ids: ["k1", "k2"] });
   });
@@ -48,8 +58,8 @@ describe("exportRows", () => {
   });
 
   it("takes a value that is nothing, a number or a yes or no, which the record's rows hold", async () => {
-    const entries = { ...partners, table: "firm_activity", rows: [{ at: "2026-11-19T10:00:00+00:00", subject: null, row_count: 3, flag: true }], count: 1 };
-    rpc.mockResolvedValue({ data: entries, error: null });
+
+    rpc.mockResolvedValue({ data: activity, error: null });
     expect((await exportRows({ firmId: "f1", table: "firm_activity" })).rows[0]).toEqual({ at: "2026-11-19T10:00:00+00:00", subject: null, row_count: 3, flag: true });
   });
 
@@ -65,6 +75,10 @@ describe("exportRows", () => {
     ["a row holding something that is not a value", { ...partners, rows: [{ code: { nested: true } }, { code: "x" }] }],
     ["a count that is not the rows", { ...partners, count: 5 }],
     ["a count below nothing", { ...partners, count: -1, rows: [] }],
+    ["another table than the one asked for", { ...partners, table: "firm_activity" }],
+    ["two columns with one id", { ...partners, columns: [{ id: "code", label: "Code" }, { id: "code", label: "Name" }], rows: [{ code: "acme-cfo" }, { code: "acme-law" }] }],
+    ["a row with a column missing", { ...partners, rows: [{ code: "acme-cfo", name: "Acme CFO" }, partners.rows[1]] }],
+    ["a row with a column that was not declared", { ...partners, rows: [{ ...partners.rows[0], email: "x@example.test" }, partners.rows[1]] }],
   ])("is a failed export, not a file with something missing, for %s", async (_what, data) => {
     rpc.mockResolvedValue({ data, error: null });
     await expect(exportRows({ firmId: "f1", table: "referral_partners" })).rejects.toMatchObject({ kind: "failed", message: "Couldn't export. Try again." });

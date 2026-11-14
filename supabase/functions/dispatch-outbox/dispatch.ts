@@ -144,22 +144,22 @@ type Built = { ok: true; message: EmailMessage } | { ok: false; reason: string; 
 /** The email for an event, or why there is none. A bad payload can never succeed, so it is final. */
 function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[]): Built {
   if (row.kind === "member_left") {
-    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    if (!config.firmNotice.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseMemberLeft(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderMemberLeft(n) } };
+    return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderMemberLeft(n) } };
   }
   if (row.kind === "firm_closing") {
-    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    if (!config.firmNotice.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseFirmClosing(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderFirmClosing(n) } };
+    return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderFirmClosing(n) } };
   }
   if (row.kind === "export_alert") {
-    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    if (!config.firmNotice.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseExportAlert(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderExportAlert(n) } };
+    return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderExportAlert(n) } };
   }
   // Every other kind is about an intake. An event with none can never be built.
   const sessionId = row.session_id;
@@ -400,7 +400,8 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived");
+  if (config.firmNotice.ok) kinds.push("member_left", "firm_closing", "export_alert");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
   if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
   return kinds;

@@ -100,6 +100,17 @@ export async function exportRows(request: ExportRequest): Promise<ExportResult> 
   });
   if (error) throw refusal(error);
   const parsed = answer.safeParse(data);
-  if (!parsed.success || parsed.data.count !== parsed.data.rows.length) throw new ExportError("failed", FALLBACK);
-  return parsed.data as ExportResult;
+  if (!parsed.success) throw new ExportError("failed", FALLBACK);
+  const result = parsed.data as ExportResult;
+  // What came back must be what was asked for and must hold together: the table, a count that is the rows, each column once, and in every row
+  // exactly the columns declared (a file made from anything else would have a column of blanks or one nobody listed).
+  const ids = result.columns.map((c) => c.id);
+  const declared = new Set(ids);
+  const consistent =
+    result.table === request.table &&
+    result.count === result.rows.length &&
+    declared.size === ids.length &&
+    result.rows.every((row) => Object.keys(row).length === declared.size && Object.keys(row).every((k) => declared.has(k)));
+  if (!consistent) throw new ExportError("failed", FALLBACK);
+  return result;
 }

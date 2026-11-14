@@ -265,6 +265,18 @@ BEGIN
     (acme, 'acme-cfo', 'Acme CFO', 'accounting'), (acme, 'acme-law', 'Acme Law', 'law_firm'), (acme, 'acme-event', 'Acme Event', 'event'),
     (zenith, 'zenith-cfo', 'Zenith CFO', 'accounting'), (zenith, 'zenith-law', 'Zenith Law', 'law_firm'),
     (cinder, 'cinder-cfo', 'Cinder CFO', 'accounting');
+  -- What the partners page counts for 30 days (intake_milestones, by referral code, summed over every campaign tag): acme-cfo started three times in the
+  -- window (under two campaigns) and certified once, and once 40 days ago; zenith has a partner with the same code, whose count is its own.
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone, firm_id, referral_code, utm_campaign) VALUES
+    (NULL, now() - interval '5 days', 'started', acme, 'acme-cfo', 'spring'), (NULL, now() - interval '4 days', 'started', acme, 'acme-cfo', 'spring'),
+    (NULL, now() - interval '3 days', 'started', acme, 'acme-cfo', NULL), (NULL, now() - interval '5 days', 'certified', acme, 'acme-cfo', 'spring'),
+    (NULL, now() - interval '40 days', 'started', acme, 'acme-cfo', NULL), (NULL, now() - interval '40 days', 'certified', acme, 'acme-cfo', NULL),
+    (NULL, now() - interval '2 days', 'answered', acme, 'acme-cfo', NULL),
+    (NULL, now() - interval '2 days', 'started', zenith, 'acme-cfo', NULL), (NULL, now() - interval '2 days', 'started', zenith, 'zenith-cfo', NULL);
+  -- Three entries at known times, for the date range of the firm's record.
+  INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, at) VALUES
+    (acme, 'sign_in', 'firm', acme::text, '2026-01-10 12:00:00+00'), (acme, 'sign_in', 'firm', acme::text, '2026-01-20 12:00:00+00'),
+    (acme, 'sign_in', 'firm', acme::text, '2026-02-01 00:00:00+00');
   -- A suspended firm and a support session, as the people who do them.
   PERFORM pg_temp.as_user('platform_admin');
   PERFORM public.admin_suspend_firm(sigma, 'testing');
@@ -314,8 +326,12 @@ BEGIN
   PERFORM pg_temp.is((SELECT string_agg(r ->> 'code', ',' ORDER BY ord) FROM jsonb_array_elements(a -> 'rows') WITH ORDINALITY x(r, ord)), 'acme-cfo,acme-event,acme-law', 'the firm''s partners by name, and no other firm''s');
   SELECT string_agg(k, ',' ORDER BY k) INTO keys FROM jsonb_object_keys(a -> 'rows' -> 0) k;
   SELECT string_agg(c ->> 'id', ',' ORDER BY ord) INTO cols FROM jsonb_array_elements(a -> 'columns') WITH ORDINALITY x(c, ord);
-  PERFORM pg_temp.is(cols, 'code,name,kind,created_at,updated_at', 'the columns are described, in order');
-  PERFORM pg_temp.is(keys, 'code,created_at,kind,name,updated_at', 'a row holds those and nothing else');
+  PERFORM pg_temp.is(cols, 'code,name,kind,started_30d,certified_30d,created_at,updated_at', 'the columns are described, in order: the page''s, then when it was added and changed');
+  PERFORM pg_temp.is(keys, 'certified_30d,code,created_at,kind,name,started_30d,updated_at', 'a row holds those and nothing else');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'label', ' | ' ORDER BY ord) FROM jsonb_array_elements(a -> 'columns') WITH ORDINALITY x(c, ord) WHERE c ->> 'id' LIKE '%30d'), 'Started, 30 days | Certified, 30 days', 'the two counts are headed as the partners page heads them');
+  PERFORM pg_temp.is((SELECT r ->> 'started_30d' || '/' || (r ->> 'certified_30d') FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'code' = 'acme-cfo'), '3/1',
+    'a partner''s intakes started and certified in the last 30 days, summed over its campaigns, and not another firm''s under the same code or what is older');
+  PERFORM pg_temp.is((SELECT jsonb_typeof(r -> 'started_30d') || jsonb_typeof(r -> 'certified_30d') FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'code' = 'acme-law'), 'numbernumber', 'a partner with none has zero, not nothing');
   PERFORM pg_temp.is((SELECT bool_and(c ->> 'label' IS NOT NULL AND c ->> 'label' <> '') FROM jsonb_array_elements(a -> 'columns') c), true, 'each with its words');
   PERFORM pg_temp.is(a -> 'rows' -> 0 ->> 'name', 'Acme CFO', 'the values are the firm''s');
   PERFORM pg_temp.is(a ->> 'label', 'Referral partners', 'the table has its words too');
@@ -344,6 +360,9 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"colour":"red"}'), '22023: Those filters don''t apply to this table', 'a filter the table does not have is refused');
   PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"kind":"nonsense"}'), '22023: Those filters don''t apply to this table', 'so is a value it does not take');
   PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '[]'), '22023: Those filters don''t apply to this table', 'and filters that are not a set of named filters');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"search":null}'), '22023: Those filters don''t apply to this table', 'a JSON null is not "no filter": it is refused');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"kind":null}'), '22023: Those filters don''t apply to this table', 'whichever filter it stands in for');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"search":3}'), '22023: Those filters don''t apply to this table', 'and a number is not text');
   -- A selection: the ones named that are the firm's, in the table's order; the others are counted as skipped and are not told apart.
   a := pg_temp.run(acme, 'referral_partners', '{}', '["acme-law","zenith-cfo","nobody-has-this","acme-cfo","acme-law"]');
   PERFORM pg_temp.is(a ->> 'count', '2', 'a selection returns the firm''s rows among the ones named');
@@ -351,6 +370,10 @@ BEGIN
   PERFORM pg_temp.is((SELECT string_agg(r ->> 'code', ',') FROM jsonb_array_elements(a -> 'rows') r), 'acme-cfo,acme-law', 'in the table''s order, each once');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT row_count FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = acme ORDER BY id DESC LIMIT 1), 2, 'the record counts the rows given, not the ids named');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  a := pg_temp.run(acme, 'referral_partners', '{}', '["ACME-LAW","acme-law","Acme-Law","NOBODY","nobody"]');
+  PERFORM pg_temp.is(a ->> 'count', '1', 'ids that differ only in case are one record');
+  PERFORM pg_temp.is(a ->> 'skipped', '1', 'and are counted once, so "skipped" is not inflated');
   PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '30 hours');
   PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '["acme-law"]'), 'ok', 'a selection needs no fresh sign-in');
   PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '[]'), 'ok', 'an empty selection is an export of nothing, not of everything');
@@ -473,6 +496,21 @@ BEGIN
   PERFORM pg_temp.is((SELECT bool_and(r ->> 'who' = 'Nevermore') FROM jsonb_array_elements(b -> 'rows') r) AND (b ->> 'count')::int >= 1, true, 'and so does Nevermore, as one');
   PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"person":"not-a-person"}'), '22023: Those filters don''t apply to this table', 'a person that is not an id is refused');
   PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"invented"}') ->> 'count', '0', 'a kind the record has none of gives none');
+  -- A date range (a firm whose 90 days hold more than 50,000 entries takes its record out in pieces): from is included, to is not.
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-10T12:00:00Z","to":"2026-02-01T00:00:00Z"}') ->> 'count', '2', 'from is included and to is not');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-10T12:00:01Z","to":"2026-02-01T00:00:00Z"}') ->> 'count', '1', 'a second later leaves out the first');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-20T12:00:00Z"}') ->> 'count', '2', 'from alone has no end');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","to":"2026-01-20T12:00:00Z"}') ->> 'count', '1', 'to alone has no start');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-10T14:00:00+02:00","to":"2026-01-10T12:00:01Z"}') ->> 'count', '1', 'a time with an offset is the same moment in UTC');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":"2026-02-01T00:00:00Z","to":"2026-01-01T00:00:00Z"}'), '22023: The period must start before it ends', 'a period that ends before it starts is refused in words');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":"2026-02-01T00:00:00Z","to":"2026-02-01T00:00:00Z"}'), '22023: The period must start before it ends', 'and so is an empty one');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":"yesterday"}'), '22023: Those filters don''t apply to this table', 'a time that is not one is refused');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"to":"2026-13-45T00:00:00Z"}'), '22023: Those filters don''t apply to this table', 'so is one that is not a date');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":20260101}'), '22023: Those filters don''t apply to this table', 'and a number');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":null}'), '22023: Those filters don''t apply to this table', 'and a JSON null');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"kind":null}'), '22023: Those filters don''t apply to this table', 'a JSON null for the kind is refused too');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"person":null}'), '22023: Those filters don''t apply to this table', 'and for the person');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"from":"2026-01-01T00:00:00Z"}'), '22023: Those filters don''t apply to this table', 'partners have no date range');
   -- A selection of entries by their key is not offered by the record's page, but the contract takes it: the keys the export gave.
   RESET ROLE;
   RAISE NOTICE 'export: the record passed';
@@ -641,6 +679,17 @@ BEGIN
   PERFORM pg_temp.is(p ->> 'exports_in_hour', '1', 'the first of the hour');
   PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert' AND firm_id NOT IN (acme, big)), 0::bigint, 'no alert belongs to another firm');
   PERFORM pg_temp.is((SELECT count(DISTINCT dedupe_key) FROM public.outbox_events WHERE kind = 'export_alert'), (SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert'), 'each alert is its own: two exports are never one alert');
+  -- A member with no email address (the account's email may be empty) still alerts the owners: the alert is never lost, and says so without a name.
+  n0 := pg_temp.alerts(big);
+  UPDATE auth.users SET email = NULL WHERE id = pg_temp.id('big_agent');
+  PERFORM pg_temp.as_user('big_agent', 'big-brokers');
+  PERFORM pg_temp.run(big, 'referral_partners');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(big), n0 + 1, 'a member with no email address still tells the owners');
+  SELECT payload INTO p FROM public.outbox_events WHERE firm_id = big AND kind = 'export_alert' AND payload -> 'member_email' = 'null'::jsonb;
+  PERFORM pg_temp.is(p ->> 'row_count', '501', 'with the rest of what it says');
+  PERFORM pg_temp.is((p ? 'member_email'), true, 'and its member''s email as nothing, not left out');
+  UPDATE auth.users SET email = 'big_agent@example.test' WHERE id = pg_temp.id('big_agent');
   RAISE NOTICE 'export: the alert passed';
 END $$;
 
