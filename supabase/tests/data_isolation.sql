@@ -191,6 +191,7 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261119090000_export.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1246,6 +1247,10 @@ INSERT INTO callable VALUES
   ('unshare_saved_view(p_view_id uuid)', 'own', NULL, 'a current owner stops sharing a shared view of their firm; PT404 for a view the caller may not read, 42501 for a member who is no owner'),
   ('my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid)', 'own', NULL, 'a current member reads their own columns for a table or a view they may read; 42501 for anyone else'),
   ('set_my_table_columns(p_firm_id uuid, p_table text, p_view_id uuid, p_columns jsonb)', 'own', NULL, 'a current member keeps their own columns for a table or a view they may read; 42501 for anyone else');
+-- CRM-S3.8b (20261119090000_export.sql): a table taken out, with its record in the same step (supabase/tests/export.sql).
+INSERT INTO callable VALUES
+  ('export_rows(p_firm_id uuid, p_table text, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm (an owner, for the firm''s record) takes the rows of a listed table that they may see and the same statement records the export; refuses a support session first (PT423), then every caller who is not a member of that firm at this address (42501); never an intake''s answers, a census or a FEIN');
 -- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
 INSERT INTO callable VALUES
   ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
@@ -1783,6 +1788,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('unshare_saved_view', 'admin', 'by_id', $$SELECT public.unshare_saved_view({sview})::text$$),
   ('my_table_columns', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.my_table_columns({firm}, 'submissions', {sview})$$),
   ('set_my_table_columns', 'advisor', 'by_id', $$SELECT public.set_my_table_columns({firm}, 'submissions', {sview}, '["company_name"]')::text$$);
+-- CRM-S3.8b: a selection of the firm's own partner ({partner}) taken out, which asks for no fresh sign-in (a whole table is tried in supabase/tests/export.sql).
+-- Another firm's member, a platform admin, a former member and a non-member are refused; the members of the firm under test are given the row.
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('export_rows', 'advisor', 'by_id', $$SELECT (public.export_rows({firm}, 'referral_partners', '{}', jsonb_build_array({partner}))->>'count')$$);
 -- CRM-S5.2: the history of a referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
 -- non-member are refused, the same as for a record that does not exist.
 INSERT INTO fprobe (fn, who, shape, call) VALUES
@@ -3408,6 +3417,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
 
 -- CRM-S5.2 (20261118130000_record_history.sql; supabase/tests/record_history.sql).
 INSERT INTO fn_class (fn, class, why) VALUES
+  ('export_rows', 'firm_scoped', 'a current member of the firm takes a listed table''s rows that they may see, and the export is recorded in the same step; a support session is refused first, every other caller who is not a member of that firm at this address is refused, and a whole table asks for a fresh sign-in (4e; supabase/tests/export.sql)'),
   ('record_history_list', 'firm_scoped', 'a current member reads the history of a record of their own firm that they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
   ('record_history_capture', 'trigger', 'writes a tracked record''s creation and each change of a field the trigger was told to track, inside the write that made it; no API role can run it or write the table'),
   ('record_history_can_see', 'service_only', 'whether the caller may see a record of a firm, per table: the reading function asks it; no API role can call it'),
@@ -3535,6 +3545,7 @@ SELECT unnest(ARRAY[
   'claim_document_scans', 'claim_intake_deletions', 'claim_ops_alerts', 'claim_outbox_events', 'complete_intake_deletion',
   'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'guard_invitation_mail_rate', 'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
+  'export_source_firm_activity', 'export_source_referral_partners',
   'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'prune_firm_outbox_events', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
