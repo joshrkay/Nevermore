@@ -1061,3 +1061,19 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history x WHERE x.table_name = 'accounts' AND x.record_key = a2::text), h + 2, 'and the history holds the first save''s two changes only');
   RAISE NOTICE 'account_page: the race passed';
 END $$;
+
+-- ---------- Indexes the page's lookups use (the account is looked up without its firm) ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+                       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = i.indkey[0]
+                      WHERE c.relname = 'contacts' AND c.relnamespace = 'public'::regnamespace AND a.attname = 'account_id'
+                        AND i.indpred IS NULL)::int >= 1, true,
+                     'contacts has a full index that leads with the account (the partial main-contact one serves only the main contact)');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+                       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = i.indkey[0]
+                      WHERE c.relname = 'opportunities' AND c.relnamespace = 'public'::regnamespace AND a.attname = 'account_id'
+                        AND i.indpred IS NULL)::int >= 1, true,
+                     'opportunities has a full index that leads with the account');
+  RAISE NOTICE 'account_page: the indexes passed';
+END $$;

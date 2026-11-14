@@ -100,6 +100,11 @@ $$;
 
 REVOKE ALL ON FUNCTION public.crm_account_fields(public.accounts) FROM PUBLIC, anon, authenticated, service_role;
 
+-- An account's page looks its opportunities up by the account alone (the account is already known to be the firm's), so they need an index that
+-- leads with the account: CRM-Q1.1a's (firm_id, account_id) cannot serve a lookup that does not name the firm. It also orders by creation, for the
+-- account's first intake (the source partner). Contacts already have one: the unique (account, prospect) index leads with the account.
+CREATE INDEX opportunities_account_created_idx ON public.opportunities (account_id, created_at, id);
+
 -- ---------- 3. One tab: its count and a page of its rows ----------
 -- {count, rows}: how many the tab holds in all, and the rows from `p_offset` (newest or nearest first, ties by id, so a page is the same each time).
 -- Fixed branches, no SQL made from text (D-44). Internal: the caller has already decided the person may see the account. Rows by tab:
