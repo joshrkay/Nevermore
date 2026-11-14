@@ -851,3 +851,200 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'accounts_query: members passed';
 END $$;
+
+-- ---------- saved views and column choices ----------
+-- Break caught: accounts is not among the tables whose views and column choices are kept, or opens the door to any other name; a view of one table is
+-- listed under the other.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); v uuid;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  v := public.save_view(acme, 'accounts', 'My accounts', '[{"field":"owner","op":"me"}]', '{"field":"last_activity_at","direction":"desc"}', NULL);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.list_saved_views(acme, 'accounts') l WHERE l.view_id = v), 1::bigint, 'a view of the accounts table is kept and listed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.list_saved_views(acme, 'submissions') l WHERE l.view_id = v), 0::bigint, 'and is not one of the queue''s');
+  PERFORM public.set_my_table_columns(acme, 'accounts', NULL, '["name", "owner", "last_activity_at"]');
+  PERFORM pg_temp.is((SELECT m.columns FROM public.my_table_columns(acme, 'accounts', NULL) m), '["name", "owner", "last_activity_at"]'::jsonb, 'the person''s column choice for the table is kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.my_table_columns(acme, 'submissions', NULL) m WHERE m.source = 'mine'), 0::bigint, 'and is not the queue''s');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'leads', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023: There is no table called%', true, 'a table that is not on the list is still refused');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'Accounts', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023:%', true, 'a name is exact');
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.list_saved_views(%L, 'accounts')$q$, acme)) LIKE '42501:%', true, 'another firm''s member reads none of Acme''s views');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: saved views passed';
+END $$;
+
+-- ---------- export ----------
+-- Break caught: the accounts are not in the export's list; the reader shows an account the person may not see, a column nobody listed or another firm's row; a
+-- selection leaks by id; an export is not recorded; the reader is open to the API roles.
+CREATE FUNCTION pg_temp.as_fresh(n text, addr text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false, 'email', n || '@example.test',
+    'amr', jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', floor(extract(epoch FROM now() - interval '1 hour'))::bigint)))::text, false);
+  PERFORM set_config('request.headers', jsonb_build_object('x-firm-address', addr)::text, false);
+  SET LOCAL ROLE authenticated;
+END $$;
+CREATE FUNCTION pg_temp.exported(p_table text, p_filters jsonb DEFAULT '{}', p_ids jsonb DEFAULT NULL) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT public.export_rows(pg_temp.id('acme'), p_table, p_filters, p_ids)
+$$;
+CREATE FUNCTION pg_temp.exported_names(j jsonb) RETURNS text LANGUAGE sql AS $$ SELECT COALESCE(string_agg(r ->> 'name', ',' ORDER BY ord), '') FROM jsonb_array_elements(j -> 'rows') WITH ORDINALITY x(r, ord) $$;
+DO $$
+DECLARE j jsonb; ids jsonb; n_before bigint; one jsonb;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT who FROM public.export_table_registry() WHERE name = 'accounts'), 'member', 'any member may export accounts (they read what they may see)');
+  PERFORM pg_temp.is(to_regprocedure('public.export_source_accounts(uuid, jsonb, jsonb, integer)') IS NOT NULL, true, 'the table has its reader');
+  PERFORM pg_temp.is(has_function_privilege('authenticated', 'public.export_source_accounts(uuid, jsonb, jsonb, integer)', 'EXECUTE')
+                     OR has_function_privilege('anon', 'public.export_source_accounts(uuid, jsonb, jsonb, integer)', 'EXECUTE'), false, 'closed to the API');
+  PERFORM pg_temp.as_fresh('acme_owner', 'acme-brokers');
+  SELECT count(*) INTO n_before FROM public.firm_activity WHERE kind = 'export_made';
+  j := pg_temp.exported('accounts');
+  PERFORM pg_temp.is(j ->> 'count', '6', 'a whole table: the six accounts the owner sees');
+  PERFORM pg_temp.is(pg_temp.exported_names(j), 'Alpha Co,Émile Holdings,zulu corp,Echo Co,Delta Works,beta inc', 'in the table''s order');
+  PERFORM pg_temp.is(j ->> 'label', 'Accounts', 'its name in words');
+  -- every row holds exactly the columns declared, each a text, number, yes or no, or nothing
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(j -> 'rows') r WHERE (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(r) k) IS DISTINCT FROM
+                       (SELECT array_agg(c ->> 'id' ORDER BY c ->> 'id') FROM jsonb_array_elements(j -> 'columns') c)), 0::bigint, 'every row holds exactly the declared columns');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(j -> 'rows') r, jsonb_each(r) e WHERE jsonb_typeof(e.value) NOT IN ('string', 'number', 'boolean', 'null')), 0::bigint, 'and nothing nested');
+  SELECT x INTO one FROM jsonb_array_elements(j -> 'rows') x WHERE x ->> 'name' = 'Alpha Co';
+  PERFORM pg_temp.is(one, jsonb_build_object('name', 'Alpha Co', 'trade_name', 'Alfa Trading', 'website', 'https://www.alpha-co.example/home', 'city', 'Portland', 'state', 'OR', 'employees', 50,
+    'industry', 'Retail', 'states_of_operation', 'OR, WA', 'current_provider', 'ADP TotalSource', 'source', 'Added by hand', 'status', 'Prospect', 'owner', 'Ann Agent',
+    'main_contact', 'Ann Alpha', 'main_contact_email', 'ann@alpha-co.example', 'main_contact_phone', '503-555-0101', 'opportunity', 'Alpha sooner search',
+    'opportunity_stage', 'In market', 'target_start', '2027-02-01', 'open_opportunities', 2, 'quote_requests_sent', 2, 'quotes_received', 1,
+    'earliest_quote_expires_on', '2026-12-31', 'last_activity_at', '2026-10-20T00:00:00+00:00', 'created_at', '2026-10-01T00:00:00+00:00', 'archived', false), 'a row, in words');
+  SELECT x INTO one FROM jsonb_array_elements(j -> 'rows') x WHERE x ->> 'name' = 'beta inc';
+  PERFORM pg_temp.is(one ->> 'status', 'Client', 'a client');
+  PERFORM pg_temp.is(one ->> 'source', 'Employer''s intake', 'the source in words');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), n_before + 1, 'the export is recorded');
+  PERFORM pg_temp.is((SELECT row_count FROM public.firm_activity WHERE kind = 'export_made' AND record_id = 'accounts' ORDER BY at DESC LIMIT 1), 6, 'with the number of rows given');
+  -- filters, a search and the archived accounts
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts', '{"filters":[{"field":"status","op":"any_of","value":["client"]}]}')), 'beta inc', 'what the table shows for a filter');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts', '{"search":"zebra"}')), 'Alpha Co', 'for a search');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts', '{"filters":[{"field":"archived","op":"is","value":true}]}')), 'Gamma LLC', 'the Archived view');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts', '{"filters":[{"field":"created_at","op":"on","value":"2026-10-10"}],"time_zone":"America/Los_Angeles"}')), 'Delta Works', 'in the person''s time zone');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts', '{"filters":[{"field":"owner","op":"me"}]}')), 'zulu corp', 'a person filter is the person exporting');
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT pg_temp.exported('accounts', '{"fliters":[]}')$q$) LIKE '22023: Those filters don''t apply to this table%', true, 'a key the table does not have is refused');
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT pg_temp.exported('accounts', '{"filters":[{"field":"firm_id","op":"is","value":"x"}]}')$q$) LIKE '22023: The accounts table has no field "firm_id"%', true, 'a field it does not list is refused');
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT pg_temp.exported('accounts', '{"filters":{}}')$q$) LIKE '22023:%', true, 'filters that are not a list are refused');
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT pg_temp.exported('accounts', '{"time_zone":"PST"}')$q$) LIKE '22023:%', true, 'a time zone that is not one is refused');
+  -- a selection by ids: the person's own visibility, archived ones named too, another firm's and invented ones skipped
+  ids := jsonb_build_array(pg_temp.id('alpha'), pg_temp.id('beta'), pg_temp.id('gamma'), pg_temp.id('zenith_one'), 'not-an-id', gen_random_uuid());
+  j := pg_temp.exported('accounts', '{}', ids);
+  PERFORM pg_temp.is(pg_temp.exported_names(j), 'Alpha Co,Gamma LLC,beta inc', 'a selection gives the named accounts, an archived one included, in the table''s order');
+  PERFORM pg_temp.is(j ->> 'skipped', '3', 'and says how many gave no row: another firm''s, text, one that is not there');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts', '{"filters":[{"field":"status","op":"any_of","value":["client"]}]}', ids)), 'beta inc', 'a selection with a filter keeps the filter');
+  PERFORM pg_temp.as_fresh('acme_agent1', 'acme-brokers');
+  j := pg_temp.exported('accounts', '{}', ids);
+  PERFORM pg_temp.is(pg_temp.exported_names(j), 'Alpha Co', 'an agent exports only what they may see, even when they name more');
+  PERFORM pg_temp.is(j ->> 'skipped', '5', 'the others look like ids that are not there');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts')), 'Alpha Co', 'and a whole table is theirs only');
+  PERFORM pg_temp.as_fresh('acme_lead', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.exported_names(pg_temp.exported('accounts')), 'Echo Co,beta inc', 'a lead''s is their team''s');
+  PERFORM pg_temp.as_fresh('acme_agent3', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.exported('accounts') ->> 'count', '0', 'an agent with none to see exports none (and the export is still recorded)');
+  PERFORM pg_temp.as_fresh('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_rows(%L, 'accounts', '{}', NULL)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'another firm''s owner cannot export Acme''s');
+  PERFORM pg_temp.is(pg_temp.exported_names(public.export_rows(pg_temp.id('zenith'), 'accounts', '{}', jsonb_build_array(pg_temp.id('alpha')))), '', 'nor name an Acme account as their own firm''s');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.export_source_accounts(%L, '{}', NULL, 10)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'a person cannot run the reader');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: export passed';
+END $$;
+
+-- ---------- what moves a row ----------
+-- Each block makes its changes and undoes them (a subtransaction rolled back), since the record of a quote request's changes is append-only.
+-- Break caught: last activity counts an edit of a field; a quote's status change does not count; the sources of last activity are not in one place (a story
+-- that adds calls, notes and tasks has to change the table's query); a lost opportunity is shown as open; a won file put away stops being a client.
+CREATE FUNCTION pg_temp.move(intake text, to_status text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE from_status text;
+BEGIN
+  SELECT w.status INTO from_status FROM public.submission_workflow w WHERE w.session_id = pg_temp.id(intake);
+  UPDATE public.submission_workflow SET status = to_status WHERE session_id = pg_temp.id(intake);
+  INSERT INTO public.submission_status_history (session_id, from_status, to_status) VALUES (pg_temp.id(intake), from_status, to_status);
+END $$;
+CREATE FUNCTION pg_temp.row_as_owner(n text) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := pg_temp.row_of(n);
+  RESET ROLE;
+  RETURN r;
+END $$;
+
+DO $$
+DECLARE before timestamptz; r jsonb;
+BEGIN
+  BEGIN
+    before := (pg_temp.row_as_owner('alpha') ->> 'last_activity_at')::timestamptz;
+    -- A field edited on the quote request, and on the account, is not activity.
+    UPDATE public.quote_requests SET note = 'called them' WHERE session_id = pg_temp.id('intake_alpha') AND peo_name = 'PEO One';
+    UPDATE public.accounts SET city = 'Salem', industry = 'Wholesale' WHERE id = pg_temp.id('alpha');
+    PERFORM pg_temp.is((pg_temp.row_as_owner('alpha') ->> 'last_activity_at')::timestamptz, before, 'editing a field is not activity (D-201)');
+    -- A status change is.
+    UPDATE public.quote_requests SET status = 'declined' WHERE session_id = pg_temp.id('intake_alpha') AND peo_name = 'PEO Two';
+    PERFORM pg_temp.is((pg_temp.row_as_owner('alpha') ->> 'last_activity_at')::timestamptz > before, true, 'a quote request''s status changing is activity');
+    PERFORM pg_temp.is((pg_temp.row_as_owner('alpha') ->> 'last_activity_at')::timestamptz > now() - interval '1 minute', true, 'and is the newest');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'waiting_on_peo', 'false', 'nothing is waiting any more');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'quote_requests_sent', '2', 'a decline is still a quote asked for');
+    -- The one place later stories extend: a branch added to account_activity_times is last activity, and nothing else was changed.
+    CREATE OR REPLACE FUNCTION public.account_activity_times(p_firm_id uuid) RETURNS TABLE (account_id uuid, at timestamptz) LANGUAGE sql STABLE AS $f$
+      SELECT a.id, a.created_at FROM public.accounts a WHERE a.firm_id = p_firm_id
+      UNION ALL SELECT a.id, timestamptz '2030-01-01 00:00+00' FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.name = 'Echo Co'
+    $f$;
+    PERFORM pg_temp.is((pg_temp.row_as_owner('echo') ->> 'last_activity_at')::timestamptz, timestamptz '2030-01-01 00:00+00', 'a story that adds a source of activity changes that one function');
+    PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+    PERFORM pg_temp.is((pg_temp.f())[1], 'echo', 'and the table is ordered by it');
+    RESET ROLE;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999';
+  EXCEPTION WHEN SQLSTATE 'ZZ999' THEN NULL;
+  END;
+  PERFORM pg_temp.is((pg_temp.row_as_owner('alpha') ->> 'last_activity_at')::timestamptz, before, 'the fixture is as it was');
+  RAISE NOTICE 'accounts_query: last activity passed';
+END $$;
+
+DO $$
+DECLARE r jsonb;
+BEGIN
+  BEGIN
+    -- Alpha's nearer opportunity is lost: it is no longer open, so the other one is the one shown, with none more.
+    PERFORM pg_temp.move('intake_alpha', 'lost');
+    r := pg_temp.row_as_owner('alpha');
+    PERFORM pg_temp.is(r ->> 'opportunity_id', pg_temp.id('opp_alpha_later')::text, 'a lost opportunity is not shown: the next open one is');
+    PERFORM pg_temp.is(r ->> 'opportunity_stage', 'qualifying', 'an opportunity with no intake is Qualifying');
+    PERFORM pg_temp.is(r ->> 'open_opportunities', '1', 'and none is "more"');
+    PERFORM pg_temp.is(r ->> 'status', 'prospect', 'a lost opportunity does not make a client');
+    -- It is won while the other is open: a client with an open opportunity.
+    PERFORM pg_temp.move('intake_alpha', 'won');
+    r := pg_temp.row_as_owner('alpha');
+    PERFORM pg_temp.is(r ->> 'status', 'client', 'a client with an open opportunity is both');
+    PERFORM pg_temp.is(r ->> 'opportunity_name', 'Alpha later search', 'and shows the open one');
+    -- Put away straight from won, it stays won (D-216); reopened it is open again.
+    PERFORM pg_temp.move('intake_alpha', 'archived');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'status', 'client', 'a won file put away keeps its account a client (D-216)');
+    PERFORM pg_temp.move('intake_alpha', 'submitted');
+    r := pg_temp.row_as_owner('alpha');
+    PERFORM pg_temp.is(r ->> 'status', 'prospect', 'reopened, the account is a prospect again');
+    PERFORM pg_temp.is(r ->> 'open_opportunities', '2', 'and the opportunity is open');
+    PERFORM pg_temp.is(r ->> 'opportunity_stage', 'intake_under_way', 'at its stage');
+    -- Archived from another stage is lost.
+    PERFORM pg_temp.move('intake_alpha', 'archived');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'open_opportunities', '1', 'archived from another stage is lost: not open');
+    -- A contact marked main, moved: the page's main contact follows the mark.
+    UPDATE public.contacts SET is_main = false WHERE id = pg_temp.id('alpha_main');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'main_contact_id', NULL, 'with none marked, an account has no main contact');
+    UPDATE public.contacts SET is_main = true WHERE account_id = pg_temp.id('alpha') AND last_name = 'Zebra';
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'main_contact_name', 'Zed Zebra', 'the one marked is the one shown');
+    -- A contact with only a mobile number.
+    UPDATE public.contacts SET email = NULL, phone = NULL, mobile = '503-555-0199' WHERE account_id = pg_temp.id('alpha') AND last_name = 'Zebra';
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'main_contact_phone', '503-555-0199', 'a mobile number is the phone when there is no other');
+    -- The same target start: the earlier-made opportunity is the one shown, so a page never flips between two.
+    UPDATE public.opportunities SET target_start = date '2027-02-01' WHERE id = pg_temp.id('opp_alpha_later');
+    PERFORM pg_temp.move('intake_alpha', 'submitted');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'opportunity_id', pg_temp.id('opp_alpha_later')::text, 'a tie of target starts goes to the one made first');
+    UPDATE public.opportunities SET target_start = NULL WHERE id = pg_temp.id('opp_alpha_later');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'opportunity_id', pg_temp.id('opp_alpha_sooner')::text, 'an open opportunity with no target start is shown after one with');
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999';
+  EXCEPTION WHEN SQLSTATE 'ZZ999' THEN NULL;
+  END;
+  RAISE NOTICE 'accounts_query: stages passed';
+END $$;

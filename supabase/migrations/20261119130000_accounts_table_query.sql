@@ -481,8 +481,10 @@ LANGUAGE sql
 STABLE
 SET search_path = public, pg_temp
 AS $$
-  SELECT (NOT r.archived OR EXISTS (SELECT 1 FROM jsonb_array_elements(p_checked) f WHERE f ->> 'field' = 'archived'))
-     AND public.accounts_row_filters_pass(r, p_checked, p_time_zone)
+  SELECT CASE WHEN jsonb_array_length(p_checked) = 0 THEN NOT r.archived
+    ELSE (NOT r.archived OR EXISTS (SELECT 1 FROM jsonb_array_elements(p_checked) f WHERE f ->> 'field' = 'archived'))
+         AND public.accounts_row_filters_pass(r, p_checked, p_time_zone)
+  END
 $$;
 
 -- ---------- 5. The accounts the caller may see, with their worked-out columns ----------
@@ -500,6 +502,11 @@ RETURNS SETOF public.accounts_row
 LANGUAGE plpgsql
 STABLE
 SET search_path = public, pg_temp
+-- Joins by hash, never by nested loop, and no JIT: the sets joined here are built inside the query, so the planner has no counts for them (and none at all for
+-- a table just filled by an import until the database has looked at it), and thought of as one row each they were joined one by one, 5,000 accounts taking
+-- 40 seconds. A plan with nested loops ruled out costs more than the limit above which the database compiles it, which cost another second.
+SET enable_nestloop = off
+SET jit = off
 AS $$
 DECLARE
   seen_owners uuid[];
@@ -509,7 +516,7 @@ DECLARE
 BEGIN
   SELECT COALESCE(array_agg(o.owner_id) FILTER (WHERE o.owner_id IS NOT NULL), '{}'), COALESCE(bool_or(o.owner_id IS NULL), false)
   INTO seen_owners, seen_unowned
-  FROM (SELECT DISTINCT a.owner_id FROM public.accounts a WHERE a.firm_id = p_firm_id) o
+  FROM (SELECT DISTINCT a.owner_id FROM public.accounts a WHERE a.firm_id = p_firm_id OFFSET 0) o   -- OFFSET 0: the question is asked of each owner, not pushed down to each account
   WHERE public.can_see_firm_record(p_firm_id, o.owner_id);
 
   RETURN QUERY
@@ -616,6 +623,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET jit = off
 AS $$
 DECLARE
   page_size constant integer := 50;
@@ -726,6 +734,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET jit = off
 AS $$
 DECLARE
   firm uuid;
@@ -782,3 +791,104 @@ REVOKE ALL ON FUNCTION public.accounts_list(uuid, jsonb, text, text, integer, te
 REVOKE ALL ON FUNCTION public.accounts_view_counts(uuid, jsonb, text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.accounts_list(uuid, jsonb, text, text, integer, text, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.accounts_view_counts(uuid, jsonb, text, text) TO authenticated;
+
+-- ---------- 7. Saved views and column choices ----------
+-- `accounts` joins the tables whose views and column choices are kept (20261117120000: "adding accounts ... is one small migration that drops and adds
+-- the domain's check with the longer list"). Nothing else changes: the functions that keep them take the table by name from this list.
+ALTER DOMAIN public.workspace_table DROP CONSTRAINT workspace_table_known;
+ALTER DOMAIN public.workspace_table ADD CONSTRAINT workspace_table_known CHECK (VALUE IN ('submissions', 'accounts'));
+
+-- ---------- 8. Export (D-48, D-218) ----------
+
+-- The words an exported file holds for a code a person never sees as one (a status, a stage, a source), the same words the page uses. Internal.
+CREATE FUNCTION public.accounts_words(p_kind text, p_code text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE p_kind
+    WHEN 'status' THEN CASE p_code WHEN 'prospect' THEN 'Prospect' WHEN 'client' THEN 'Client' END
+    WHEN 'stage' THEN CASE p_code WHEN 'qualifying' THEN 'Qualifying' WHEN 'intake_under_way' THEN 'Intake under way' WHEN 'ready_to_send' THEN 'Ready to send'
+      WHEN 'in_market' THEN 'In market' WHEN 'quoted' THEN 'Quoted' WHEN 'won' THEN 'Won' WHEN 'lost' THEN 'Lost' END
+    WHEN 'source' THEN CASE p_code WHEN 'employer_intake' THEN 'Employer''s intake' WHEN 'added_by_hand' THEN 'Added by hand' WHEN 'new_quote' THEN 'New quote'
+      WHEN 'lead' THEN 'Lead' WHEN 'import' THEN 'Import' END
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.accounts_words(text, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- What can be exported (20261119090000), restated with its two lines and the third: the accounts, for any current member (they read what row security shows
+-- them, and the reader below applies that itself). The columns are the table's, in the order a file shows them.
+CREATE OR REPLACE FUNCTION public.export_table_registry()
+RETURNS TABLE (name text, label text, who text, columns jsonb)
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT * FROM (VALUES
+    ('referral_partners', 'Referral partners', 'member',
+     '[{"id":"code","label":"Code"},{"id":"name","label":"Name"},{"id":"kind","label":"Kind"},{"id":"started_30d","label":"Started, 30 days"},{"id":"certified_30d","label":"Certified, 30 days"},{"id":"created_at","label":"Added"},{"id":"updated_at","label":"Last changed"}]'::jsonb),
+    ('firm_activity', 'The firm''s record', 'owner',
+     '[{"id":"at","label":"When"},{"id":"who","label":"Who"},{"id":"kind","label":"What"},{"id":"record_type","label":"Record type"},{"id":"record_id","label":"Record"},{"id":"subject","label":"About"},{"id":"role","label":"Role"},{"id":"row_count","label":"Rows"}]'::jsonb),
+    ('accounts', 'Accounts', 'member',
+     '[{"id":"name","label":"Account"},{"id":"trade_name","label":"Trade name"},{"id":"website","label":"Website"},{"id":"city","label":"City"},{"id":"state","label":"State"},{"id":"employees","label":"Employees"},{"id":"industry","label":"Industry"},{"id":"states_of_operation","label":"States of operation"},{"id":"current_provider","label":"Current provider"},{"id":"source","label":"Source"},{"id":"status","label":"Status"},{"id":"owner","label":"Owner"},{"id":"main_contact","label":"Main contact"},{"id":"main_contact_email","label":"Main contact email"},{"id":"main_contact_phone","label":"Main contact phone"},{"id":"opportunity","label":"Opportunity"},{"id":"opportunity_stage","label":"Opportunity stage"},{"id":"target_start","label":"Target start"},{"id":"open_opportunities","label":"Open opportunities"},{"id":"quote_requests_sent","label":"Quotes asked for"},{"id":"quotes_received","label":"Quotes back"},{"id":"earliest_quote_expires_on","label":"Nearest quote expiry"},{"id":"last_activity_at","label":"Last activity"},{"id":"created_at","label":"Created"},{"id":"archived","label":"Archived"}]'::jsonb)
+  ) t (name, label, who, columns)
+$$;
+
+REVOKE ALL ON FUNCTION public.export_table_registry() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.export_table_registry() TO service_role;
+
+-- The accounts' reader, run by export_rows after its checks (a support session refused, a member of this firm at this address, the sign-in for a whole table).
+-- It does what row security would, by the table's own query (accounts_rows: the accounts the caller may see, by their level) and no column the table does
+-- not list. Filters: an object of `filters` (the table's own filters, as the page sends them), `search` and `time_zone`, each optional; a key it does not
+-- have is refused, so a typo never exports everything. With no ids it exports what the table shows for those filters (archived accounts only when a filter
+-- asks); a selection by ids names the accounts, archived ones too, and is not narrowed by the archived rule. In the table's own order (last activity, newest
+-- first). A code is written in the words a person reads (Client, In market, Employer's intake).
+CREATE FUNCTION public.export_source_accounts(p_firm_id uuid, p_filters jsonb, p_ids jsonb, p_limit integer)
+RETURNS SETOF jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  tz text;
+  checked jsonb;
+  search_in text;
+  ids uuid[];
+BEGIN
+  IF jsonb_typeof(p_filters) IS DISTINCT FROM 'object'
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_filters) k WHERE k NOT IN ('filters', 'search', 'time_zone'))
+     OR (p_filters ? 'search' AND jsonb_typeof(p_filters -> 'search') IS DISTINCT FROM 'string')
+     OR (p_filters ? 'time_zone' AND jsonb_typeof(p_filters -> 'time_zone') IS DISTINCT FROM 'string')
+     OR (p_filters ? 'filters' AND jsonb_typeof(p_filters -> 'filters') IS DISTINCT FROM 'array') THEN
+    RAISE EXCEPTION 'Those filters don''t apply to this table' USING ERRCODE = '22023';
+  END IF;
+  tz := public.workspace_time_zone(p_filters ->> 'time_zone');
+  checked := public.accounts_filters_checked(p_firm_id, COALESCE(p_filters -> 'filters', '[]'::jsonb), (now() AT TIME ZONE tz)::date);
+  search_in := p_filters ->> 'search';
+  IF p_ids IS NOT NULL THEN
+    -- An id that is not an account's id (another firm's, a made-up one, text) gives no row, like one that is not there.
+    SELECT COALESCE(array_agg(i::uuid), '{}') INTO ids
+    FROM jsonb_array_elements_text(p_ids) i
+    WHERE i ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  END IF;
+  RETURN QUERY
+    SELECT jsonb_build_object(
+      'name', r.name, 'trade_name', r.trade_name, 'website', r.website, 'city', r.city, 'state', r.state, 'employees', r.employees,
+      'industry', r.industry, 'states_of_operation', NULLIF(array_to_string(r.states_of_operation, ', '), ''), 'current_provider', r.current_provider,
+      'source', public.accounts_words('source', r.source), 'status', public.accounts_words('status', r.status), 'owner', r.owner_name,
+      'main_contact', NULLIF(r.main_contact_name, ''), 'main_contact_email', r.main_contact_email, 'main_contact_phone', r.main_contact_phone,
+      'opportunity', r.opportunity_name, 'opportunity_stage', public.accounts_words('stage', r.opportunity_stage), 'target_start', r.target_start,
+      'open_opportunities', r.open_opportunities, 'quote_requests_sent', r.quote_requests_sent, 'quotes_received', r.quotes_received,
+      'earliest_quote_expires_on', r.earliest_quote_expires_on, 'last_activity_at', r.last_activity_at, 'created_at', r.created_at, 'archived', r.archived)
+    FROM public.accounts_rows(p_firm_id, search_in, ids) r
+    WHERE CASE WHEN ids IS NULL THEN public.accounts_row_passes(r, checked, tz) ELSE public.accounts_row_filters_pass(r, checked, tz) END
+    ORDER BY r.last_activity_at DESC NULLS LAST, r.id
+    LIMIT p_limit;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.export_source_accounts(uuid, jsonb, jsonb, integer) FROM PUBLIC, anon, authenticated;
