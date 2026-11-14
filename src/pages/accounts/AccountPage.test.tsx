@@ -524,6 +524,21 @@ describe("AccountPage: edit in place", () => {
     expect(client.updateAccount.mock.calls[1][3]).toBe(5);
   });
 
+  // Catches: a save that names the version a refresh brought under the open form, a version the person never saw: someone else's change would be overwritten.
+  it("sends the version the person started from when a refresh brought a newer one under the open form", async () => {
+    client.updateAccount.mockResolvedValue({ conflict: true, currentVersion: 4, current: { ...conflict.current, employees: 52 }, changed: [{ field: "employees", value: 52, who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" }] });
+    renderPage();
+    const user = await open();
+    client.getAccountPage.mockResolvedValue(page({ account: { ...account, employees: 52, version: 4 } }));
+    act(() => { document.dispatchEvent(new Event("visibilitychange", { bubbles: true })); });
+    await waitFor(() => expect(client.getAccountPage.mock.calls.length).toBeGreaterThan(1));
+    await user.type(screen.getByLabelText("Industry"), "s");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.updateAccount).toHaveBeenCalled());
+    expect(client.updateAccount.mock.calls[0][3]).toBe(3);
+    expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ employees: 45 });
+  });
+
   it("closes without saving on Cancel when nothing changed", async () => {
     renderPage();
     const user = await open();
