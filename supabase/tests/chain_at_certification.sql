@@ -452,8 +452,13 @@ BEGIN
     PERFORM pg_temp.is(public.is_free_mail_domain(d), true, d || ' is a free-mail domain');
   END LOOP;
   PERFORM pg_temp.is(public.is_free_mail_domain('acme.example'), false, 'a business''s own domain is not');
+  PERFORM pg_temp.is(public.is_free_mail_domain('mail.gmail.com'), true, 'a free-mail domain''s subdomain is one too');
+  PERFORM pg_temp.is(public.is_free_mail_domain('login.yahoo.com'), true, 'login.yahoo.com');
+  PERFORM pg_temp.is(public.is_free_mail_domain('a.b.outlook.com'), true, 'at any depth');
+  PERFORM pg_temp.is(public.is_free_mail_domain('acme.com'), false, 'but a name that only ends like one is not (acme.com, me.com)');
+  PERFORM pg_temp.is(public.is_free_mail_domain('alive.com'), false, 'alive.com, live.com');
   PERFORM pg_temp.is(public.is_free_mail_domain('gmail.com.example'), false, 'nor one that only starts with a free-mail name');
-  PERFORM pg_temp.is(public.is_free_mail_domain(NULL), NULL::boolean, 'no domain says nothing');
+  PERFORM pg_temp.is(public.is_free_mail_domain(NULL), false, 'no domain is not one');
   RAISE NOTICE 'chain_at_certification: free mail passed';
 END $$;
 
@@ -531,7 +536,7 @@ DECLARE d text; ok boolean; n integer := 0; first_id uuid; next_id uuid;
 BEGIN
   PERFORM pg_temp.as_owner();
   FOREACH d IN ARRAY ARRAY['n', 'none', '-', 'n.a', 'a.b', '192.168.1.1', 'localhost', 'x_y.example', '-.example', 'facebook.com', 'm.facebook.com', 'fb.com', 'sites.google.com',
-    'linkedin.com', 'instagram.com', 'gmail.com'] LOOP
+    'linkedin.com', 'instagram.com', 'gmail.com', 'mail.gmail.com', 'login.yahoo.com'] LOOP
     PERFORM pg_temp.is(public.is_matchable_web_domain(d), false, d || ' is not a domain that says which business');
   END LOOP;
   FOREACH d IN ARRAY ARRAY['acme.example', 'my-biz.co.uk', 'shop.acme.example', 'google.com', 'xn--bcher-kva.example', 'a1.io'] LOOP
@@ -542,7 +547,7 @@ BEGIN
   -- Through certification, in a firm of their own so only the website could match: the same free text, then pages on shared sites.
   INSERT INTO public.firms (name, address, approved_at) VALUES ('Shared Hosts Brokers', 'shared-hosts', now());
   INSERT INTO fx SELECT 'hosts', id FROM public.firms WHERE address = 'shared-hosts';
-  FOREACH d IN ARRAY ARRAY['N/A', 'none', '-', 'https://www.facebook.com/acmepage', 'https://m.facebook.com/otherpage', 'https://sites.google.com/view/one',
+  FOREACH d IN ARRAY ARRAY['N/A', 'none', '-', 'https://mail.gmail.com/inbox', 'https://www.facebook.com/acmepage', 'https://m.facebook.com/otherpage', 'https://sites.google.com/view/one',
     'linkedin.com/company/two', 'https://www.instagram.com/three'] LOOP
     n := n + 1;
     first_id := pg_temp.certified('h' || n || 'a', 'hosts', 'Hosts Name A ' || n, 'MO', d);
@@ -755,6 +760,13 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = closing), 0::bigint, 'closing deletes the accounts');
   PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE firm_id = closing) + (SELECT count(*) FROM public.contacts WHERE firm_id = closing), 0::bigint, 'and the opportunities and contacts');
   PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions WHERE id = pg_temp.id('i_c1')), 1::bigint, 'the intake is kept');
+  -- The firm is closed and holds no CRM records: the employer certifying that intake again is not refused, and no chain comes back.
+  PERFORM pg_temp.is(public.firm_is_closed(closing), true, 'the firm is closed');
+  PERFORM pg_temp.is(pg_temp.certify('i_c1', 'c1', 'Signer After Closing'), 'ok', 'the employer certifies again after the firm closed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_certifications WHERE session_id = pg_temp.id('i_c1')), 2::bigint, 'the certification was recorded');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = closing) + (SELECT count(*) FROM public.contacts WHERE firm_id = closing)
+    + (SELECT count(*) FROM public.opportunities WHERE firm_id = closing), 0::bigint, 'a closed firm holds no chain');
+  PERFORM pg_temp.is(public.make_intake_chain(pg_temp.id('i_c1')) ->> 'made', 'false', 'nor does the step make one');
 
   -- A suspended firm.
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Suspended Brokers', 'suspended-brokers', now(), 'approved', now()) RETURNING id INTO susp;
@@ -800,7 +812,7 @@ BEGIN
 
   -- No API role runs the step, the match, the hook or a helper.
   PERFORM pg_temp.is((SELECT bool_or(has_function_privilege(r, p.oid, 'EXECUTE')) FROM pg_proc p, unnest(ARRAY['anon', 'authenticated', 'service_role']) r
-    WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('make_intake_chain', 'find_duplicate_account', 'chain_at_certification', 'is_free_mail_domain', 'account_name_key', 'crm_answer_text', 'crm_split_person_name')),
+    WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('make_intake_chain', 'find_duplicate_account', 'chain_at_certification', 'is_free_mail_domain', 'is_shared_web_host', 'is_matchable_web_domain', 'account_name_key', 'crm_answer_text', 'crm_split_person_name')),
     false, 'no API role can run any function of this story');
   PERFORM pg_temp.as_user('acme_owner');
   PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.make_intake_chain(%L)', sid)), '42501', 'a firm''s owner cannot ask for a chain');
@@ -1005,4 +1017,53 @@ BEGIN
   PERFORM pg_temp.is(r, 'did not wait:ok', 'a step for an intake that has its chain does not wait');
   PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE intake_id = pg_temp.id('i_race7')), 1::bigint, 'and the other chain was made');
   RAISE NOTICE 'chain_at_certification: no waiting for a chain that is there passed';
+END $$;
+
+-- A certification that waits behind the firm's closing (D-122: the closing holds the firm's row until it commits) leaves no records in the closed firm.
+-- Break caught: the chain is made after the closing's delete pass has committed, and nothing ever removes it; or only the closed check is there, taken
+-- before the closing commits, so the chain is made in a firm with no members.
+DO $$
+DECLARE f uuid; o uuid; n integer;
+BEGIN
+  FOR n IN 1..2 LOOP
+    INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Race Closing Brokers ' || n, 'race-closing-' || n, now(), 'approved', now()) RETURNING id INTO f;
+    INSERT INTO fx VALUES ('race_closing' || n, f);
+    INSERT INTO auth.users (id, aud, role, email, email_confirmed_at, is_anonymous, created_at, updated_at) VALUES (gen_random_uuid(), 'authenticated', 'authenticated', 'race_closing_owner' || n || '@example.test', now(), false, now(), now()) RETURNING id INTO o;
+    INSERT INTO fx VALUES ('race_closing_owner' || n, o);
+    INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (f, o, 'owner');
+    INSERT INTO public.firm_closures (firm_id, asked_at, asked_by, closes_at) VALUES (f, now() - interval '31 days', o, now() - interval '1 day');
+  END LOOP;
+  -- A draft the employer certifies while the first firm closes; a submission of the second firm, certified before and with no chain (as CRM-Q1.3 will find
+  -- it), whose chain is asked for by the step while that firm closes.
+  PERFORM pg_temp.new_prospect('race_p8');
+  PERFORM pg_temp.start_intake('i_race8', 'race_p8', pg_temp.answers('Race Eight Corp', 'ID'), 'race_closing1');
+  PERFORM pg_temp.new_prospect('race_p9');
+  PERFORM pg_temp.start_intake('i_race9', 'race_p9', pg_temp.answers('Race Nine Corp', 'ID'), 'race_closing2');
+  PERFORM pg_temp.is(pg_temp.certify('i_race9', 'race_p9'), 'ok', 'certified before the closing');
+  DELETE FROM public.opportunities WHERE intake_id = pg_temp.id('i_race9');
+  DELETE FROM public.accounts WHERE name = 'Race Nine Corp';
+END $$;
+DO $$
+DECLARE r text; f uuid := pg_temp.id('race_closing1');
+BEGIN
+  r := pg_temp.race_pair(NULL, ARRAY[format('SELECT public.close_firm_now(%L)', f)], 'race_p8', pg_temp.certify_stmt('i_race8'));
+  PERFORM pg_temp.is(r, 'waited:ok', 'the certification waits for the closing and then goes through');
+  PERFORM pg_temp.is(public.firm_is_closed(f), true, 'the firm is closed');
+  PERFORM pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp.id('i_race8')), 'submitted', 'the employer''s certification was not refused');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = f) + (SELECT count(*) FROM public.contacts WHERE firm_id = f)
+    + (SELECT count(*) FROM public.opportunities WHERE firm_id = f), 0::bigint, 'and the closed firm holds no records');
+  RAISE NOTICE 'chain_at_certification: a certification behind a closing passed';
+END $$;
+
+-- The same for the step on its own, where nothing else makes it wait for the firm's row: without its own lock it asks whether the firm is closed before
+-- the closing commits, and then waits for the closing at the insert and writes the chain after it.
+-- Break caught: the lock on the firm's row before the closed question is gone.
+DO $$
+DECLARE r text; f uuid := pg_temp.id('race_closing2');
+BEGIN
+  r := pg_temp.race_pair(NULL, ARRAY[format('SELECT public.close_firm_now(%L)', f)], NULL, format('SELECT public.make_intake_chain(%L)', pg_temp.id('i_race9')));
+  PERFORM pg_temp.is(r, 'waited:ok', 'the step waits for the closing');
+  PERFORM pg_temp.is(public.firm_is_closed(f), true, 'the firm is closed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = f) + (SELECT count(*) FROM public.opportunities WHERE firm_id = f), 0::bigint, 'and makes no chain in it');
+  RAISE NOTICE 'chain_at_certification: the step behind a closing passed';
 END $$;

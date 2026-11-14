@@ -38,10 +38,12 @@ LANGUAGE sql
 IMMUTABLE
 SET search_path = public, pg_temp
 AS $$
-  SELECT lower(btrim(p_domain)) = ANY (ARRAY[
+  -- The listed domain or any subdomain of it (mail.gmail.com, login.yahoo.com).
+  SELECT EXISTS (SELECT 1 FROM unnest(ARRAY[
     'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'yahoo.com', 'ymail.com', 'rocketmail.com', 'icloud.com',
     'me.com', 'mac.com', 'aol.com', 'aim.com', 'proton.me', 'protonmail.com', 'pm.me', 'gmx.com', 'gmx.net', 'mail.com', 'zoho.com', 'yandex.com',
-    'fastmail.com', 'hey.com', 'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'bellsouth.net', 'cox.net', 'charter.net'])
+    'fastmail.com', 'hey.com', 'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'bellsouth.net', 'cox.net', 'charter.net']) h
+    WHERE lower(btrim(p_domain)) = h OR lower(btrim(p_domain)) LIKE '%.' || h)
 $$;
 
 REVOKE ALL ON FUNCTION public.is_free_mail_domain(text) FROM PUBLIC, anon, authenticated, service_role;
@@ -167,7 +169,7 @@ REVOKE ALL ON FUNCTION public.find_duplicate_account(uuid, text, text, text, tex
 -- ---------- 3. The step ----------
 -- Makes the chain of an intake that has been certified, or returns the one that is there. Answers {"made": true, "account_id", "contact_id" (null when the
 -- prospect has neither a usable email nor a phone), "opportunity_id", "possible_duplicate_of" (null for none)}, or {"made": false, "account_id",
--- "opportunity_id"} for an intake that already sits on an opportunity, whoever made it. Refuses an intake that does not exist (P0002) and one that has
+-- "opportunity_id"} for an intake that already sits on an opportunity, whoever made it, and {"made": false, "closed": true} for an intake of a closed firm. Refuses an intake that does not exist (P0002) and one that has
 -- never been certified (55000): a draft has no chain (ADR 0025).
 --
 -- The values are the certified ones: the answers of the intake's latest certification (its snapshot), not the working copy. Ordering, D-29 and D-32:
@@ -252,6 +254,16 @@ BEGIN
   v_email := CASE WHEN length(prof.email) <= 254 AND prof.email ~ '^[^@[:space:]]+@[^@[:space:]]+$' THEN prof.email END;
   v_phone := left(NULLIF(btrim(prof.phone), ''), 40);
   v_names := public.crm_split_person_name(COALESCE(NULLIF(btrim(prof.contact_name), ''), cert.signer_name));
+
+  -- A closed firm holds no CRM records: closing deleted them and kept the intake, so a certification again must not bring the chain back. The firm's row is
+  -- held FOR KEY SHARE first, which conflicts only with the closing's FOR UPDATE of that row (close_firm_now, D-122): a closing that is running is waited for,
+  -- and the question is then asked of what it committed, so a chain is never written after the closing's delete pass. The employer's certification is not
+  -- refused; it just has no chain. A firm that is closing and not yet closed still gets its chain, which its closing deletes with the rest. (This lock is
+  -- taken before the firm's advisory lock below; the closing takes the row and no advisory lock, so the two cannot wait on each other.)
+  PERFORM 1 FROM public.firms f WHERE f.id = i.firm_id FOR KEY SHARE;
+  IF public.firm_is_closed(i.firm_id) THEN
+    RETURN jsonb_build_object('made', false, 'closed', true);
+  END IF;
 
   -- One chain at a time within a firm (see above), then the look again: another step may have made it while this one waited.
   PERFORM pg_advisory_xact_lock(hashtextextended('crm_chain:' || i.firm_id::text, 0));
