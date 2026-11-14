@@ -336,7 +336,9 @@ CREATE TEMP TABLE snap (k text PRIMARY KEY, v jsonb NOT NULL);
 -- The chain's step and then this story's migration, which brings them in and prints how many of each it made.
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
 
 -- ---------- every certified submission has its chain, in its own firm, owned by nobody ----------
@@ -468,6 +470,86 @@ BEGIN
     END LOOP;
   END LOOP;
   RAISE NOTICE 'bring_submissions_in: no API role passed';
+END $$;
+
+-- ---------- a submission from before certifications were recorded ----------
+-- An intake whose submission is a row of its status history alone (it has no certification row) is a submission (intake_ever_certified). It is brought in on its own
+-- answers, and then an advisor can take it to ready for market and record a send, which the rule needs an opportunity for.
+-- Break caught: the run skips it and reports 0 (the story's P1), the rule does not count it as a submission, or the step refuses it for having no certification.
+DO $$
+DECLARE r jsonb; adv uuid; a public.accounts;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.legacy('hist', 'default', 'History Only Co', 'MT', NULL, now());
+  ALTER TABLE public.chamber_certifications DISABLE TRIGGER chamber_certifications_guard;
+  DELETE FROM public.chamber_certifications WHERE session_id = pg_temp.id('i_hist');
+  ALTER TABLE public.chamber_certifications ENABLE TRIGGER chamber_certifications_guard;
+  ALTER TABLE public.submission_status_history DISABLE TRIGGER submission_status_history_append_only;
+  UPDATE public.submission_status_history SET changed_at = '2026-01-20' WHERE session_id = pg_temp.id('i_hist') AND to_status = 'submitted';
+  ALTER TABLE public.submission_status_history ENABLE TRIGGER submission_status_history_append_only;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.is(public.intake_ever_certified(pg_temp.id('i_hist')), true, 'setup: its submission is in its status history alone');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_certifications WHERE session_id = pg_temp.id('i_hist')), 0::bigint, 'setup: it has no certification row');
+
+  r := public.bring_submissions_in();
+  PERFORM pg_temp.is(r ->> 'accounts', '1', 'the run chains it and counts it');
+  PERFORM pg_temp.is(r ->> 'submissions_found', '2', 'found with the closed firm''s');
+  a := pg_temp.acct('i_hist');
+  PERFORM pg_temp.is(a.name, 'History Only Co', 'its account is made from its own answers');
+  PERFORM pg_temp.is(a.created_at, '2026-01-20'::timestamptz, 'as old as its submission');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = a.id), 1::bigint, 'with its prospect as contact');
+
+  -- Its advisor takes it to ready for market and records a send.
+  INSERT INTO auth.users (id, aud, role, email, email_confirmed_at, is_anonymous, created_at, updated_at)
+  VALUES (gen_random_uuid(), 'authenticated', 'authenticated', 'adv@example.test', now(), false, now(), now()) RETURNING id INTO adv;
+  INSERT INTO fx VALUES ('adv', adv);
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (public.default_firm_id(), adv, 'owner');
+  PERFORM pg_temp.as_user('adv');
+  PERFORM public.set_submission_status(pg_temp.id('i_hist'), 'under_review', 'Picked up');
+  PERFORM public.set_submission_status(pg_temp.id('i_hist'), 'ready_for_market', 'Reviewed');
+  PERFORM public.advisor_record_quote_send(pg_temp.id('i_hist'), 'TriNet', NULL);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quote_requests q JOIN public.opportunities o ON o.intake_id = q.session_id WHERE q.session_id = pg_temp.id('i_hist')), 1::bigint,
+    'a send can be recorded, and the quote request is on its opportunity');
+  PERFORM pg_temp.is(pg_temp.attempt(format('DELETE FROM public.opportunities WHERE intake_id = %L', pg_temp.id('i_hist'))), '23514', 'and the rule counts it as a submission');
+
+  -- One that is in progress again and holds no quote request: still a submission, so its opportunity stays.
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.legacy('hist2', 'default', 'History Two Co', 'MT', NULL, now());
+  ALTER TABLE public.chamber_certifications DISABLE TRIGGER chamber_certifications_guard;
+  DELETE FROM public.chamber_certifications WHERE session_id = pg_temp.id('i_hist2');
+  ALTER TABLE public.chamber_certifications ENABLE TRIGGER chamber_certifications_guard;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM public.bring_submissions_in();
+  UPDATE public.chamber_sessions SET status = 'in_progress' WHERE id = pg_temp.id('i_hist2');
+  PERFORM pg_temp.is(pg_temp.attempt(format('DELETE FROM public.opportunities WHERE intake_id = %L', pg_temp.id('i_hist2'))), '23514', 'an ever-submitted intake in progress again keeps its opportunity');
+  RAISE NOTICE 'bring_submissions_in: a submission from status history alone passed';
+END $$;
+
+-- ---------- an older submission brought in is the earlier one ----------
+-- An account made at a certification since the chain began is LATER than a submission brought in from before it; D-195 marks the later one.
+-- Break caught: the brought-in older submission is marked a duplicate of the newer account, and the newer one is left unmarked.
+DO $$
+DECLARE newer uuid; older uuid;
+BEGIN
+  PERFORM pg_temp.legacy('late', 'default', 'Late Match Business', 'NM', NULL, now());
+  newer := (pg_temp.acct('i_late')).id;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.legacy('early', 'default', 'Late Match Business', 'NM', NULL, '2026-01-10');
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.is(public.bring_submissions_in() ->> 'possible_duplicates', '1', 'one mark');
+  older := (pg_temp.acct('i_early')).id;
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = older), NULL::uuid, 'the older submission''s account is not marked');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = newer), older, 'the newer account is marked a duplicate of it');
+  RAISE NOTICE 'bring_submissions_in: the older one is the earlier passed';
 END $$;
 
 -- ---------- the rule: a submission and a quote request sit on an opportunity ----------

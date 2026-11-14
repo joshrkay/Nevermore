@@ -6,8 +6,10 @@
 -- opportunity holding it, all owned by nobody (D-214). Then it adds the rule: a submission, and a quote request, sits on one opportunity, and the database
 -- refuses anything else.
 --
--- A submission. ADR 0025: an intake certified at least once, not a draft. That is "has a row in chamber_certifications", the same test the step uses, and it
--- stays true when the employer changes the answers afterwards and the intake goes back to in progress (the chain stays, as the step's tests prove).
+-- A submission. ADR 0025: an intake certified at least once, not a draft: intake_ever_certified (a certification row, or a "submitted" row of its status
+-- history, for the intakes submitted before certifications were recorded). It stays true when the employer changes the answers afterwards. An intake with no
+-- certification row has no snapshot, so its chain is made from its own answers as they are (make_intake_chain is restated below for that, and for nothing
+-- else). Its "created" entry in the record history carries the day of the migration, not the submission's.
 --
 -- Quote requests as quotes. A quote request is already on an intake (quote_requests.session_id) and the Quote of the workspace's screens is that quote request
 -- (D-185, GLOSSARY "Quote"), so it sits on the opportunity that holds its intake: bringing the intake in is what brings its quote requests in. No table is
@@ -27,7 +29,7 @@
 -- migration back, to be run again) instead of hanging. The time is that of one chain for each submission (milliseconds each; measured in the test).
 -- Nothing is lost by running it in a quiet hour.
 --
--- The rule (D-29: constraint triggers, no lock). Row-level constraint triggers that fire at the end of the statement and are deferrable, so a fixture or a
+-- The rule (D-29: constraint triggers, no lock; created last, so the run holds no table lock). Row-level constraint triggers that fire at the end of the statement and are deferrable, so a fixture or a
 -- later merge can move records in one transaction with SET CONSTRAINTS:
 --   * an intake is saved as submitted (chamber_sessions insert or update): it must sit on an opportunity. The chain trigger of CRM-Q1.1b fires first in the same
 --     statement (it is named earlier), so a first certification passes, and a submission can't be made without its opportunity. (The certification row is written
@@ -45,6 +47,145 @@
 --
 -- What is NOT here: a quotes table or a quote on screen (Epic 5, CRM-Q2); merging the possible duplicates it marks (CRM-S4.3); the account's fields being
 -- filled again (CRM-Q1.2); anything on screen.
+
+SET lock_timeout = '5s';
+
+-- ---------- 0. The step, restated ----------
+-- make_intake_chain of 20261119110000, with one change: an intake that was submitted before certifications were recorded (it has no chamber_certifications
+-- row, but intake_ever_certified says it was submitted: a row of its status history) takes its values from its own answers, since there is no snapshot.
+-- An intake with a certification is made from it exactly as before, and an intake never submitted is refused as before.
+CREATE OR REPLACE FUNCTION public.make_intake_chain(p_intake_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  i public.chamber_sessions;
+  cert record;
+  cert_data jsonb;
+  cert_signer text;
+  prof record;
+  existing public.opportunities;
+  d jsonb;
+  v_name text;
+  v_name_certified boolean;
+  v_website text;
+  v_domain text;
+  v_state text;
+  v_street text;
+  v_industry text;
+  v_employees integer;
+  v_states text[];
+  v_provider text;
+  v_start text;
+  v_email text;
+  v_phone text;
+  v_names text[];
+  v_dup uuid;
+  v_account uuid;
+  v_contact uuid;
+  v_opportunity uuid;
+BEGIN
+  SELECT * INTO i FROM public.chamber_sessions WHERE id = p_intake_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'The intake does not exist' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- The chain that is there (a cheap look first: every update of a certified intake asks).
+  SELECT * INTO existing FROM public.opportunities WHERE intake_id = p_intake_id;
+  IF FOUND THEN
+    RETURN jsonb_build_object('made', false, 'account_id', existing.account_id, 'opportunity_id', existing.id);
+  END IF;
+
+  SELECT c.chamber_data, c.signer_name INTO cert
+  FROM public.chamber_certifications c WHERE c.session_id = p_intake_id ORDER BY c.version DESC, c.id DESC LIMIT 1;
+  IF FOUND THEN
+    cert_data := cert.chamber_data;
+    cert_signer := cert.signer_name;
+  ELSIF public.intake_ever_certified(p_intake_id) THEN
+    -- Submitted before certifications were recorded (CRM-Q1.3): there is no snapshot, so the values are the intake's own answers as they are now, and there
+    -- is no signer's name to fall back on.
+    cert_data := i.chamber_data;
+  ELSE
+    RAISE EXCEPTION 'The intake has never been certified, so it has no account, contact or opportunity' USING ERRCODE = '55000';
+  END IF;
+  d := cert_data;
+
+  -- The prospect: the person who certified. Their profile's name and phone, their email (a signer's name when the profile has none).
+  SELECT u.email::text AS email, p.contact_name, p.company_name, p.phone INTO prof
+  FROM (SELECT 1) one LEFT JOIN auth.users u ON u.id = i.user_id LEFT JOIN public.profiles p ON p.user_id = i.user_id;
+
+  -- The account's values, each as its column takes it. What a column would refuse is left out, never allowed to fail the certification.
+  v_name := public.crm_answer_text(d, 'company_name', 200);
+  v_name_certified := v_name IS NOT NULL;
+  v_name := COALESCE(v_name, left(NULLIF(btrim(prof.company_name), ''), 200), 'Unnamed business');
+  v_website := public.crm_answer_text(d, 'website', 300);
+  v_domain := public.web_domain_of(v_website);
+  v_state := CASE WHEN public.is_us_state_code(public.crm_answer_text(d, 'hq_state', 2)) THEN public.crm_answer_text(d, 'hq_state', 2) END;
+  v_street := public.crm_answer_text(d, 'street_address', 200);
+  v_industry := public.crm_answer_text(d, 'industry', 200);
+  v_employees := CASE WHEN jsonb_typeof(d -> 'employee_count') = 'number' AND (d ->> 'employee_count') ~ '^[0-9]{1,9}$' THEN (d ->> 'employee_count')::integer END;
+  v_states := CASE WHEN jsonb_typeof(d -> 'states') = 'array' THEN
+    COALESCE((SELECT array_agg(s.state ORDER BY s.first_at)
+              FROM (SELECT x.state, min(x.at) AS first_at
+                    FROM (SELECT e.value #>> '{}' AS state, e.at FROM jsonb_array_elements(d -> 'states') WITH ORDINALITY AS e (value, at)
+                          WHERE jsonb_typeof(e.value) = 'string') x
+                    WHERE public.is_us_state_code(x.state) GROUP BY x.state) s), '{}') ELSE '{}' END;
+  v_provider := CASE WHEN COALESCE((d ->> 'in_peo') <> 'false', true) THEN public.crm_answer_text(d, 'current_peo', 200) END;
+  v_start := public.crm_answer_text(d, 'start_month', 100);
+
+  -- The contact's values.
+  v_email := CASE WHEN length(prof.email) <= 254 AND prof.email ~ '^[^@[:space:]]+@[^@[:space:]]+$' THEN prof.email END;
+  v_phone := left(NULLIF(btrim(prof.phone), ''), 40);
+  v_names := public.crm_split_person_name(COALESCE(NULLIF(btrim(prof.contact_name), ''), cert_signer));
+
+  -- A closed firm holds no CRM records: closing deleted them and kept the intake, so a certification again must not bring the chain back. The firm's row is
+  -- held FOR KEY SHARE first, which conflicts only with the closing's FOR UPDATE of that row (close_firm_now, D-122): a closing that is running is waited for,
+  -- and the question is then asked of what it committed, so a chain is never written after the closing's delete pass. The employer's certification is not
+  -- refused; it just has no chain. A firm that is closing and not yet closed still gets its chain, which its closing deletes with the rest. (This lock is
+  -- taken before the firm's advisory lock below; the closing takes the row and no advisory lock, so the two cannot wait on each other.)
+  PERFORM 1 FROM public.firms f WHERE f.id = i.firm_id FOR KEY SHARE;
+  IF public.firm_is_closed(i.firm_id) THEN
+    RETURN jsonb_build_object('made', false, 'closed', true);
+  END IF;
+
+  -- One chain at a time within a firm (see above), then the look again: another step may have made it while this one waited.
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_chain:' || i.firm_id::text, 0));
+  SELECT * INTO existing FROM public.opportunities WHERE intake_id = p_intake_id;
+  IF FOUND THEN
+    RETURN jsonb_build_object('made', false, 'account_id', existing.account_id, 'opportunity_id', existing.id);
+  END IF;
+
+  v_dup := public.find_duplicate_account(i.firm_id,
+    v_domain,
+    CASE WHEN v_name_certified THEN v_name END,
+    v_state,
+    v_email);
+
+  INSERT INTO public.accounts (firm_id, owner_id, name, website, street, state, industry, employees, states_of_operation, current_provider, source, possible_duplicate_of)
+  VALUES (i.firm_id, NULL, v_name, v_website, v_street, v_state, v_industry, v_employees, v_states, v_provider, 'employer_intake', v_dup)
+  RETURNING id INTO v_account;
+
+  IF v_names IS NOT NULL AND (v_email IS NOT NULL OR v_phone IS NOT NULL) THEN
+    INSERT INTO public.contacts (firm_id, account_id, owner_id, first_name, last_name, email, phone, is_main, prospect_user_id)
+    VALUES (i.firm_id, v_account, NULL, v_names[1], v_names[2], v_email, v_phone, true, i.user_id)
+    RETURNING id INTO v_contact;
+  END IF;
+
+  INSERT INTO public.opportunities (firm_id, account_id, owner_id, intake_id, name, main_contact_id)
+  VALUES (i.firm_id, v_account, NULL, p_intake_id, CASE WHEN v_start IS NULL THEN 'PEO search' ELSE v_start || ' PEO search' END, v_contact)
+  ON CONFLICT (intake_id) DO NOTHING
+  RETURNING id INTO v_opportunity;
+  IF v_opportunity IS NULL THEN
+    RAISE EXCEPTION 'Another step made this intake''s opportunity first' USING ERRCODE = '40001';
+  END IF;
+
+  RETURN jsonb_build_object('made', true, 'account_id', v_account, 'contact_id', v_contact, 'opportunity_id', v_opportunity, 'possible_duplicate_of', v_dup);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.make_intake_chain(uuid) FROM PUBLIC, anon, authenticated, service_role;
 
 -- ---------- 1. Bringing them in ----------
 CREATE OR REPLACE FUNCTION public.bring_submissions_in()
@@ -70,8 +211,10 @@ BEGIN
   FOR s IN
     SELECT cs.id, f.first_at
     FROM public.chamber_sessions cs
-    CROSS JOIN LATERAL (SELECT min(c.recorded_at) AS first_at FROM public.chamber_certifications c WHERE c.session_id = cs.id) f
-    WHERE f.first_at IS NOT NULL
+    CROSS JOIN LATERAL (SELECT COALESCE(
+      (SELECT min(c.recorded_at) FROM public.chamber_certifications c WHERE c.session_id = cs.id),
+      (SELECT min(h.changed_at) FROM public.submission_status_history h WHERE h.session_id = cs.id AND h.to_status = 'submitted')) AS first_at) f
+    WHERE public.intake_ever_certified(cs.id)
       AND NOT EXISTS (SELECT 1 FROM public.opportunities o WHERE o.intake_id = cs.id)
     ORDER BY f.first_at, cs.id
   LOOP
@@ -87,7 +230,18 @@ BEGIN
       accounts_made := accounts_made + 1;
       opportunities_made := opportunities_made + 1;
       IF r ->> 'contact_id' IS NOT NULL THEN contacts_made := contacts_made + 1; END IF;
-      IF r ->> 'possible_duplicate_of' IS NOT NULL THEN duplicates := duplicates + 1; END IF;
+      IF r ->> 'possible_duplicate_of' IS NOT NULL THEN
+        -- The step marks the account it made as the duplicate of the earliest match. When that match is LATER than this submission (an account made at a
+        -- certification since the chain began), it is the later one that D-195 marks: the match is marked as a duplicate of this account, whatever pointed at
+        -- the match points at this one, and this account is left unmarked.
+        IF (SELECT m.created_at FROM public.accounts m WHERE m.id = (r ->> 'possible_duplicate_of')::uuid) > s.first_at THEN
+          UPDATE public.accounts SET possible_duplicate_of = NULL WHERE id = (r ->> 'account_id')::uuid;
+          UPDATE public.accounts SET possible_duplicate_of = (r ->> 'account_id')::uuid WHERE possible_duplicate_of = (r ->> 'possible_duplicate_of')::uuid;
+          UPDATE public.accounts SET possible_duplicate_of = (r ->> 'account_id')::uuid
+            WHERE id = (r ->> 'possible_duplicate_of')::uuid AND possible_duplicate_of IS NULL;
+        END IF;
+        duplicates := duplicates + 1;
+      END IF;
       SELECT count(*) INTO n FROM public.quote_requests q WHERE q.session_id = s.id;
       quote_requests_on := quote_requests_on + n;
     END IF;
@@ -130,7 +284,7 @@ BEGIN
     RETURN;
   END IF;
   IF EXISTS (SELECT 1 FROM public.chamber_sessions cs WHERE cs.id = p_intake_id AND cs.status = 'submitted')
-     OR EXISTS (SELECT 1 FROM public.chamber_certifications c WHERE c.session_id = p_intake_id)
+     OR public.intake_ever_certified(p_intake_id)
      OR EXISTS (SELECT 1 FROM public.quote_requests q WHERE q.session_id = p_intake_id) THEN
     RAISE EXCEPTION 'Every submission and every quote request sits on one opportunity' USING ERRCODE = '23514';
   END IF;
@@ -159,6 +313,23 @@ $$;
 
 REVOKE ALL ON FUNCTION public.enforce_opportunity_rule() FROM PUBLIC, anon, authenticated, service_role;
 
+-- ---------- 3. The run ----------
+-- The report is a notice, which
+-- `supabase db push` prints, and the function answers the same counts to anyone who runs it again.
+DO $$
+DECLARE
+  r jsonb := public.bring_submissions_in();
+BEGIN
+  RAISE NOTICE 'CRM-Q1.3: % submissions had no opportunity; made % accounts, % contacts and % opportunities (% marked possible duplicate); % quote requests are on an opportunity; % submissions of closed firms left alone',
+    r ->> 'submissions_found', r ->> 'accounts', r ->> 'contacts', r ->> 'opportunities', r ->> 'possible_duplicates',
+    r ->> 'quote_requests_on_an_opportunity', r ->> 'left_alone_closed_firm';
+END $$;
+
+-- ---------- 4. The rule's triggers ----------
+-- Created after the run, so the long part holds no lock on the tables they are on: creating a trigger takes SHARE ROW EXCLUSIVE on its table until the migration
+-- commits, which waits for every open writer (at most the 5 seconds of lock_timeout above, then the migration fails and rolls back whole) and holds writers
+-- off only for the moments from here to the commit. An intake certified while the run was going has its chain made by its own certification (the trigger of
+-- 20261119110000), so nothing falls in the gap.
 -- Dropped first so the migration can be run again.
 DROP TRIGGER IF EXISTS chamber_sessions_has_opportunity ON public.chamber_sessions;
 DROP TRIGGER IF EXISTS opportunities_keep_intake_delete ON public.opportunities;
@@ -178,14 +349,3 @@ CREATE CONSTRAINT TRIGGER opportunities_keep_intake_unlink AFTER UPDATE OF intak
 CREATE CONSTRAINT TRIGGER quote_requests_has_opportunity AFTER INSERT OR UPDATE OF session_id ON public.quote_requests
   DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION public.enforce_opportunity_rule();
 
--- ---------- 3. The run ----------
--- The rule is in place first, so nothing brought in can go against it. The report is a notice, which
--- `supabase db push` prints, and the function answers the same counts to anyone who runs it again.
-DO $$
-DECLARE
-  r jsonb := public.bring_submissions_in();
-BEGIN
-  RAISE NOTICE 'CRM-Q1.3: % submissions had no opportunity; made % accounts, % contacts and % opportunities (% marked possible duplicate); % quote requests are on an opportunity; % submissions of closed firms left alone',
-    r ->> 'submissions_found', r ->> 'accounts', r ->> 'contacts', r ->> 'opportunities', r ->> 'possible_duplicates',
-    r ->> 'quote_requests_on_an_opportunity', r ->> 'left_alone_closed_firm';
-END $$;
