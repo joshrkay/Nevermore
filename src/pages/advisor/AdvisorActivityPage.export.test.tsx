@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blobBytes } from "@/test/blob";
+import { toast } from "sonner";
 
 // The Export button on the firm's record of who did what (story CRM-S3.8a; docs/BROKER_CRM_BUILD.md D-48, D-209, D-210), for its owners. The
 // database's call, export_table, is faked (supabase/tests/export.sql tests it): these tests prove what the page asks of it and what it does with the
@@ -12,6 +13,7 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }));
 const supportApi = { fetchFirmSupportUses: vi.fn(), fetchMySupportSessionHere: vi.fn() };
 vi.mock("@/lib/supportApi", async () => ({ ...(await vi.importActual<object>("@/lib/supportApi")), ...supportApi }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
@@ -58,6 +60,7 @@ describe("AdvisorActivityPage: Export (CRM-S3.8a)", () => {
     for (const fn of Object.values(api)) fn.mockReset();
     auth.signOut.mockReset();
     exportTable.mockReset();
+    vi.mocked(toast.message).mockReset();
     supportApi.fetchFirmSupportUses.mockReset().mockResolvedValue([]);
     supportApi.fetchMySupportSessionHere.mockReset().mockResolvedValue(null);
     api.fetchMyFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" }]);
@@ -110,6 +113,88 @@ describe("AdvisorActivityPage: Export (CRM-S3.8a)", () => {
     );
     expect(saved[0].name).toBe("who-did-what-2026-03-02.csv");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Exported 40 entries."));
+  });
+
+  // Catches: the close of a support session reading as a fresh opening in a file an owner may use to check Nevermore's access (the page words
+  // the kind by the kind AND the record's type, `entryLabel`; a label of the kind alone gives "opened your firm's console" for both).
+  it("words each entry as the page does, so the end of a use of support reads as its end", async () => {
+    exportTable.mockResolvedValue(answer([
+      ["2026-03-02T11:00:00.000Z", "Nevermore", "support_access", "support_session_end", "s-1", null, null, null],
+      ["2026-03-02T10:00:00.000Z", "Nevermore", "support_access", "support_session", "s-1", null, null, null],
+      ["2026-03-02T09:00:00.000Z", "lead@example.com", "invitation_sent", "firm", "f-1", null, "agent", null],
+      ["2026-03-02T08:00:00.000Z", "owner@example.com", "member_ended", "membership", "m-9", null, "agent", null],
+      ["2026-03-02T07:00:00.000Z", "owner@example.com", "member_ended", "membership", "m-8", "lead@example.com", "lead", null],
+    ]));
+    const user = await ready();
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect((await fileText(saved[0].blob)).text).toBe(
+      "When,Who,What,Kind of record,Record,Person it was about,Role,Rows\r\n" +
+      "2026-03-02T11:00:00.000Z,Nevermore,Nevermore support's access ended,Support session ended,s-1,,,\r\n" +
+      "2026-03-02T10:00:00.000Z,Nevermore,Nevermore support opened your firm's console,Support session,s-1,,,\r\n" +
+      "2026-03-02T09:00:00.000Z,lead@example.com,Sent an invitation,Firm,f-1,,agent,\r\n" +
+      // The person a membership was about, whose account is gone, is "A former member" as on the page; the rows that are not about a person stay empty.
+      "2026-03-02T08:00:00.000Z,owner@example.com,Ended a membership,Membership,m-9,A former member,agent,\r\n" +
+      "2026-03-02T07:00:00.000Z,owner@example.com,Ended a membership,Membership,m-8,lead@example.com,lead,\r\n",
+    );
+  });
+
+  // Catches: the button staying pressable over the previous filters' entries while the new ones load, so that a filter which turns out to match nothing is
+  // exported anyway (the database records an export of no rows, and a third in the hour tells the owners); the button taken away for a change that
+  // is not a filter (the next page), which the file does not depend on; and a button over an answer of nothing.
+  it("is offered only over entries that answer the filters now chosen, and is back once the new answer arrives", async () => {
+    await ready();
+    let arrive: (v: unknown) => void = () => undefined;
+    api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+    fireEvent.change(await screen.findByLabelText("Kind"), { target: { value: "sign_in" } });
+    await waitFor(() => expect(screen.getByRole("table").parentElement).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+    arrive({ entries: [entry({ entry_key: "k9", actor_email: "new@example.com" })], hasMore: true });
+    await screen.findByText("new@example.com", { selector: "td" });
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
+
+    // The person filter is a filter too.
+    api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+    fireEvent.change(screen.getByLabelText("Person"), { target: { value: "u2" } });
+    await waitFor(() => expect(screen.getByRole("table").parentElement).toHaveAttribute("aria-busy", "true"));
+    expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+    arrive({ entries: [], hasMore: false });
+    await screen.findByText("No entries match these filters.");
+    expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+
+    // The next page is not a filter: the export is the same on every page, so the button stays while it loads.
+    fireEvent.change(screen.getByLabelText("Person"), { target: { value: "" } });
+    api.listFirmActivity.mockResolvedValue({ entries: [entry({ entry_key: "k10", actor_email: "again@example.com" })], hasMore: true });
+    await screen.findByText("again@example.com", { selector: "td" });
+    api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    await waitFor(() => expect(screen.getByRole("table").parentElement).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
+  });
+
+  // Catches: a file of one firm's record saved while another firm's is on screen, under a name that says nothing of the firm (D-235), so an owner of
+  // both takes it for the one in front of them; and nothing said about an export they started that did not come to them.
+  it("saves nothing, and says why, when the export finishes after the owner has moved to another firm", async () => {
+    api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }, { firm_id: "firm-2", name: "Beta Brokers" }]);
+    api.listFirmActivity.mockImplementation(async (firm: string) => ({ entries: [entry({ actor_email: firm === "firm-2" ? "beta@example.com" : "agent@example.com" })], hasMore: false }));
+    let arrive: (v: unknown) => void = () => undefined;
+    exportTable.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+    renderPage("/advisor/activity?firm=firm-1");
+    await screen.findByText("agent@example.com", { selector: "td" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    expect(exportTable).toHaveBeenCalledWith("firm-1", "firm_activity", COLUMNS, expect.anything());
+
+    fireEvent.change(screen.getByLabelText("Firm"), { target: { value: "firm-2" } });
+    await screen.findByText("beta@example.com", { selector: "td" });
+    arrive(answer([["2026-03-02T11:00:00.000Z", "agent@example.com", "sign_in", "firm", "firm-1", null, null, null]]));
+    await waitFor(() => expect(toast.message).toHaveBeenCalledTimes(1));
+    expect(toast.message).toHaveBeenCalledWith("An export you started finished after the page changed, so its file was not saved.");
+    expect(saved).toHaveLength(0);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
   });
 
   // Catches: the button offered to a lead or an agent (the record is for owners, D-48), whether by the page showing the table to them or by the

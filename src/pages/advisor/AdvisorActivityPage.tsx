@@ -41,10 +41,12 @@ const COLUMNS: (PlaceholderColumn & { header: string })[] = [
 const EXPORT_COLUMNS_SHOWN: ExportColumnSpec<"firm_activity">[] = [
   { column: "at", header: "When" },
   { column: "who", header: "Who", text: (value) => (value === null ? "A former member" : String(value)) },
-  { column: "kind", header: "What", text: (value) => kindLabel(String(value)) },
+  // The page's What is the kind AND the record's type (`entryLabel`): the end of a use of support is not the opening of one.
+  { column: "kind", header: "What", text: (value, row) => entryLabel(String(value), String(row.record_type ?? "")) },
   { column: "record_type", header: "Kind of record", text: (value) => recordLabel(String(value)) },
   { column: "record_id", header: "Record" },
-  { column: "subject", header: "Person it was about" },
+  // On a membership, a person whose account is gone is "A former member" (as `recordText` says); on any other entry no person is none.
+  { column: "subject", header: "Person it was about", text: (value, row) => (value === null ? (row.record_type === "membership" ? "A former member" : "") : String(value)) },
   { column: "role", header: "Role" },
   { column: "rows", header: "Rows" },
 ];
@@ -190,6 +192,9 @@ const AdvisorActivityPage = () => {
   // The words are for the question the (empty) entries ANSWERED, which is the previous one while the next is on its way, never one not yet answered.
   const [answeredPerson, answeredKind, answeredAfter] = (load.kind === "ready" ? JSON.parse(load.asked) : [person, kind, after]) as [string | null, string | null, ActivityCursor | null];
   const answeredFiltered = answeredPerson !== null || answeredKind !== null;
+  // The entries on screen answer the filters now chosen (a next page does not matter to an export, which holds every page): until the new answer arrives
+  // an export would be of filters nobody has seen the result of, and one that matches nothing is still written to the firm's record (CRM-S3.8a, D-246).
+  const answersFilters = load.kind === "ready" && answeredPerson === person && answeredKind === kind;
   const personInWords = answeredPerson === NEVERMORE_FILTER ? "Nevermore" : (people?.find((p) => p.user_id === answeredPerson)?.email ?? "A former member");
   const clearFilters = () => { setPerson(null); setKind(null); setTrail([]); personList.current?.focus(); };
   const emptyState = !isEmpty ? null : answeredAfter !== null ? (
@@ -280,7 +285,7 @@ const AdvisorActivityPage = () => {
                 </select>
               </div>
               {/* Over entries only: there is nothing to export from an empty answer. Not offered during Nevermore support (D-123); the page is for owners alone. */}
-              {load.kind === "ready" && load.entries.length > 0 && (forExport === null ? (
+              {load.kind === "ready" && answersFilters && load.entries.length > 0 && (forExport === null ? (
                 <p className="text-xs text-muted-foreground max-w-xs">
                   The record no longer holds a former member's email, so their entries can't be exported alone. Choose Everyone or another person.
                 </p>

@@ -2,11 +2,15 @@
 // use it (D-50), never on its own.
 
 /**
- * A cell a spreadsheet could run as a formula when the file is opened (CSV injection): it starts with `=`, `+`, `-` or `@` (after any spaces),
- * or with a tab, a carriage return or a line feed, which some spreadsheets skip before reading one. A partner named `=HYPERLINK(...)` is such a
- * cell. The rule is deliberately wider than the four characters: a name is never worth a formula.
+ * A cell a spreadsheet could run as a formula when the file is opened (CSV injection): it starts with `=`, `+`, `-` or `@` (D-234), or with one of
+ * those hidden behind what a spreadsheet or the person may not see or may skip: any space or control character (Unicode white space, which takes in
+ * the no-break and ideographic spaces and the byte order mark, a vertical tab, a form feed) or any invisible format character (a zero-width space or
+ * joiner, a direction mark), or written in its fullwidth form (U+FF1D, U+FF0B, U+FF0D, U+FF20). A cell that starts with a tab, a carriage return
+ * or a line feed is held back whatever follows. A partner named `=HYPERLINK(...)` is such a cell. The rule is deliberately wider than the four
+ * characters, and errs on the side of plain text, which costs one apostrophe: a name is never worth a formula. Written with \u{...} codes, never
+ * as the invisible characters themselves.
  */
-const LIKE_A_FORMULA = /^( *[=+\-@]|[\t\r\n])/;
+const LIKE_A_FORMULA = /^(?:[\s\p{Cc}\p{Cf}]*[=+\-@\u{ff1d}\u{ff0b}\u{ff0d}\u{ff20}]|[\t\r\n])/u;
 
 /** A cell as plain text: one apostrophe in front of what could be a formula, so a spreadsheet shows it and never runs it. */
 const plainText = (text: string) => (LIKE_A_FORMULA.test(text) ? `'${text}` : text);
