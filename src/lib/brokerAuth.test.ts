@@ -62,6 +62,13 @@ describe("where a broker goes after signing in", () => {
     );
     expect(brokerCallbackUrl("https://app.example.com", "https://evil.example")).toBe("https://app.example.com/broker/callback");
   });
+
+  // Catches: the queue ("/advisor") being left out of the address because it is the default, so the callback can't tell a sign-in for the queue from one for no page.
+  it("carries the queue as a page too, so the return can tell it from no page at all", () => {
+    expect(brokerCallbackUrl("https://app.example.com", "/advisor")).toBe("https://app.example.com/broker/callback?next=%2Fadvisor");
+    expect(brokerCallbackUrl("https://app.example.com", null)).toBe("https://app.example.com/broker/callback");
+    expect(brokerCallbackUrl("https://app.example.com", "")).toBe("https://app.example.com/broker/callback");
+  });
 });
 
 describe("a session belongs to one firm address", () => {

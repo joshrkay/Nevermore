@@ -5,7 +5,7 @@ import {
   type SavedView, type ViewFilter, type WorkspaceTable,
 } from "@/lib/tableSettingsApi";
 import type { TableFields } from "@/lib/tableQuery";
-import { effectiveFilters, sameAddress, viewSort, type TableAddress } from "./address";
+import { effectiveFilters, sameQuestion, viewSort, type TableAddress } from "./address";
 import type { Readiness, TableDefinition } from "./columns";
 import type { useTableAddress } from "./useTableAddress";
 import { TABLE_REFRESH_MS, useFirmReady } from "./useTableRows";
@@ -75,6 +75,8 @@ export interface SavedViewsScreen {
   columnsStatus: "no_firm" | "loading" | "ready" | "failed";
   /** The database refuses the query on screen (a choice a field doesn't list): what it asks is not worth keeping. */
   refused: boolean;
+  /** The rows of the question on screen have settled (an answer or a refusal, not the previous question's rows kept while the next load is on its way): until then nobody knows whether the database refuses it. */
+  rowsSettled: boolean;
 }
 
 /**
@@ -103,6 +105,7 @@ export function useSavedViewsControl<K extends TableFields, Row, Context>(
   const listed = (id: string) => !!client.getQueryData<SavedView[]>(key)?.some((v) => v.id === id);
   const kind = table.id as WorkspaceTable;
   const refusedWords = `This view of the ${table.noun.plural} can't be shown, so it can't be saved.`;
+  const rowsWords = current.rowsSettled ? null : "Available once the rows have loaded.";
   const columnsWords =
     current.columnsStatus === "ready" ? null
     : current.columnsStatus === "failed" ? "Couldn't load your columns, so a view can't be saved yet."
@@ -115,18 +118,19 @@ export function useSavedViewsControl<K extends TableFields, Row, Context>(
   return {
     failed: table.viewsStatus === "failed",
     retry: list.retry,
-    saveBlocked: current.refused ? refusedWords : columnsWords,
-    keepBlocked: current.refused ? refusedWords : null,
+    saveBlocked: current.refused ? refusedWords : rowsWords ?? columnsWords,
+    keepBlocked: current.refused ? refusedWords : rowsWords,
     async save(name) {
       if (firmId === null) throw new Error("Available once your firm's details have loaded.");
-      if (current.refused || columnsWords) throw new Error(current.refused ? refusedWords : columnsWords!);
+      const blocked = current.refused ? refusedWords : rowsWords ?? columnsWords;
+      if (blocked) throw new Error(blocked);
       const from = location.address;
       const id = await saveView({ firmId, table: kind, name, ...screenAsView(table, from), columns: current.columns });
       await refresh();
       // The chips and the sort are the new view's own now, so the address holds none of them. A view the list doesn't hold yet would be dropped, and a
       // person who has gone somewhere else meanwhile is left there.
       const now = latest.current;
-      if (listed(id) && sameAddress(table, from, now.address)) now.change({ view: id, filters: [], sort: null }, { push: true });
+      if (listed(id) && sameQuestion(table, from, now.address)) now.change({ view: id, filters: [], sort: null }, { push: true });
     },
     async rename(viewId, name) {
       await renameSavedView(viewId, name);
@@ -148,12 +152,12 @@ export function useSavedViewsControl<K extends TableFields, Row, Context>(
       await refresh();
     },
     async update(viewId) {
-      if (current.refused) throw new Error(refusedWords);
+      if (current.refused || rowsWords) throw new Error(current.refused ? refusedWords : rowsWords!);
       const from = location.address;
       await changeSavedView(viewId, { ...screenAsView(table, from), columns: table.views.find((v) => v.id === viewId)?.columns ?? null });
       await refresh();
       const now = latest.current;
-      if (now.address.view === viewId && sameAddress(table, from, now.address)) now.change({ filters: [], sort: null }, { replace: true });
+      if (now.address.view === viewId && sameQuestion(table, from, now.address)) now.change({ filters: [], sort: null }, { replace: true });
     },
   };
 }

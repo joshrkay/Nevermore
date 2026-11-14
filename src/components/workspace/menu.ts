@@ -52,6 +52,8 @@ export const SETTINGS_LINKS: { label: string; description: string; to: string; o
 ];
 
 export const SETTINGS_PATH = "/settings";
+/** The page where a mailbox is connected and disconnected. */
+export const MAILBOX_PATH = "/advisor/mailbox";
 
 export const MENU_ITEMS: MenuItem[] = [
   {

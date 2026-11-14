@@ -28,6 +28,11 @@ export interface FieldDefinition<Kind extends FieldKind = FieldKind> {
    */
   choices?: readonly FieldChoice[];
   /**
+   * Whether the database refuses a value outside `choices` (the queue's `queue_field_choices`, and its state codes). Left out, the list is only what the
+   * screen offers: the database takes any value there, so a saved view that names another still runs and is not turned away.
+   */
+  choicesEnforced?: boolean;
+  /**
    * The direction a first click on a column of this field sorts in (CRM-S3.2a). Left out, it follows the kind: a date starts newest first
    * (what a person expects of "Submitted"), everything else ascending (A to Z, smallest first, and a choice in its own order). A date that
    * reads better soonest first ("Quote expires", "Waiting since": the longest wait is the oldest day) says "asc".

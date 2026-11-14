@@ -337,7 +337,21 @@ const fileOf = (f: z.infer<typeof fileSchema>): AccountFile => ({
   storagePath: f.storage_path,
 });
 
+const contactOf = (c: z.infer<typeof contactSchema>): ContactRow => ({
+  id: c.id, firstName: c.first_name, lastName: c.last_name, title: c.title, email: c.email, phone: c.phone, mobile: c.mobile, isMain: c.is_main, doNotEmail: c.do_not_email,
+});
+const opportunityOf = (o: z.infer<typeof opportunitySchema>): OpportunityRow => ({ id: o.id, name: o.name, stage: o.stage, targetStart: o.target_start, submissionId: o.submission_id });
+const quoteOf = (q: z.infer<typeof quoteSchema>): QuoteRow => ({
+  id: q.id, submissionId: q.submission_id, opportunityId: q.opportunity_id, opportunityName: q.opportunity_name, peoName: q.peo_name, status: q.status,
+  sentOn: q.sent_on, quoteReceivedOn: q.quote_received_on, quoteExpiresOn: q.quote_expires_on,
+});
+const activityOf = (a: z.infer<typeof activitySchema>): ActivityRow => ({
+  type: a.type, entryKey: a.entry_key, at: a.at, changeId: a.change_id, kind: a.kind, who: a.who, whoKind: a.who_kind, field: a.field,
+  from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name,
+});
+
 const FALLBACK = "Couldn't load the account. Try again.";
+const LIST_FALLBACK = "Couldn't load the list. Try again.";
 const SAVE_FALLBACK = "Couldn't save the account. Try again.";
 
 type DbError = { code?: string; message?: string };
@@ -371,30 +385,10 @@ export async function getAccountPage(firmId: string, accountId: string): Promise
     account: { ...fieldsOf(account as FieldsRow), status: account.status, owner: account.owner as { id: string; name: string } | null, sourcePartner: account.source_partner },
     canChange,
     tabs: {
-      contacts: {
-        count: tabs.contacts.count,
-        rows: tabs.contacts.rows.map((c) => ({
-          id: c.id, firstName: c.first_name, lastName: c.last_name, title: c.title, email: c.email, phone: c.phone, mobile: c.mobile, isMain: c.is_main, doNotEmail: c.do_not_email,
-        })),
-      },
-      opportunities: {
-        count: tabs.opportunities.count,
-        rows: tabs.opportunities.rows.map((o) => ({ id: o.id, name: o.name, stage: o.stage, targetStart: o.target_start, submissionId: o.submission_id })),
-      },
-      quotes: {
-        count: tabs.quotes.count,
-        rows: tabs.quotes.rows.map((q) => ({
-          id: q.id, submissionId: q.submission_id, opportunityId: q.opportunity_id, opportunityName: q.opportunity_name, peoName: q.peo_name, status: q.status,
-          sentOn: q.sent_on, quoteReceivedOn: q.quote_received_on, quoteExpiresOn: q.quote_expires_on,
-        })),
-      },
-      activity: {
-        count: tabs.activity.count,
-        rows: tabs.activity.rows.map((a) => ({
-          type: a.type, entryKey: a.entry_key, at: a.at, changeId: a.change_id, kind: a.kind, who: a.who, whoKind: a.who_kind, field: a.field,
-          from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name,
-        })),
-      },
+      contacts: { count: tabs.contacts.count, rows: tabs.contacts.rows.map(contactOf) },
+      opportunities: { count: tabs.opportunities.count, rows: tabs.opportunities.rows.map(opportunityOf) },
+      quotes: { count: tabs.quotes.count, rows: tabs.quotes.rows.map(quoteOf) },
+      activity: { count: tabs.activity.count, rows: tabs.activity.rows.map(activityOf) },
       files: { count: tabs.files.count, rows: tabs.files.rows.map(fileOf) },
     },
   };
@@ -402,6 +396,8 @@ export async function getAccountPage(firmId: string, accountId: string): Promise
 
 /** How many files a page of the Files list holds when the caller does not say. The database allows 100 at most. */
 export const ACCOUNT_FILES_PAGE_SIZE = 50;
+/** How many rows a page of a tab holds when the caller does not say. The database allows 100 at most. */
+export const ACCOUNT_TAB_PAGE_SIZE = 50;
 
 /**
  * An account's files that passed the virus check, newest first: a page of them and how many there are in all. Null when the person may not see the account.
@@ -423,6 +419,47 @@ export async function listAccountFiles(
   const parsed = tab(fileSchema).safeParse(data);
   if (!parsed.success) throw new AccountError("failed", "Couldn't load the files. Try again.");
   return { count: parsed.data.count, rows: parsed.data.rows.map(fileOf) };
+}
+
+/** The tabs that list more than the page's first five rows through `listAccountTab`. Files has `listAccountFiles`. */
+export interface AccountTabRows {
+  contacts: ContactRow;
+  opportunities: OpportunityRow;
+  quotes: QuoteRow;
+  activity: ActivityRow;
+}
+export type AccountListTab = keyof AccountTabRows;
+
+const tabShapes = {
+  contacts: [tab(contactSchema), contactOf],
+  opportunities: [tab(opportunitySchema), opportunityOf],
+  quotes: [tab(quoteSchema), quoteOf],
+  activity: [tab(activitySchema), activityOf],
+} as const;
+
+/**
+ * A page of one tab of an account's page, from the first row or any later one: the rows the page holds the first five of, and how many the tab holds in all.
+ * Null when the person may not see the account. Rows that are not the agreed shape for the tab are a failure, never a list with something missing.
+ */
+export async function listAccountTab<T extends AccountListTab>(
+  firmId: string,
+  accountId: string,
+  which: T,
+  options: { limit?: number; offset?: number } = {},
+): Promise<TabRows<AccountTabRows[T]> | null> {
+  const { data, error } = await supabase.rpc("account_tab", {
+    p_firm_id: firmId,
+    p_account_id: accountId,
+    p_tab: which,
+    p_limit: options.limit ?? ACCOUNT_TAB_PAGE_SIZE,
+    p_offset: options.offset ?? 0,
+  });
+  if (error) throw refusal(error, LIST_FALLBACK);
+  if (data === null) return null;
+  const [shape, rowOf] = tabShapes[which] as unknown as [ReturnType<typeof tab>, (row: unknown) => AccountTabRows[T]];
+  const parsed = shape.safeParse(data);
+  if (!parsed.success) throw new AccountError("failed", LIST_FALLBACK);
+  return { count: parsed.data.count, rows: (parsed.data.rows as unknown[]).map(rowOf) };
 }
 
 /**

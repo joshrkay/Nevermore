@@ -103,6 +103,12 @@ const FIELD_CHOICES: Partial<Record<QueueField, readonly FieldChoice[]>> = {
 };
 
 /**
+ * The choice fields whose values the database checks: it refuses a value outside the list (`queue_field_choices`; a state must be a state code). The
+ * other lists (missing items) are only what the screen offers, and the database takes any text there.
+ */
+const ENFORCED_CHOICES: readonly QueueField[] = ["pipeline_status", "intake_status", "states"];
+
+/**
  * A first click on a date column sorts newest first, except these two, where the person wants the oldest day first: the longest wait on a
  * PEO is the earliest "waiting since", and the quote about to lapse is the earliest expiry (the two orders the old Sort box offered). A
  * first click on Quotes sorts the most requests first (an intake with none has the number 0 and would otherwise fill the first page).
@@ -115,6 +121,7 @@ const queueFields = Object.fromEntries(
     label: FIELD_LABELS[id],
     kind: QUEUE_FIELDS[id],
     ...(FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id] } : {}),
+    ...(FIELD_CHOICES[id] && ENFORCED_CHOICES.includes(id) ? { choicesEnforced: true } : {}),
     ...(FIRST_DIRECTIONS[id] ? { firstDirection: FIRST_DIRECTIONS[id] } : {}),
   }]),
 ) as FieldDefinitions<Fields>;

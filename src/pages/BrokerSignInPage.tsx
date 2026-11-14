@@ -7,7 +7,7 @@ import FirmName from "@/components/FirmName";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
-import { brokerNext, startBrokerSignIn } from "@/lib/brokerAuth";
+import { BROKER_DEFAULT_NEXT, brokerNext, startBrokerSignIn } from "@/lib/brokerAuth";
 
 /**
  * Where a broker signs in with their Google or Microsoft account, which also lets the product send a submission to a
@@ -20,9 +20,10 @@ const BrokerSignInPage = () => {
   const location = useLocation();
   const [starting, setStarting] = useState<BrokerProvider | null>(null);
   const from = (location.state as { from?: { pathname: string; search?: string } } | null)?.from;
-  const next = brokerNext(from ? `${from.pathname}${from.search ?? ""}` : null);
+  // The page the broker was sent from, or none when they came to sign in directly (a failed mailbox then goes to the mailbox page, not to a page they never asked for).
+  const next = from ? brokerNext(`${from.pathname}${from.search ?? ""}`) : null;
 
-  if (!loading && user && !isAnonymous) return <Navigate to={next} replace />;
+  if (!loading && user && !isAnonymous) return <Navigate to={next ?? BROKER_DEFAULT_NEXT} replace />;
 
   const start = async (provider: BrokerProvider) => {
     setStarting(provider);

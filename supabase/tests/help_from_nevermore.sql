@@ -160,6 +160,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1029,7 +1030,7 @@ DECLARE
   helpers text[] := ARRAY['firm_role', 'is_firm_member', 'can_see_firm_record', 'can_read_firm_activity', 'can_read_peo_mail', 'colleague_in_my_firm',
     'intake_folder_firm_read_only', 'intake_folder_in_my_firm', 'intake_in_my_firm', 'intake_owner_in_my_firm', 'quote_request_in_my_firm',
     'can_change_firm_record', 'is_support_session', 'support_reads_firm', 'refuse_support_session'];
-  reads text[] := ARRAY['account_files', 'account_page', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
+  reads text[] := ARRAY['account_files', 'account_page', 'account_tab', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'record_history_list', 'retention_review_due', 'session_verified_fields'];
