@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -58,26 +58,27 @@ export function ExportButton<T extends ExportTable>({ firmId, table, columns, fi
   const running = useRef(false);
   const isRunning = phase.kind === "running";
   // The screen this button is on, as far as an export's file is concerned (D-245): who is signed in, the firm, the table, the filters and the columns it
-  // asks for, and whether downloads are off. By value, so the page drawing the button again with equal arrays changes nothing. `belongsTo` is that
-  // screen while the button is on it and null once it is gone (another page, another firm's page, the sign-in screen). The file is saved only to the
-  // screen it was asked on: its name says nothing of the firm or the filters (D-235), so one that arrived on another screen would be taken for that screen's.
+  // asks for, and whether downloads are off. By value, so the page drawing the button again with equal arrays changes nothing. `generation` counts the screens
+  // the button has been on: it goes up each time the one it is on ends, by a change of any of those or by the button going (another page, another firm's
+  // page, the sign-in screen). An export is saved only if the count is the one it was asked at, so it was on one screen the whole time, not merely on an equal
+  // one at the end (D-250). The file's name says nothing of the firm or the filters (D-235), so one that arrived on another screen would be taken for that screen's.
+  // The count goes up in a layout effect, as the change is committed: an answer can come in the moment between the page being drawn and React running its other
+  // effects, and would be read against the screen that has just gone (D-251).
   const { user } = useAuth();
   const scope = JSON.stringify([user?.id ?? null, firmId, table, filters, columns.map((c) => c.column), downloadsOff]);
-  const belongsTo = useRef<string | null>(null);
-  useEffect(() => {
-    belongsTo.current = scope;
-    return () => { belongsTo.current = null; };
-  }, [scope]);
+  const generation = useRef(0);
+  useLayoutEffect(() => () => { generation.current += 1; }, [scope]);
 
   const run = async () => {
     if (running.current) return;
     running.current = true;
     setPhase({ kind: "running" });
+    const askedOn = generation.current;
     try {
       // One zone for both: the days a date filter means, and the day in the file's name.
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const result = await exportTable(firmId, table, columns.map((c) => c.column), { filters, timeZone });
-      if (belongsTo.current !== scope) {
+      if (generation.current !== askedOn) {
         // The database has recorded it (and may have told the owners): say that no file came, since nothing on the screen it was asked on will.
         toast.message("An export you started finished after the page changed, so its file was not saved.");
         setPhase({ kind: "idle" });
@@ -100,7 +101,7 @@ export function ExportButton<T extends ExportTable>({ firmId, table, columns, fi
       setPhase({ kind: "done", message: `Exported ${result.rowCount.toLocaleString("en-US")} ${result.rowCount === 1 ? noun.singular : noun.plural}.` });
     } catch (error) {
       // A refusal for a screen the person has left is nothing for them to act on.
-      if (belongsTo.current !== scope) {
+      if (generation.current !== askedOn) {
         setPhase({ kind: "idle" });
         return;
       }

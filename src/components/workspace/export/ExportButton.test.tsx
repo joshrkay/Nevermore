@@ -1,3 +1,4 @@
+import { useLayoutEffect, useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -50,12 +51,17 @@ const pressed = async (ui: React.ReactElement) => {
   expect(exportTable).toHaveBeenCalledTimes(1);
   return view;
 };
+/** Waits until the export has been dealt with, saved or not, and says it was not saved: a file that was saved shows as one, not as a toast that never came. */
+const toldNotSaved = async () => {
+  await waitFor(() => expect(saved.length + vi.mocked(toast.message).mock.calls.length).toBeGreaterThan(0));
+  expect(saved).toHaveLength(0);
+  expect(toast.message).toHaveBeenCalledTimes(1);
+  expect(toast.message).toHaveBeenCalledWith(NOT_SAVED);
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+};
 const notSaved = async () => {
   arrive(answer);
-  await waitFor(() => expect(toast.message).toHaveBeenCalledTimes(1));
-  expect(toast.message).toHaveBeenCalledWith(NOT_SAVED);
-  expect(saved).toHaveLength(0);
-  expect(URL.createObjectURL).not.toHaveBeenCalled();
+  await toldNotSaved();
 };
 /** A button that is still on the page after the export it was pressed for went stale is as it was before the press: not "Exporting…", nothing said under it. */
 const asBeforeThePress = () => {
@@ -139,6 +145,81 @@ describe("ExportButton: the screen an export belongs to", () => {
     const view = await pressed(inWorkspace(false, <ExportButton {...partners} />));
     view.rerender(inWorkspace(true, <ExportButton {...partners} />));
     await notSaved();
+  });
+
+  // Catches: the file saved because the screen is the same at the end as it was at the start, though it was another one in between (D-250). The comparison
+  // of the screen at the end proves only that it came back, not that it never changed: a support session that began and ended, or a filter put back, is a
+  // change the person made and the export was not asked on. Each case changes one part of the screen and puts it back before the database answers.
+  const awayAndBack: [string, () => React.ReactElement, () => React.ReactElement, () => React.ReactElement][] = [
+    ["the firm", () => <ExportButton {...partners} />, () => <ExportButton {...partners} firmId="firm-b" />, () => <ExportButton {...partners} />],
+    [
+      "the filters",
+      () => <ExportButton {...partners} />,
+      () => <ExportButton {...partners} filters={[{ field: "kind", op: "any_of", value: ["accounting"] }]} />,
+      () => <ExportButton {...partners} filters={[{ field: "kind", op: "any_of", value: ["law_firm"] }]} />,
+    ],
+    [
+      "the columns",
+      () => <ExportButton {...partners} />,
+      () => <ExportButton {...partners} columns={[partners.columns[1], partners.columns[0]]} />,
+      () => <ExportButton {...partners} columns={[...partners.columns]} />,
+    ],
+    [
+      "the person",
+      () => <ExportButton {...partners} />,
+      () => { signedIn = { id: "u2" }; return <ExportButton {...partners} />; },
+      () => { signedIn = { id: "u1" }; return <ExportButton {...partners} />; },
+    ],
+    [
+      "whether downloads are off (Nevermore support begun and ended)",
+      () => inWorkspace(false, <ExportButton {...partners} />),
+      () => inWorkspace(true, <ExportButton {...partners} />),
+      () => inWorkspace(false, <ExportButton {...partners} />),
+    ],
+  ];
+  it.each(awayAndBack)("saves nothing when %s changed and changed back before the database answered", async (_part, start, away, back) => {
+    const view = await pressed(start());
+    view.rerender(away());
+    view.rerender(back());
+    await notSaved();
+    asBeforeThePress();
+  });
+
+  // Catches: the screen's change known to the button only when React runs the effects that are not layout effects, which it does after the page is drawn
+  // (D-251). For a change that no event of the person's made (an answer, a session that ended, support begun) React draws the page and leaves those effects
+  // to a later turn, so a database answer that comes between the two would be taken for one that came before the change, and its file saved to a screen it was
+  // not asked on. The tests above flush every effect before they answer. This one answers when the page has been drawn and nothing else has run, the way a
+  // browser that took long over the drawing does (React hands the rest of its work on after about 5 ms): the answer is waiting, and is read in that gap.
+  const takeLong = () => { for (const until = performance.now() + 20; performance.now() < until; ) { /* a page that took long to draw */ } };
+  let change: (to: { firmId?: string; shown?: boolean }) => void = () => undefined;
+  let whenDrawn: () => void = () => undefined;
+  const Page = () => {
+    const [on, setOn] = useState({ firmId: "firm-a", shown: true });
+    change = (to) => setOn((now) => ({ ...now, ...to }));
+    useLayoutEffect(() => whenDrawn());
+    return on.shown ? <ExportButton {...partners} firmId={on.firmId} /> : null;
+  };
+  it.each([
+    ["the firm changed", { firmId: "firm-b" }],
+    ["the button went from the page", { shown: false }],
+  ])("saves nothing when %s and the database answers as the page is drawn, before its effects have run", async (_what, to) => {
+    await pressed(<Page />);
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const wasActing = env.IS_REACT_ACT_ENVIRONMENT;
+    const windowEvent = Object.getOwnPropertyDescriptor(window, "event");
+    // Outside `act`, React draws as it does in a browser: this update is nobody's event, and it is drawn on its own turn.
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      whenDrawn = () => { whenDrawn = () => undefined; arrive(answer); takeLong(); };
+      // jsdom leaves the click on `window.event` after the press, and React takes an update made while one is there for the person's own (drawn at once,
+      // effects and all); a browser does not, and an answer is not a click.
+      Object.defineProperty(window, "event", { get: () => undefined, configurable: true });
+      change(to);
+      await toldNotSaved();
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = wasActing;
+      if (windowEvent) Object.defineProperty(window, "event", windowEvent);
+    }
   });
 
   // Catches: a refusal that arrives after the person has gone drawn as an alert (with a "Sign in again" or "Try again" that belongs to a screen they have
