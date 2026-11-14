@@ -528,6 +528,18 @@ _Avoid_: status (an account has a status, an opportunity a stage), pipeline stag
 An account's website reduced to what the duplicate match compares: lower case, without the scheme, a login, the path, query or port, a trailing dot or a leading `www.`. Worked out from the website, never typed. Whether it is a free-mail domain is the duplicate match's question, not stored here.
 _Avoid_: URL, host
 
+**Level rule** (code: `can_change_firm_record(firm, owner)`; story CRM-A2.1a, D-209):
+The one question every change to a record of a firm's CRM asks of the caller, written once: may they change a record of this firm that this person owns? An agent changes the records they own; a lead their own and those of their team and of every team under it; an owner of the firm the firm's; a record with no owner, or whose owner has left, only an owner. It does not read the firm's visibility setting: "everyone sees everything" lets a member see a colleague's record, never change it. Nevermore support is no member and changes nothing. Adding a contact, a call, a note or a task is open to anyone who may see the record, so the adding stories do not ask it. Not callable by the browser: each write function asks it after the one write guard (a closing firm and Nevermore support are refused first), and an account's page answers it as `can_change` so the screen shows Edit only to those it will serve.
+_Avoid_: permission, edit rights, ACL
+
+**Account's page** (code: `account_page(firm, account)`; story CRM-A2.1a, screen 17):
+What the page of one account draws, read in one call: the account's own fields with its version, its worked-out status and source (with the referral partner's name when its first intake came by a partner's link), its owner by name, and for each tab its count and first five rows: Contacts, Opportunities (name, worked-out stage, target start, and the submission its name opens until the opportunity has a page of its own, D-187), Quotes (a quote request on an intake of its opportunities: PEO, status, sent, quote dates), Activity and Files. There is no Renewals tab (D-186). It answers only someone who may see the account, and answers the same nothing for an account that is not there. The save of the account's own fields (`update_account`) is edit in place, from a version, by the level rule; the owner, archiving and source are not among them.
+_Avoid_: account view, 360 view, detail page
+
+**Account's files** (code: `account_files(firm, account)`; story CRM-A2.1a, D-199):
+The files of the account's intakes that passed the virus check (scan verdict clean; never one pending, quarantined, failed or not scanned), newest first, named and placed and never with what was read out of them. Each stays under its own access rule: the list gives no link, a link is a signed link made by Storage only to someone its file rule lets read the file, and a support session is given none. Uploading a file to an account is CRM-A2.5's.
+_Avoid_: attachments, documents (the intake's own word for what a prospect uploads)
+
 **Activity tab**:
 The tab of an account's page that lists, newest first, its calls, notes and tasks (from Epic 6 its emails) together with its record history, with a filter for All, Calls, Notes, Tasks and Changes (D-212). It is never the **Firm activity** record.
 _Avoid_: activity feed, audit log, timeline (on its own)
