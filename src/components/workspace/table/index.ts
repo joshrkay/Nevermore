@@ -1,6 +1,7 @@
 export * from "./address";
 export * from "./columns";
 export { DataTable } from "./DataTable";
+export { FilterRow } from "./FilterRow";
 export * from "./operators";
 export { Pager } from "./Pager";
 export { refusedQueryReason } from "./refusal";

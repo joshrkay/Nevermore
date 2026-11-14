@@ -63,7 +63,7 @@ const cut = (s: string, max: number) => {
 const length = (s: string) => Array.from(s).length;
 
 // ---- escaping: a backslash keeps ":" and "," (and itself) from being read as separators ----
-const escapeText = (s: string) => s.replace(/[\\:,]/g, (c) => `\\${c}`);
+export const escapeText = (s: string) => s.replace(/[\\:,]/g, (c) => `\\${c}`);
 const unescapeText = (s: string) => s.replace(/\\([\\:,])/g, "$1");
 /** Splits on a separator that is not escaped, leaving the pieces' escapes in place. */
 function splitOn(s: string, sep: ":" | ","): string[] {
@@ -95,8 +95,8 @@ const textValue = (raw: string): string | undefined => {
   return t !== "" && length(t) <= FILTER_TEXT_MAX ? t : undefined;
 };
 
-/** The value a filter's text holds for an operator of this shape, or undefined when it is not one. */
-function readValue(shape: OperatorShape, raw: string | undefined): unknown {
+/** The value a filter's text holds for an operator of this shape, or undefined when it is not one. The filter row's editor checks what is typed with this same function, so it takes exactly what the address does. */
+export function readValue(shape: OperatorShape, raw: string | undefined): unknown {
   if (shape === "none") return raw === undefined ? null : undefined;
   if (raw === undefined) return undefined;
   switch (shape) {
@@ -147,7 +147,8 @@ const writeValue = (value: unknown): string | null => {
   if (Array.isArray(value)) return value.map((v) => (typeof v === "string" ? escapeText(v) : String(v))).join(",");
   return typeof value === "string" ? escapeText(value) : String(value);
 };
-const writeFilter = (f: { field: string; op: string; value?: unknown }): string => {
+/** One filter as the address writes it (`field:operator:value`): also its key, since two equal filters are one. */
+export const writeFilter = (f: { field: string; op: string; value?: unknown }): string => {
   const value = writeValue(f.value);
   return value === null ? `${escapeText(f.field)}:${escapeText(f.op)}` : `${escapeText(f.field)}:${escapeText(f.op)}:${value}`;
 };
@@ -289,18 +290,24 @@ export function addressToSearch<K extends TableFields>(address: TableAddress<K>)
 /** Whether two addresses are the same place: the same page, sort, filters, view and search (S3.4a asks this to tell a view that was modified). */
 export const sameAddress = <K extends TableFields>(a: TableAddress<K>, b: TableAddress<K>): boolean => addressToSearch(a) === addressToSearch(b);
 
+/** What can change in an address: any part but `held`, and, for the filter row, which held filters stay (`heldFilters`, as written in the address). */
+export type AddressChange<K extends TableFields> = Partial<Omit<TableAddress<K>, "held">> & { heldFilters?: string[] };
+
 /**
  * The address after a change. Anything other than the page going to another page (a filter, the sort, the view, the search)
  * starts again from the first page, always: the rows under the old page number mean nothing under the new question (CRM-S3.5).
  */
-export function changeAddress<K extends TableFields>(address: TableAddress<K>, change: Partial<Omit<TableAddress<K>, "held">>): TableAddress<K> {
+export function changeAddress<K extends TableFields>(address: TableAddress<K>, change: AddressChange<K>): TableAddress<K> {
   const onlyThePage = Object.keys(change).every((k) => k === "page");
-  const next = { ...address, ...change, held: { ...address.held } };
+  const { heldFilters, ...rest } = change;
+  const next = { ...address, ...rest, held: { ...address.held } };
   if (!onlyThePage) next.page = 1;
   // A view or sort a person chose replaces the one that was held.
   if ("view" in change) next.held.view = null;
   if ("sort" in change) next.held.sort = null;
   // A caller that states the whole filter list (a checkbox, a removed chip, "Clear filters") replaces the held filters too.
   if ("filters" in change) next.held.filters = [];
+  // The filter row keeps (or removes one of) the filters held for fields that have not loaded, by saying which ones are left.
+  if (heldFilters) next.held.filters = [...heldFilters].sort();
   return next;
 }

@@ -103,6 +103,14 @@ const renderAt = (url = "/advisor") =>
 // The table's body: the rows (or the grey rows). It, not the headers, is what is busy and dimmed while the next answer arrives.
 const tableBody = () => screen.getByRole("table").querySelector("tbody")!;
 const where = () => screen.getByTestId("location").textContent;
+// The filter row (CRM-S3.3a) and what it holds. A yes-or-no listed filter is set with its button and "Apply".
+const filterRow = () => screen.getByRole("group", { name: "Filters" });
+const emptyState = () => document.querySelector<HTMLElement>("[data-empty]")!;
+const setYes = async (user: ReturnType<typeof userEvent.setup>, label: string, answer: "Yes" | "No" = "Yes") => {
+  await user.click(screen.getByRole("button", { name: `Filter by ${label}` }));
+  if (answer === "No") await user.selectOptions(screen.getByLabelText(label), "No");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+};
 
 const companyOrder = () =>
   screen
@@ -248,7 +256,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockReturnValue(new Promise(() => {}));
       renderAt();
       const status = spoken()[0];
-      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
+      await setYes(userEvent.setup(), "Waiting on a PEO");
       await waitFor(() => expect(where()).toBe("?filter=waiting_on_peo:is:true"));
       expect(spoken()).toHaveLength(1);
       expect(spoken()[0]).toBe(status);
@@ -262,8 +270,7 @@ describe("AdvisorDashboardPage", () => {
         listQueue.mockReturnValue(new Promise(() => {}));
         renderAt();
         expect(screen.getByRole("searchbox", { name: "Search" })).toBeEnabled();
-        expect(screen.getByLabelText("Needs advisor action only")).toBeEnabled();
-        expect(screen.getByLabelText("Waiting on a PEO only")).toBeEnabled();
+        for (const name of ["Filter by Needs advisor action", "Filter by Waiting on a PEO", "Add filter"]) expect(screen.getByRole("button", { name })).not.toHaveAttribute("aria-disabled");
         expect(screen.getByRole("button", { name: "Company" })).toBeEnabled();
         // Refresh stays in the tab order, says why it can't be used, and ignores the click.
         const refresh = screen.getByRole("button", { name: "Refresh" });
@@ -643,24 +650,612 @@ describe("AdvisorDashboardPage", () => {
     expect(screen.queryByTestId("needs-action-s2")).not.toBeInTheDocument();
   });
 
+  describe("the filter row (CRM-S3.3a)", () => {
+    // Opens the editor for a field: its button when the table lists it, else "Add filter" and the field in its list.
+    const openFor = async (user: ReturnType<typeof userEvent.setup>, label: string) => {
+      const listed = screen.queryByRole("button", { name: `Filter by ${label}` });
+      if (listed) return user.click(listed);
+      await user.click(screen.getByRole("button", { name: "Add filter" }));
+      await user.click(within(screen.getByRole("list", { name: "Fields to filter by" })).getByRole("button", { name: label }));
+    };
+    const type = (label: string, value: string): void => { fireEvent.change(screen.getByLabelText(label), { target: { value } }); };
+    const apply = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: "Apply" }));
+    const choose = async (user: ReturnType<typeof userEvent.setup>, ...labels: string[]) => {
+      for (const l of labels) await user.click(within(screen.getByRole("group", { name: "Choices" })).getByRole("checkbox", { name: l }));
+    };
+    const chip = (words: string) => screen.getByRole("button", { name: words });
+    const mounted = async (url = "/advisor", rows: unknown[] = [row()]) => {
+      listQueue.mockResolvedValue(rows);
+      renderAt(url);
+      await screen.findByRole("table");
+      await act(async () => {});
+      return userEvent.setup();
+    };
+    // A table that also has the kinds the queue lacks: a person (who can be chosen) and one with no listed values.
+    const withMoreKinds = () => setTable({
+      ...QUEUE_TABLE,
+      fields: {
+        ...QUEUE_TABLE.fields,
+        owner: { label: "Owner", kind: "person", choices: [{ value: "u1", label: "Pat Agent" }, { value: "u2", label: "Sam Agent" }] },
+        mentor: { label: "Mentor", kind: "person" },
+        tags: { label: "Tags", kind: "choices" },
+      } as never,
+    });
+
+    // Catches: a listed filter that does nothing, or one that writes the address without asking the database for the same rows.
+    it("sets a listed yes-or-no filter from its button: it goes in the address, is sent to the database, and shows as a chip", async () => {
+      const user = await mounted();
+      await user.click(screen.getByRole("button", { name: "Filter by Needs advisor action" }));
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+      await waitFor(() => expect(where()).toBe("?filter=needs_action:is:true"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action")] }));
+      expect(screen.getByRole("button", { name: "Needs advisor action: yes" })).toBeInTheDocument();
+    });
+
+    // Catches: an operator the database takes missing from the editor, an operator offered for the wrong kind, or a value written in a shape the database does not read.
+    // The right filter is in the address and is what listQueue is asked for, for EVERY operator of every kind the table has.
+    describe("adds a filter of each kind with each operator", () => {
+      type Case = [string, string, string, (u: ReturnType<typeof userEvent.setup>) => Promise<void> | void, Record<string, unknown>, string];
+      const cases: Case[] = [
+        // text
+        ["text contains", "Company", "contains", () => type("Text", "acme"), { field: "company_name", op: "contains", value: "acme" }, "company_name:contains:acme"],
+        ["text is", "Company", "is", () => type("Text", "Acme Co"), { field: "company_name", op: "is", value: "Acme Co" }, "company_name:is:Acme+Co"],
+        ["text is empty", "Company", "is empty", () => {}, { field: "company_name", op: "is_empty" }, "company_name:is_empty"],
+        // number
+        ["number is", "Employees", "is", () => type("Number", "5"), { field: "employee_count", op: "is", value: 5 }, "employee_count:is:5"],
+        ["number more than", "Employees", "is more than", () => type("Number", "50"), { field: "employee_count", op: "more_than", value: 50 }, "employee_count:more_than:50"],
+        ["number less than", "Employees", "is less than", () => type("Number", "8"), { field: "employee_count", op: "less_than", value: 8 }, "employee_count:less_than:8"],
+        ["number between", "Employees", "is between", () => { type("From", "10"); type("To", "50"); }, { field: "employee_count", op: "between", value: [10, 50] }, "employee_count:between:10,50"],
+        // date
+        ["date on", "Submitted", "is on", () => type("Day", "2026-11-01"), { field: "submitted_at", op: "on", value: "2026-11-01" }, "submitted_at:on:2026-11-01"],
+        ["date before", "Submitted", "is before", () => type("Day", "2026-11-01"), { field: "submitted_at", op: "before", value: "2026-11-01" }, "submitted_at:before:2026-11-01"],
+        ["date after", "Submitted", "is after", () => type("Day", "2026-11-01"), { field: "submitted_at", op: "after", value: "2026-11-01" }, "submitted_at:after:2026-11-01"],
+        ["date between", "Submitted", "is between", () => { type("From", "2026-11-01"); type("To", "2026-11-30"); }, { field: "submitted_at", op: "between", value: ["2026-11-01", "2026-11-30"] }, "submitted_at:between:2026-11-01,2026-11-30"],
+        ["date in the next N days", "Submitted", "is in the next N days", () => type("Number of days", "7"), { field: "submitted_at", op: "in_next_days", value: 7 }, "submitted_at:in_next_days:7"],
+        ["date in the last N days", "Submitted", "is in the last N days", () => type("Number of days", "30"), { field: "submitted_at", op: "in_last_days", value: 30 }, "submitted_at:in_last_days:30"],
+        // one choice
+        ["choice is any of", "Status", "is any of", (u) => choose(u, "Won", "Lost"), { field: "pipeline_status", op: "any_of", value: ["won", "lost"] }, "pipeline_status:any_of:won,lost"],
+        ["choice is none of", "Status", "is none of", (u) => choose(u, "Won"), { field: "pipeline_status", op: "none_of", value: ["won"] }, "pipeline_status:none_of:won"],
+        ["choice is empty", "Status", "is empty", () => {}, { field: "pipeline_status", op: "is_empty" }, "pipeline_status:is_empty"],
+        // several choices
+        ["choices includes any of", "States", "includes any of", (u) => choose(u, "CA", "NY"), { field: "states", op: "any_of", value: ["CA", "NY"] }, "states:any_of:CA,NY"],
+        ["choices includes none of", "States", "includes none of", (u) => choose(u, "CA"), { field: "states", op: "none_of", value: ["CA"] }, "states:none_of:CA"],
+        ["choices is empty", "States", "is empty", () => {}, { field: "states", op: "is_empty" }, "states:is_empty"],
+        // yes or no
+        ["yes", "Has new PEO mail", "", () => {}, { field: "has_new_peo_mail", op: "is", value: true }, "has_new_peo_mail:is:true"],
+        ["no", "Has new PEO mail", "", async () => { await userEvent.selectOptions(screen.getByLabelText("Has new PEO mail"), "No"); }, { field: "has_new_peo_mail", op: "is", value: false }, "has_new_peo_mail:is:false"],
+        // person (a table that has one: the queue has none yet, CRM-A1.1)
+        ["person is any of", "Owner", "is any of", (u) => choose(u, "Pat Agent"), { field: "owner", op: "any_of", value: ["u1"] }, "owner:any_of:u1"],
+        ["person is me", "Owner", "is me", () => {}, { field: "owner", op: "me" }, "owner:me"],
+        ["person is my team", "Owner", "is my team", () => {}, { field: "owner", op: "my_team" }, "owner:my_team"],
+        // a field whose values the table does not list: typed, separated by commas
+        ["typed values", "Tags", "includes any of", () => type("Values, separated by commas", "a, b"), { field: "tags", op: "any_of", value: ["a", "b"] }, "tags:any_of:a,b"],
+      ];
+      it.each(cases)("%s", async (_n, label, operator, fill, expected, address) => {
+        withMoreKinds();
+        const user = await mounted();
+        await openFor(user, label);
+        if (operator) await user.selectOptions(screen.getByLabelText("Condition"), operator);
+        await fill(user);
+        await apply(user);
+        await waitFor(() => expect(where()).toBe(`?filter=${address}`));
+        expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [expected] }));
+        // The editor is closed and a chip says what is in force.
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(within(screen.getByRole("list", { name: "Filters in force" })).getAllByRole("listitem")).toHaveLength(1);
+      });
+
+      // Catches: the editor offering an operator the codec and the database do not take, or leaving one out (the two lists drifting).
+      it("offers exactly the operators of the field's kind, in plain words, from the one list the codec reads", async () => {
+        withMoreKinds();
+        const user = await mounted();
+        const offered = async (label: string) => {
+          await openFor(user, label);
+          const options = within(screen.getByLabelText("Condition")).getAllByRole("option").map((o) => o.textContent);
+          await user.keyboard("{Escape}");
+          return options;
+        };
+        const labels = (kind: keyof typeof OPERATORS) => Object.values(OPERATORS[kind]).map((o) => o.label);
+        expect(await offered("Company")).toEqual(labels("text"));
+        expect(await offered("Employees")).toEqual(labels("number"));
+        expect(await offered("Submitted")).toEqual(labels("date"));
+        expect(await offered("Status")).toEqual(labels("choice"));
+        expect(await offered("States")).toEqual(labels("choices"));
+        expect(await offered("Owner")).toEqual(labels("person"));
+        // A person's "is any of" needs people to choose from (CRM-A1.1 gives them): without a list, only "me" and "my team" are offered.
+        expect(await offered("Mentor")).toEqual(["is me", "is my team"]);
+      });
+    });
+
+    // Catches: a filter shown with the database's words, or a chip that is not the one `filterInWords` writes in the empty state.
+    it("shows one chip per filter in the address, worded as the empty state words it, each with a remove button that says what it removes", async () => {
+      await mounted("/advisor?filter=pipeline_status:any_of:won,lost&filter=employee_count:more_than:50&filter=states:is_empty");
+      const list = screen.getByRole("list", { name: "Filters in force" });
+      expect(within(list).getAllByRole("listitem").map((i) => i.textContent)).toEqual(["Employees is more than 50", "Status is any of Won or Lost", "States is empty"]);
+      expect(screen.getByRole("button", { name: "Remove filter: Status is any of Won or Lost" })).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Filters" })).toContainElement(list);
+    });
+
+    // Catches: a tab's own filter appearing as a chip that can be removed (it would let the person remove what the tab is).
+    it("shows no chip for a tab's own filter: the tab is its control", async () => {
+      await mounted("/advisor?view=won");
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("won")] }));
+      expect(screen.queryByRole("list", { name: "Filters in force" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Remove filter/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+    });
+
+    // Catches: a bookmark or a link from a colleague losing its filters, or the colleague's table asking for something else (the database applies their own visibility).
+    it("shows the chips of a bookmarked address and asks for exactly those rows, so a colleague who opens the link sees the same filters", async () => {
+      const link = "/advisor?filter=employee_count:between:10,50&filter=needs_action:is:true&sort=company_name";
+      await mounted(link);
+      expect(screen.getByRole("button", { name: "Employees is between 10 and 50" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Needs advisor action: yes" })).toBeInTheDocument();
+      const asked = listQueue.mock.calls.at(-1)![0];
+      cleanup();
+      listQueue.mockClear();
+      await mounted(link);
+      // The same address asks the same question; which rows answer it is the database's, over the viewer's own membership.
+      expect(listQueue).toHaveBeenLastCalledWith(asked);
+      expect(where()).toBe("?filter=employee_count:between:10,50&filter=needs_action:is:true&sort=company_name");
+    });
+
+    // Catches: removing a chip leaving the filter in force, removing the wrong one, or dropping the page to somewhere else.
+    it("removes one filter from its chip, keeps the others, and goes back to the first page", async () => {
+      const user = await mounted("/advisor?page=2&filter=employee_count:more_than:50&filter=needs_action:is:true");
+      listQueue.mockResolvedValue({ rows: [row()], total: 120 });
+      await user.click(screen.getByRole("button", { name: "Remove filter: Employees is more than 50" }));
+      await waitFor(() => expect(where()).toBe("?filter=needs_action:is:true"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("needs_action")] }));
+      expect(screen.queryByRole("button", { name: "Employees is more than 50" })).not.toBeInTheDocument();
+      // The field's own button is back, now that nothing filters it.
+      expect(screen.getByRole("button", { name: "Filter by Employees" })).toBeInTheDocument();
+    });
+
+    // Catches: a chip that cannot be changed (a person would have to remove and rebuild it), or an editor that does not start from the filter's values.
+    it("changes a filter by clicking its chip: the editor starts from its values, and applying replaces it", async () => {
+      const user = await mounted("/advisor?filter=employee_count:more_than:50");
+      await user.click(chip("Employees is more than 50"));
+      expect(screen.getByLabelText("Condition")).toHaveValue("more_than");
+      expect(screen.getByLabelText("Number")).toHaveValue(50);
+      await user.selectOptions(screen.getByLabelText("Condition"), "is between");
+      type("From", "10");
+      type("To", "20");
+      await apply(user);
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:between:10,20"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "employee_count", op: "between", value: [10, 20] }] }));
+      expect(screen.queryByRole("button", { name: "Employees is more than 50" })).not.toBeInTheDocument();
+      expect(screen.getByRole("list", { name: "Filters in force" }).querySelectorAll("li")).toHaveLength(1);
+    });
+
+    // Catches: changing a chosen list dropping a value the table does not list, unseen.
+    it("keeps a value the table does not list when a list is changed, shown in quotes as written", async () => {
+      const user = await mounted("/advisor?filter=pipeline_status:any_of:won,zzz");
+      await user.click(chip("Status is any of Won or “zzz”"));
+      expect(within(screen.getByRole("group", { name: "Choices" })).getByRole("checkbox", { name: "“zzz”" })).toBeChecked();
+      await choose(user, "Lost");
+      await apply(user);
+      await waitFor(() => expect(where()).toBe("?filter=pipeline_status:any_of:won,zzz,lost"));
+    });
+
+    // Catches: the choice list not being searchable, or searching by value instead of by the words a person reads.
+    it("searches the choices by their words", async () => {
+      const user = await mounted();
+      await openFor(user, "Status");
+      await user.type(screen.getByLabelText("Search choices"), "won");
+      const group = screen.getByRole("group", { name: "Choices" });
+      expect(within(group).getAllByRole("checkbox").map((c) => (c as HTMLInputElement).labels?.[0].textContent)).toEqual(["Won"]);
+      await user.clear(screen.getByLabelText("Search choices"));
+      await user.type(screen.getByLabelText("Search choices"), "zzzz");
+      expect(within(group).getByText("Nothing matches that search.")).toBeInTheDocument();
+    });
+
+    // Catches: "Clear filters" clearing the tab, the search or the sort too (D-159), staying when there is nothing to clear, or not being a step Back undoes.
+    it("clears every filter, keeps the tab, search and sort, shows only when there is a filter, and is a step Back undoes", async () => {
+      const user = await mounted("/advisor?view=won&q=acme&sort=company_name&filter=employee_count:more_than:50&filter=needs_action:is:true");
+      await user.click(within(filterRow()).getByRole("button", { name: "Clear filters" }));
+      await waitFor(() => expect(where()).toBe("?view=won&q=acme&sort=company_name"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("won")], search: "acme", sort: { field: "company_name", direction: "asc" } }));
+      expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=employee_count:more_than:50&filter=needs_action:is:true&sort=company_name"));
+    });
+
+    // Catches: an address that cannot be undone (the row replacing history), or a change that keeps the page number the old question had.
+    it("makes adding, changing and removing a filter each a step Back undoes, and starts again from page 1", async () => {
+      listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
+      renderAt("/advisor?page=3");
+      await screen.findByText("101 to 150 of 375 submissions");
+      const user = userEvent.setup();
+      await openFor(user, "Employees");
+      type("Number", "5");
+      await apply(user);
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:is:5"));
+      await user.click(chip("Employees is 5"));
+      type("Number", "6");
+      await apply(user);
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:is:6"));
+      await user.click(screen.getByRole("button", { name: "Remove filter: Employees is 6" }));
+      await waitFor(() => expect(where()).toBe(""));
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:is:6"));
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:is:5"));
+      fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+      await waitFor(() => expect(where()).toBe("?page=3"));
+    });
+
+    // Catches: the count above the table not following the filters ("the count above the table is of what matches").
+    it("changes the count above the table to what matches the new filter", async () => {
+      listQueue.mockImplementation(async ({ filters }: { filters: unknown[] }) => ({ rows: [row()], total: filters.length ? 1 : 375 }));
+      renderAt();
+      await screen.findByText("1 to 50 of 375 submissions");
+      await setYes(userEvent.setup(), "Needs advisor action");
+      expect(await screen.findByText("1 to 1 of 1 submission")).toBeInTheDocument();
+    });
+
+    // Catches: two filters on different fields replacing each other, or only one reaching the database ("filters combine with and").
+    it("combines filters with and: both are in the address and both are sent", async () => {
+      const user = await mounted("/advisor?filter=employee_count:more_than:50");
+      await setYes(user, "Needs advisor action");
+      await waitFor(() => expect(where()).toBe("?filter=employee_count:more_than:50&filter=needs_action:is:true"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "employee_count", op: "more_than", value: 50 }, yes("needs_action")] }));
+    });
+
+    // Catches: "Add filter" offering a field twice, offering one that is already filtered, leaving one out, or offering the listed ones.
+    it("lists the table's own filters as buttons and offers every OTHER field under Add filter", async () => {
+      await mounted();
+      const listedLabels = ["Needs advisor action", "Waiting on a PEO", "Has new PEO mail", "States", "Employees", "Submitted"];
+      expect(within(filterRow()).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent).slice(0, 6)).toEqual(listedLabels.map((l) => `Filter by ${l}`));
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Add filter" }));
+      const offered = within(screen.getByRole("list", { name: "Fields to filter by" })).getAllByRole("button").map((b) => b.textContent);
+      const everyLabel = Object.values(QUEUE_TABLE.fields).map((f) => f.label);
+      expect([...offered].sort()).toEqual(everyLabel.filter((l) => !listedLabels.includes(l)).sort());
+      // Searchable by the field's words.
+      await user.type(screen.getByLabelText("Search fields"), "quote");
+      expect(within(screen.getByRole("list", { name: "Fields to filter by" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["Earliest quote expiry", "Quote requests sent", "Quote requests with new PEO mail", "Quotes received"]);
+    });
+
+    // Catches: a field with a filter still offered (a second filter on it from the row), or its listed button left beside its chip.
+    it("takes a filtered field out of Add filter and out of the listed buttons: its chip is its control", async () => {
+      const user = await mounted("/advisor?filter=company_name:contains:acme&filter=employee_count:is:5");
+      await user.click(screen.getByRole("button", { name: "Add filter" }));
+      expect(within(screen.getByRole("list", { name: "Fields to filter by" })).queryByRole("button", { name: "Company" })).not.toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("button", { name: "Filter by Employees" })).not.toBeInTheDocument();
+    });
+
+    // Catches: an address that carries two filters on one field (a hand-written one) losing one, or one of them being stuck.
+    it("shows two filters on one field as two chips, each removable on its own", async () => {
+      const user = await mounted("/advisor?filter=submitted_at:after:2026-10-01&filter=submitted_at:before:2026-11-01");
+      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [
+        { field: "submitted_at", op: "after", value: "2026-10-01" }, { field: "submitted_at", op: "before", value: "2026-11-01" },
+      ] }));
+      expect(screen.getAllByRole("button", { name: /^Remove filter: Submitted/ })).toHaveLength(2);
+      await user.click(screen.getByRole("button", { name: "Remove filter: Submitted is after Oct 1, 2026" }));
+      await waitFor(() => expect(where()).toBe("?filter=submitted_at:before:2026-11-01"));
+    });
+
+    describe("the limit of 20", () => {
+      const filters = (n: number) => Array.from({ length: n }, (_, i) => `filter=employee_count:is:${i + 1}`).join("&");
+      // Catches: a 21st filter being offered (the database would refuse the whole question), or no reason being given for the missing button.
+      it("makes Add filter and the listed buttons unavailable at 20, says why, and keeps the chips editable", async () => {
+        const user = await mounted(`/advisor?${filters(20)}`);
+        const add = screen.getByRole("button", { name: "Add filter" });
+        expect(add).toHaveAttribute("aria-disabled", "true");
+        expect(add).toHaveAccessibleDescription("A table takes up to 20 filters.");
+        await user.click(add);
+        expect(screen.queryByRole("list", { name: "Fields to filter by" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Filter by Needs advisor action" }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        await user.click(chip("Employees is 7"));
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+      // Catches: the tab's own filters not counting against the limit.
+      it("counts the tab's own filters first: with a tab and 19 filters it is already 20", async () => {
+        await mounted(`/advisor?view=won&${filters(19)}`);
+        expect(screen.getByRole("button", { name: "Add filter" })).toHaveAttribute("aria-disabled", "true");
+      });
+      it("still adds at 19", async () => {
+        const user = await mounted(`/advisor?${filters(19)}`);
+        expect(screen.getByRole("button", { name: "Add filter" })).not.toHaveAttribute("aria-disabled");
+        await setYes(user, "Needs advisor action");
+        await waitFor(() => expect(screen.getAllByRole("button", { name: /^Remove filter/ })).toHaveLength(20));
+      });
+    });
+
+    describe("what is typed is checked before anything is applied", () => {
+      // Catches: a half-made filter reaching the address (and the database) on a keystroke or an Apply with a missing value.
+      it.each([
+        ["text, blank", "Company", "contains", [], "Enter some text."],
+        ["text, over 200 characters", "Company", "contains", [["Text", "a".repeat(201)]], "Use 200 characters or fewer."],
+        ["a number, blank", "Employees", "is", [], "Enter a number."],
+        ["a between with only one end", "Employees", "is between", [["From", "5"]], "Enter the larger number."],
+        ["a between with no ends", "Employees", "is between", [], "Enter the smaller number."],
+        ["a day, blank", "Submitted", "is on", [], "Choose a day."],
+        ["a between of days with one end", "Submitted", "is between", [["From", "2026-11-01"]], "Choose the last day."],
+        ["days, blank", "Submitted", "is in the next N days", [], "Enter a number of days."],
+        ["days over 3660", "Submitted", "is in the next N days", [["Number of days", "3661"]], "Enter a whole number of days from 0 to 3660."],
+        ["days that are not whole", "Submitted", "is in the last N days", [["Number of days", "1.5"]], "Enter a whole number of days from 0 to 3660."],
+        ["days below 0", "Submitted", "is in the last N days", [["Number of days", "-1"]], "Enter a whole number of days from 0 to 3660."],
+        ["a list with nothing chosen", "Status", "is any of", [], "Choose at least one."],
+        ["typed values, none", "Tags", "includes any of", [], "Enter at least one value."],
+        ["typed values, 101", "Tags", "includes any of", [["Values, separated by commas", Array.from({ length: 101 }, (_, i) => `v${i}`).join(",")]], "Use 100 values or fewer."],
+      ])("says what is wrong under the field and applies nothing: %s", async (_n, label, operator, fill, message) => {
+        withMoreKinds();
+        const user = await mounted();
+        const asked = listQueue.mock.calls.length;
+        await openFor(user, label);
+        await user.selectOptions(screen.getByLabelText("Condition"), operator as string);
+        for (const [l, v] of fill as string[][]) type(l, v);
+        await apply(user);
+        await screen.findAllByRole("alert");
+        expect(screen.getAllByRole("alert").map((a) => a.textContent).join(" ")).toContain(message as string);
+        // The message is tied to its field, and nothing was applied: the address and the question are as they were, and the editor is still open.
+        expect(where()).toBe("");
+        expect(listQueue.mock.calls.length).toBe(asked);
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+      // Catches: a value being applied that was typed to the exact limit being refused, or the limit being restated with a different number.
+      it("takes text of exactly 200 characters and a count of exactly 3660 days", async () => {
+        const user = await mounted();
+        await openFor(user, "Company");
+        await user.selectOptions(screen.getByLabelText("Condition"), "contains");
+        type("Text", "a".repeat(200));
+        await apply(user);
+        await waitFor(() => expect(where()).toBe(`?filter=company_name:contains:${"a".repeat(200)}`));
+        await openFor(user, "Submitted");
+        await user.selectOptions(screen.getByLabelText("Condition"), "is in the next N days");
+        type("Number of days", "3660");
+        await apply(user);
+        await waitFor(() => expect(where()).toContain("submitted_at:in_next_days:3660"));
+        // And 0 days is today alone.
+        await user.click(chip("Submitted is in the next 3660 days"));
+        type("Number of days", "0");
+        await apply(user);
+        await waitFor(() => expect(where()).toContain("submitted_at:in_next_days:0"));
+      });
+      // Catches: errors that do not clear when the person fixes the value, or that stay when the condition changes to one that needs no value.
+      it("clears the message once the value is fixed and applies it", async () => {
+        const user = await mounted();
+        await openFor(user, "Employees");
+        await apply(user);
+        expect(await screen.findByRole("alert")).toHaveTextContent("Enter a number.");
+        type("Number", "12");
+        await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+        await apply(user);
+        await waitFor(() => expect(where()).toBe("?filter=employee_count:is:12"));
+      });
+      it("applies with Enter from a field, not on each keystroke", async () => {
+        const user = await mounted();
+        await openFor(user, "Employees");
+        await user.type(screen.getByLabelText("Number"), "12");
+        expect(where()).toBe("");
+        await user.keyboard("{Enter}");
+        await waitFor(() => expect(where()).toBe("?filter=employee_count:is:12"));
+      });
+    });
+
+    // Catches: Escape or a click away changing the address, or leaving the editor open.
+    it.each([
+      ["Escape", async (user: ReturnType<typeof userEvent.setup>) => { await user.keyboard("{Escape}"); }],
+      ["Cancel", async (user: ReturnType<typeof userEvent.setup>) => { await user.click(screen.getByRole("button", { name: "Cancel" })); }],
+    ])("cancels with %s: the address and the question are unchanged, and focus returns to what opened it", async (_n, leave) => {
+      const user = await mounted("/advisor?filter=employee_count:is:5");
+      const asked = listQueue.mock.calls.length;
+      await user.click(chip("Employees is 5"));
+      type("Number", "99");
+      await leave(user);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(where()).toBe("?filter=employee_count:is:5");
+      expect(listQueue.mock.calls.length).toBe(asked);
+      await waitFor(() => expect(chip("Employees is 5")).toHaveFocus());
+    });
+
+    // Catches: a click elsewhere on the page applying the half-typed filter, or leaving the editor open over the table. (Focus goes where the person clicked.)
+    it("cancels by clicking away: nothing is applied and the editor closes", async () => {
+      const user = await mounted("/advisor?filter=employee_count:is:5");
+      const asked = listQueue.mock.calls.length;
+      await user.click(chip("Employees is 5"));
+      type("Number", "99");
+      await user.click(document.body);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(where()).toBe("?filter=employee_count:is:5");
+      expect(listQueue.mock.calls.length).toBe(asked);
+    });
+
+    describe("keyboard and screen reader", () => {
+      // Catches: an editor that opens with focus left behind on the page, or a control only a mouse can reach.
+      it("puts focus in the editor when it opens, and every control can be reached and used from the keyboard", async () => {
+        const user = await mounted();
+        screen.getByRole("button", { name: "Filter by Employees" }).focus();
+        await user.keyboard("{Enter}");
+        expect(screen.getByLabelText("Condition")).toHaveFocus();
+        await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.getByRole("button", { name: "Filter by Employees" })).toHaveFocus());
+        screen.getByRole("button", { name: "Add filter" }).focus();
+        await user.keyboard("{Enter}");
+        expect(screen.getByLabelText("Search fields")).toHaveFocus();
+        await user.tab();
+        await user.keyboard("{Enter}");
+        // The first field in the list was chosen (a yes or no, "A PEO has an older version"): its editor has focus in its first control.
+        expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+        expect(screen.getByLabelText("A PEO has an older version")).toHaveFocus();
+      });
+      // Catches: focus dropped to the page after applying; the person must find their place again.
+      it("puts focus on the chip that was made or changed", async () => {
+        const user = await mounted();
+        await openFor(user, "Employees");
+        type("Number", "5");
+        await apply(user);
+        await waitFor(() => expect(chip("Employees is 5")).toHaveFocus());
+        await user.click(chip("Employees is 5"));
+        type("Number", "6");
+        await apply(user);
+        await waitFor(() => expect(chip("Employees is 6")).toHaveFocus());
+        await setYes(user, "Needs advisor action");
+        await waitFor(() => expect(chip("Needs advisor action: yes")).toHaveFocus());
+      });
+      // Catches: focus falling to the page body when the chip that had it is removed.
+      it("moves focus to the next chip when one is removed, else the one before, else Add filter, and Clear filters goes to Add filter", async () => {
+        const user = await mounted("/advisor?filter=company_name:is_empty&filter=employee_count:is:5&filter=needs_action:is:true");
+        await user.click(screen.getByRole("button", { name: "Remove filter: Employees is 5" }));
+        await waitFor(() => expect(chip("Needs advisor action: yes")).toHaveFocus());
+        await user.click(screen.getByRole("button", { name: "Remove filter: Needs advisor action: yes" }));
+        await waitFor(() => expect(chip("Company is empty")).toHaveFocus());
+        await user.click(screen.getByRole("button", { name: "Remove filter: Company is empty" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "Add filter" })).toHaveFocus());
+        fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument());
+        await user.click(screen.getByRole("button", { name: "Clear filters" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "Add filter" })).toHaveFocus());
+        expect(document.body).not.toHaveFocus();
+      });
+      // Catches: the row saying a change on its own as well as the range line and the empty state (three announcements, the finding on the sort).
+      it("announces nothing of its own: the range line is the one polite status that says what a new filter left", async () => {
+        listQueue.mockImplementation(async ({ filters }: { filters: unknown[] }) => ({ rows: [row()], total: filters.length ? 1 : 375 }));
+        renderAt();
+        await screen.findByText("1 to 50 of 375 submissions");
+        const user = userEvent.setup();
+        await setYes(user, "Needs advisor action");
+        await screen.findByText("1 to 1 of 1 submission");
+        expect(within(filterRow()).queryAllByRole("status")).toHaveLength(0);
+        expect(within(filterRow()).queryAllByRole("alert")).toHaveLength(0);
+        expect(spoken().map((s) => s.textContent)).toEqual(["1 to 1 of 1 submission"]);
+        expectStatusesOutsideBusy();
+      });
+      it("is a labelled group, and each chip's two buttons say what they do", async () => {
+        await mounted("/advisor?filter=employee_count:is:5");
+        const group = screen.getByRole("group", { name: "Filters" });
+        expect(within(group).getByRole("button", { name: "Employees is 5" })).toHaveAttribute("aria-haspopup", "dialog");
+        expect(within(group).getByRole("button", { name: "Remove filter: Employees is 5" })).toBeInTheDocument();
+      });
+    });
+
+    describe("while the table is loading", () => {
+      // Catches: filters locked while the rows load (D-143: they change the question, so a person can correct a slow one).
+      it("keeps the filters usable while the rows are on their way", async () => {
+        listQueue.mockReturnValue(new Promise(() => {}));
+        renderAt("/advisor?filter=employee_count:is:5");
+        const user = userEvent.setup();
+        await setYes(user, "Needs advisor action");
+        await waitFor(() => expect(where()).toBe("?filter=employee_count:is:5&filter=needs_action:is:true"));
+        expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "employee_count", op: "is", value: 5 }, yes("needs_action")] }));
+      });
+      // Catches: a filter on a field that has not loaded yet being dropped, or applied by guesswork, or a listed button that opens an editor for a table not ready.
+      it("while the fields load, disables the listed filters and Add filter with the reason, shows a held filter as a quiet chip with its text, and keeps it through other changes", async () => {
+        listQueue.mockResolvedValue([row()]);
+        setTable({ ...QUEUE_TABLE, fieldsStatus: "loading" });
+        renderAt("/advisor?filter=a:contains:acme&filter=employee_count:is:5");
+        await screen.findByText("Loading submissions");
+        const listed = screen.getByRole("button", { name: "Filter by Needs advisor action" });
+        expect(listed).toHaveAttribute("aria-disabled", "true");
+        expect(listed).toHaveAccessibleDescription("More filters are available once the table's fields have loaded.");
+        expect(screen.getByRole("button", { name: "Add filter" })).toHaveAttribute("aria-disabled", "true");
+        fireEvent.click(listed);
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        // The known filter is a chip as usual, the held one a quiet chip with its text as written (not a button that opens an editor).
+        expect(screen.getByRole("button", { name: "Employees is 5" })).toBeInTheDocument();
+        expect(screen.getByRole("list", { name: "Filters waiting for their fields" })).toHaveTextContent("a:contains:acme");
+        expect(screen.queryByRole("button", { name: "a:contains:acme" })).not.toBeInTheDocument();
+        // Removing the known chip keeps the held filter in the address.
+        fireEvent.click(screen.getByRole("button", { name: "Remove filter: Employees is 5" }));
+        await waitFor(() => expect(where()).toBe("?filter=a:contains:acme"));
+        expect(screen.getByRole("button", { name: "Remove filter: a:contains:acme" })).toBeInTheDocument();
+        // Once the field arrives the held filter is judged, shown in words, and applied.
+        setTable({ ...QUEUE_TABLE, fieldsStatus: "ready", fields: { ...QUEUE_TABLE.fields, a: { label: "A", kind: "text" } } as never });
+        expect(await screen.findByRole("button", { name: "A contains “acme”" })).toBeInTheDocument();
+        expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [{ field: "a", op: "contains", value: "acme" }] }));
+      });
+    });
+
+    // Catches: a refused filter taking the chips away with the table, so the person cannot remove or fix the one that was refused.
+    it("keeps the chips when the database refuses a filter, so the offending one can be removed or changed without leaving", async () => {
+      listQueue.mockImplementation(async (o: { filters: { field: string; value?: number }[] }) => {
+        if (o.filters.some((f) => f.field === "employee_count" && f.value === 5)) throw Object.assign(new Error("Employees can't be 5"), { code: "22023" });
+        return [row()];
+      });
+      renderAt("/advisor?filter=employee_count:is:5&filter=needs_action:is:true");
+      expect(await screen.findByRole("alert")).toHaveTextContent("Employees can't be 5");
+      const user = userEvent.setup();
+      await user.click(chip("Employees is 5"));
+      type("Number", "6");
+      await apply(user);
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(where()).toBe("?filter=employee_count:is:6&filter=needs_action:is:true");
+      // And it can be removed too.
+      listQueue.mockImplementation(async () => { throw Object.assign(new Error("No"), { code: "22023" }); });
+      await user.click(screen.getByRole("button", { name: "Remove filter: Employees is 6" }));
+      await waitFor(() => expect(where()).toBe("?filter=needs_action:is:true"));
+    });
+
+    describe("the tab numbers", () => {
+      // Catches: the tab numbers keeping the old question's counts after a filter changes (a number and the rows it opens must agree, D-137).
+      it("are asked again, under the new filter, when a filter is added, changed or removed, and not when only the sort changes", async () => {
+        const user = await mounted();
+        const asks = () => countQueueViews.mock.calls.length;
+        const lastFiltersOf = (tab: number) => countQueueViews.mock.calls.at(-1)![0][tab].filters;
+        const before = asks();
+        await setYes(user, "Needs advisor action");
+        await waitFor(() => expect(asks()).toBeGreaterThan(before));
+        expect(lastFiltersOf(0)).toEqual([yes("needs_action")]);
+        // Every tab is counted under it: the first view is Won's neighbour, so its own filter comes first.
+        expect(lastFiltersOf(1)).toEqual([expect.objectContaining({ field: "pipeline_status" }), yes("needs_action")]);
+        const afterAdd = asks();
+        await user.click(screen.getByRole("button", { name: "Remove filter: Needs advisor action: yes" }));
+        await waitFor(() => expect(asks()).toBeGreaterThan(afterAdd));
+        expect(lastFiltersOf(0)).toEqual([]);
+        const afterRemove = asks();
+        await user.click(screen.getByRole("button", { name: "Company" }));
+        await waitFor(() => expect(where()).toBe("?sort=company_name"));
+        await act(async () => {});
+        expect(asks()).toBe(afterRemove);
+      });
+    });
+
+    // Catches: today's links (the old checkbox's, the Inbox's) losing their filter now the checkboxes are gone, or not showing as chips a person can remove.
+    describe("today's links keep working", () => {
+      it.each([
+        ["?action=1", "Needs advisor action: yes", "needs_action"],
+        ["?waiting=1", "Waiting on a PEO: yes", "waiting_on_peo"],
+        ["?mail=new", "Has new PEO mail: yes", "has_new_peo_mail"],
+      ])("%s asks for its filter, shows it as a chip, and the address is rewritten as the new one", async (url, words, field) => {
+        await mounted(`/advisor${url}`);
+        expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes(field)] }));
+        expect(screen.getByRole("button", { name: words })).toBeInTheDocument();
+        await waitFor(() => expect(where()).toBe(`?filter=${field}:is:true`));
+      });
+      it("keeps ?status=, and a tab and a filter together", async () => {
+        await mounted("/advisor?status=won&action=1");
+        expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("won"), yes("needs_action")] }));
+        await waitFor(() => expect(where()).toBe("?view=won&filter=needs_action:is:true"));
+        expect(screen.getByRole("link", { name: /^Won/ })).toHaveAttribute("aria-current", "page");
+      });
+    });
+  });
+
   it("lists only the submissions that need advisor action, alone or with a status, and says when there are none", async () => {
     listQueue.mockResolvedValue([row({ needs_action: true })]);
     renderAt("/advisor?status=under_review");
     await screen.findByRole("link", { name: "Acme" });
-    const toggle = screen.getByRole("checkbox", { name: "Needs advisor action only" });
-    expect(toggle).not.toBeChecked();
+    // Not set yet: the listed button is there and there is no chip.
+    expect(screen.getByRole("button", { name: "Filter by Needs advisor action" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Needs advisor action: yes" })).not.toBeInTheDocument();
 
     listQueue.mockResolvedValue([]);
-    fireEvent.click(toggle);
+    await setYes(userEvent.setup(), "Needs advisor action");
     expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
     expect(screen.getByText("View: Under review")).toBeInTheDocument();
-    expect(screen.getByText("Needs advisor action: yes")).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "What is in force" })).getByText("Needs advisor action: yes")).toBeInTheDocument();
     expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("under_review"), yes("needs_action")] }));
-    expect(screen.getByRole("checkbox", { name: "Needs advisor action only" })).toBeChecked();
+    // The chip is its control now, so its button in the row is gone.
+    expect(screen.getByRole("button", { name: "Needs advisor action: yes" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Filter by Needs advisor action" })).not.toBeInTheDocument();
     expect(where()).toBe("?view=under_review&filter=needs_action:is:true");
 
     listQueue.mockResolvedValue([row()]);
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    fireEvent.click(within(filterRow()).getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
     // The tab stays: the button clears the filters its label names.
     expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("under_review")] }));
@@ -986,7 +1581,7 @@ describe("AdvisorDashboardPage", () => {
 
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
       await screen.findByText("51 to 100 of 375 submissions matching “acme”");
-      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
+      await setYes(userEvent.setup(), "Waiting on a PEO");
       await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=waiting_on_peo:is:true"));
 
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
@@ -1117,9 +1712,9 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([]);
       renderAt("/advisor?status=sent_to_carrier");
       await screen.findByText("No submissions match these filters.");
-      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
+      await setYes(userEvent.setup(), "Waiting on a PEO");
       await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [pipeline("sent_to_carrier"), yes("waiting_on_peo")] })));
-      expect(await screen.findByText("Waiting on a PEO: yes")).toBeInTheDocument();
+      expect(await within(screen.getByRole("list", { name: "What is in force" })).findByText("Waiting on a PEO: yes")).toBeInTheDocument();
       expect(screen.getByText("View: Sent to PEOs")).toBeInTheDocument();
     });
   });
@@ -1530,11 +2125,12 @@ describe("AdvisorDashboardPage", () => {
       renderAt("/advisor?filter=a:contains:acme");
       await screen.findByText("Loading submissions");
       expect(where()).toBe("?filter=a:contains:acme");
-      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
-      await waitFor(() => expect(where()).toBe("?filter=waiting_on_peo:is:true"));
+      // The filter row shows it as a quiet chip with its text as written; removing the chip is a change of the filters, so it never applies later.
+      fireEvent.click(screen.getByRole("button", { name: "Remove filter: a:contains:acme" }));
+      await waitFor(() => expect(where()).toBe(""));
       setTable({ ...QUEUE_TABLE, fieldsStatus: "ready", fields: { ...QUEUE_TABLE.fields, a: { label: "A", kind: "text" } } as never });
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-      expect(listQueue).toHaveBeenLastCalledWith(query({ filters: [yes("waiting_on_peo")] }));
+      expect(listQueue).toHaveBeenLastCalledWith(query());
     });
 
     // Catches: a table's own default sort not showing in its header, or hiding the sort the address holds.
@@ -2058,7 +2654,12 @@ describe("AdvisorDashboardPage", () => {
     const statuses = () => spoken().map((s) => s.textContent);
     const clearFilters = () => screen.queryByRole("button", { name: /^Clear filters/ });
     // Anything that could create or start a record.
-    const offersToCreate = () => screen.queryByRole("link", { name: /new|create|add|start/i }) ?? screen.queryByRole("button", { name: /new|create|add|start/i });
+    // The filter row's own buttons ("Add filter", "Filter by Has new PEO mail") narrow the list; they create nothing.
+    const offersToCreate = () => {
+      const named = /new|create|add|start/i;
+      const outsideRow = (e: HTMLElement) => !e.closest("[role=group][aria-label=Filters]");
+      return screen.queryAllByRole("link", { name: named }).find(outsideRow) ?? screen.queryAllByRole("button", { name: named }).find(outsideRow) ?? null;
+    };
 
     // Catches: an empty queue at the bare address being worded as a filter that excluded everything, or offering "Clear filters" with nothing to clear.
     it("says nothing yet, in one sentence with no action, when the address is bare and no rows come back", async () => {
@@ -2082,7 +2683,7 @@ describe("AdvisorDashboardPage", () => {
       expect(bare).toContain("Company");
       expect(bare).toContain("Quote expires");
       expect(screen.getByLabelText("Search")).toBeInTheDocument();
-      expect(screen.getByRole("checkbox", { name: "Waiting on a PEO only" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Filter by Waiting on a PEO" })).toBeInTheDocument();
       expect(screen.getByRole("navigation", { name: "Views" })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("link", { name: /^Won/ }));
       await screen.findByText("No submissions match these filters.");
@@ -2127,7 +2728,7 @@ describe("AdvisorDashboardPage", () => {
       expect(await screen.findByText(headline)).toBeInTheDocument();
       const list = screen.getByRole("list", { name: "What is in force" });
       expect(within(list).getAllByRole("listitem").map((i) => i.textContent)).toEqual(inForce);
-      expect(screen.getByRole("button", { name: clear })).toBeInTheDocument();
+      expect(within(emptyState()).getByRole("button", { name: clear })).toBeInTheDocument();
       expect(screen.queryByText(/appear here/)).not.toBeInTheDocument();
       expect(offersToCreate()).toBeNull();
     });
@@ -2139,7 +2740,7 @@ describe("AdvisorDashboardPage", () => {
       expect(await screen.findByText("No submissions have new PEO mail.")).toBeInTheDocument();
       expect(screen.queryByText(/match these filters/)).not.toBeInTheDocument();
       expect(within(screen.getByRole("list", { name: "What is in force" })).getByText("Has new PEO mail: yes")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+      expect(within(emptyState()).getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
       // Inbox together with another filter is no longer only the Inbox.
       cleanup();
       renderAt("/advisor?mail=new&action=1");
@@ -2151,12 +2752,12 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockImplementation(async (q: { filters: { field: string }[] }) => (q.filters.some((f) => f.field !== "pipeline_status") ? [] : q.filters.length ? [] : [row()]));
       renderAt("/advisor?view=won&q=zzz&filter=needs_action:is:true&filter=company_name:contains:acme&sort=company_name");
       await screen.findByText("No submissions match this search and these filters.");
-      fireEvent.click(screen.getByRole("button", { name: "Clear filters and search" }));
+      fireEvent.click(within(emptyState()).getByRole("button", { name: "Clear filters and search" }));
       expect(await screen.findByRole("button", { name: "Show all statuses" })).toBeInTheDocument();
       expect(where()).toBe("?view=won&sort=company_name");
       expect(screen.getByText("View: Won")).toBeInTheDocument();
       expect(screen.getByLabelText("Search")).toHaveValue("");
-      expect(screen.getByRole("checkbox", { name: "Needs advisor action only" })).not.toBeChecked();
+      expect(screen.queryByRole("button", { name: /^Remove filter/ })).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: /^Won/ })).toHaveAttribute("aria-current", "page");
       fireEvent.click(screen.getByRole("button", { name: "Show all statuses" }));
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
@@ -2187,7 +2788,7 @@ describe("AdvisorDashboardPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
       expect(await screen.findByText("Submissions appear here once a prospect has started filling in an intake.")).toBeInTheDocument();
       expect(clearFilters()).toBeNull();
-      fireEvent.click(screen.getByRole("checkbox", { name: "Waiting on a PEO only" }));
+      await setYes(userEvent.setup(), "Waiting on a PEO");
       expect(await screen.findByText("No submissions match these filters.")).toBeInTheDocument();
       expect(screen.queryByText(/appear here/)).not.toBeInTheDocument();
     });

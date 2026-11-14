@@ -103,6 +103,12 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
   fields: FieldDefinitions<K>;
   /** Whether every field the address may name is in `fields` yet. Absent means ready. */
   fieldsStatus?: Readiness;
+  /**
+   * The fields the table's filter row always shows as buttons ready to set (CRM-S3.3a: "each table lists its filters"), in this order. "Add filter" offers
+   * every other field. A listed field is one a person reaches for daily (the queue's: the yes-or-no marks the old checkboxes stood for, and the columns
+   * most often narrowed by). Choose the few that matter, not all of them.
+   */
+  listedFilters: (keyof K & string)[];
   columns: ColumnDefinition<Row, keyof K & string, Context>[];
   rowKey: (row: Row) => string;
   /** The views known now. */

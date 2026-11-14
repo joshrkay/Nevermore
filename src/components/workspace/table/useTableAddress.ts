@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import type { TableFields } from "@/lib/tableQuery";
-import { addressToSearch, changeAddress, judgeAddress, type TableAddress } from "./address";
+import { addressToSearch, changeAddress, judgeAddress, type AddressChange, type TableAddress } from "./address";
 import type { TableDefinition } from "./columns";
 
-type Change<K extends TableFields> = Partial<Omit<TableAddress<K>, "held">>;
+type Change<K extends TableFields> = AddressChange<K>;
 
 /**
  * The table's address (CRM-S3.5a, D-43): what the page's search parameters say, read by the one codec, kept clean (an address

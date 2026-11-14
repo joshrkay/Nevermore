@@ -294,6 +294,10 @@ export const QUEUE_TABLE: QueueTableDefinition = {
   noun: { singular: "submission", plural: "submissions" },
   fields: queueFields,
   columns: queueColumns,
+  // The filters a broker reaches for, always in the row: the three yes-or-no marks the old checkboxes and links stood for (needs action,
+  // waiting on a PEO, new PEO mail: "Status" is the tabs), then the three columns most often narrowed by (the states a prospect is in, how many
+  // people they employ, and when they submitted). Every other field is under "Add filter".
+  listedFilters: ["needs_action", "waiting_on_peo", "has_new_peo_mail", "states", "employee_count", "submitted_at"],
   rowKey: (row) => row.session_id,
   views: QUEUE_VIEWS,
   allViewLabel: "All statuses",

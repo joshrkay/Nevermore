@@ -144,4 +144,25 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await expect(page).toHaveURL(/filter=has_new_peo_mail/);
     expect(page.url()).not.toContain("mail=new");
   });
+  await test.step("a filter set in the row narrows the whole queue, shows as a chip, survives a reload, and comes off with its remove button (CRM-S3.3a)", async () => {
+    await page.goto(`${firmUrl(FIRM)}/advisor`);
+    await expect(page.getByText("1 to 50 of 52")).toBeVisible();
+    await page.getByRole("button", { name: "Filter by Has new PEO mail" }).click();
+    await page.getByRole("button", { name: "Apply" }).click();
+    await expect(page).toHaveURL(/filter=has_new_peo_mail(:|%3A)is(:|%3A)true$/);
+    await expect(page.getByText("1 to 1 of 1")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Mail Waiting Co" })).toBeVisible();
+    await expect(page.getByRole("row")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Has new PEO mail: yes", exact: true })).toBeVisible();
+    // The address is a bookmark: a reload shows the same chip and the same rows.
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Has new PEO mail: yes", exact: true })).toBeVisible();
+    await expect(page.getByText("1 to 1 of 1")).toBeVisible();
+    await page.getByRole("button", { name: "Remove filter: Has new PEO mail: yes" }).click();
+    await expect(page.getByText("1 to 50 of 52")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Has new PEO mail: yes", exact: true })).toHaveCount(0);
+    await expect(page).not.toHaveURL(/filter=/);
+    await page.goBack();
+    await expect(page.getByText("1 to 1 of 1")).toBeVisible();
+  });
 });
