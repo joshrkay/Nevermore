@@ -814,7 +814,12 @@ describe("AdvisorActivityPage", () => {
     });
 
     it("still reads as a sentence for a table a later version adds, as the database named it", async () => {
-      expect(await recordOf(made("accounts", 3))).toHaveTextContent("Exported 3 rows of accounts");
+      expect(await recordOf(made("leads", 3))).toHaveTextContent("Exported 3 rows of leads");
+    });
+
+    // CRM-A1.1b: the accounts table is one the database exports, so its entry reads in the accounts' own words.
+    it("reads an export of accounts in the accounts' own words", async () => {
+      expect(await recordOf(made("accounts", 3))).toHaveTextContent("Exported 3 accounts");
     });
 
     it("leaves any other table entry as it was when it holds no count", async () => {
