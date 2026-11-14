@@ -405,7 +405,7 @@ export const ACCOUNT_FILES_PAGE_SIZE = 50;
 
 /**
  * An account's files that passed the virus check, newest first: a page of them and how many there are in all. Null when the person may not see the account.
- * Each file is named and placed; open one with `documentUrl(file's storage path and name)`, which Storage allows only to those its own file rule lets read it.
+ * Each file is named and placed; the link that opens one is made by the one place that signs (src/lib/advisorApi.ts), from its storage path and name, and Storage allows it only to those its own file rule lets read it.
  */
 export async function listAccountFiles(
   firmId: string,
