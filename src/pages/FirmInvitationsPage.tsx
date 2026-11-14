@@ -13,7 +13,7 @@ import {
   type Delivery, type FirmRole, type PendingInvitation,
 } from "@/lib/invitationApi";
 import { LoadFailed, NothingYet } from "@/components/workspace/states";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 import { AskedToJoinSection, OrganisationsSection } from "@/components/workspace/FirmJoinSections";
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
@@ -122,7 +122,7 @@ const FirmInvitationsPage = () => {
       tellDelivery(result.delivery, i.email, `Invitation sent again to ${i.email}.`, "The invitation is saved but the email didn't go out. Try again.");
       await refresh();
     } catch (err) {
-      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -134,7 +134,7 @@ const FirmInvitationsPage = () => {
       toast.success(`Invitation to ${i.email} withdrawn.`);
       await refresh();
     } catch (err) {
-      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };

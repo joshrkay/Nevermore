@@ -46,10 +46,16 @@ function refusal(error: DbError, fallback: string): Error {
   }
 }
 
+/** A refused LOAD also carries `forbidden`, which the page reads to say there is nothing to retry. */
+function loadRefusal(error: DbError, fallback: string): Error {
+  const e = refusal(error, fallback);
+  return error.code === "42501" ? Object.assign(e, { forbidden: true }) : e;
+}
+
 /** The organisations the firm lists, oldest first. Owners only. */
 export async function fetchOrganisations(firmId: string): Promise<ListedOrganisation[]> {
   const { data, error } = await supabase.rpc("firm_organisations", { p_firm_id: firmId });
-  if (error) throw refusal(error, "Couldn't load the organisations.");
+  if (error) throw loadRefusal(error, "Couldn't load the organisations.");
   return (data ?? []).map((o) => ({ id: o.id, provider: o.provider as OrganisationProvider, orgId: o.org_id, label: o.label, addedAt: o.added_at }));
 }
 
@@ -67,7 +73,7 @@ export async function removeOrganisation(id: string): Promise<void> {
 /** The people who asked to join, oldest first. Owners only. */
 export async function fetchJoinRequests(firmId: string): Promise<JoinRequest[]> {
   const { data, error } = await supabase.rpc("firm_join_requests", { p_firm_id: firmId });
-  if (error) throw refusal(error, "Couldn't load the requests.");
+  if (error) throw loadRefusal(error, "Couldn't load the requests.");
   return (data ?? []).map((r) => ({ id: r.request_id, email: r.email, askedAt: r.asked_at, provider: r.provider as OrganisationProvider, organisation: r.org_label }));
 }
 

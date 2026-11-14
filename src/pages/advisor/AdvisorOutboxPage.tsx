@@ -29,7 +29,7 @@ import {
 import { listOutboxEvents, outboxSummary, requeueOutboxEvent, type OutboxEvent, type OutboxSummaryRow } from "@/lib/advisorApi";
 import { formatDateTime } from "@/components/advisor/format";
 import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn, LoadFailed } from "@/components/workspace/states";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 type Load =
   | { kind: "loading" }
@@ -133,7 +133,7 @@ const AdvisorOutboxPage = () => {
       }
       reload();
     } catch (err) {
-      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     } finally {
       setBusy(null);
       setRebuilding(null);

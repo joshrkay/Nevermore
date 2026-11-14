@@ -10,7 +10,7 @@ import { loadMyFirms } from "@/hooks/useOwnedFirms";
 import { currentFirm } from "@/lib/currentFirm";
 import { fetchFirmMembers, liftSuspension, removeMember, suspendMember, type FirmMember, type MemberRole } from "@/lib/memberApi";
 import { LoadFailed } from "@/components/workspace/states";
-import { SaveFailed } from "@/components/workspace/form/SaveFailed";
+import { SaveFailed } from "@/components/workspace/form";
 
 type Load =
   | { kind: "loading" }

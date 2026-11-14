@@ -7,7 +7,7 @@ import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@
 import { disconnectMailbox, fetchMyMailbox, type MyMailbox } from "@/lib/advisorApi";
 import { startBrokerSignIn } from "@/lib/brokerAuth";
 import { LoadFailed } from "@/components/workspace/states";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; mailbox: MyMailbox };
 
@@ -52,7 +52,7 @@ const AdvisorMailboxPage = () => {
       setConfirming(false);
       setAttempt((n) => n + 1);
     } catch (err) {
-      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };

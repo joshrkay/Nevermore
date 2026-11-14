@@ -446,6 +446,24 @@ describe("QuoteRequestsPanel", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  // Catches (D-178): the failure of "Issue a new address" written inside the confirmation's own alert, so the question is read twice, and
+  // between the buttons it belongs beside.
+  it("says a failed reissue in its own alert, outside the confirmation's, with the question still there and focus on the button", async () => {
+    api.reissueQuoteRequestAddress.mockRejectedValueOnce(new Error("TypeError: Failed to fetch"));
+    panel({ replyDomain: "quotes.example.com", addresses: [address()] });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Revoke and issue a new address" }));
+    const issue = within(row).getByRole("button", { name: "Issue a new address" });
+    fireEvent.click(issue);
+    await waitFor(() => expect(within(row).getAllByRole("alert")).toHaveLength(2));
+    const [question, failure] = within(row).getAllByRole("alert");
+    expect(question).toHaveTextContent("Issue a new address? Mail sent to this one");
+    expect(question).not.toHaveTextContent("wasn't issued");
+    expect(failure).toHaveTextContent("The new address wasn't issued. Check your connection and try again.");
+    expect(question.contains(failure)).toBe(false);
+    await waitFor(() => expect(issue).toHaveFocus());
+  });
+
   it("turns an underwriter's question into an ask of the prospect, and offers that only on questions", () => {
     const onAskProspect = vi.fn();
     panel({

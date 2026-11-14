@@ -13,7 +13,7 @@ import { afterLeavingFirm, leaveFirm } from "@/lib/leaveFirmApi";
 import { closingDate, requestFirmClosure, withdrawFirmClosure } from "@/lib/closeFirmApi";
 import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
 import { LoadFailed } from "@/components/workspace/states";
-import { SaveFailed } from "@/components/workspace/form/SaveFailed";
+import { SaveFailed } from "@/components/workspace/form";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -60,6 +60,8 @@ const AdvisorSettingsPage = () => {
   const [problem, setProblem] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [typed, setTyped] = useState("");
+  // While "Try again" on the closure check asks again, the failure is not on screen: a second failure is then a new alert, read afresh.
+  const [rechecking, setRechecking] = useState(false);
   const [closeProblem, setCloseProblem] = useState<string | null>(null);
   const { closesAt, canAsk, why, loaded: closureKnown, failed: closureFailed, error: closureError } = useFirmClosure(firm?.id ?? null);
 
@@ -155,8 +157,14 @@ const AdvisorSettingsPage = () => {
             <button type="button" disabled={busy} onClick={() => void withdraw()} className="min-h-11 px-3 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50">
               Withdraw the request to close
             </button>
+          ) : rechecking ? (
+            <p role="status" className="text-sm text-muted-foreground">Checking whether this firm can be closed…</p>
           ) : closureFailed && !closureKnown ? (
-            <LoadFailed error={closureError ?? new Error("Couldn't check the firm.")} what="whether this firm can be closed" onRetry={() => void refreshFirmClosure(firm.id)} />
+            <LoadFailed
+              error={closureError ?? new Error("Couldn't check the firm.")}
+              what="whether this firm can be closed"
+              onRetry={() => { setRechecking(true); void refreshFirmClosure(firm.id).finally(() => setRechecking(false)); }}
+            />
           ) : !closureKnown ? null : !canAsk ? (
             <p className="text-sm">
               {why === "default_firm" ? "This firm takes the intakes people start on Nevermore, so it can't be closed."

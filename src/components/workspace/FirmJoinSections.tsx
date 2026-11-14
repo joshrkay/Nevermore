@@ -12,7 +12,7 @@ import {
   addOrganisation, approveJoinRequest, declineJoinRequest, fetchJoinRequests, fetchOrganisations, removeOrganisation,
   type JoinRequest, type JoinRole, type ListedOrganisation,
 } from "@/lib/joinByOrganisationApi";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 // The two sections of the Invitations page that are about people coming in by their organisation (story CRM-P1.4): the firm's listed
 // Google domains and Microsoft tenants, and the people who asked to join from one. The database decides who may do any of it (a
@@ -80,7 +80,7 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
   const remove = useMutation({
     mutationFn: removeOrganisation,
     onSuccess: () => { toast.success("Removed. People who sign in from it will no longer be listed."); setConfirming(null); },
-    onError: (err: Error) => toast.error(failureWords(err, "That didn't go through. Check your connection and try again.")),
+    onError: (err: Error) => toast.error(failureWords(err, DID_NOT_GO_THROUGH)),
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
   return (
@@ -95,7 +95,7 @@ export const OrganisationsSection = ({ firmId }: { firmId: string }) => {
       </div>
       <div ref={form}><OrganisationForm firmId={firmId} onListed={() => queryClient.invalidateQueries({ queryKey: key })} /></div>
       {organisations.isError && !organisations.data && (
-        <PanelFailed what="the organisations" onRetry={() => void organisations.refetch()} />
+        <PanelFailed what="the organisations" error={organisations.error} onRetry={() => void organisations.refetch()} />
       )}
       {organisations.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>
@@ -153,7 +153,7 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
       toast.success(d.kind === "approve" ? `${d.request.email} is now ${WITH_ARTICLE[held ?? d.role]} of ${firmName}.` : `Declined ${d.request.email}.`);
       setDeclining(null);
     },
-    onError: (err: Error) => toast.error(failureWords(err, "That didn't go through. Check your connection and try again.")),
+    onError: (err: Error) => toast.error(failureWords(err, DID_NOT_GO_THROUGH)),
     // Whatever happened, what the database holds now is what the owner sees.
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
@@ -166,7 +166,7 @@ export const AskedToJoinSection = ({ firmId, firmName }: { firmId: string; firmN
         </p>
       </div>
       {requests.isError && !requests.data && (
-        <PanelFailed what="the people who asked to join" onRetry={() => void requests.refetch()} />
+        <PanelFailed what="the people who asked to join" error={requests.error} onRetry={() => void requests.refetch()} />
       )}
       {requests.isPending && (
         <div className="flex items-center text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin mr-2" aria-hidden="true" /> Loading…</div>

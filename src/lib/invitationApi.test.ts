@@ -76,7 +76,7 @@ describe("the owner's list, and withdrawing", () => {
 
   it("says only owners can read the list when the database refuses", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Only an owner of the firm can do that" } });
-    await expect(fetchPendingInvitations("f1")).rejects.toThrow("Only an owner of the firm can see invitations.");
+    await expect(fetchPendingInvitations("f1")).rejects.toMatchObject({ message: "Only an owner of the firm can see invitations.", forbidden: true });
   });
 
   it("withdraws an invitation by its id", async () => {

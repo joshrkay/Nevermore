@@ -35,6 +35,8 @@ interface ManuscriptPanelProps {
   /** Whether they are read yet: a packet is generated only once they are, or every check would read can't tell. */
   catalogStatus: PeoCatalogStatus;
   onRetryCatalog: () => void;
+  /** Whether this panel says out loud that the PEOs' profiles are loading or failed. False when "What each PEO still needs" is showing the same state (one read, said once). */
+  announceCatalog?: boolean;
   onChanged: () => void;
 }
 
@@ -43,7 +45,7 @@ interface ManuscriptPanelProps {
  * version names the certification and review state it was built from; `onChanged` reloads the
  * submission after a version is stored, or when the database refuses one because either has moved on.
  */
-const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onChanged }: ManuscriptPanelProps) => {
+const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onChanged, announceCatalog = true }: ManuscriptPanelProps) => {
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
   const failure = useSaveFailure("The packet wasn't generated. Check your connection and try again.");
@@ -166,7 +168,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
             on. Correction reasons are printed in it.
           </p>
           {catalogStatus === "loading" && (
-            <RecordLoading name="the PEOs' profiles">
+            <RecordLoading name="the PEOs' profiles" silent={!announceCatalog}>
               <div aria-hidden="true" aria-busy="true" className="mb-1"><PlaceholderLines count={2} /></div>
               <p className="text-xs text-muted-foreground">You can generate the packet once they're in.</p>
             </RecordLoading>
@@ -174,6 +176,8 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
           {catalogStatus === "failed" && (
             <PanelFailed
               what="the PEOs' profiles"
+              focusKey="packet"
+              silent={!announceCatalog}
               message="We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating."
               onRetry={onRetryCatalog}
               className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1.5 space-y-1"

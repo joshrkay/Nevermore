@@ -1497,6 +1497,9 @@ describe("AdvisorDashboardPage", () => {
       expect(where()).toBe("?view=won&filter=states:any_of:CA&sort=-employee_count");
       // Focus did not fall to the page when the panel went: it stayed with the page's main area, which is there before and after.
       expect(document.activeElement).toBe(screen.getByRole("main"));
+      // It was made focusable for that moment only: once focus leaves, main is not a stop in the tab order.
+      act(() => screen.getByRole("main").blur());
+      expect(screen.getByRole("main")).not.toHaveAttribute("tabindex");
     });
 
     // Catches: a retry that fails again leaving nothing on screen, or an alert that is not said again.
@@ -1510,6 +1513,26 @@ describe("AdvisorDashboardPage", () => {
       expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
       // The first button went with the first failure; focus is on the new one, so a keyboard person can press it again.
       expect(document.activeElement).toBe(within(alert).getByRole("button", { name: "Try again" }));
+    });
+
+    // Catches (D-175): a "Try again" whose button never went (the failure stayed on screen while it asked) leaving its press believed, so the next failure to
+    // mount within ten seconds, after the rows came, took focus from the Refresh button the person had pressed.
+    it("does not let a press whose button never went take focus for a later failure within ten seconds", async () => {
+      listQueue.mockRejectedValueOnce(new Error("down"));
+      renderAt();
+      const failed = await screen.findByRole("alert");
+      let answer!: (rows: unknown) => void;
+      listQueue.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+      fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
+      await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+      await act(async () => answer([row()]));
+      await screen.findByRole("link", { name: "Acme" });
+      listQueue.mockRejectedValue(new Error("down again"));
+      const refresh = screen.getByRole("button", { name: "Refresh" });
+      refresh.focus();
+      fireEvent.click(refresh);
+      await screen.findByRole("alert");
+      expect(document.activeElement).toBe(refresh);
     });
 
     // Catches: a later failure, long after "Try again" worked (a refresh a minute on), taking focus from wherever the person is.

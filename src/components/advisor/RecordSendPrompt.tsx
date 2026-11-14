@@ -6,7 +6,7 @@ import { localToday } from "@/data/peoProfiles";
 import { canRecordSend, formatDay } from "@/data/quoteRequests";
 import { recordQuoteSend, type QuoteRequestRow } from "@/lib/advisorApi";
 import { unchangedSinceOpened, type BuiltFrom } from "@/lib/certificationCheck";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords } from "@/components/workspace/form";
 
 interface RecordSendPromptProps {
   sessionId: string;

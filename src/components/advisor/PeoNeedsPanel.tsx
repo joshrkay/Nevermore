@@ -224,7 +224,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
       );
     }
     if (catalogStatus === "failed") {
-      return <PanelFailed what="the PEOs' profiles" message="We couldn't load the PEOs' profiles, so we can't say what each still needs." onRetry={onRetryCatalog} />;
+      return <PanelFailed what="the PEOs' profiles" focusKey="peo-needs" message="We couldn't load the PEOs' profiles, so we can't say what each still needs." onRetry={onRetryCatalog} />;
     }
     const groups = groupByCompleteness(certified.intake, certified.documents, catalog);
     const chosen = chosenPeo ? findPeo(catalog, chosenPeo) : undefined;

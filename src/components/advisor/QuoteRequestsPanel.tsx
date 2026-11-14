@@ -165,16 +165,18 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
         Put this address in CC when you email {request.peo_name} from your own mail. Your message and their replies then reach this quote request.
       </p>
       {confirming ? (
-        <div role="alert" className="text-xs space-y-1">
-          <p>Issue a new address? Mail sent to this one will no longer reach this quote request, so {request.peo_name} has to be given the new one.</p>
-          <div className="flex gap-2">
-            <SaveFailed message={failure.message} returnFocusTo={issueButton} className="text-xs" />
-            <button ref={issueButton} onClick={reissue} disabled={saving} className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50">
-              {saving && <Loader2 className="w-3 h-3 animate-spin" />} Issue a new address
-            </button>
-            <button onClick={() => setConfirming(false)} className="px-2 py-1 rounded-md border border-border">Keep this one</button>
+        <>
+          <div role="alert" className="text-xs space-y-1">
+            <p>Issue a new address? Mail sent to this one will no longer reach this quote request, so {request.peo_name} has to be given the new one.</p>
+            <div className="flex gap-2">
+              <button ref={issueButton} onClick={reissue} disabled={saving} className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50">
+                {saving && <Loader2 className="w-3 h-3 animate-spin" />} Issue a new address
+              </button>
+              <button onClick={() => setConfirming(false)} className="px-2 py-1 rounded-md border border-border">Keep this one</button>
+            </div>
           </div>
-        </div>
+          <SaveFailed message={failure.message} returnFocusTo={issueButton} className="text-xs" />
+        </>
       ) : (
         <button onClick={() => setConfirming(true)} className="text-xs text-primary underline">Revoke and issue a new address</button>
       )}

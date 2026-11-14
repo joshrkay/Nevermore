@@ -10,7 +10,7 @@ import {
   type AssignableRequest, type HeldMail, type QuoteRequestMessageRow,
 } from "@/lib/advisorApi";
 import { LoadFailed } from "@/components/workspace/states";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "not_admin" } | { kind: "ready"; held: HeldMail };
 
@@ -46,7 +46,7 @@ const HeldMessage = ({ message, held, onDone }: { message: QuoteRequestMessageRo
       toast.success(kind === "assign" ? "Assigned. It is new PEO mail on that thread." : "Discarded.");
       onDone();
     } catch (err) {
-      toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      toast.error(failureWords(err, DID_NOT_GO_THROUGH));
       setBusy(null);
     }
   };

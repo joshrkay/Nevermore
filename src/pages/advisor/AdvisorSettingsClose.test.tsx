@@ -178,6 +178,20 @@ describe("closing a firm from Settings", () => {
     expect(await screen.findByRole("button", { name: "Close this firm" })).toBeEnabled();
   });
 
+  // Catches (D-175): "Try again" on a check that fails again leaving the first failure on screen, so the second is never announced, and focus
+  // left on a button that was never replaced.
+  it("takes the failure away while it asks again, so a second failure is announced afresh, with focus on its button", async () => {
+    db.loadFails = true;
+    await renderPage();
+    const first = await screen.findByRole("alert");
+    expect(first).toHaveTextContent(/couldn.t load whether this firm can be closed/i);
+    fireEvent.click(within(first).getByRole("button", { name: "Try again" }));
+    expect(first).not.toBeInTheDocument();
+    const second = await screen.findByRole("alert");
+    expect(second).not.toBe(first);
+    expect(within(second).getByRole("button", { name: "Try again" })).toHaveFocus();
+  });
+
   // Catches: the page words the database's refusal of the default firm as something else.
   it("says why when the database refuses the firm that takes every intake", async () => {
     db.fail = { code: "PT403", message: "This firm takes the intakes people start on Nevermore, so it can't be closed" };

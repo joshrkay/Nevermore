@@ -189,6 +189,8 @@ const Detail = ({
   };
   // What each PEO still needs is built from the last certified version, never from answers given since.
   const certifiedVersion = lastCertifiedVersion(detail, verifiedFieldsOf(detail.reviews));
+  // "What each PEO still needs" shows the profiles loading or failing when there is a certified version it can read; it then says so for the Advisor packet too.
+  const needsShowsCatalog = !!certifiedVersion && !certifiedVersion.cantTell;
   const sub = detail.submission;
   // The certification the page's files were built from, checked again at each download's click.
   const builtFrom = certificationOf(detail.id, detail.intakeStatus, sub ?? {});
@@ -323,7 +325,7 @@ const Detail = ({
             quoteRequests={detail.quoteRequests}
             onChanged={quotesChanged}
           />
-          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} />
+          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} announceCatalog={!needsShowsCatalog} />
           <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
           <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />

@@ -8,7 +8,7 @@ import { DiscardDraft, History, RecheckForm, ReviewAndPublish } from "./PeoActio
 import { buttonClass, primaryClass, type SectionKey } from "./shared";
 import { Section, SectionContents } from "./ProfileSections";
 import { AnswersEditor, CensusEditor, ContactsEditor, DocumentsEditor, QuestionsEditor, RulesEditor, type EditorProps } from "./SectionEditors";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords } from "@/components/workspace/form";
 
 const SECTIONS: SectionKey[] = ["rules", "answers", "census", "documents", "questions", "contacts"];
 

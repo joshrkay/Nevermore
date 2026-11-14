@@ -833,6 +833,43 @@ describe("AdvisorSubmissionPage", () => {
       expect(screen.getByLabelText("New note")).toHaveValue("");
     });
 
+    // Catches (D-178): the rule for "is this text meant for a person" hiding a refusal the product raised on purpose (55000, P0002, P0001 and the 23xxx and 40001 it raises with
+    // its own sentence) behind "check your connection", or showing the database's own text (constraint names, "invalid input syntax", the edge function's status line).
+    const FALLBACK = "The note wasn't saved. Check your connection and try again. What you typed is still here.";
+    it.each([
+      ["55000", "This PEO has a draft. Publish or discard it before recording a re-check", "shown"],
+      ["P0002", "Submission not found", "shown"],
+      ["P0001", "That submission can't be changed now", "shown"],
+      ["23514", "A note can't be empty.", "shown"],
+      ["23505", "That code is already taken.", "shown"],
+      ["40001", "Another version was generated meanwhile; generate it again", "shown"],
+      ["PT409", "Someone changed this first.", "shown"],
+      ["23505", 'duplicate key value violates unique constraint "advisor_notes_pkey"', "hidden"],
+      ["23503", 'insert or update on table "advisor_notes" violates foreign key constraint "x"', "hidden"],
+      ["23514", 'new row for relation "advisor_notes" violates check constraint "body_len"', "hidden"],
+      ["23502", 'null value in column "body" of relation "advisor_notes" violates not-null constraint', "hidden"],
+      ["22P02", 'invalid input syntax for type uuid: "nonsense"', "hidden"],
+      ["22001", "value too long for type character varying(5)", "hidden"],
+      ["40001", "could not serialize access due to concurrent update", "hidden"],
+      ["40P01", "deadlock detected", "hidden"],
+      ["42883", "function public.nope(uuid) does not exist", "hidden"],
+      ["42P01", 'relation "advisor_notes2" does not exist', "hidden"],
+      ["57014", "canceling statement due to statement timeout", "hidden"],
+      ["PGRST301", "JWT expired", "hidden"],
+      [undefined, "Edge Function returned a non-2xx status code", "hidden"],
+      [undefined, "Failed to send a request to the Edge Function", "hidden"],
+      [undefined, "TypeError: Failed to fetch", "hidden"],
+    ])("a failed save with code %s says %j: %s", async (code, text, outcome) => {
+      renderPage();
+      await screen.findByRole("heading", { name: "Signed Co" });
+      api.addNote.mockRejectedValueOnce(Object.assign(new Error(text), code ? { code } : {}));
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "x" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+      const alert = await within(screen.getByRole("heading", { name: "Internal notes" }).closest("section")!).findByRole("alert");
+      expect(alert).toHaveTextContent(outcome === "shown" ? text : FALLBACK);
+      if (outcome === "hidden") expect(alert).not.toHaveTextContent(text);
+    });
+
     // Catches: the database's own sentence (a rule the product raises, with its own words) being lost: it is for a person and is shown, as the form already does.
     it("shows a refusal's own words when they are meant for a person", async () => {
       renderPage();
@@ -1059,7 +1096,9 @@ describe("AdvisorSubmissionPage", () => {
     expect(generate).toBeDisabled();
     // The shared loading pieces: one status for a screen reader, grey lines (hidden from it) where the checks will be, and why Generate waits.
     const packet = screen.getByRole("region", { name: "Advisor packet" });
-    expect(within(packet).getByRole("status")).toHaveTextContent("Loading the PEOs' profiles");
+    // Two panels wait on the one read: the page says so ONCE (D-146), from the first panel; the second shows its grey lines and its reason silently.
+    await waitFor(() => expect(screen.getAllByRole("status").filter((e) => /Loading the PEOs' profiles/.test(e.textContent ?? ""))).toHaveLength(1));
+    expect(within(packet).queryByRole("status")).not.toBeInTheDocument();
     expect(packet.querySelector("[aria-busy='true'][aria-hidden='true']")).not.toBeNull();
     expect(within(packet).getByText("You can generate the packet once they're in.")).toBeInTheDocument();
     fireEvent.click(generate);
@@ -1073,9 +1112,10 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Signed Co" });
     const panel = screen.getByRole("region", { name: "Advisor packet" });
-    expect(await within(panel).findByRole("alert")).toHaveTextContent(
-      "We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.",
-    );
+    // One read failed for two panels: ONE alert (the first panel's), and the packet panel says the same in words that are not a live region.
+    await waitFor(() => expect(screen.getAllByRole("alert").filter((e) => /load the PEOs' profiles/.test(e.textContent ?? ""))).toHaveLength(1));
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+    expect(panel).toHaveTextContent("We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.");
     expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeDisabled();
     // The rest of the page is untouched by the failure: the other panels still show their content.
     expect(screen.getByRole("heading", { name: "Internal notes" })).toBeInTheDocument();
@@ -1086,6 +1126,20 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(within(panel).getByRole("button", { name: /Generate packet/ }));
     await waitFor(() => expect(api.saveManuscriptVersion).toHaveBeenCalled());
+  });
+
+  // Catches (D-175): the retry that fails again moving focus to the OTHER panel's button (both panels wait on one read), which is off screen.
+  it("puts focus on the Try again of the panel that was pressed when the profiles fail again", async () => {
+    peoCatalogReads.push(() => Promise.reject(new Error("down")), () => Promise.reject(new Error("down")));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const packet = screen.getByRole("region", { name: "Advisor packet" });
+    const needs = screen.getByRole("heading", { name: "What each PEO still needs" }).closest("section")!;
+    fireEvent.click(await within(packet).findByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(peoCatalogReads).toHaveLength(0));
+    await waitFor(() => expect(within(packet).getByRole("button", { name: "Try again" })).toHaveFocus());
+    expect(within(needs).getByRole("button", { name: "Try again" })).not.toHaveFocus();
   });
 
   it("reloads, and keeps no file, when the prospect certified again while the packet was being generated", async () => {

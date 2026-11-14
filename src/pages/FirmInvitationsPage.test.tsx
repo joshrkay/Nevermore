@@ -323,6 +323,14 @@ describe("FirmInvitationsPage", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("That invitation has already been used or withdrawn."));
   });
 
+  // Catches: the owners-only refusal read as a failure that "Try again" might fix.
+  it("says there is nothing to retry when the list is refused to this account", async () => {
+    api.fetchPendingInvitations.mockRejectedValueOnce(Object.assign(new Error("Only an owner of the firm can see invitations."), { forbidden: true }));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have access to this firm's records.");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
   it("offers a retry when the list can't be loaded", async () => {
     api.fetchPendingInvitations.mockRejectedValueOnce(new Error("Couldn't load the invitations."));
     renderPage();

@@ -179,7 +179,6 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
     await waitFor(() => expect(join.fetchJoinRequests).toHaveBeenCalledTimes(2));
   });
 
-  // Catches: a lead or an agent is shown the owners' lists, or the page asks the database for them.
   // Catches: a section that cannot load showing the database's own words in red, or taking the whole page down with it, or its Try again being the page's.
   it.each([
     ["Organisations", "fetchOrganisations", "We couldn't load the organisations."],
@@ -199,6 +198,19 @@ describe("FirmInvitationsPage: organisations and people who asked to join", () =
     await waitFor(() => expect(section).toHaveFocus());
   });
 
+  // Catches: a "Try again" offered where it can never work (the role is gone, or the session ended), and the refusal's sentence lost.
+  it.each([
+    ["a refused role", { forbidden: true }, /no longer have access to this firm's records/],
+    ["an ended session", { unauthenticated: true }, /session has expired/],
+  ] as const)("offers no Try again in a section whose load failed for %s", async (_name, flags, words) => {
+    join.fetchOrganisations.mockRejectedValueOnce(Object.assign(new Error("x"), flags));
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: "Organisations" })).closest("section")!;
+    expect(await within(section).findByRole("alert")).toHaveTextContent(words);
+    expect(within(section).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  // Catches: a lead or an agent is shown the owners' lists, or the page asks the database for them.
   it("shows neither list to someone who is not an owner, and asks for neither", async () => {
     invitations.fetchMyFirm.mockResolvedValue({ id: "f1", name: "Acme Brokers", role: "lead" });
     renderPage();

@@ -10,7 +10,7 @@ import { savePeoDraft } from "@/lib/advisorApi";
 import { listTemplateWorkbooks, TEMPLATE_WORKBOOK_STATUS_WORDS, templateWorkbookProblem, uploadTemplateWorkbook, type TemplateWorkbookRecord } from "@/lib/templateWorkbooks";
 import { buttonClass, columnLabel, inputClass, primaryClass, problemAt, sourceDraft, sourceFrom, suggestQuestionKey, type SectionKey, type SourceDraft } from "./shared";
 import { Field, SourceFields } from "./SourceFields";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords } from "@/components/workspace/form";
 
 /** The problems' paths that belong to a section (its parts' fields and sources), so its editor shows only its own. */
 const sectionPaths = (section: SectionKey) =>

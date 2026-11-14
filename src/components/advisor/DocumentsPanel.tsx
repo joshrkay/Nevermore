@@ -7,7 +7,7 @@ import { advisorScanNotice } from "@/data/documentStatus";
 import { documentUrl, recordActivity, type DocumentEvent } from "@/lib/advisorApi";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { actorName, formatDateTime } from "./format";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords } from "@/components/workspace/form";
 
 interface DocumentsPanelProps {
   documents: ReviewedDocument[];

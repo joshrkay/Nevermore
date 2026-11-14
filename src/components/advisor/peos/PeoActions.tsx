@@ -8,7 +8,7 @@ import { checkCensusLayout } from "@/lib/censusLayoutCheck";
 import { listTemplateWorkbooks } from "@/lib/templateWorkbooks";
 import { buttonClass, primaryClass, sourceDraft, sourceFrom, type SourceDraft } from "./shared";
 import { SourceFields } from "./SourceFields";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords } from "@/components/workspace/form";
 
 /** The review before publishing: what the draft changes from the version in use, and what still stops it. */
 export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload }: {

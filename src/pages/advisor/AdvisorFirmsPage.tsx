@@ -8,7 +8,7 @@ import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, sto
 import { firmHostname, firmUrlFrom } from "@/lib/firmHost";
 import { endSupportSession, endTime, fetchSupportSessions, startSupportSession, SUPPORT_REASON_MAX, type SupportSession } from "@/lib/supportApi";
 import { LoadFailed } from "@/components/workspace/states";
-import { failureWords } from "@/components/workspace/form/failureWords";
+import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 type Load =
   | { kind: "loading" }
@@ -67,7 +67,7 @@ const AdvisorFirmsPage = () => {
       // An ended session is no failure to retry: LoadFailed signs the person out. A refusal (42501) stays a message,
       // since it can also mean the admin belongs to this firm, and the person can still use the page.
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -83,7 +83,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -99,7 +99,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -112,7 +112,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
@@ -128,7 +128,7 @@ const AdvisorFirmsPage = () => {
       setAttempt((n) => n + 1);
     } catch (err) {
       if ((err as { unauthenticated?: boolean }).unauthenticated) setLoad({ kind: "error", error: err as Error });
-      else toast.error(failureWords(err, "That didn't go through. Check your connection and try again."));
+      else toast.error(failureWords(err, DID_NOT_GO_THROUGH));
     }
     setBusy(null);
   };
