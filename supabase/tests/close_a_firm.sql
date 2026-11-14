@@ -140,6 +140,7 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261119100000_crm_records.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -282,6 +283,16 @@ BEGIN
   INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload, status) VALUES ('advisor_notification', s, 'alert-a', '{}', 'pending');
   -- The firm's working data: for alpha and for beta alike.
   INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (fa, 'existing', 'Existing', 'accounting'), (fb, 'existing', 'Existing', 'accounting');
+  -- Each firm's records (CRM-Q1.1a): an account with its contacts and an opportunity holding the firm's intake, which closing deletes in that order and
+  -- leaves the intake itself.
+  INSERT INTO public.accounts (id, firm_id, name) VALUES ('00000000-0000-4000-8000-0000000000a1', fa, 'Alpha account'), ('00000000-0000-4000-8000-0000000000b1', fb, 'Beta account');
+  INSERT INTO public.contacts (id, firm_id, account_id, last_name, email, is_main) VALUES
+    ('00000000-0000-4000-8000-0000000000a2', fa, '00000000-0000-4000-8000-0000000000a1', 'Main', 'main@alpha.example', true),
+    ('00000000-0000-4000-8000-0000000000a3', fa, '00000000-0000-4000-8000-0000000000a1', 'Other', 'other@alpha.example', false),
+    ('00000000-0000-4000-8000-0000000000b2', fb, '00000000-0000-4000-8000-0000000000b1', 'Main', 'main@beta.example', true);
+  INSERT INTO public.opportunities (firm_id, account_id, name, intake_id, main_contact_id) VALUES
+    (fa, '00000000-0000-4000-8000-0000000000a1', 'Alpha search', s, '00000000-0000-4000-8000-0000000000a2'),
+    (fb, '00000000-0000-4000-8000-0000000000b1', 'Beta search', sb, '00000000-0000-4000-8000-0000000000b2');
   INSERT INTO public.firm_organisations (firm_id, provider, org_id, label) VALUES (fa, 'google', 'alpha.example', 'Alpha'), (fb, 'google', 'beta.example', 'Beta');
   INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label) VALUES (fa, pg_temp.id('joiner'), 'google', 'alpha.example', 'Alpha');
   INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at)
@@ -1019,8 +1030,8 @@ BEGIN
   PERFORM pg_temp.is(c.asked_by, pg_temp.id('owner_a'), 'it still says who asked');
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
-    'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 1, 'referral_partners', 1, 'firm_teams', 1,
-    'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
+    'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 5, 'referral_partners', 1,
+    'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
@@ -1028,6 +1039,9 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE address = 'both@mailbox.test'), 1::bigint, 'the mailbox of a person who belongs to another firm is kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE address = 'agent_b@mailbox.test'), 1::bigint, 'and the other firm''s');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_teams WHERE firm_id = fb), 1::bigint, 'the other firm''s team is kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = fa) + (SELECT count(*) FROM public.contacts WHERE firm_id = fa) + (SELECT count(*) FROM public.opportunities WHERE firm_id = fa), 0::bigint, 'the firm''s accounts, contacts and opportunities are deleted');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = fb) + (SELECT count(*) FROM public.contacts WHERE firm_id = fb) + (SELECT count(*) FROM public.opportunities WHERE firm_id = fb), 3::bigint, 'and the other firm''s are kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions WHERE id = pg_temp.id('intake_a')), 1::bigint, 'the intake on one of the opportunities is kept, with its employer');
   RAISE NOTICE 'close_a_firm: the deletion passed';
 END $$;
 

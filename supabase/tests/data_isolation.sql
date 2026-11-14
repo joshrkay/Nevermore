@@ -191,6 +191,7 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261119100000_crm_records.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -677,6 +678,32 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ---- CRM-Q1.1a: accounts, contacts and opportunities (20261119100000) ----
+-- Each firm has two accounts, each with a contact and an opportunity: one owned by the firm's agent (the advisor's, agent_b's) and one with no owner.
+-- The first firm shows everyone everything, so all its members read all of them; the second sees by level, so its agent reads only the owned
+-- account and what hangs off it and its owner reads both (the matrix below). The owned account's opportunity holds the firm's certified intake.
+DO $$
+DECLARE
+  f text;
+  fid uuid;
+  agent uuid;
+  acc1 uuid;
+  acc2 uuid;
+  main_contact uuid;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+    fid := pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END);
+    agent := pg_temp.id(CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END);
+    INSERT INTO public.accounts (firm_id, owner_id, name, website) VALUES (fid, agent, 'Fixture owned ' || f, 'https://www.fixture-' || f || '.example/') RETURNING id INTO acc1;
+    INSERT INTO public.accounts (firm_id, name) VALUES (fid, 'Fixture unowned ' || f) RETURNING id INTO acc2;
+    INSERT INTO public.contacts (firm_id, account_id, last_name, email, is_main) VALUES (fid, acc1, 'Fixture', 'c-' || f || '@example.test', true) RETURNING id INTO main_contact;
+    INSERT INTO public.contacts (firm_id, account_id, last_name, phone) VALUES (fid, acc2, 'Fixture', '503-555-0100');
+    INSERT INTO public.opportunities (firm_id, account_id, name, intake_id, main_contact_id)
+    VALUES (fid, acc1, 'Fixture search', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), main_contact);
+    INSERT INTO public.opportunities (firm_id, account_id, name) VALUES (fid, acc2, 'Fixture search');
+  END LOOP;
+END $$;
+
 -- ---------- 1. the matrix ----------
 -- Rows each caller sees of each source. A missing caller key means 0; "all" means every row there is. Every
 -- source must hold at least one row, or the check would prove nothing.
@@ -808,6 +835,15 @@ INSERT INTO matrix VALUES
 -- fixtures make are what writes its rows, through the trigger.
 INSERT INTO matrix VALUES
   ('public.record_history',                             '{}', NULL);
+
+-- ---- CRM-Q1.1a: accounts, contacts and opportunities (20261119100000) ----
+-- Read by level through can_see_firm_record, a contact and an opportunity by their account's (supabase/tests/crm_records.sql); written by nobody through
+-- the API. Each firm has two of each, one on an account with an owner and one on an account with none: the first firm's members see both, the second's
+-- agent only the owned account's and its owner both.
+INSERT INTO matrix VALUES
+  ('public.accounts',                                   '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('public.contacts',                                   '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('public.opportunities',                              '{"agent_b":1}', '{"A":2,"B":2}');
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -2804,6 +2840,21 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.record_history', 'firm', 'its own firm_id; closed to the API, a member reads a record''s history through a function',
    $m$INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind) VALUES ({firm}, 'referral_partners', 'probe-{tag}', gen_random_uuid(), 'created') RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- CRM-Q1.1a: accounts, contacts and opportunities (20261119100000) ----
+-- A firm's own records: their own firm_id (a contact and an opportunity are on an account of their firm, by a foreign key on the pair). A member reads
+-- them by level, so one member of the second firm (an agent who owns nothing here, and the member of both firms) legitimately reads none of the probe's
+-- rows: there is no positive control in the probe (member_reads false); the matrix above has it, with exact counts for each caller, and so does
+-- crm_records.sql. Nobody writes through the API, so a write is refused for privilege.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.accounts', 'firm', 'its own firm_id; read by level, written by no API role',
+   $m$INSERT INTO public.accounts (firm_id, owner_id, name) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.contacts', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account',
+   $m$INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'probe-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.opportunities', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account',
+   $m$INSERT INTO public.opportunities (firm_id, account_id, name) SELECT a.firm_id, a.id, 'Probe {tag}' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -3416,6 +3467,11 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_history_who', 'service_only', 'how a history names who made a change (a member''s email, "Nevermore", "System"): the reading function and a conflict ask it, so they cannot disagree; no API role can call it (D-33, D-156)'),
   ('record_version_changes', 'service_only', 'the fields that differ from what a person started from, and who changed each: a record''s save function asks it after its own firm checks, for a record the caller may see; no API role can call it (D-155)'),
   ('firm_actor_is_staff', 'service_only', 'whether an actor was Nevermore''s own person acting on a firm they were not a member of (D-33): the firm''s record and the history of a record stamp it; no API role can call it');
+
+-- CRM-Q1.1a (20261119100000_crm_records.sql; supabase/tests/crm_records.sql): an account's status and an opportunity's stage, worked out.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
+  ('opportunity_stage', 'service_only', 'an opportunity''s stage, worked out from its submission''s pipeline stage; answers for any opportunity by id, so no API role can call it: a query that has decided the caller may see the opportunity asks it');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),

@@ -496,6 +496,22 @@ _Avoid_: PEO contact (a person at a PEO), prospect (the person who certifies; a 
 One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known. It holds at most one intake; next year's renewal is a new opportunity on the same account. Until CRM-O1.2 its stage is worked out from its submission's pipeline stage, never stored: Intake under way (draft, submitted, under review, information requested), Ready to send (ready for market), In market (sent to PEOs), Quoted, Won, and Lost (lost or archived). It is open until it is won or lost (D-206).
 _Avoid_: deal, search (on its own), case
 
+**Main contact**:
+The one contact of an account that is the person to deal with first; an account has at most one, by a constraint (D-29), and an opportunity's main contact is a contact on the same account. An account made from a submission starts with its prospect as its main contact (D-214).
+_Avoid_: primary contact, lead contact
+
+**Account status** (code: `account_status(account)`; story CRM-Q1.1a, CRM-A1.3, D-197):
+Whether an account is a prospect account or a client, worked out each time it is asked and never stored: `prospect` until one of its opportunities' submissions is won, then `client` (a won submission that is archived no longer makes a client; Former client arrives with the placement record in Epic 4). Nobody sets it. Not callable by the browser: a query that has decided the caller may see the account asks it.
+_Avoid_: account type, lifecycle stage
+
+**Opportunity stage** (code: `opportunity_stage(opportunity)`, `opportunity_stage_of(pipeline stage)`; story CRM-Q1.1a, D-206):
+Where an opportunity is, worked out from its submission's pipeline stage and never stored (until CRM-O1.2): `qualifying` when it has no intake, `intake_under_way` (draft, submitted, under review, information requested), `ready_to_send` (ready for market), `in_market` (sent to PEOs), `quoted`, `won`, and `lost` (lost or archived). A pipeline stage the mapping does not know is refused, never answered with nothing, so a stage added to the pipeline fails a test until it is mapped.
+_Avoid_: status (an account has a status, an opportunity a stage), pipeline stage (that is the submission's own)
+
+**Web domain** (code: `web_domain_of(website)`, `accounts.web_domain`; story CRM-Q1.1a, D-193):
+An account's website reduced to what the duplicate match compares: lower case, without the scheme, a login, the path, query or port, a trailing dot or a leading `www.`. Worked out from the website, never typed. Whether it is a free-mail domain is the duplicate match's question, not stored here.
+_Avoid_: URL, host
+
 **Activity tab**:
 The tab of an account's page that lists, newest first, its calls, notes and tasks (from Epic 6 its emails) together with its record history, with a filter for All, Calls, Notes, Tasks and Changes (D-212). It is never the **Firm activity** record.
 _Avoid_: activity feed, audit log, timeline (on its own)
