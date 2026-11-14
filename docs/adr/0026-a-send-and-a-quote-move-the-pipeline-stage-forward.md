@@ -1,6 +1,6 @@
 # A send and a quote move the pipeline stage forward
 
-Status: accepted (founder, 2026-11-13, D-10; grilled 2026-11-14, D-230, D-231). Reverses D44's "the pipeline stage stays manual, with a one-click offer of the next step after a first send or a first quote".
+Status: accepted (founder, 2026-11-13, D-10; grilled 2026-11-14, D-411, D-412). Reverses D44's "the pipeline stage stays manual, with a one-click offer of the next step after a first send or a first quote".
 
 ## Context
 

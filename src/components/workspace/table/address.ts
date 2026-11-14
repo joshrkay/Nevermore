@@ -155,6 +155,12 @@ export const writeFilter = (f: { field: string; op: string; value?: unknown }): 
   return value === null ? `${escapeText(f.field)}:${escapeText(f.op)}` : `${escapeText(f.field)}:${escapeText(f.op)}:${value}`;
 };
 
+/** A filter a saved view holds (`{ field, op, value }`), read the way the address reads it: the filter, or null when the table can't take it. */
+export function readStoredFilter<K extends TableFields>(table: TableDefinition<K, never, never>, stored: { field: string; op: string; value?: unknown }): TableFilter<K> | null {
+  const read = readFilter(table, writeFilter(stored));
+  return "ok" in read ? read.ok : null;
+}
+
 /** A sort parameter read against the table's fields: the sort, or the text when it names a field the table doesn't know. */
 function readSort<K extends TableFields>(table: TableDefinition<K, never, never>, text: string | null): { sort: TableSort<keyof K & string> } | { unknown: string } | null {
   if (!text) return null;
@@ -169,6 +175,12 @@ export function searchTermFor(typed: string, minChars: number): string {
   const text = cut(wellFormed(typed).trim(), FILTER_TEXT_MAX).trim();
   return text.replace(/\s+/g, "").length >= minChars ? text : "";
 }
+
+/** The view an id names, or undefined for no view (the table's "All") and for an id the table doesn't list. */
+export const viewOf = <K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null) => table.views.find((v) => v.id === viewId);
+
+/** The sort a view is in while the address holds none: its own, else none (the table's own order). */
+export const viewSort = <K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null): TableSort<keyof K & string> | null => viewOf(table, viewId)?.sort ?? null;
 
 /** The filters a view stands for (none for no view, or for a view the table doesn't know). */
 export function viewFilters<K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null): TableFilter<K>[] {
@@ -192,9 +204,9 @@ export interface TableQuery<K extends TableFields> {
   search: string;
 }
 
-/** The effective query of an address: the view's filters and the address's together, the sort, the page and the search. */
+/** The effective query of an address: the view's filters and the address's together, the sort (the address's, else the view's), the page and the search. */
 export function queryFor<K extends TableFields>(table: TableDefinition<K, never, never>, address: TableAddress<K>): TableQuery<K> {
-  return { filters: effectiveFilters(table, address.view, address.filters), sort: address.sort, page: address.page, search: address.search };
+  return { filters: effectiveFilters(table, address.view, address.filters), sort: address.sort ?? viewSort(table, address.view), page: address.page, search: address.search };
 }
 
 /** Whether the address holds anything the table can't judge yet: the rows wait until it can. */
@@ -223,8 +235,10 @@ export function judgeAddress<K extends TableFields>(table: TableDefinition<K, ne
   if (sortRead && "sort" in sortRead) sort = sortRead.sort;
   else if (sortRead && "unknown" in sortRead && fieldsLoading) held.sort = sortRead.unknown;
 
-  // A sort equal to the table's own default is no sort: the address never holds it, so the order line and its way back don't show for it.
-  if (sort && table.defaultSort && sort.field === table.defaultSort.field && sort.direction === table.defaultSort.direction) sort = null;
+  // A sort equal to the order the table is in without one (the view's own, else the table's default) is no sort: the address never holds it, so
+  // the order line and its way back don't show for it, and a view whose order was only repeated is not a modified view.
+  const base = viewSort(table, view) ?? table.defaultSort;
+  if (sort && base && sort.field === base.field && sort.direction === base.direction) sort = null;
 
   // The view's filters count first against the table's limit; the address takes the room that is left (held ones count too).
   const room = Math.max(0, TABLE_FILTER_LIMIT - viewFilters(table, view).length);
@@ -289,8 +303,17 @@ export function addressToSearch<K extends TableFields>(address: TableAddress<K>)
   return out.join("&");
 }
 
-/** Whether two addresses are the same place: the same page, sort, filters, view and search (S3.4a asks this to tell a view that was modified). */
-export const sameAddress = <K extends TableFields>(a: TableAddress<K>, b: TableAddress<K>): boolean => addressToSearch(a) === addressToSearch(b);
+/**
+ * Whether two addresses are the same place: the same page, sort, filters, view and search. A sort that only repeats the order its view is in
+ * (or the table's own default) is no sort, so an address that writes it out is the place that leaves it out.
+ */
+export const sameAddress = <K extends TableFields>(table: TableDefinition<K, never, never>, a: TableAddress<K>, b: TableAddress<K>): boolean => {
+  const plain = (x: TableAddress<K>): TableAddress<K> => {
+    const base = viewSort(table, x.view) ?? table.defaultSort;
+    return x.sort && base && x.sort.field === base.field && x.sort.direction === base.direction ? { ...x, sort: null } : x;
+  };
+  return addressToSearch(plain(a)) === addressToSearch(plain(b));
+};
 
 /** What can change in an address: any part but `held`, and, for the filter row, which held filters stay (`heldFilters`, as written in the address). */
 export type AddressChange<K extends TableFields> = Partial<Omit<TableAddress<K>, "held">> & { heldFilters?: string[] };

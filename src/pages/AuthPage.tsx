@@ -39,9 +39,11 @@ const AuthPage = () => {
   const notice =
     routeState?.reason === "expired"
       ? "Your session expired. Sign in again to continue."
-      : routeState?.reason === "signed_out"
-        ? "You've been signed out."
-        : null;
+      : routeState?.reason === "step_up"
+        ? "Sign in again to export a whole table."
+        : routeState?.reason === "signed_out"
+          ? "You've been signed out."
+          : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

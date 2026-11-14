@@ -23,6 +23,7 @@ const listEmailProblems = vi.fn();
 const fetchMyColumns = vi.fn();
 const setMyColumns = vi.fn();
 vi.mock("@/lib/tableSettingsApi", () => ({
+  listSavedViews: async () => [],
   fetchMyColumns: (...a: unknown[]) => fetchMyColumns(...a),
   setMyColumns: (...a: unknown[]) => setMyColumns(...a),
 }));
@@ -2104,8 +2105,8 @@ describe("AdvisorDashboardPage", () => {
       expect(listQueue.mock.calls.every(([o]) => o.filters[0].field === "needs_action")).toBe(true);
       const a = readAddress(QUEUE_TABLE, new URLSearchParams("filter=waiting_on_peo:is:true&filter=needs_action:is:true"));
       const b = readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true&filter=waiting_on_peo:is:true"));
-      expect(sameAddress(a, b)).toBe(true);
-      expect(sameAddress(a, readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true")))).toBe(false);
+      expect(sameAddress(QUEUE_TABLE, a, b)).toBe(true);
+      expect(sameAddress(QUEUE_TABLE, a, readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true")))).toBe(false);
     });
 
     // Catches: an old parameter and a new filter on the same field both applying, so "yes" and "no" together match nothing.

@@ -1,6 +1,6 @@
 # The owner can reopen a won or lost search
 
-Status: accepted (founder, 2026-11-14, CRM-O1.3, D-288, D-289). Changes the pipeline's moves, under which won and lost could move only to archived.
+Status: accepted (founder, 2026-11-14, CRM-O1.3, D-469, D-470). Changes the pipeline's moves, under which won and lost could move only to archived.
 
 ## Context
 
@@ -17,4 +17,4 @@ Reopening a win is refused while its renewal is being worked by an opportunity, 
 ## Consequences
 
 - The console's stage control offers Won and Lost through the opportunity's dialog, not by itself.
-- An account's status follows a reopen without a write, since it is worked out (D-197, D-270).
+- An account's status follows a reopen without a write, since it is worked out (D-197, D-451).

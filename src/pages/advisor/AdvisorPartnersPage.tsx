@@ -32,6 +32,8 @@ import {
   type ReferralPartner,
 } from "@/lib/advisorApi";
 import { LoadFailed } from "@/components/workspace/states";
+import { ExportControl } from "@/components/workspace/ExportControl";
+import type { ShownColumn } from "@/lib/exportFile";
 
 type Counts = Map<string, { started: number; certified: number }>;
 type Load =
@@ -42,6 +44,14 @@ type Load =
   /** A member of several firms, on the bare domain, has not said which. */
   | { kind: "choose" }
   | { kind: "ready"; firmId: string; partners: ReferralPartner[]; counts: Counts };
+
+/** The columns of the table below, as an export writes them: the partner's name, their link (or their code where no link works yet) and the two counts. */
+const exportColumns = (links: boolean): ShownColumn[] => [
+  { id: "name", heading: "Partner" },
+  links ? { id: "code", heading: "Their link", text: (row) => partnerLink(String(row.code)) } : { id: "code", heading: "Their code" },
+  { id: "started_30d", heading: "Started, 30 days" },
+  { id: "certified_30d", heading: "Certified, 30 days" },
+];
 
 const CODE_RULE = "Use only lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit.";
 const buttonClass = "flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50";
@@ -159,7 +169,11 @@ const AdvisorPartnersPage = () => {
             </p>
           </div>
         ) : (
-          <PartnerTable partners={load.partners} counts={load.counts} links={referralLinksWork(load.firmId)} onChanged={reload} />
+          <>
+            {/* Every partner of the firm, as the database gives them: this page has no filter of its own to carry (CRM-S3.8a). */}
+            <div className="mt-8"><ExportControl firmId={load.firmId} table="referral_partners" columns={exportColumns(referralLinksWork(load.firmId))} /></div>
+            <PartnerTable partners={load.partners} counts={load.counts} links={referralLinksWork(load.firmId)} onChanged={reload} />
+          </>
         ))}
       </main>
     </div>
@@ -256,7 +270,7 @@ const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => vo
 };
 
 const PartnerTable = ({ partners, counts, links, onChanged }: { partners: ReferralPartner[]; counts: Counts; links: boolean; onChanged: () => void }) => (
-  <div className="overflow-x-auto mt-8">
+  <div className="overflow-x-auto mt-2">
     <table className="w-full text-sm border-collapse">
       <caption className="sr-only">{links ? "Referral partners, their links and their intakes in the last 30 days" : "Referral partners, their codes and their intakes in the last 30 days"}</caption>
       <thead>

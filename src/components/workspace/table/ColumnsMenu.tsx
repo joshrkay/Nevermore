@@ -12,7 +12,8 @@ import type { MyColumns } from "./useMyColumns";
 // Apply, because the table behind it changes at once. The name column is always shown and always first.
 //   Nothing can be changed until the person's kept choice has arrived (a change over the usual columns would be kept over their real choice); after a
 //   failed load the usual columns show, read-only, with "Try again".
-//   Left for later stories: a saved view's own columns (CRM-S3.4a gives `useMyColumns` the view); the firm's custom fields (CRM-X3.1 lists them in the
+//   On a saved view (CRM-S3.4a) the same list is the person's own choice for that view; "Go back to this view's columns" forgets it.
+//   Left for a later story: the firm's custom fields (CRM-X3.1 lists them in the
 //   table's `columns` once loaded, and this list offers them with no change).
 
 const LOADING_REASON = "More columns are available once the table's fields have loaded.";
@@ -72,7 +73,7 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
     keep(next);
   };
   const forget = () => {
-    if (reason || mine.kept === null) return;
+    if (reason || !mine.canForget) return;
     setSaid("");
     void mine.save(null);
   };
@@ -86,7 +87,9 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80" aria-label="Columns">
-        <p className="mb-2 text-sm text-muted-foreground">Choose the columns this table shows you. Your choice is kept for you on any device.</p>
+        <p className="mb-2 text-sm text-muted-foreground">
+          {mine.viewId ? "Choose the columns this view shows you. Your choice is kept for you on this view, on any device." : "Choose the columns this table shows you. Your choice is kept for you on any device."}
+        </p>
         {reason && (
           <p id={reasonId} className="mb-2 text-sm text-muted-foreground">
             {reason}
@@ -149,10 +152,10 @@ export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }
             type="button"
             onClick={forget}
             aria-describedby={reason ? reasonId : undefined}
-            aria-disabled={mine.kept === null || reason ? true : undefined}
-            className={cn(BUTTON, (mine.kept === null || reason) && "opacity-50")}
+            aria-disabled={!mine.canForget || reason ? true : undefined}
+            className={cn(BUTTON, (!mine.canForget || reason) && "opacity-50")}
           >
-            Show the usual columns
+            {mine.viewId ? "Go back to this view's columns" : "Show the usual columns"}
           </button>
         </div>
         <p role="status" className="sr-only">{said}</p>
