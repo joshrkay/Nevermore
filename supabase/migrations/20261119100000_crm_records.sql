@@ -31,8 +31,9 @@
 -- ---------- 1. The web domain ----------
 -- The match key of D-193: the address a person typed, reduced to its domain: lower case, no scheme, no login, no path, query, port or trailing dot,
 -- and no leading "www." (any white space around it, a tab or a line break included, is trimmed, and a scheme with one slash or three, or with
--- backslashes, is still a scheme). Nothing is left of an address that is only a "www." or blanks, and that is no domain. (Whether the domain is a free-mail one
--- is the duplicate match's to decide, CRM-Q1.1b.) Pure.
+-- backslashes, is still a scheme, as is "http:" or "https:" with none; any other word before a colon and no slash is a host and its port). Nothing is
+-- left of an address that is only a "www." or blanks, and that is no domain. (Whether the domain is a free-mail one is the duplicate match's to decide,
+-- CRM-Q1.1b.) Pure.
 CREATE FUNCTION public.web_domain_of(p_website text)
 RETURNS text
 LANGUAGE sql
@@ -47,7 +48,7 @@ AS $$
             regexp_replace(
               regexp_replace(
                 lower(regexp_replace(p_website, '^[[:space:] ​﻿]+|[[:space:] ​﻿]+$', '', 'g')),
-                '^[a-z][a-z0-9+.-]*:[/\\]+', ''),
+                '^([a-z][a-z0-9+.-]*:[/\\]+|https?:)', ''),
               '[/\\?#].*$', ''),
             '^.*@', ''),
           ':[0-9]*$', ''),
@@ -152,6 +153,9 @@ CREATE INDEX contacts_email_idx ON public.contacts (firm_id, lower(email)) WHERE
 COMMENT ON TABLE public.contacts IS 'A person at an account (glossary: Contact), on exactly one account. Seen by whoever may see its account.';
 
 -- ---------- 4. Opportunities ----------
+-- chamber_sessions holds its firm in another column, so the foreign key on the pair below (opportunities_intake_fkey) needs it unique with the id.
+-- Additive: the id is already the key. (A trigger on the opportunity alone was tried first and refused: it fires only when the opportunity changes, so
+-- an intake moved to another firm left the opportunity on it.)
 ALTER TABLE public.chamber_sessions ADD CONSTRAINT chamber_sessions_id_firm_id_key UNIQUE (id, firm_id);
 
 CREATE TABLE public.opportunities (
@@ -180,8 +184,8 @@ CREATE TABLE public.opportunities (
   -- only the browser's roles). The intake's deletion leaves the opportunity, with none.
   CONSTRAINT opportunities_intake_fkey FOREIGN KEY (intake_id, firm_id) REFERENCES public.chamber_sessions (id, firm_id) ON DELETE SET NULL (intake_id),
   -- The main contact is a contact on the same account; a contact's deletion clears it. Moving a contact to another account while it is the main
-  -- contact of an opportunity is refused, unless the opportunity moves with it in the same transaction. The link is deferrable (initially immediate), so a merge (CRM-S4.3b) can move contacts and the opportunities that name them in one transaction without clearing and
-  -- restoring each main contact.
+  -- contact of an opportunity is refused, unless the opportunity moves with it in the same transaction. The link is deferrable (initially immediate),
+  -- so a merge (CRM-S4.3b) can move contacts and the opportunities that name them in one transaction without clearing and restoring each main contact.
   CONSTRAINT opportunities_main_contact_fkey FOREIGN KEY (account_id, main_contact_id) REFERENCES public.contacts (account_id, id)
     ON DELETE SET NULL (main_contact_id) DEFERRABLE INITIALLY IMMEDIATE
 );
@@ -192,9 +196,6 @@ CREATE INDEX opportunities_main_contact_idx ON public.opportunities (main_contac
 
 COMMENT ON TABLE public.opportunities IS 'One search for one account and one start date (glossary: Opportunity). Its stage is worked out by opportunity_stage(), never stored.';
 
--- chamber_sessions holds its firm in another column, so the foreign key on the pair above needs it unique with the id. Additive: the id is already the key.
--- (A trigger on the opportunity alone was tried first and refused: it fires only when the opportunity changes, so an intake moved to another firm
--- left the opportunity on it.)
 -- ---------- 5. Stamps, and a source nobody edits ----------
 CREATE TRIGGER accounts_updated_at BEFORE UPDATE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER contacts_updated_at BEFORE UPDATE ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();

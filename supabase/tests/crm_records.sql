@@ -340,6 +340,9 @@ BEGIN
   PERFORM pg_temp.is(public.web_domain_of('http:///x.example.com/y'), 'x.example.com', 'and one with three');
   PERFORM pg_temp.is(public.web_domain_of('HTTPS:\\x.example.com\y'), 'x.example.com', 'and one with backslashes');
   PERFORM pg_temp.is(public.web_domain_of('example.com:8080'), 'example.com', 'a port on a bare domain is not taken for a scheme');
+  PERFORM pg_temp.is(public.web_domain_of('https:example.com'), 'example.com', 'a web scheme with no slash is a scheme');
+  PERFORM pg_temp.is(public.web_domain_of('HTTP:www.Example.com/x'), 'example.com', 'in capitals too');
+  PERFORM pg_temp.is(public.web_domain_of('localhost:8080'), 'localhost', 'but any other word before a colon is a host with a port');
   PERFORM pg_temp.is(public.web_domain_of('www.'), NULL, 'nothing left is no domain');
   PERFORM pg_temp.is(public.web_domain_of('   '), NULL, 'blank is no domain');
   PERFORM pg_temp.is(public.web_domain_of(NULL), NULL, 'nothing is no domain');
