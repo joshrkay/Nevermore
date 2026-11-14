@@ -32,10 +32,12 @@ const EnterOrChoose = ({ seen, children }: { seen: MutableRefObject<{ refusal: R
 
 /**
  * A page of the firm's console. By default the person must be a current member of the firm, at a firm's address that
- * address's firm; `as="owner"` asks for a firm's owner (the firm's record of who did what). Whether they hold a platform role
- * is never asked.
+ * address's firm; `as="owner"` asks for a firm's owner, and `ownersOnly` finishes the sentence "Only a firm's owners can …" that
+ * tells anyone else what the page is for (the firm's record of who did what, its members). Whether they hold a platform role
+ * is never asked. `allowSupport` lets a platform admin on a support session through a page of owners, where the page only reads what
+ * an owner reads (the record, the members; story CRM-P2.4): the database refuses it every change.
  */
-const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "member" | "owner" }) => {
+const RequireFirm = ({ children, as = "member", ownersOnly = "read its record of who did what", allowSupport = false }: { children: ReactNode; as?: "member" | "owner"; ownersOnly?: string; allowSupport?: boolean }) => {
   const { user, session } = useAuth();
   const firmAddress = useFirmAddress();
   const address = firmAddress.status === "known" ? firmAddress.address : null;
@@ -51,13 +53,13 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
           const firms = await loadMyFirms(userId, sessionKey);
           const here = currentFirm(firms, address);
           seen.current = { refusal: "firm" in here ? null : here.refusal };
-          return ("firm" in here && here.firm.role === "owner") || seen.current.refusal === "several";
+          return ("firm" in here && (here.firm.role === "owner" || (allowSupport && here.firm.role === "support"))) || seen.current.refusal === "several";
         }}
         deniedCode="firm_owner_route"
         denied={() => {
           return (
             <AccessMessage title="For a firm's owners">
-              <p className="text-muted-foreground mb-4">Only a firm's owners can read its record of who did what.</p>
+              <p className="text-muted-foreground mb-4">Only a firm's owners can {ownersOnly}.</p>
               <Link to="/advisor" className="text-primary underline hover:text-primary/90">Back to the console</Link>
             </AccessMessage>
           );
@@ -103,7 +105,7 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
 };
 
 /**
- * A page that is platform-wide (the firms waiting for approval, who gets in by organisation, held mail), for the platform's
+ * A page that is platform-wide (the firms waiting for approval, held mail), for the platform's
  * admins. An admin is no member of any firm (D-16), so this is never a way into a firm's console, and the console is never a
  * way into this.
  */

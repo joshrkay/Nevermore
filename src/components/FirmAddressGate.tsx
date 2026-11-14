@@ -3,19 +3,25 @@ import { useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
-import { fetchIsMemberOfFirmAddress, recordFirmSignIn } from "@/lib/firmApi";
+import { fetchIsMemberOfFirmAddress, fetchIsMySuspendedFirmAtAddress, recordFirmSignIn } from "@/lib/firmApi";
 import NotFound from "@/pages/NotFound";
 import { AUTH_CALLBACK_PATH } from "@/lib/authRedirect";
 import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
 import { JOIN_PATH } from "@/lib/invitationLink";
 import { onMembershipChanged } from "@/lib/membershipChanged";
+import { askToJoinFirm } from "@/lib/joinByOrganisationApi";
+import { fetchMySupportSessionHere } from "@/lib/supportApi";
+import { platformFirmsUrl } from "@/lib/firmHost";
 
 // The pages a sign-in lands on hold no data and finish by redirecting. At an existing firm's address they are left
 // alone: hiding one while the new session is checked would unmount it half-way, and its one-time code would be spent
 // twice. At an address no firm holds they are not mounted at all (D-27).
 const SIGN_IN_LANDING_PATHS: readonly string[] = [AUTH_CALLBACK_PATH, BROKER_CALLBACK_PATH];
 
-type Membership = "checking" | "member" | "not_member" | "error";
+// "suspended": a current member of a firm that Nevermore has suspended (story CRM-P1.8). "asked": not a member, but signed in from an
+// organisation the firm lists, so an owner now has their request to join (story CRM-P1.4). "support": a platform admin with an open support
+// session for this firm, let in to read it (CRM-P2.4); "support_ended": the same admin once the hour is over.
+type Membership = "checking" | "member" | "suspended" | "asked" | "support" | "support_ended" | "not_member" | "error";
 
 // Which sign-ins have been written to the firm's record (CRM-P2.3), so a person is recorded once for each sign-in and not
 // once for each page they open. A convenience only: where the browser keeps nothing, the answer lasts until the page is
@@ -43,9 +49,10 @@ function markSignInReported(key: string): void {
  * What a firm's address shows (story CRM-P1.3a, D-17, D-18, D-27). On the bare domain it changes nothing. At an address
  * no firm holds: a plain not-found page for everyone, with a sign-out when a session exists there anyway; no sign-in
  * screen and no callback page. At a firm that exists and is not refused (approved or still waiting; a refused firm is treated as an address no firm holds, D-31): a signed-out visitor reaches the
- * sign-in screens, which name the firm; a signed-in current member reaches the console; a signed-in person who is not a
+ * sign-in screens, which name the firm; a signed-in current member reaches the console, unless Nevermore has suspended the firm, when they are told so and can sign out (CRM-P1.8); a signed-in person who is not a
  * current member sees "You aren't a member of this firm" and a sign-out, and nothing else, whichever firm they do
- * belong to. This decides only what to render: the database refuses the data to a non-member anyway, and no firm is
+ * belong to, unless they are signed in from an organisation the firm lists: then they are told they have asked to join and that an owner
+ * must approve them (CRM-P1.4). This decides only what to render: the database refuses the data to a non-member anyway, and no firm is
  * put in the token.
  */
 const FirmAddressGate = ({ children }: { children: ReactNode }) => {
@@ -70,10 +77,27 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     if (!address || !signedIn) return;
     let cancelled = false;
     setAnswer(null);
-    fetchIsMemberOfFirmAddress(address).then(
-      (ok) => !cancelled && setAnswer({ asked, result: ok ? "member" : "not_member" }),
-      () => !cancelled && setAnswer({ asked, result: "error" }),
-    );
+    // Whether the firm is suspended is asked only of a member: the database tells no one else.
+    fetchIsMemberOfFirmAddress(address)
+      .then(async (ok): Promise<Exclude<Membership, "checking">> => {
+        // Someone who is not a member is asked about once: the database answers "asked" only for a person whose own sign-in comes from an
+        // organisation this firm lists, and "none" for everyone else, so what the rest see is what they saw before.
+        if (!ok) {
+          // A platform admin is no member; the database tells only them whether they hold a support session here, open or just over.
+          const support = await fetchMySupportSessionHere();
+          if (support) return support.isOpen ? "support" : "support_ended";
+          return (await askToJoinFirm(address)) === "asked" ? "asked" : "not_member";
+        }
+        // The database answers "member" for a support session too (the role is `support`), so a person who holds an open one here is
+        // asked first: they are let in to read, and no sign-in is written for them (it would fail every time, and is never theirs).
+        const holding = await fetchMySupportSessionHere();
+        if (holding?.isOpen) return "support";
+        return (await fetchIsMySuspendedFirmAtAddress(address)) ? "suspended" : "member";
+      })
+      .then(
+        (result) => !cancelled && setAnswer({ asked, result }),
+        () => !cancelled && setAnswer({ asked, result: "error" }),
+      );
     return () => { cancelled = true; };
   }, [address, userId, signedIn, asked, attempt]);
 
@@ -129,6 +153,35 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   if (membership === "not_member") {
     return (
       <Message title="You aren't a member of this firm">
+        <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
+      </Message>
+    );
+  }
+  if (membership === "support_ended") {
+    return (
+      <Message title="The support hour has ended">
+        <p className="text-muted-foreground mb-4">Nevermore support access to {firm.name} has ended, so there is nothing more to see here. Start another from the firms page if you need to.</p>
+        <a href={platformFirmsUrl()} className="text-primary underline hover:text-primary/90">Back to the firms page</a>
+      </Message>
+    );
+  }
+  if (membership === "asked") {
+    return (
+      <Message title={`You've asked to join ${firm.name}`}>
+        <p className="text-muted-foreground mb-4">
+          An owner of {firm.name} has to approve you before you can use it. There is nothing more for you to do now. Once they have, check again.
+        </p>
+        <div className="flex gap-4 justify-center">
+          <button onClick={() => setAttempt((n) => n + 1)} className="text-primary underline hover:text-primary/90">Check again</button>
+          <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
+        </div>
+      </Message>
+    );
+  }
+  if (membership === "suspended") {
+    return (
+      <Message title={`${firm.name} is suspended`}>
+        <p className="text-muted-foreground mb-4">Nobody can use this firm until Nevermore lifts the suspension. Contact Nevermore to ask why and what to do next. Nothing has been deleted.</p>
         <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
       </Message>
     );

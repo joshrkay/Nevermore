@@ -160,6 +160,37 @@ describe("a message to a quote request's reply address", () => {
     expect(t.logs[0]).toBe("MAIL_RECORDED: message=17 duplicate=false held=true reason=revoked_address");
   });
 
+  // CRM-P2.2: the function never decides whose mail it is. It names every reply address of ours the message was sent to, and the
+  // database says which record, which firm's holding list, or the platform's, it belongs to (supabase/tests/files_tokens_addresses.sql).
+  it("names every reply address of ours on the message, and no other, and no firm", async () => {
+    const t = setup({ recorded: { held: true, held_reason: "ambiguous_address", quote_request_id: null, session_id: null } });
+    const other = "eaa-2026-0099.adp.fedcba9876543210";
+    const res = await handleReceiveRequest(
+      await signed(eventBody({
+        to: [`${LOCAL}@quotes.nevermorepeo.com`, "Someone <someone@trinet.example>"],
+        cc: [`${other.toUpperCase()}@Quotes.NevermorePEO.com`],
+        bcc: [`${other}@quotes.nevermorepeo.com`, `${LOCAL}@evil.quotes.nevermorepeo.com`, `${LOCAL}@nevermorepeo.com`],
+        received_for: [`${LOCAL}@quotes.nevermorepeo.com`],
+      })),
+      t.deps,
+    );
+    expect(res.status).toBe(200);
+    const [call] = t.calls("record_inbound_mail");
+    expect(call.p_local_parts).toEqual([LOCAL, other]);
+    expect(Object.keys(call).filter((k) => /firm|session|intake|quote/i.test(k))).toEqual([]);
+  });
+
+  it("names no reply address when the message wasn't sent to one of ours, and is held for the platform to see", async () => {
+    const t = setup({ recorded: { held: true, held_reason: "unknown_address", quote_request_id: null, session_id: null } });
+    const res = await handleReceiveRequest(
+      await signed(eventBody({ to: ["priya@trinet.example"], cc: [], bcc: [], received_for: [`${LOCAL}@quotes.nevermorepeo.net`] })),
+      t.deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ held: true });
+    expect(t.calls("record_inbound_mail")[0].p_local_parts).toEqual([]);
+  });
+
   it("is answered 200 again on a replay, which the database records as a duplicate", async () => {
     const t = setup({ recorded: { duplicate: true } });
     const res = await handleReceiveRequest(await signed(eventBody()), t.deps);

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const auth = { user: { id: "u1", email: "owner@example.test" } as { id: string; email?: string } | null, loading: false, isAnonymous: false, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -12,10 +13,15 @@ vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current })
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 const api = { fetchMyFirm: vi.fn(), fetchPendingInvitations: vi.fn(), inviteMember: vi.fn(), resendInvitation: vi.fn(), cancelInvitation: vi.fn() };
 vi.mock("@/lib/invitationApi", () => api);
+// The organisations and requests to join have their own sections, tested in FirmInvitationsPage.join.test.tsx: here they are empty.
+vi.mock("@/lib/joinByOrganisationApi", () => ({
+  fetchOrganisations: vi.fn().mockResolvedValue([]), fetchJoinRequests: vi.fn().mockResolvedValue([]),
+  addOrganisation: vi.fn(), removeOrganisation: vi.fn(), approveJoinRequest: vi.fn(), declineJoinRequest: vi.fn(),
+}));
 
 const { default: FirmInvitationsPage } = await import("./FirmInvitationsPage");
 
-const renderPage = () => render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter>);
+const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter></QueryClientProvider>);
 const pending = (over: Record<string, unknown> = {}) => ({
   id: "i1", email: "newcomer@example.test", role: "agent", invitedAt: "2026-11-16T10:00:00Z", expiresAt: "2099-11-23T10:00:00Z", expired: false,
   resentAt: null, delivery: "sent", emailError: null, ...over,
@@ -70,10 +76,19 @@ describe("FirmInvitationsPage", () => {
     expect(items[2]).toHaveTextContent("The email did not go out");
   });
 
-  it("says plainly when nobody is waiting", async () => {
+  // Catches: an empty list that leaves the owner without a way to make the first invitation, offers one that does not lead to the form, or is announced twice.
+  it("says what belongs in an empty list, with an action that takes the owner to the invite form, and is one status", async () => {
     api.fetchPendingInvitations.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText("No invitations are waiting.")).toBeInTheDocument();
+    expect(await screen.findByText("Invitations you send appear here until they are accepted.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Pending invitations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear filters/ })).not.toBeInTheDocument();
+    // Each empty list says its own sentence once, as its own polite status.
+    const statuses = screen.getAllByRole("status").filter((s) => s.textContent);
+    expect(statuses.filter((s) => s.textContent === "Invitations you send appear here until they are accepted.")).toHaveLength(1);
+    expect(statuses.every((s) => s.getAttribute("aria-live") === "polite")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    expect(screen.getByLabelText("Email address")).toHaveFocus();
   });
 
   it("invites the email typed with the role chosen, then clears the form and reloads the list", async () => {
@@ -178,7 +193,7 @@ describe("FirmInvitationsPage", () => {
     expect(about.length).toBeGreaterThanOrEqual(2);
     for (const sentence of new Set(about)) {
       api.inviteMember.mockReset().mockRejectedValue(new Error(sentence));
-      const { unmount } = render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /></Routes></MemoryRouter>);
+      const { unmount } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /></Routes></MemoryRouter></QueryClientProvider>);
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
       await user.click(screen.getByRole("button", { name: "Send invitation" }));
@@ -278,7 +293,7 @@ describe("FirmInvitationsPage", () => {
         ],
         { initialEntries: ["/firm/invitations"] },
       );
-      render(<RouterProvider router={router} />);
+      render(<QueryClientProvider client={new QueryClient()}><RouterProvider router={router} /></QueryClientProvider>);
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
       await user.click(screen.getByRole("link", { name: "Elsewhere" }));
@@ -308,10 +323,18 @@ describe("FirmInvitationsPage", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("That invitation has already been used or withdrawn."));
   });
 
+  // Catches: the owners-only refusal read as a failure that "Try again" might fix.
+  it("says there is nothing to retry when the list is refused to this account", async () => {
+    api.fetchPendingInvitations.mockRejectedValueOnce(Object.assign(new Error("Only an owner of the firm can see invitations."), { forbidden: true }));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have access to this firm's records.");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
   it("offers a retry when the list can't be loaded", async () => {
     api.fetchPendingInvitations.mockRejectedValueOnce(new Error("Couldn't load the invitations."));
     renderPage();
-    expect(await screen.findByText("Couldn't load the invitations.")).toBeInTheDocument();
+    expect(await screen.findByText("We couldn't load the invitations.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("list", { name: "Pending invitations" })).toBeInTheDocument();
   });

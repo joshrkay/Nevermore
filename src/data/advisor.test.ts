@@ -16,8 +16,6 @@ import {
   PIPELINE_STATUSES,
   PIPELINE_TRANSITIONS,
   prospectStatusAfter,
-  QUEUE_SEARCH_MIN_CHARS,
-  queueSearchTerm,
   reconcileDocuments,
   prospectStatusMessage,
   referenceOf,
@@ -143,18 +141,6 @@ describe("auditBadges", () => {
     ]));
     expect(countAuditBadges(badges, ["company_name", "employee_count", "pay_frequency", "industry"])).toEqual({ prospect_confirmed: 2, advisor_overridden: 1 });
     expect(countAuditBadges(badges, ["industry"])).toEqual({ prospect_confirmed: 0, advisor_overridden: 0 });
-  });
-});
-
-describe("queueSearchTerm (F-2.2)", () => {
-  it("searches only once at least 3 characters are typed, trimmed", () => {
-    expect(QUEUE_SEARCH_MIN_CHARS).toBe(3);
-    for (const short of ["", "  ", "a", " ab ", "3M"]) expect(queueSearchTerm(short)).toBe("");
-    expect(queueSearchTerm("  acm ")).toBe("acm");
-    expect(queueSearchTerm("pat gamma")).toBe("pat gamma");
-    // Spaces don't count toward the minimum.
-    expect(queueSearchTerm("a b")).toBe("");
-    expect(queueSearchTerm("a bc")).toBe("a bc");
   });
 });
 

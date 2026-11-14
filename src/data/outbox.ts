@@ -36,6 +36,8 @@ export const OUTBOX_KIND_LABELS: Record<string, string> = {
   information_request: "Request for information",
   draft_expiry_reminder: "Draft expiry reminder",
   peo_mail_arrived: "New PEO mail",
+  member_left: "Member left the firm",
+  firm_closing: "Request to close the firm",
 };
 
 export const outboxKindLabel = (kind: string) => OUTBOX_KIND_LABELS[kind] ?? kind;
@@ -56,6 +58,7 @@ const GLOSSES: Record<string, string> = {
 
 const CANCELLED_GLOSSES: Record<string, string> = {
   "reminders turned off": "Not sent: the prospect stopped draft reminders before this one went.",
+  "the firm closed": "Not sent: the firm closed, so nobody is left to tell.",
   "the draft changed": "Not sent: the draft changed, was certified or closed after this reminder was queued, so the date it gave no longer held.",
 };
 

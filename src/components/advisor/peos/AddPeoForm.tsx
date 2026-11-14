@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { failureWords } from "@/components/workspace/form";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { addPeo } from "@/lib/advisorApi";
 import { inputClass, primaryClass } from "./shared";
@@ -26,7 +27,7 @@ const AddPeoForm = ({ onAdded }: { onAdded: (id: number) => void }) => {
       setName("");
       onAdded(added.id);
     } catch (err) {
-      setProblem((err as Error).message);
+      setProblem(failureWords(err, "The PEO wasn't added. Check your connection and try again."));
     } finally {
       setSaving(false);
     }

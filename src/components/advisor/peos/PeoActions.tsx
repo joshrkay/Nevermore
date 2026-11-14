@@ -8,6 +8,7 @@ import { checkCensusLayout } from "@/lib/censusLayoutCheck";
 import { listTemplateWorkbooks } from "@/lib/templateWorkbooks";
 import { buttonClass, primaryClass, sourceDraft, sourceFrom, type SourceDraft } from "./shared";
 import { SourceFields } from "./SourceFields";
+import { failureWords } from "@/components/workspace/form";
 
 /** The review before publishing: what the draft changes from the version in use, and what still stops it. */
 export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload }: {
@@ -57,7 +58,7 @@ export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload
       onDone();
     } catch (err) {
       if (isStaleDraftError(err)) setStale(true);
-      else setFailed((err as Error).message);
+      else setFailed(failureWords(err, "That wasn't saved. Check your connection and try again."));
     } finally {
       setPublishing(false);
     }
@@ -107,7 +108,7 @@ export const DiscardDraft = ({ peoId, draft, inUse, onDone, onCancel }: { peoId:
       toast.success("Draft discarded.");
       onDone();
     } catch (err) {
-      setFailed((err as Error).message);
+      setFailed(failureWords(err, "That wasn't saved. Check your connection and try again."));
       setBusy(false);
     }
   };
@@ -151,7 +152,7 @@ export const RecheckForm = ({ peoId, inUse, today, onDone, onCancel }: { peoId: 
       toast.success(`Recorded. Version ${inUse.version + 1} is in use, checked ${formatCheckedOn(next.checkedOn)}.`);
       onDone();
     } catch (err) {
-      setFailed((err as Error).message);
+      setFailed(failureWords(err, "That wasn't saved. Check your connection and try again."));
     } finally {
       setBusy(false);
     }

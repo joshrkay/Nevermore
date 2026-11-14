@@ -155,7 +155,7 @@ describe("mailbox: connecting", () => {
     expect((await res.json()).code).toBe("not_member");
   });
 
-  it.each(["connect", "check", "disconnect"])("refuses %s with 403 and does nothing when the token is no current member's or has no second factor", async (action) => {
+  it.each(["connect", "check"])("refuses %s with 403 and does nothing when the token is no current member's or has no second factor", async (action) => {
     const s = setup({ member: false, rpc: { mailbox_secret: { data: null } } });
     const res = await handleMailboxRequest(post({ action, provider: "google", refresh_token: "1//the-refresh-token" }), s.deps);
     expect(res.status).toBe(403);
@@ -163,6 +163,16 @@ describe("mailbox: connecting", () => {
     expect(s.asked).toEqual(["my_firms:{}"]);
     expect(s.calls).toEqual([]);
     expect(s.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("lets a former member disconnect: it only removes their own mailbox, and the token must be revoked at the provider", async () => {
+    const sealedRow = await import("../_shared/mailboxCrypto").then((m) => m.sealToken(KEY, "u1", "1//stored"));
+    const row = { provider: "google", address: "m@a.example", scope: "s", token_ciphertext: sealedRow.ciphertext, token_iv: sealedRow.iv };
+    const s = setup({ member: false, rpc: { mailbox_secret: { data: row }, mailbox_delete: { data: true } } });
+    const res = await handleMailboxRequest(post({ action: "disconnect" }), s.deps);
+    expect(res.status).toBe(200);
+    expect(String((s.fetchFn.mock.calls[0] as unknown[])[0])).toBe("https://oauth2.googleapis.com/revoke");
+    expect(s.calls.map(([fn]) => fn)).toEqual(["mailbox_secret", "mailbox_delete"]);
   });
 
   it("says something went wrong, without detail, when the database fails", async () => {

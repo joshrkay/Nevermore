@@ -231,6 +231,18 @@ describe("AdvisorPeosPage", () => {
       expect(screen.getByLabelText("Its name")).toHaveValue("trinet");
     });
 
+    // Catches (D-178): a dropped network or a constraint message shown as the reason a PEO was not added.
+    it("says in plain words, never the network's, when adding a PEO fails for a reason that is not the database's rule", async () => {
+      api.addPeo.mockRejectedValue(new Error("TypeError: Failed to fetch"));
+      renderPage();
+      await screen.findByRole("list", { name: "PEOs" });
+      fireEvent.change(screen.getByLabelText("Its name"), { target: { value: "trinet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add a PEO" }));
+      expect(await screen.findByText("The PEO wasn't added. Check your connection and try again.")).toBeInTheDocument();
+      expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Its name")).toHaveValue("trinet");
+    });
+
     it("edits a section into a draft: the rest of the profile stays as it is in use, and the draft banner says what happens next", async () => {
       api.savePeoDraft.mockResolvedValue(undefined);
       renderPage("/advisor/peos?peo=5");

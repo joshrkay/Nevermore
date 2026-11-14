@@ -13,11 +13,19 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const fetchFirmName = vi.fn();
 const fetchIsMemberOfFirmAddress = vi.fn();
 const recordFirmSignIn = vi.fn();
+const fetchIsMySuspendedFirmAtAddress = vi.fn();
 vi.mock("@/lib/firmApi", () => ({
+  fetchIsMySuspendedFirmAtAddress: (...a: unknown[]) => fetchIsMySuspendedFirmAtAddress(...a),
   fetchFirmName: (...a: unknown[]) => fetchFirmName(...a),
   fetchIsMemberOfFirmAddress: (...a: unknown[]) => fetchIsMemberOfFirmAddress(...a),
   recordFirmSignIn: (...a: unknown[]) => recordFirmSignIn(...a),
 }));
+
+const fetchMySupportSessionHere = vi.fn();
+vi.mock("@/lib/supportApi", () => ({ fetchMySupportSessionHere: (...a: unknown[]) => fetchMySupportSessionHere(...a) }));
+
+const askToJoinFirm = vi.fn();
+vi.mock("@/lib/joinByOrganisationApi", () => ({ askToJoinFirm: (...a: unknown[]) => askToJoinFirm(...a) }));
 
 const { FirmAddressProvider } = await import("@/hooks/useFirmAddress");
 const { default: FirmAddressGate } = await import("./FirmAddressGate");
@@ -45,6 +53,9 @@ describe("the firm address gate", () => {
     fetchFirmName.mockReset().mockResolvedValue("Acme Brokers");
     fetchIsMemberOfFirmAddress.mockReset().mockResolvedValue(true);
     recordFirmSignIn.mockReset().mockResolvedValue(true);
+    fetchIsMySuspendedFirmAtAddress.mockReset().mockResolvedValue(false);
+    askToJoinFirm.mockReset().mockResolvedValue("none");
+    fetchMySupportSessionHere.mockReset().mockResolvedValue(null);
     try { window.localStorage.clear(); } catch { /* no storage here */ }
   });
 
@@ -135,6 +146,66 @@ describe("the firm address gate", () => {
     renderAt("acme-brokers.nevermorepeo.com");
     fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  // Joining by organisation (CRM-P1.4): a person who is not a member, signed in from an organisation the firm lists, is told they
+  // have asked to join. Anyone else is told what they were told before.
+  describe("a person who is not a member", () => {
+    // Catches: the person is asked nothing about joining, or is shown the plain refusal though an owner is waiting to decide.
+    it("is told they have asked to join, and that an owner must approve them, when the database holds their request", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+      askToJoinFirm.mockResolvedValue("asked");
+      auth.user = { id: "u1" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "You've asked to join Acme Brokers" })).toBeInTheDocument();
+      expect(screen.getByText(/An owner of Acme Brokers has to approve you before you can use it/)).toBeInTheDocument();
+      expect(askToJoinFirm).toHaveBeenCalledWith("acme-brokers");
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "You aren't a member of this firm" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+      expect(auth.signOut).toHaveBeenCalledTimes(1);
+    });
+
+    // Catches: the person has to reload to find out an owner approved them.
+    it("can check again, and gets in once an owner has approved them", async () => {
+      let member = false;
+      fetchIsMemberOfFirmAddress.mockImplementation(async () => member);
+      askToJoinFirm.mockResolvedValue("asked");
+      auth.user = { id: "u1" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      member = true;
+      fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+    });
+
+    // Catches: a person from no listed organisation sees anything new (a hint that the firm lists organisations), or the ask changes
+    // what they were shown.
+    it("sees exactly what they saw before when the database holds no request for them", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+      askToJoinFirm.mockResolvedValue("none");
+      auth.user = { id: "u1" };
+      const { container } = renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
+      expect(askToJoinFirm).toHaveBeenCalledWith("acme-brokers");
+      expect(container.textContent).not.toMatch(/asked to join|approve/i);
+      expect(screen.getAllByRole("button")).toHaveLength(1);
+    });
+
+    // Catches: a member, a signed-out visitor or a guest is sent through the asking, which is for someone who is not a member.
+    it("is the only one asked about joining: not a member, not a signed-out visitor, not a guest", async () => {
+      auth.user = { id: "u1" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      await screen.findByText("The console");
+      auth.user = null;
+      renderAt("acme-brokers.nevermorepeo.com");
+      auth.user = { id: "g1" };
+      auth.isAnonymous = true;
+      renderAt("acme-brokers.nevermorepeo.com");
+      await waitFor(() => expect(fetchFirmName).toHaveBeenCalled());
+      expect(askToJoinFirm).not.toHaveBeenCalled();
+    });
   });
 
   it("shows the console to no one while it is still checking", async () => {
@@ -368,4 +439,142 @@ describe("the firm address gate", () => {
       expect(recordFirmSignIn).not.toHaveBeenCalled();
     });
   });
+  // Help from Nevermore (story CRM-P2.4): a platform admin is no member, and is let in only while their own support session for this
+  // firm is open; once the hour is over the page says so, and links back to the platform's firms page.
+  describe("a platform admin on a support session", () => {
+    const session = (over: Record<string, unknown> = {}) => ({ id: "s1", firmId: "f1", firmName: "Acme Brokers", firmAddress: "acme-brokers", endsAt: "2026-11-18T16:00:00Z", endedAt: null, isOpen: true, secondFactorPending: false, ...over });
+    beforeEach(() => {
+      auth.user = { id: "admin1", email: "admin@nevermore.example" };
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    });
+
+    // Catches: an admin with an open session is told "You aren't a member", or is let in as a member (their sign-in written to the firm's record as theirs).
+    it("lets an admin with an open session through, as support, and records no sign-in for them", async () => {
+      fetchMySupportSessionHere.mockResolvedValue(session());
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      expect(askToJoinFirm).not.toHaveBeenCalled();
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+    });
+
+    // Catches: my_firm_at_address answers yes for a support session, so the gate treats the admin as a member and writes a sign-in for
+    // them on every page change (it fails every time and is never marked done).
+    it("records no sign-in for an admin on an open session even where the database says they are a member here", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+      fetchMySupportSessionHere.mockResolvedValue(session());
+      auth.user = { id: "admin1", email: "admin@nevermore.example", last_sign_in_at: "t9" };
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      await act(async () => {});
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+      expect(fetchIsMySuspendedFirmAtAddress).not.toHaveBeenCalled();
+    });
+
+    // Catches: the fix that skips the sign-in for support also skips it for a member (a member's sign-in is still written once).
+    it("still records one sign-in for a member who holds no support session", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+      fetchMySupportSessionHere.mockResolvedValue(null);
+      auth.user = { id: "member1", email: "pat@acme.example", last_sign_in_at: "t10" };
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      await waitFor(() => expect(recordFirmSignIn).toHaveBeenCalledTimes(1));
+    });
+
+    // Catches: an expired session still opens the firm, or the admin is left on a blank "not a member" page with no way back.
+    it("says the hour has ended once it is over, and links back to the firms page", async () => {
+      fetchMySupportSessionHere.mockResolvedValue(session({ isOpen: false, endedAt: "2026-11-18T16:00:00Z" }));
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByRole("heading", { name: "The support hour has ended" })).toBeInTheDocument();
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Back to the firms page" })).toHaveAttribute("href", expect.stringMatching(/\/advisor\/firms$/));
+    });
+
+    // Catches: an admin whose password sign-in still owes its second step is told they are no member and can never reach the step that would let them in.
+    it("lets an admin whose password sign-in owes its second step through to that step, with a session held", async () => {
+      fetchMySupportSessionHere.mockResolvedValue(session({ secondFactorPending: true }));
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "You aren't a member of this firm" })).not.toBeInTheDocument();
+    });
+
+    // Catches: a person with no session is told anything about support, or never asked to join where their sign-in lists the firm.
+    it("treats an admin with no session as any other person who is not a member", async () => {
+      renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
+      expect(askToJoinFirm).toHaveBeenCalledWith("acme-brokers");
+    });
+  });
+
+  // A suspended firm (story CRM-P1.8): its members can still sign in at its address and are told it is suspended, with a way to
+  // sign out, and nothing of the firm: no console, no lists, no counts. The firm's name still shows (D-27) before sign-in.
+  describe("a suspended firm", () => {
+    beforeEach(() => {
+      fetchIsMySuspendedFirmAtAddress.mockResolvedValue(true);
+      auth.user = { id: "u1", email: "pat@acme.example", last_sign_in_at: "t1" };
+    });
+
+    it("tells its member it is suspended and to contact Nevermore, and shows nothing of the firm's console", async () => {
+      const { container } = renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByRole("heading", { name: "Acme Brokers is suspended" })).toBeInTheDocument();
+      expect(screen.getByText(/contact Nevermore/i)).toBeInTheDocument();
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      expect(container.textContent).not.toContain("pat@acme.example");
+      expect(fetchIsMySuspendedFirmAtAddress).toHaveBeenCalledWith("acme-brokers");
+    });
+
+    it("has a Sign out that works", async () => {
+      renderAt("acme-brokers.nevermorepeo.com");
+      fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+      expect(auth.signOut).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes every page of the firm to its member, not only the first they open", async () => {
+      for (const path of ["/advisor", "/advisor/activity", "/advisor/submissions/abc", "/advisor/firms"]) {
+        const view = renderAt("acme-brokers.nevermorepeo.com", path);
+        expect(await screen.findByRole("heading", { name: "Acme Brokers is suspended" }), path).toBeInTheDocument();
+        expect(screen.queryByText("The console"), path).not.toBeInTheDocument();
+        view.unmount();
+      }
+    });
+
+    it("is not recorded as a sign-in to the firm: nothing of the firm is written for them", async () => {
+      renderAt("acme-brokers.nevermorepeo.com");
+      await screen.findByRole("heading", { name: "Acme Brokers is suspended" });
+      await act(async () => {});
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+    });
+
+    it("is asked only of a member: a person who is not one is told so and nothing is asked about the firm's state", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
+      expect(fetchIsMySuspendedFirmAtAddress).not.toHaveBeenCalled();
+    });
+
+    it("still shows a signed-out visitor the firm's sign-in", async () => {
+      auth.user = null;
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      expect(fetchIsMySuspendedFirmAtAddress).not.toHaveBeenCalled();
+    });
+
+    it("says it couldn't check, with a retry, when the state can't be read, rather than showing the console", async () => {
+      fetchIsMySuspendedFirmAtAddress.mockRejectedValueOnce(new Error("boom"));
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "We couldn't check your access" })).toBeInTheDocument();
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByRole("heading", { name: "Acme Brokers is suspended" })).toBeInTheDocument();
+    });
+
+    it("gives the console back when the suspension is lifted and the page is asked again", async () => {
+      const view = renderAt("acme-brokers.nevermorepeo.com");
+      await screen.findByRole("heading", { name: "Acme Brokers is suspended" });
+      view.unmount();
+      fetchIsMySuspendedFirmAtAddress.mockResolvedValue(false);
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+    });
+  });
+
 });

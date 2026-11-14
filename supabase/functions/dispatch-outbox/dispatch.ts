@@ -12,11 +12,15 @@ import { fieldLabels } from "./fieldLabels.ts";
 import {
   parseAdvisorNotification,
   parsePeoMailArrived,
+  parseFirmClosing,
+  parseMemberLeft,
   parseDraftExpiryReminder,
   parseInformationRequest,
   parseProspectConfirmation,
   renderAdvisorNotification,
   renderPeoMailArrived,
+  renderFirmClosing,
+  renderMemberLeft,
   renderDraftExpiryReminder,
   renderInformationRequest,
   renderProspectConfirmation,
@@ -44,11 +48,19 @@ export const CLAIM_LEASE_SECONDS = 600;
 export interface OutboxRow {
   id: string;
   kind: string;
-  session_id: string;
+  /** The intake the event is about; null for an event that belongs to a firm (a "member left" email). */
+  session_id: string | null;
+  /** The firm a firm-level event belongs to; null for an event about an intake. */
+  firm_id?: string | null;
   payload: unknown;
   attempts: number;
   /** The frozen send of an earlier attempt, as stored; read it through `parsePending`. */
   pending_send: unknown;
+  /**
+   * The addresses the first preparation of an advisor alert went to, written once by the database and never cleared (D-35). Absent
+   * on a row that has not been prepared yet, and on rows from before it existed.
+   */
+  first_recipients?: unknown;
 }
 
 /** The write-ahead copy of an email: what to send and the key to send it under. */
@@ -91,6 +103,8 @@ export interface DispatchDeps {
    * (never a platform-wide list). Asked each time one is built or resent, so a member who has left stops receiving at once.
    */
   advisorRecipients: (sessionId: string) => Promise<string[]>;
+  /** The addresses of the current owners of a firm: who a "member left" email goes to. Asked each time one is built or resent, like `advisorRecipients`. */
+  ownerRecipients: (firmId: string) => Promise<string[]>;
   log: (line: string) => void;
 }
 
@@ -127,11 +141,26 @@ type Built = { ok: true; message: EmailMessage } | { ok: false; reason: string; 
 
 /** The email for an event, or why there is none. A bad payload can never succeed, so it is final. */
 function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[]): Built {
+  if (row.kind === "member_left") {
+    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseMemberLeft(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderMemberLeft(n) } };
+  }
+  if (row.kind === "firm_closing") {
+    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseFirmClosing(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderFirmClosing(n) } };
+  }
+  // Every other kind is about an intake. An event with none can never be built.
+  const sessionId = row.session_id;
+  if (sessionId === null) return { ok: false, reason: "invalid_payload", final: true };
   if (row.kind === "advisor_notification") {
     if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
     const n = parseAdvisorNotification(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
-    const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(row.session_id)}`;
+    const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(sessionId)}`;
     return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderAdvisorNotification(n, { reviewUrl }) } };
   }
   if (row.kind === "peo_mail_arrived") {
@@ -139,7 +168,7 @@ function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[
     const n = parsePeoMailArrived(row.payload);
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
     // The thread is on the submission page, behind advisor sign-in.
-    const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(row.session_id)}`;
+    const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(sessionId)}`;
     return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderPeoMailArrived(n, { reviewUrl }) } };
   }
   if (row.kind === "prospect_confirmation") {
@@ -155,7 +184,7 @@ function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[
   if (row.kind === "information_request" || row.kind === "draft_expiry_reminder") {
     if (!config.prospectLink.ok) return { ok: false, reason: "not_configured", final: false };
     const { from, supportEmail, appBaseUrl } = config.prospectLink;
-    const intakeUrl = `${appBaseUrl}/start?session=${encodeURIComponent(row.session_id)}`;
+    const intakeUrl = `${appBaseUrl}/start?session=${encodeURIComponent(sessionId)}`;
     if (row.kind === "information_request") {
       const r = parseInformationRequest(row.payload);
       if (!r) return { ok: false, reason: "invalid_payload", final: true };
@@ -202,9 +231,15 @@ export function parsePending(raw: unknown): PendingSend | null {
 
 const isFresh = (pending: PendingSend, nowMs: number) => nowMs - Date.parse(pending.frozen_at) < FROZEN_MAX_AGE_MS;
 
-const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived";
+/** The stored first recipients, or null when the row has none (not prepared yet, or older than the column). */
+function firstRecipients(value: unknown): string[] | null {
+  return Array.isArray(value) && value.length > 0 && value.every((a) => typeof a === "string") ? (value as string[]) : null;
+}
 
-/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member. */
+/** The kinds sent to people of a firm, whose recipients are looked up at each send and fixed at the first preparation (D-35, D-102). */
+const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing";
+
+/** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
   if (!isAdvisorKind(kind)) return true;
   const members = new Set(current.map((a) => a.toLowerCase()));
@@ -226,7 +261,15 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   let advisorTo: string[] = [];
   if (isAdvisorKind(row.kind)) {
     try {
-      advisorTo = await deps.advisorRecipients(row.session_id);
+      // A firm's own email (a member left, a request to close) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
+      if (row.kind === "member_left" || row.kind === "firm_closing") {
+        // An event that names no firm has no one to tell and never will: it is not looked up by a null id.
+        if (!row.firm_id) return { outcome: "fail", reason: "invalid_payload", final: true };
+        advisorTo = await deps.ownerRecipients(row.firm_id);
+      } else {
+        if (row.session_id === null) return { outcome: "fail", reason: "invalid_payload", final: true };
+        advisorTo = await deps.advisorRecipients(row.session_id);
+      }
     } catch {
       return { outcome: "fail", reason: "recipients_failed", final: false };
     }
@@ -236,7 +279,23 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   const stored = parsePending(row.pending_send);
   if (stored && isFresh(stored, deps.now()) && namesOnly(stored, advisorTo, row.kind)) return { outcome: "send", pending: stored, origin: "frozen" };
 
-  const built = buildMessage(row, deps.config, advisorTo);
+  // D-35: the people an alert goes to are fixed when it is first prepared, and the database keeps them on the row (first_recipients),
+  // apart from the frozen message, which is thrown away when it ages out or a send is definitively refused. A message that is rebuilt
+  // goes to those people who are still members, never to anyone who joined after the first preparation (adding an address changes the key,
+  // so everyone who already has it would get it twice). D-102: when none of them is still a member, it is not lost: it goes to the
+  // current members, under a new key. A row older than the column falls back to the frozen message's people, whatever its age (age decides
+  // only whether the message and key can be replayed above). With nothing stored it is a first preparation and goes to the current members.
+  let to = advisorTo;
+  if (isAdvisorKind(row.kind)) {
+    const first = firstRecipients(row.first_recipients) ?? stored?.message.to ?? null;
+    if (first) {
+      const named = new Set(first.map((a) => a.toLowerCase()));
+      const stillThere = advisorTo.filter((a) => named.has(a.toLowerCase()));
+      if (stillThere.length > 0) to = stillThere;
+    }
+  }
+
+  const built = buildMessage(row, deps.config, to);
   if (!built.ok) return { outcome: "fail", reason: built.reason, final: built.final };
 
   // Whatever is stored but unusable (too old, or not the shape we write) must be overwritten; the
@@ -333,7 +392,7 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "member_left", "firm_closing");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
   if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
   return kinds;

@@ -1,23 +1,14 @@
-import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
+import { createElement, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
-import { useMyFirms } from "@/hooks/useOwnedFirms";
+import { useMyFirms, useMySupportSession } from "@/hooks/useOwnedFirms";
 import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
 import { currentFirm } from "@/lib/currentFirm";
+import { WorkspaceContext, type FirmRoleLabel, type Workspace } from "./workspaceContext";
 
-export type FirmRoleLabel = "Owner" | "Lead" | "Agent";
-const ROLE_LABELS: Record<string, FirmRoleLabel> = { owner: "Owner", lead: "Lead", agent: "Agent" };
+export { WorkspaceContext, type FirmRoleLabel, type Workspace };
 
-export interface Workspace {
-  /** The firm the page is showing, or null until known (or when the person has none to show). */
-  firm: { id: string; name: string; address: string } | null;
-  role: FirmRoleLabel | null;
-  isOwner: boolean;
-  /** Whether the database says the person is a platform admin; false until known or when it can't be asked (D-37). */
-  isPlatformAdmin: boolean;
-  /** The person's name, or their email when they have no name (D-42). */
-  person: string;
-}
+const ROLE_LABELS: Record<string, FirmRoleLabel> = { owner: "Owner", lead: "Lead", agent: "Agent", support: "Nevermore support" };
 
 /** The firm a person works in: the console's current firm (currentFirm, the one rule), or none. */
 function firmShown(firms: MyFirm[] | null, address: string | null): MyFirm | null {
@@ -31,6 +22,7 @@ function useLoadWorkspace(): Workspace {
   const { user } = useAuth();
   const firmAddress = useFirmAddress();
   const mine = useMyFirms();
+  const supportSession = useMySupportSession();
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -45,12 +37,13 @@ function useLoadWorkspace(): Workspace {
     firm: shown ? { id: shown.firm_id, name: shown.name, address: shown.address } : null,
     role: shown ? ROLE_LABELS[shown.role] ?? null : null,
     isOwner: shown?.role === "owner",
+    isSupport: shown?.role === "support",
+    supportEndsAt: shown?.role === "support" && supportSession?.isOpen ? supportSession.endsAt : null,
+    supportSessionId: shown?.role === "support" && supportSession?.isOpen ? supportSession.id : null,
     isPlatformAdmin,
     person: named?.trim() ?? user?.email ?? "",
   };
 }
-
-const WorkspaceContext = createContext<Workspace | null>(null);
 
 /** Loads the workspace state once for everything inside the shell (one platform-admin question, not one per reader). */
 export function WorkspaceProvider({ children }: { children: ReactNode }) {

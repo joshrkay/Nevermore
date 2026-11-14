@@ -6,6 +6,7 @@ import { localToday } from "@/data/peoProfiles";
 import { canRecordSend, formatDay } from "@/data/quoteRequests";
 import { recordQuoteSend, type QuoteRequestRow } from "@/lib/advisorApi";
 import { unchangedSinceOpened, type BuiltFrom } from "@/lib/certificationCheck";
+import { failureWords } from "@/components/workspace/form";
 
 interface RecordSendPromptProps {
   sessionId: string;
@@ -42,7 +43,7 @@ const RecordSendPrompt = ({ sessionId, peo, stage, builtFrom, existing, onRecord
       toast.success(`Recorded the send to ${peo}.`);
       onRecorded();
     } catch (err) {
-      setRefused((err as Error).message);
+      setRefused(failureWords(err, "The send wasn't recorded. Check your connection and try again."));
     } finally {
       setSaving(false);
     }

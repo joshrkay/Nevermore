@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
 // about which firms they own, so an answer given before the second factor is not handed out after it.
@@ -10,6 +12,9 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...api, FIRM_ACTIVITY_PAGE_SIZE: 25 }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+// The uses of Nevermore support (story CRM-P2.4): the reason and times the database gives an owner, never who.
+const supportApi = { fetchFirmSupportUses: vi.fn(), fetchMySupportSessionHere: vi.fn() };
+vi.mock("@/lib/supportApi", async () => ({ ...(await vi.importActual<object>("@/lib/supportApi")), ...supportApi }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
@@ -32,6 +37,8 @@ describe("AdvisorActivityPage", () => {
     firmAddress = { status: "none" };
     auth.session = { access_token: "tok-1" };
     for (const fn of Object.values(api)) fn.mockReset();
+    supportApi.fetchFirmSupportUses.mockReset().mockResolvedValue([]);
+    supportApi.fetchMySupportSessionHere.mockReset().mockResolvedValue(null);
     api.fetchMyFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" }]);
     api.fetchIsAdmin.mockResolvedValue(false);
     api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
@@ -83,29 +90,351 @@ describe("AdvisorActivityPage", () => {
     expect(screen.queryByText(/You no longer have access to this firm's records/)).not.toBeInTheDocument();
   });
 
-  it("shows that it is loading until the record arrives", async () => {
-    let arrive: (v: unknown) => void = () => undefined;
-    api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
-    renderPage();
-    expect(await screen.findByRole("status")).toHaveTextContent("Loading");
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    arrive({ entries: [entry()], hasMore: false });
-    expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  describe("loading (CRM-S2.1)", () => {
+    const HEADERS = ["When", "Who", "What", "Record"];
+    const slowLine = () => screen.queryByText("This is taking longer than usual.");
+    const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    afterEach(() => { cleanup(); vi.useRealTimers(); });
+    const hang = () => {
+      let arrive: (v: unknown) => void = () => undefined;
+      api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+      return arrive;
+    };
+
+    // Catches: the title, the filters and the column headers waiting behind a spinner; grey rows not drawn under the real headers; the
+    // placeholders being read row by row; the person filter (which needs the list of people) being usable before the list is there.
+    it("shows the title, the filters and the column headers at once, with eight grey rows and one status", async () => {
+      hang();
+      const { container } = renderPage();
+      expect(screen.getByRole("heading", { name: "Who did what" })).toBeInTheDocument();
+      const table = screen.getByRole("table", { name: "Who did what" });
+      expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(HEADERS);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
+      for (const r of Array.from(container.querySelectorAll("tbody tr"))) expect(r.children).toHaveLength(HEADERS.length);
+      expect(container.querySelector("tbody")).toHaveAttribute("aria-hidden", "true");
+      expect(within(table).getAllByRole("row")).toHaveLength(1);
+      expect(spoken()).toHaveLength(1);
+      expect(spoken()[0]).toHaveTextContent("Loading the record of who did what");
+      expect(allStatuses()).toHaveLength(2);
+      expectStatusesOutsideBusy();
+      // What changes the question stays usable; what needs the answer's own list does not.
+      expect(screen.getByLabelText("Kind")).toBeEnabled();
+      // The Person list says why it can't be used yet, stays in the tab order, and ignores a choice.
+      expect(screen.getByLabelText("Person")).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByLabelText("Person")).toHaveAccessibleDescription("Available when the record has loaded");
+      // No pager, and no placeholders are announced.
+      expect(screen.queryByRole("button", { name: "Older" })).not.toBeInTheDocument();
+      expect(container.querySelector("[class*='animate-pulse']")!.className).toContain("motion-safe:");
+    });
+
+    // Catches: a different table (other headers, a second table, no body) replacing the placeholders, so the page jumps.
+    it("is the same table with the same headers once the entries arrive, and the status is gone", async () => {
+      const arrive = hang();
+      const { container } = renderPage();
+      arrive({ entries: [entry(), entry({ entry_key: "k2" })], hasMore: false });
+      await waitFor(() => expect(container.querySelectorAll("tbody tr")).toHaveLength(2));
+      expect(screen.getAllByRole("table")).toHaveLength(1);
+      expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(HEADERS);
+      expect(container.querySelectorAll("tbody")).toHaveLength(1);
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Person")).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByLabelText("Person")).toBeEnabled();
+    });
+
+    // Catches: the kind filter being locked while the first answer is slow, so a person can't correct it.
+    it("asks again for a corrected filter while the first answer is slow", async () => {
+      hang();
+      renderPage();
+      await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledTimes(1));
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await waitFor(() => expect(api.listFirmActivity).toHaveBeenCalledTimes(2));
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", after: null });
+      expect(spoken()).toHaveLength(1);
+    });
+
+    // Catches: the slow line coming at nine seconds, or not as a status, or Try again not asking again and not starting the count over.
+    it("says it is taking longer than usual at ten seconds, not nine, under the title; Try again asks again", async () => {
+      vi.useFakeTimers();
+      hang();
+      renderPage();
+      const container = allStatuses().find((e) => !e.textContent)!;
+      expect(container).toBeDefined();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toBe(container);
+      expect(slowLine()).toHaveAttribute("role", "status");
+      expectStatusesOutsideBusy();
+      expect(screen.getByRole("heading", { name: "Who did what" }).parentElement).toContainElement(slowLine());
+      expect(spoken()).toHaveLength(2);
+      expect(screen.getByLabelText("Person")).toHaveAttribute("aria-disabled", "true");
+      const asked = api.listFirmActivity.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await tick(0);
+      expect(api.listFirmActivity.mock.calls.length).toBe(asked + 1);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(9_000);
+      expect(slowLine()).not.toBeInTheDocument();
+      await tick(1_000);
+      expect(slowLine()).toBeInTheDocument();
+    });
+
+    // Catches: the line staying once the entries have arrived or the load has failed.
+    it("takes the line away when the entries arrive, and when the load fails", async () => {
+      vi.useFakeTimers();
+      const arrive = hang();
+      renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => arrive({ entries: [entry()], hasMore: false }));
+      await tick(0);
+      expect(screen.getByRole("table")).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      cleanup();
+      let fail: (e: Error) => void = () => undefined;
+      api.listFirmActivity.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+      renderPage();
+      await tick(10_000);
+      expect(slowLine()).toBeInTheDocument();
+      await act(async () => fail(new Error("The network dropped")));
+      await tick(0);
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load the record of who did what.");
+      expect(screen.queryByText("The network dropped")).not.toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+    });
+
+    // Catches: a ten-second timer left running after the page is closed.
+    it("leaves no timer behind when the page is closed while waiting", async () => {
+      vi.useFakeTimers();
+      hang();
+      const timers = watchSlowTimers();
+      const { unmount } = renderPage();
+      await tick(3_000);
+      unmount();
+      timers.expectAllCleared();
+      timers.restore();
+    });
+
+    // Catches: the firm's name line appearing above the filters on arrival and pushing the filters and the table down a line.
+    it("holds the line the firm's name will fill while loading at a firm's address, so nothing is pushed down", async () => {
+      api.fetchMyFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory", address: "alpha", role: "owner" }]);
+      firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+      const arrive = hang();
+      renderPage();
+      const reserved = screen.getByLabelText("Person").closest("div")!.parentElement!.previousElementSibling!;
+      expect(reserved).toHaveAttribute("aria-hidden", "true");
+      expect(reserved.className).toContain("h-5");
+      arrive({ entries: [entry()], hasMore: false });
+      const real = await screen.findByText("Alpha Advisory");
+      expect(real.closest("p")!.nextElementSibling).toBe(screen.getByLabelText("Person").closest("div")!.parentElement);
+      expect(real.closest("p")!.className).toContain("text-sm");
+    });
+
+    // Catches: entries of the filter just left staying at full strength under the new filter's choice while its answer loads (it looks like the answer).
+    it("dims the entries and marks them busy while another filter or page loads, and not for a refresh of the same one", async () => {
+      renderPage();
+      const table = await screen.findByRole("table");
+      await screen.findByText("agent@example.com", { selector: "td" });
+      const box = table.parentElement!;
+      expect(box).not.toHaveAttribute("aria-busy");
+      api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await waitFor(() => expect(box).toHaveAttribute("aria-busy", "true"));
+      expect(box).toHaveClass("opacity-70");
+      expect(screen.getByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(screen.getByRole("table").parentElement).toBe(box);
+    });
+
+    // Catches: another firm's entries and people (their emails) staying on screen under the new firm's name while it loads.
+    it("clears the entries and the Person list at once when another firm is chosen on the bare domain", async () => {
+      api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }, { firm_id: "firm-2", name: "Beta Brokers" }]);
+      renderPage("/advisor/activity?firm=firm-1");
+      await screen.findByText("agent@example.com", { selector: "td" });
+      expect(within(screen.getByLabelText("Person")).getByRole("option", { name: "lead@example.com" })).toBeInTheDocument();
+      api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+      api.listFirmActivityPeople.mockReturnValue(new Promise(() => undefined));
+      fireEvent.change(screen.getByLabelText("Firm"), { target: { value: "firm-2" } });
+      await waitFor(() => expect(screen.queryByText("agent@example.com", { selector: "td" })).not.toBeInTheDocument());
+      expect(screen.queryByRole("option", { name: "lead@example.com" })).not.toBeInTheDocument();
+      expect(document.querySelectorAll("tbody[aria-hidden=true] tr")).toHaveLength(8);
+      // The choice of firm stays, so the person can change their mind.
+      expect(screen.getByLabelText("Firm")).toHaveValue("firm-2");
+    });
+
+    // Catches (D-49): a changed filter or the next page, with entries on screen, bringing back grey rows or the slow line.
+    it("shows no placeholders and no slow line while a filter or the next page loads over entries already shown", async () => {
+      vi.useFakeTimers();
+      api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });
+      const { container } = renderPage();
+      await tick(0);
+      expect(screen.getByRole("table")).toBeInTheDocument();
+      api.listFirmActivity.mockReturnValue(new Promise(() => undefined));
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      await tick(25_000);
+      expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
+      expect(screen.getByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(slowLine()).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
+    });
   });
 
-  it("says when nothing has been recorded yet", async () => {
-    api.listFirmActivity.mockResolvedValue({ entries: [], hasMore: false });
-    renderPage();
-    expect(await screen.findByText("Nothing has been recorded for your firm yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  // CRM-S2.2: nothing yet and nothing matches, as one table that keeps its headers and its filters.
+  describe("when no entries are shown (CRM-S2.2)", () => {
+    const none = { entries: [], hasMore: false };
+    const HEADERS = ["When", "Who", "What", "Record"];
+    const headers = () => within(screen.getByRole("table", { name: "Who did what" })).getAllByRole("columnheader").map((h) => h.textContent);
+    // Catches: an empty record worded as a filter that excluded everything, or an empty message that is false for a firm whose entries have all aged out (the record is pruned at ninety days).
+    it("says nothing has been recorded in the last ninety days, which is true for a firm whose entries aged out, and offers no action", async () => {
+      api.listFirmActivity.mockResolvedValue(none);
+      renderPage();
+      expect(await screen.findByText(/Nothing has been recorded for your firm in the last 90 days/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Clear filters/ })).not.toBeInTheDocument();
+      expect(screen.queryByText(/match/)).not.toBeInTheDocument();
+      // Nobody makes entries by hand: the record is written by what people do, so there is no action.
+      expect(within(screen.getByRole("table")).queryAllByRole("button")).toHaveLength(0);
+      expect(headers()).toEqual(HEADERS);
+      expect(screen.getByLabelText("Person")).toBeInTheDocument();
+      expect(screen.getByLabelText("Kind")).toBeInTheDocument();
+      expect(spoken()).toHaveLength(1);
+      expectStatusesOutsideBusy();
+    });
+
+    // Catches: the filters being left out of the words, or the offer to clear them also clearing nothing, or an offer to create.
+    it("says no entries match, names the person and the kind chosen, and clears both", async () => {
+      renderPage();
+      await screen.findByRole("table", { name: "Who did what" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.change(await screen.findByLabelText("Person"), { target: { value: "u2" } });
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "export_made" } });
+      expect(await screen.findByText("No entries match these filters.")).toBeInTheDocument();
+      const list = screen.getByRole("list", { name: "What is in force" });
+      expect(within(list).getAllByRole("listitem").map((i) => i.textContent)).toEqual(["Person: lead@example.com", "Kind: Exported records"]);
+      expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /new|create|add|start/i })).not.toBeInTheDocument();
+      expect(headers()).toEqual(HEADERS);
+      expect(spoken()).toHaveLength(1);
+
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(await screen.findByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: null });
+      expect(screen.getByLabelText("Person")).toHaveValue("");
+      expect(screen.getByLabelText("Kind")).toHaveValue("");
+      expect(screen.getByLabelText("Person")).toHaveFocus();
+    });
+
+    // Catches: a filter by Nevermore being named by its internal value, or one kind of filter alone being worded as both.
+    it("words one filter alone, and Nevermore as Nevermore", async () => {
+      api.listFirmActivityPeople.mockResolvedValue([{ user_id: null, email: null, is_nevermore: true }]);
+      renderPage();
+      await screen.findByRole("table", { name: "Who did what" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.change(screen.getByLabelText("Person"), { target: { value: NEVERMORE_FILTER } });
+      await screen.findByText("No entries match these filters.");
+      expect(within(screen.getByRole("list", { name: "What is in force" })).getAllByRole("listitem").map((i) => i.textContent)).toEqual(["Person: Nevermore"]);
+    });
+
+    // Catches: the table being rebuilt for the empty answer, which would drop focus from a control and make the page jump.
+    it("is the same table from the grey rows to the empty state and back to rows, with focus kept on the Kind list", async () => {
+      let arrive: (v: unknown) => void = () => undefined;
+      api.listFirmActivity.mockReturnValue(new Promise((resolve) => { arrive = resolve; }));
+      renderPage();
+      const table = screen.getByRole("table", { name: "Who did what" });
+      const kind = screen.getByLabelText("Kind");
+      kind.focus();
+      await act(async () => arrive(none));
+      await screen.findByText(/Nothing has been recorded/);
+      expect(screen.getByRole("table", { name: "Who did what" })).toBe(table);
+      expect(screen.getByLabelText("Kind")).toBe(kind);
+      expect(kind).toHaveFocus();
+      expect(table.querySelectorAll("tbody")).toHaveLength(1);
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.change(kind, { target: { value: "sign_in" } });
+      await screen.findByText("agent@example.com", { selector: "td" });
+      expect(screen.getByRole("table", { name: "Who did what" })).toBe(table);
+    });
+
+    // Catches: the empty words describing a filter the person has just chosen whose answer has not arrived yet.
+    it("keeps the words it has, dimmed, until the answer for a newly chosen filter arrives", async () => {
+      api.listFirmActivity.mockResolvedValue(none);
+      renderPage();
+      await screen.findByText(/Nothing has been recorded/);
+      api.listFirmActivity.mockReturnValue(new Promise(() => {}));
+      fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "sign_in" } });
+      await act(async () => {});
+      expect(screen.getByText(/Nothing has been recorded/)).toBeInTheDocument();
+      expect(screen.queryByText(/No entries match/)).not.toBeInTheDocument();
+    });
+
+    // Catches: "Back to the newest" leaving focus on a button that goes away, which drops it to the top of the page.
+    it("puts focus on the Person list when Back to the newest is pressed", async () => {
+      api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });
+      renderPage();
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      const back = await screen.findByRole("button", { name: "Back to the newest" });
+      back.focus();
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.click(back);
+      await screen.findByText("agent@example.com", { selector: "td" });
+      expect(screen.getByLabelText("Person")).toHaveFocus();
+    });
+
+    // Catches: a page after the first that comes back empty under a filter saying nothing matches, when the first page had matches.
+    it("says there are no older entries, not that none match, when a later page under a filter is empty", async () => {
+      renderPage();
+      fireEvent.change(await screen.findByLabelText("Kind"), { target: { value: "sign_in" } });
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: true });
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      expect(await screen.findByText("There are no older entries.")).toBeInTheDocument();
+      expect(screen.queryByText(/No entries match/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Back to the newest" })).toBeInTheDocument();
+    });
+
+    // Catches: another firm's entries or empty words staying on screen, undimmed, while a new firm loads when the firm changed by a link, not by the list.
+    it("clears the entries at once when the firm in the address changes by navigation", async () => {
+      api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }, { firm_id: "firm-2", name: "Beta Advisory" }]);
+      const { Link } = await import("react-router-dom");
+      render(<MemoryRouter initialEntries={["/advisor/activity?firm=firm-1"]}><Link to="/advisor/activity?firm=firm-2">Go to Beta</Link><AdvisorActivityPage /></MemoryRouter>);
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("link", { name: "Go to Beta" }));
+      expect(screen.queryByText("agent@example.com", { selector: "td" })).not.toBeInTheDocument();
+      expect(document.querySelector("tbody[aria-hidden=true]")).not.toBeNull();
+      cleanup();
+      api.listFirmActivity.mockResolvedValue(none);
+      render(<MemoryRouter initialEntries={["/advisor/activity?firm=firm-1"]}><Link to="/advisor/activity?firm=firm-2">Go to Beta</Link><AdvisorActivityPage /></MemoryRouter>);
+      await screen.findByText(/Nothing has been recorded/);
+      api.listFirmActivity.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("link", { name: "Go to Beta" }));
+      expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
+    });
+
+    // Catches: an empty page after the first (the older entries aged out meanwhile) being called "nothing yet", which would be false.
+    it("does not say nothing has been recorded when the page after the first comes back empty", async () => {
+      api.listFirmActivity.mockResolvedValueOnce({ entries: [entry()], hasMore: true });
+      renderPage();
+      await screen.findByText("agent@example.com", { selector: "td" });
+      api.listFirmActivity.mockResolvedValue(none);
+      fireEvent.click(screen.getByRole("button", { name: "Older" }));
+      expect(await screen.findByText("There are no older entries.")).toBeInTheDocument();
+      expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
+      api.listFirmActivity.mockResolvedValue({ entries: [entry()], hasMore: false });
+      fireEvent.click(screen.getByRole("button", { name: "Back to the newest" }));
+      expect(await screen.findByText("agent@example.com", { selector: "td" })).toBeInTheDocument();
+      expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: null, after: null });
+    });
   });
 
-  it("says what failed, with the reason, and tries again when asked", async () => {
+  it("says what failed, never the network's own words, and tries again when asked", async () => {
     api.listFirmActivity.mockRejectedValueOnce(new Error("The network dropped"));
     renderPage();
     expect(await screen.findByText("We couldn't load the record of who did what.")).toBeInTheDocument();
-    expect(screen.getByText("The network dropped")).toBeInTheDocument();
+    expect(screen.queryByText("The network dropped")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
     expect(api.listFirmActivity).toHaveBeenCalledTimes(2);
@@ -130,6 +459,23 @@ describe("AdvisorActivityPage", () => {
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: NEVERMORE_FILTER, kind: null, after: null }));
   });
 
+  // Suspending a firm and lifting the suspension (story CRM-P1.8) are in the firm's record, shown as done by Nevermore.
+  it("names a suspension and the lifting of one in words, as done by Nevermore", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [
+        entry({ entry_key: "k9", kind: "firm_restored", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null, by_nevermore: true }),
+        entry({ entry_key: "k10", kind: "firm_suspended", record_type: "firm", record_id: "firm-1", actor_id: null, actor_email: null, by_nevermore: true }),
+      ],
+      hasMore: false,
+    });
+    renderPage();
+    const rows = within(await screen.findByRole("table")).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("Lifted the firm's suspension");
+    expect(rows[2]).toHaveTextContent("Suspended the firm");
+    expect(within(rows[1]).getAllByRole("cell")[1].textContent).toBe("Nevermore");
+    expect(within(rows[2]).getAllByRole("cell")[1].textContent).toBe("Nevermore");
+  });
+
   it("asks which firms the person owns again when the sign-in changes, such as after the second factor", async () => {
     api.fetchOwnedFirms.mockResolvedValueOnce([]).mockResolvedValue([{ firm_id: "firm-1", name: "Alpha Advisory" }]);
     const view = renderPage();
@@ -142,14 +488,16 @@ describe("AdvisorActivityPage", () => {
 
   it("sits inside the workspace menu, under Settings, which links to it for an owner", async () => {
     render(
-      <MemoryRouter initialEntries={["/advisor/activity"]}>
-        <Routes>
-          <Route element={<WorkspaceShell />}>
-            <Route path="/advisor/activity" element={<AdvisorActivityPage />} />
-            <Route path="/settings" element={<AdvisorSettingsPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/advisor/activity"]}>
+          <Routes>
+            <Route element={<WorkspaceShell />}>
+              <Route path="/advisor/activity" element={<AdvisorActivityPage />} />
+              <Route path="/settings" element={<AdvisorSettingsPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     await screen.findByRole("table");
     const nav = screen.getByRole("navigation", { name: "Workspace" });
@@ -222,8 +570,10 @@ describe("AdvisorActivityPage", () => {
     renderPage();
     const kind = await screen.findByLabelText("Kind");
     const options = within(kind).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toHaveLength(18);
+    expect(options).toHaveLength(30);
     expect(options.slice(0, 3)).toEqual(["Every kind", "Signed in", "Opened a submission"]);
+    // Removing, suspending and lifting a suspension (CRM-P1.5) are read by name, not as the database wrote them.
+    expect(options).toEqual(expect.arrayContaining(["Removed a member", "Suspended a member", "Lifted a member's suspension", "Left the firm", "Listed an organisation", "Removed an organisation", "Asked to join", "Asked to close the firm", "Withdrew the request to close the firm", "Nevermore stopped the request to close the firm", "Declined a request to join"]));
     fireEvent.change(kind, { target: { value: "packet_downloaded" } });
     await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "packet_downloaded", after: null }));
   });
@@ -234,7 +584,7 @@ describe("AdvisorActivityPage", () => {
     api.listFirmActivity.mockResolvedValue({ entries: [], hasMore: false });
     fireEvent.change(kind, { target: { value: "export_made" } });
     expect(await screen.findByText("No entries match these filters.")).toBeInTheDocument();
-    expect(screen.queryByText("Nothing has been recorded for your firm yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing has been recorded/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Kind")).toHaveValue("export_made");
   });
 
@@ -377,5 +727,44 @@ describe("AdvisorActivityPage", () => {
     const row = within(await screen.findByRole("table")).getAllByRole("row")[1];
     expect(within(row).getAllByRole("cell")[2]).toHaveTextContent("something_new");
     expect(row).toHaveTextContent("report r1");
+  });
+
+  // Help from Nevermore (story CRM-P2.4, D-33).
+  // Catches: the owners see a use of support without its reason or its times, see it under a name or an email, or the end of a use reads as a start.
+  it("shows each use of Nevermore support as Nevermore, with the reason and when it started and ended", async () => {
+    api.listFirmActivity.mockResolvedValue({
+      entries: [
+        entry({ entry_key: "e2", at: "2026-11-12T16:00:00Z", actor_id: null, actor_email: null, by_nevermore: true, kind: "support_access", record_type: "support_session_end", record_id: "s1" }),
+        entry({ entry_key: "e1", at: "2026-11-12T15:00:00Z", actor_id: null, actor_email: null, by_nevermore: true, kind: "support_access", record_type: "support_session", record_id: "s1" }),
+      ],
+      hasMore: false,
+    });
+    supportApi.fetchFirmSupportUses.mockResolvedValue([{ id: "s1", reason: "Customer asked about a stuck quote", startedAt: "2026-11-12T15:00:00Z", endsAt: "2026-11-12T16:00:00Z", endedAt: "2026-11-12T16:00:00Z" }]);
+    renderPage();
+    const rows = within(await screen.findByRole("table", { name: "Who did what" })).getAllByRole("row").slice(1);
+    expect(rows[1]).toHaveTextContent("Nevermore");
+    expect(rows[1]).toHaveTextContent("Nevermore support opened your firm's console");
+    expect(rows[1]).toHaveTextContent("Reason: Customer asked about a stuck quote");
+    expect(rows[0]).toHaveTextContent("Nevermore");
+    expect(rows[0]).toHaveTextContent("Nevermore support's access ended");
+    expect(rows[0]).toHaveTextContent("Reason: Customer asked about a stuck quote");
+    expect(supportApi.fetchFirmSupportUses).toHaveBeenCalledWith("firm-1");
+  });
+
+  // Catches: Nevermore support, which is no owner, is told "only owners" and cannot read the record the story promised it.
+  it("lets a support session read the record at the firm's address, as an owner does", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+    api.fetchMyFirms.mockResolvedValue([]);
+    supportApi.fetchMySupportSessionHere.mockResolvedValue({ id: "s1", firmId: "firm-1", firmName: "Alpha Advisory", firmAddress: "alpha", endsAt: "2999-01-01T00:00:00Z", endedAt: null, isOpen: true, secondFactorPending: false });
+    api.fetchOwnedFirms.mockResolvedValue([]);
+    const original = window.location;
+    Object.defineProperty(window, "location", { value: { ...original, hostname: "alpha.localhost" }, configurable: true });
+    try {
+      renderPage();
+      expect(await screen.findByRole("table", { name: "Who did what" })).toBeInTheDocument();
+      expect(api.listFirmActivity).toHaveBeenCalledWith("firm-1", { person: null, kind: null, after: null });
+    } finally {
+      Object.defineProperty(window, "location", { value: original, configurable: true });
+    }
   });
 });

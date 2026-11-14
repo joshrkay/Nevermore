@@ -24,6 +24,8 @@ through. Nothing sends through the mailbox yet, and no Google or Microsoft app i
 email text, granting `advisor` only and logging every grant. The claim names Supabase keeps for each provider have not been
 observed; the rule grants nothing if they differ.
 
+_Note, 2026-11-18:_ story CRM-P1.4 retired that platform-wide list, its page `/advisor/organisations` and the function `claim_advisor_role_by_organisation`. Each firm now lists its own organisations and an owner approves each person who asks to join from one (the match on Google's verified domain or Microsoft's tenant ID is unchanged). The paragraph above is kept as the record of what was decided then.
+
 ## Considered Options
 
 - **The product sends from a Nevermore address in the broker's name** (ADR 0003's earlier rule). Kept only as what a broker with no connected mailbox falls back to by hand. Rejected as the main path: it isn't their address.

@@ -1,15 +1,16 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, Link, MemoryRouter, RouterProvider } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryRouter, Link, MemoryRouter, RouterProvider, useLocation } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
-// The header asks which firm the address names; these pages are tested at the bare domain.
-vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+let firmAddress: { status: string; address?: string; name?: string } = { status: "none" };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 const api = {
+  listMyFirms: vi.fn(),
   listReferralPartners: vi.fn(),
   loadIntakeSources: vi.fn(),
   addReferralPartner: vi.fn(),
@@ -18,9 +19,17 @@ const api = {
 vi.mock("@/lib/advisorApi", () => api);
 
 const { default: AdvisorPartnersPage } = await import("./AdvisorPartnersPage");
+const { DEFAULT_FIRM_ID } = await import("@/data/referralPartners");
 
-const renderPage = () => render(<MemoryRouter initialEntries={["/advisor/partners"]}><AdvisorPartnersPage /></MemoryRouter>);
+// Every intake a browser starts belongs to the default firm (D-101), so only its partners' links can work today.
+const DEFAULT_FIRM = DEFAULT_FIRM_ID;
+const Where = () => <p data-testid="where">{useLocation().search}</p>;
+const renderPage = (path = "/advisor/partners") =>
+  render(<MemoryRouter initialEntries={[path]}><AdvisorPartnersPage /><Where /></MemoryRouter>);
+const alpha = { id: DEFAULT_FIRM, name: "Alpha Advisory", address: "alpha" };
+const beta = { id: "firm-b", name: "Beta Brokers", address: "beta" };
 const acme = {
+  firm_id: DEFAULT_FIRM,
   code: "acme-cfo",
   name: "Acme CFO Partners",
   kind: "accounting",
@@ -28,6 +37,7 @@ const acme = {
   created_by_email: "adv@example.com",
   updated_at: "2026-11-01T00:00:00Z",
   updated_by_email: "adv@example.com",
+  version: 3,
 };
 
 describe("AdvisorPartnersPage", () => {
@@ -35,11 +45,13 @@ describe("AdvisorPartnersPage", () => {
     for (const fn of Object.values(api)) fn.mockReset();
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();
+    firmAddress = { status: "none" };
+    api.listMyFirms.mockResolvedValue([alpha]);
     api.listReferralPartners.mockResolvedValue([acme]);
     api.loadIntakeSources.mockResolvedValue([
-      { referral_code: "acme-cfo", utm_campaign: "spring", started: 3, certified: 1 },
-      { referral_code: "acme-cfo", utm_campaign: null, started: 2, certified: 1 },
-      { referral_code: null, utm_source: "linkedin", started: 9, certified: 4 },
+      { firm_id: DEFAULT_FIRM, referral_code: "acme-cfo", utm_campaign: "spring", started: 3, certified: 1 },
+      { firm_id: DEFAULT_FIRM, referral_code: "acme-cfo", utm_campaign: null, started: 2, certified: 1 },
+      { firm_id: DEFAULT_FIRM, referral_code: null, utm_source: "linkedin", started: 9, certified: 4 },
     ]);
   });
 
@@ -51,7 +63,8 @@ describe("AdvisorPartnersPage", () => {
     const cells = within(row).getAllByRole("cell");
     expect(cells[1]).toHaveTextContent("5");
     expect(cells[2]).toHaveTextContent("2");
-    const [from, to] = api.loadIntakeSources.mock.calls[0] as [Date, Date];
+    const [from, to, firm] = api.loadIntakeSources.mock.calls[0] as [Date, Date, string];
+    expect(firm).toBe(DEFAULT_FIRM);
     expect(Math.round((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000))).toBe(30);
   });
 
@@ -82,7 +95,7 @@ describe("AdvisorPartnersPage", () => {
       await user.selectOptions(field("Kind of partner"), "law_firm");
       await user.click(screen.getByRole("button", { name: "Add partner" }));
 
-      await waitFor(() => expect(api.addReferralPartner).toHaveBeenCalledWith("smith-jones-llp", "Smith & Jones LLP", "law_firm"));
+      await waitFor(() => expect(api.addReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "smith-jones-llp", "Smith & Jones LLP", "law_firm"));
       await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(2));
       expect(field("Name")).toHaveValue("");
       expect(field("Code in their link")).toHaveValue("");
@@ -159,7 +172,7 @@ describe("AdvisorPartnersPage", () => {
       await user.tab();
       expect(screen.getByRole("button", { name: "Add partner" })).toHaveFocus();
       await user.keyboard("{Enter}");
-      await waitFor(() => expect(api.addReferralPartner).toHaveBeenCalledWith("keys", "Keys", expect.any(String)));
+      await waitFor(() => expect(api.addReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "keys", "Keys", expect.any(String)));
     });
 
     it("refuses a badly formed code before sending it, under the code field", async () => {
@@ -279,14 +292,15 @@ describe("AdvisorPartnersPage", () => {
     };
 
     it("renames a partner, keeping its code", async () => {
-      api.updateReferralPartner.mockResolvedValue({ ...acme, name: "Acme Fractional CFOs" });
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...acme, name: "Acme Fractional CFOs" } });
       const { user, row } = await openEdit();
       await user.clear(within(row).getByLabelText("Name"));
       await user.type(within(row).getByLabelText("Name"), "Acme Fractional CFOs");
       await user.click(within(row).getByRole("button", { name: "Save" }));
-      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith("acme-cfo", "Acme Fractional CFOs", "accounting"));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme Fractional CFOs", "accounting", 3));
       expect(toast.success).toHaveBeenCalledWith("Partner saved");
-      await waitFor(() => expect(screen.getByRole("button", { name: "Edit Acme CFO Partners" })).toBeInTheDocument());
+      // The saved name shows at once, from the answer (the list's reload is mocked unchanged).
+      await waitFor(() => expect(screen.getByRole("button", { name: "Edit Acme Fractional CFOs" })).toBeInTheDocument());
     });
 
     it("turns the details into fields marked Required, with Save and Cancel", async () => {
@@ -319,6 +333,197 @@ describe("AdvisorPartnersPage", () => {
       expect(alert).toHaveTextContent("Couldn't save the partner.");
       expect(alert.parentElement).toContainElement(within(row).getByRole("button", { name: "Save" }));
       expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+    });
+
+    // Catches: a save from an out-of-date partner looking as if it worked (or overwriting), or losing what the person typed, or a dialog that
+    // does not say what changed, where and by whom (CRM-S2.4a, D-155, D-181).
+    describe("when someone else changed the partner while it was being edited", () => {
+      const theirs = {
+        conflict: true,
+        currentVersion: 4,
+        current: { name: "Acme Finance Group", kind: "other" },
+        changed: [
+          { field: "name", value: "Acme Finance Group", who: "owner@example.com", at: "2026-11-14T12:00:00+00:00" },
+          { field: "kind", value: "other", who: "Nevermore", at: "2026-11-14T12:05:00+00:00" },
+        ],
+      };
+      const dialog = () => screen.getByRole("alertdialog");
+      const typeII = async () => {
+        api.updateReferralPartner.mockResolvedValueOnce(theirs);
+        const opened = await openEdit();
+        await opened.user.type(within(opened.row).getByLabelText("Name"), " II");
+        await opened.user.click(within(opened.row).getByRole("button", { name: "Save" }));
+        await screen.findByRole("alertdialog");
+        return opened;
+      };
+
+      it("opens a dialog that sets what they typed beside what is there now, with who changed each field and when, and saves nothing", async () => {
+        const { row } = await typeII();
+        expect(within(dialog()).getByRole("heading", { name: "Someone else changed this partner" })).toBeInTheDocument();
+        expect(dialog()).toHaveAccessibleName("Someone else changed this partner");
+        const rows = within(within(dialog()).getByRole("table")).getAllByRole("row").slice(1);
+        expect(rows).toHaveLength(2);
+        expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent("Name");
+        const [yours, theirsCell, who] = within(rows[0]).getAllByRole("cell");
+        expect(yours).toHaveTextContent("Acme CFO Partners II");
+        expect(theirsCell).toHaveTextContent("Acme Finance Group");
+        expect(who).toHaveTextContent("owner@example.com");
+        expect(who).toHaveTextContent(/Nov 1[45], 2026/);
+        // A code is shown as the words the form shows, and a person at Nevermore is only ever "Nevermore" (D-33).
+        const [, kindTheirs, kindWho] = within(rows[1]).getAllByRole("cell");
+        expect(kindTheirs).toHaveTextContent("Other");
+        expect(kindWho).toHaveTextContent("Nevermore");
+        // Nothing was saved, nothing says it was, and what was typed is still in the form behind.
+        expect(api.updateReferralPartner).toHaveBeenCalledTimes(1);
+        expect(toast.success).not.toHaveBeenCalled();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+        expect(screen.queryByText(/Reload to see their change/)).not.toBeInTheDocument();
+        // The three choices, and a plain line on what each does.
+        for (const name of ["Keep mine", "Keep theirs", "Keep editing"]) expect(within(dialog()).getByRole("button", { name })).toBeInTheDocument();
+        expect(dialog()).toHaveAccessibleDescription(/Keep mine saves what you typed over their change\. Keep theirs/);
+      });
+
+      // Catches: focus left behind the dialog, or on a choice that overwrites someone's work.
+      it("puts focus on the choice that changes nothing, and keeps it inside the dialog", async () => {
+        const { user } = await typeII();
+        expect(within(dialog()).getByRole("button", { name: "Keep editing" })).toHaveFocus();
+        for (let i = 0; i < 5; i++) {
+          await user.tab();
+          expect(dialog()).toContainElement(document.activeElement as HTMLElement);
+        }
+        await user.tab({ shift: true });
+        expect(dialog()).toContainElement(document.activeElement as HTMLElement);
+      });
+
+      // Catches: "Keep mine" saving from the old version again (refused again), or not saving at all.
+      it("keeps what the person typed: Keep mine saves it again from the version that holds their change", async () => {
+        api.updateReferralPartner.mockResolvedValueOnce(theirs).mockResolvedValueOnce({ conflict: false, partner: { ...acme, name: "Acme CFO Partners II", version: 5 } });
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep mine" }));
+        await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(2));
+        expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 4);
+        expect(await screen.findByRole("button", { name: "Edit Acme CFO Partners II" })).toBeInTheDocument();
+        expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+        expect(toast.success).toHaveBeenCalledWith("Partner saved");
+        // The row is closed, and focus is on its Edit button rather than lost to the page.
+        expect(screen.getByRole("button", { name: "Edit Acme CFO Partners II" })).toHaveFocus();
+      });
+
+      // Catches: Keep mine hiding a second change made while the dialog was open.
+      it("shows the dialog again, with the newest change, when Keep mine finds yet another change", async () => {
+        const third = { ...theirs, currentVersion: 5, current: { name: "Third", kind: "other" }, changed: [{ field: "name", value: "Third", who: "lead@example.com", at: "2026-11-14T12:30:00+00:00" }] };
+        api.updateReferralPartner.mockResolvedValueOnce(theirs).mockResolvedValueOnce(third);
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep mine" }));
+        await waitFor(() => expect(within(screen.getByRole("alertdialog")).getByText("lead@example.com")).toBeInTheDocument());
+        expect(within(screen.getByRole("alertdialog")).queryByText("owner@example.com")).not.toBeInTheDocument();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+      });
+
+      // Catches: "Keep theirs" leaving the old version behind (the next save would conflict with a change the person has just accepted), or leaving their typing
+      // in the form as if it were still the thing to save.
+      it("takes their version: the form shows it, focus goes to the first field, and a save starts from their version", async () => {
+        const { user, row } = await typeII();
+        await user.click(within(dialog()).getByRole("button", { name: "Keep theirs" }));
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme Finance Group");
+        expect(within(row).getByLabelText("Kind of partner")).toHaveValue("other");
+        expect(within(row).getByLabelText("Name")).toHaveFocus();
+        expect(api.updateReferralPartner).toHaveBeenCalledTimes(1);
+        api.updateReferralPartner.mockResolvedValueOnce({ conflict: false, partner: { ...acme, name: "Acme Finance Group", kind: "other", version: 5 } });
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme Finance Group", "other", 4));
+      });
+
+      // Catches: closing the dialog throwing the typing away, or a way to close it that picks a side.
+      it("keeps editing: the dialog closes, what was typed stays, focus is back on Save, and Save conflicts again from the same version", async () => {
+        api.updateReferralPartner.mockResolvedValue(theirs);
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep editing" }));
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+        expect(within(row).getByRole("button", { name: "Save" })).toHaveFocus();
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await screen.findByRole("alertdialog");
+        expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      });
+
+      // Catches: Escape choosing a side or closing the row (it would ask to discard, or silently discard).
+      it("treats Escape as keep editing, without asking to discard and without closing the row", async () => {
+        const { user, row } = await typeII();
+        await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+        expect(screen.queryByText("Discard your changes?")).not.toBeInTheDocument();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+      });
+
+      // Catches: an empty comparison when the fields were changed and changed back (the version still moved).
+      it("says so when their changes left the fields as they were, and still offers the choices", async () => {
+        api.updateReferralPartner.mockResolvedValueOnce({ ...theirs, current: { name: "Acme CFO Partners", kind: "accounting" }, changed: [] });
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        const d = await screen.findByRole("alertdialog");
+        expect(d).toHaveTextContent("The fields are as they were when you started");
+        expect(within(d).queryByRole("table")).not.toBeInTheDocument();
+        expect(within(d).getByRole("button", { name: "Keep mine" })).toBeInTheDocument();
+      });
+    });
+
+    // Without a connection (CRM-S2.4a, D-182, D-143): Save is not usable and says why; nothing is sent, nothing typed is lost.
+    describe("without a connection", () => {
+      const goOffline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false); window.dispatchEvent(new Event("offline")); });
+      const goOnline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true); window.dispatchEvent(new Event("online")); });
+      afterEach(() => { vi.restoreAllMocks(); });
+
+      // Catches: a Save that looks usable and fails with a dropped-connection message after the person has waited, or one that is disabled with no reason.
+      it("makes Save aria-disabled with the reason, ignores a click, keeps the typing, and is usable again when the connection is back", async () => {
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        goOffline();
+        const save = within(row).getByRole("button", { name: "Save" });
+        expect(save).toHaveAttribute("aria-disabled", "true");
+        expect(save).not.toBeDisabled();
+        expect(save).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+        await user.click(save);
+        expect(api.updateReferralPartner).not.toHaveBeenCalled();
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+        goOnline();
+        expect(within(row).getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-disabled");
+        expect(within(row).getByRole("button", { name: "Save" })).not.toHaveAccessibleDescription(/offline/);
+        api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...acme, name: "Acme CFO Partners II", version: 4 } });
+        await user.click(within(row).getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(1));
+      });
+
+      // Catches: Enter in a field sending a save that cannot arrive, or doing nothing at all.
+      it("does not send a save made with Enter, says it was not saved, and keeps the typing", async () => {
+        const { user, row } = await openEdit();
+        await user.type(within(row).getByLabelText("Name"), " II");
+        goOffline();
+        await user.keyboard("{Enter}");
+        expect(api.updateReferralPartner).not.toHaveBeenCalled();
+        expect(await within(row).findByRole("alert")).toHaveTextContent("You're offline, so this wasn't saved. Try again when you're back online. What you typed is still here.");
+        expect(within(row).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
+      });
+
+      it("does the same for the add form", async () => {
+        renderPage();
+        const user = userEvent.setup();
+        await screen.findByRole("button", { name: "Edit Acme CFO Partners" });
+        goOffline();
+        const add = screen.getByRole("button", { name: "Add partner" });
+        expect(add).toHaveAttribute("aria-disabled", "true");
+        expect(add).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+        await user.click(add);
+        expect(api.addReferralPartner).not.toHaveBeenCalled();
+      });
     });
 
     // Catches: Cancel asking when nothing changed.
@@ -405,11 +610,11 @@ describe("AdvisorPartnersPage", () => {
     });
 
     it("does not ask about a saved edit afterwards", async () => {
-      api.updateReferralPartner.mockResolvedValue({ ...acme, name: "Acme CFO Partners II" });
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...acme, name: "Acme CFO Partners II" } });
       const { user, row } = await openEdit();
       await user.type(within(row).getByLabelText("Name"), " II");
       await user.click(within(row).getByRole("button", { name: "Save" }));
-      await screen.findByRole("button", { name: "Edit Acme CFO Partners" });
+      await screen.findByRole("button", { name: "Edit Acme CFO Partners II" });
       const leave = new Event("beforeunload", { cancelable: true });
       window.dispatchEvent(leave);
       expect(leave.defaultPrevented).toBe(false);
@@ -478,7 +683,7 @@ describe("AdvisorPartnersPage", () => {
     // The router keeps one blocker; two dirty forms on a page must still ask once, and ask until both are clean.
     it("asks once for two forms with unsaved changes, and keeps asking until both are saved or discarded", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      api.updateReferralPartner.mockResolvedValue({ ...acme, name: "Acme CFO Partners II" });
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...acme, name: "Acme CFO Partners II" } });
       api.addReferralPartner.mockResolvedValue({ ...acme, code: "new-one", name: "New One" });
       const user = renderInRouter();
       await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
@@ -559,10 +764,263 @@ describe("AdvisorPartnersPage", () => {
     });
   });
 
+  // The version a save sends is the one the person STARTED editing from, never the one a list reload brought later (CRM-S2.4b, review).
+  describe("a save names the version the person started from", () => {
+    const bobs = { ...acme, name: "Bob's Acme", version: 4 };
+    const gamma = { ...acme, code: "gamma", name: "Gamma", kind: "other", version: 1 };
+    const addGamma = async (user: ReturnType<typeof userEvent.setup>) => {
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "Gamma");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+    };
+    const conflict = { conflict: true, currentVersion: 4, current: { name: "Bob's Acme", kind: "accounting" }, changed: [{ field: "name", value: "Bob's Acme", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" }] };
+
+    // Catches: Save sending the version the row holds NOW, so a reload in between lets old typing overwrite someone else's change.
+    it("sends the starting version when a reload brought a newer one, and shows the conflict line again after another reload", async () => {
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme]).mockResolvedValue([bobs, gamma]);
+      api.addReferralPartner.mockResolvedValue(gamma);
+      api.updateReferralPartner.mockResolvedValue(conflict);
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      const row = screen.getByRole("row", { name: /Save/ });
+      await user.type(within(row).getByLabelText("Name"), " II");
+      await addGamma(user); // the list reloads, and the partner is now version 4
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(2));
+      await screen.findByRole("row", { name: /Gamma/ });
+      await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Save" }));
+      expect(await screen.findByRole("alertdialog")).toHaveTextContent("Someone else changed this partner");
+      expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+      // Another reload, then Save again: still the starting version, still a conflict.
+      api.listReferralPartners.mockResolvedValue([{ ...bobs, version: 5 }, gamma]);
+      api.addReferralPartner.mockResolvedValue({ ...gamma, code: "delta", name: "Delta" });
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "Delta");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(3));
+      await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledTimes(2));
+      expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Acme CFO Partners II", "accounting", 3);
+      expect(await screen.findByRole("alertdialog")).toHaveTextContent("Someone else changed this partner");
+    });
+
+    // Catches: a closed row keeping its old starting version, so the next edit conflicts with a change the person already saw.
+    it("starts again from the then-current version when the row is closed and Edit is opened again", async () => {
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme]).mockResolvedValue([bobs, gamma]);
+      api.addReferralPartner.mockResolvedValue(gamma);
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: { ...bobs, name: "Mine", version: 5 } });
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      await addGamma(user);
+      await screen.findByRole("row", { name: /Gamma/ });
+      await user.click(within(screen.getByRole("row", { name: /Save/ })).getByRole("button", { name: "Cancel" }));
+      await user.click(await screen.findByRole("button", { name: "Edit Bob's Acme" }));
+      const row = screen.getByRole("row", { name: /Save/ });
+      expect(within(row).getByLabelText("Name")).toHaveValue("Bob's Acme");
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "Mine");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith(DEFAULT_FIRM, "acme-cfo", "Mine", "accounting", 4));
+    });
+
+    // Catches: a save conflicting with the person's own previous save because the page waits for the list to say the new version.
+    it("uses the answer to a save at once, so editing again before the list reloads starts from the new version", async () => {
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme]).mockReturnValue(new Promise(() => {}));
+      api.updateReferralPartner.mockResolvedValueOnce({ conflict: false, partner: { ...acme, name: "First", version: 4 } }).mockResolvedValue({ conflict: false, partner: { ...acme, name: "Second", version: 5 } });
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      let row = screen.getByRole("row", { name: /Save/ });
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "First");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      await user.click(await screen.findByRole("button", { name: "Edit First" })); // shown from the answer, though the list has not reloaded
+      row = screen.getByRole("row", { name: /Save/ });
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "Second");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenLastCalledWith(DEFAULT_FIRM, "acme-cfo", "Second", "accounting", 4));
+    });
+  });
+
   it("says when there are no partners yet, and offers to try again when it can't load", async () => {
     api.listReferralPartners.mockRejectedValueOnce(new Error("Couldn't load the referral partners.")).mockResolvedValue([]);
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: /try again/i }));
     expect(await screen.findByText("No referral partners yet.")).toBeInTheDocument();
+  });
+
+  describe("links, which only the default firm can use (D-101)", () => {
+    const betaAcme = { ...acme, firm_id: "firm-b", name: "Beta's Acme" };
+    const atBeta = () => {
+      api.listMyFirms.mockResolvedValue([alpha, beta]);
+      firmAddress = { status: "known", address: "beta", name: "Beta Brokers" };
+      api.listReferralPartners.mockResolvedValue([betaAcme]);
+    };
+
+    it("shows and copies a link for the default firm's partners, and offers it when one is added", async () => {
+      api.addReferralPartner.mockResolvedValue({ ...acme, code: "new-co", name: "New Co" });
+      renderPage();
+      const row = await screen.findByRole("row", { name: /Acme CFO Partners/ });
+      expect(within(row).getByText("https://nevermorepeo.com/?ref=acme-cfo")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy Acme CFO Partners's link" })).toBeInTheDocument();
+      expect(screen.queryByText(/links come when/i)).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Co" } });
+      fireEvent.change(screen.getByLabelText("Kind of partner"), { target: { value: "other" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Added New Co. Send them https://nevermorepeo.com/?ref=new-co"));
+    });
+
+    it("keeps another firm's partner and its code but shows no link, and says when links come", async () => {
+      atBeta();
+      renderPage();
+      const row = await screen.findByRole("row", { name: /Beta's Acme/ });
+      expect(within(row).getByText("acme-cfo")).toBeInTheDocument();
+      expect(screen.queryByText(/nevermorepeo\.com/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Copy .*link/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("columnheader", { name: "Their link" })).not.toBeInTheDocument();
+      expect(screen.getByText(/links come when the firm can take intakes/i)).toBeInTheDocument();
+      // The funnel counts are asked for the page's own firm, not for another membership's.
+      expect(api.loadIntakeSources.mock.calls[0][2]).toBe("firm-b");
+    });
+
+    it("offers no link while adding a partner to another firm, and the toast carries none", async () => {
+      atBeta();
+      api.addReferralPartner.mockResolvedValue({ ...betaAcme, code: "new-co", name: "New Co" });
+      renderPage();
+      await screen.findByRole("row", { name: /Beta's Acme/ });
+      fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Name"), { target: { value: "New Co" } });
+      expect(screen.getByLabelText("Code in their link")).toHaveValue("new-co");
+      expect(screen.queryByText(/Their link:/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/nevermorepeo\.com/)).not.toBeInTheDocument();
+      fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Kind of partner"), { target: { value: "other" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Added New Co."));
+    });
+
+    it("says it too for another firm with no partners yet", async () => {
+      atBeta();
+      api.listReferralPartners.mockResolvedValue([]);
+      renderPage();
+      expect(await screen.findByText("No referral partners yet.")).toBeInTheDocument();
+      expect(screen.getByText(/links come when the firm can take intakes/i)).toBeInTheDocument();
+      expect(screen.queryByText(/then send them their link/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("which firm it acts for", () => {
+    const betaAcme = { ...acme, firm_id: "firm-b", name: "Beta's Acme" };
+
+    it("reads the partners of the only firm the person belongs to", async () => {
+      renderPage();
+      await screen.findByRole("row", { name: /Acme CFO Partners/ });
+      expect(api.listReferralPartners).toHaveBeenCalledWith(DEFAULT_FIRM);
+      expect(screen.queryByLabelText("Firm")).not.toBeInTheDocument();
+    });
+
+    it("at a firm's address acts for that firm, though the person belongs to others", async () => {
+      api.listMyFirms.mockResolvedValue([alpha, beta]);
+      firmAddress = { status: "known", address: "beta", name: "Beta Brokers" };
+      api.listReferralPartners.mockResolvedValue([betaAcme]);
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: betaAcme });
+      api.addReferralPartner.mockResolvedValue(betaAcme);
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Beta's Acme" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith("firm-b", "acme-cfo", "Beta's Acme", "accounting", 3));
+      expect(api.listReferralPartners).toHaveBeenCalledWith("firm-b");
+      expect(api.listReferralPartners).not.toHaveBeenCalledWith(DEFAULT_FIRM);
+      expect(screen.queryByLabelText("Firm")).not.toBeInTheDocument();
+      fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Name"), { target: { value: "New Co" } });
+      fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Kind of partner"), { target: { value: "other" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(api.addReferralPartner).toHaveBeenCalledWith("firm-b", "new-co", "New Co", "other"));
+    });
+
+    it("on the bare domain asks a member of several firms which one, and acts for the one chosen", async () => {
+      api.listMyFirms.mockResolvedValue([alpha, beta]);
+      api.listReferralPartners.mockImplementation(async (firm: string) => (firm === "firm-b" ? [betaAcme] : [acme]));
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: betaAcme });
+      renderPage();
+      const choose = await screen.findByLabelText("Firm");
+      expect(api.listReferralPartners).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "Add partner" })).not.toBeInTheDocument();
+      fireEvent.change(choose, { target: { value: "firm-b" } });
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Beta's Acme" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.updateReferralPartner).toHaveBeenCalledWith("firm-b", "acme-cfo", "Beta's Acme", "accounting", 3));
+    });
+
+    it("counts a partner's intakes only from its own firm when another firm uses the same code", async () => {
+      api.loadIntakeSources.mockResolvedValue([
+        { firm_id: DEFAULT_FIRM, referral_code: "acme-cfo", started: 3, certified: 1 },
+        { firm_id: "firm-b", referral_code: "acme-cfo", started: 40, certified: 20 },
+      ]);
+      renderPage();
+      const row = await screen.findByRole("row", { name: /Acme CFO Partners/ });
+      const cells = within(row).getAllByRole("cell");
+      expect(cells[1]).toHaveTextContent(/^3$/);
+      expect(cells[2]).toHaveTextContent(/^1$/);
+    });
+
+    it("leaves the previous firm's table and controls at once when another firm is chosen, and carries no draft over", async () => {
+      api.listMyFirms.mockResolvedValue([alpha, beta]);
+      let release: (v: unknown[]) => void = () => {};
+      api.listReferralPartners.mockImplementation((firm: string) =>
+        firm === "firm-b" ? new Promise((resolve) => { release = resolve; }) : Promise.resolve([acme]));
+      renderPage(`/advisor/partners?firm=${DEFAULT_FIRM}`);
+      await screen.findByRole("row", { name: /Acme CFO Partners/ });
+      fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Name"), { target: { value: "Draft For Alpha" } });
+
+      fireEvent.change(screen.getByLabelText("Firm"), { target: { value: "firm-b" } });
+      // While Beta loads, nothing of Alpha's can be clicked, and the chooser is still there to go back.
+      expect(screen.getByRole("status")).toHaveTextContent(/Loading partners/);
+      expect(screen.queryByRole("button", { name: "Add partner" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Edit Acme CFO Partners" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("row", { name: /Acme CFO Partners/ })).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Firm")).toHaveValue("firm-b");
+
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledWith("firm-b"));
+      release([{ ...acme, firm_id: "firm-b", name: "Beta's Acme" }]);
+      await screen.findByRole("row", { name: /Beta's Acme/ });
+      expect(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Name")).toHaveValue("");
+    });
+
+    it("does not show a reload of the same firm as a loading page", async () => {
+      api.updateReferralPartner.mockResolvedValue({ conflict: false, partner: acme });
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByRole("row", { name: /Acme CFO Partners/ })).toBeInTheDocument();
+    });
+
+    it("treats a ?firm= that matches none of the person's firms as absent when they belong to exactly one, and puts that firm's id in the address", async () => {
+      renderPage("/advisor/partners?firm=not-a-firm");
+      await screen.findByRole("row", { name: /Acme CFO Partners/ });
+      expect(screen.queryByText(/aren't a member of a firm/)).not.toBeInTheDocument();
+      expect(api.listReferralPartners).toHaveBeenCalledWith(DEFAULT_FIRM);
+      expect(api.listReferralPartners).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("where")).toHaveTextContent(`?firm=${DEFAULT_FIRM}`);
+    });
+
+    it("still asks a member of several firms to choose when the ?firm= matches none of them", async () => {
+      api.listMyFirms.mockResolvedValue([alpha, beta]);
+      renderPage("/advisor/partners?firm=not-a-firm");
+      expect(await screen.findByLabelText("Firm")).toHaveValue("");
+      expect(api.listReferralPartners).not.toHaveBeenCalled();
+    });
+
+    it("says so when the person belongs to no firm", async () => {
+      api.listMyFirms.mockResolvedValue([]);
+      renderPage();
+      expect(await screen.findByText(/aren't a member of a firm/)).toBeInTheDocument();
+      expect(api.listReferralPartners).not.toHaveBeenCalled();
+    });
   });
 });

@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { useId, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,7 +14,7 @@ import { downloadBlob } from "@/lib/downloadFile";
  * can't be built, it says so, as the packet's download does. A tab that outlived the certification gives no file
  * (`builtFrom`, checked at the click).
  */
-const WorkersCompDownload = ({ application: a, builtFrom, onDownloaded }: { application: WorkersCompApplication; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
+const WorkersCompDownloadControl = ({ application: a, builtFrom, onDownloaded }: { application: WorkersCompApplication; builtFrom: BuiltFrom; onDownloaded?: () => void }) => {
   const id = useId();
   const [busy, setBusy] = useState(false);
   // The blanks section by section: "Applicant: Doing business as (DBA), FEIN, ...".
@@ -61,5 +63,8 @@ const WorkersCompDownload = ({ application: a, builtFrom, onDownloaded }: { appl
     </div>
   );
 };
+
+/** Not offered during Nevermore support: a file built here from rows support may read would leave the product unrecorded (CRM-P2.4). */
+const WorkersCompDownload = (props: ComponentProps<typeof WorkersCompDownloadControl>) => (useDownloadsOff() ? null : <WorkersCompDownloadControl {...props} />);
 
 export default WorkersCompDownload;

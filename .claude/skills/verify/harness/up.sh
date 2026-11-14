@@ -4,11 +4,14 @@
 H=$(cd "$(dirname "$0")" && pwd); RUN=${RUN_DIR:-/tmp/verify-harness}; ROOT=$(cd "$H/../../../.." && pwd)
 PGRST=${PGRST:-/tmp/verify-pgrst/postgrest}; mkdir -p $RUN; export RUN_DIR=$RUN
 "$H/down.sh" >/dev/null 2>&1
-service postgresql start >/dev/null 2>&1; sleep 2
-su postgres -c "psql -q -c 'DROP DATABASE IF EXISTS verify' -c 'CREATE DATABASE verify'" 2>&1 | grep -v NOTICE
-su postgres -c "cd $ROOT && psql -q -d verify -v ON_ERROR_STOP=1 -f -" < $H/setup.sql || { echo "DB setup failed"; exit 1; }
+# The server comes from the standard libpq variables (PGHOST, PGPORT, PGUSER, PGPASSWORD), default localhost:5432 as postgres/postgres. PGUSER must be the superuser named postgres: e2e/stack/bootstrap.sql refuses any other role.
+export PGHOST=${PGHOST:-localhost} PGPORT=${PGPORT:-5432} PGUSER=${PGUSER:-postgres} PGPASSWORD=${PGPASSWORD:-postgres}
+[ "$PGUSER" = postgres ] || { echo "PGUSER must be postgres (it is $PGUSER)"; exit 1; }
+psql -q -d postgres -c 'DROP DATABASE IF EXISTS verify WITH (FORCE)' -c 'CREATE DATABASE verify TEMPLATE template0' 2>&1 | grep -v NOTICE
+{ cat $H/setup.sql; for f in $(ls $ROOT/supabase/migrations/*.sql | sort); do echo "\\i supabase/migrations/$(basename $f)"; done; cat $H/seed.sql; } > $RUN/setup.all.sql
+(cd $ROOT && psql -q -d verify -v ON_ERROR_STOP=1 -f $RUN/setup.all.sql) || { echo "DB setup failed"; exit 1; }
 cat > $RUN/pgrst.conf <<CONF
-db-uri = "postgres://authenticator:pw@127.0.0.1:5432/verify"
+db-uri = "postgres://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/verify"
 db-schemas = "public"
 db-anon-role = "anon"
 jwt-secret = "verify-harness-secret-0123456789abcdef"

@@ -7,10 +7,10 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@exampl
 // The header asks which firm the address names; these pages are tested at the bare domain.
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const loadFunnel = vi.fn();
-const loadIntakeSources = vi.fn();
+const loadIntakeSourcesOfMyFirms = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({
   loadFunnel: (...a: unknown[]) => loadFunnel(...a),
-  loadIntakeSources: (...a: unknown[]) => loadIntakeSources(...a),
+  loadIntakeSourcesOfMyFirms: (...a: unknown[]) => loadIntakeSourcesOfMyFirms(...a),
 }));
 
 const { default: AdvisorFunnelPage } = await import("./AdvisorFunnelPage");
@@ -21,8 +21,8 @@ const DAY = 24 * 60 * 60 * 1000;
 describe("AdvisorFunnelPage", () => {
   beforeEach(() => {
     loadFunnel.mockReset();
-    loadIntakeSources.mockReset();
-    loadIntakeSources.mockResolvedValue([]);
+    loadIntakeSourcesOfMyFirms.mockReset();
+    loadIntakeSourcesOfMyFirms.mockResolvedValue({ firms: [], rows: [] });
   });
 
   it("shows each step's count, share of starts and median time, for the last 30 days by default", async () => {
@@ -45,10 +45,10 @@ describe("AdvisorFunnelPage", () => {
 
   it("shows the same intakes by source, the partner's name first and its codes under it", async () => {
     loadFunnel.mockResolvedValue([{ step: 1, milestone: "started", intakes: 7, median_minutes: null }]);
-    loadIntakeSources.mockResolvedValue([
+    loadIntakeSourcesOfMyFirms.mockResolvedValue({ firms: [{ id: "firm-a", name: "Alpha", address: "alpha" }], rows: [
       { referral_code: "acme-cfo", partner_name: "Acme CFO Partners", utm_source: null, utm_medium: null, utm_campaign: "spring", started: 4, answered: 3, census_provided: 2, ready_to_certify: 2, certified: 1 },
       { referral_code: null, partner_name: null, utm_source: null, utm_medium: null, utm_campaign: null, started: 3, answered: 1, certified: 0 },
-    ]);
+    ] });
     renderPage();
     const table = await screen.findByRole("table", { name: "Intakes from each source that reached each step" });
     const acme = within(table).getByRole("row", { name: /Acme CFO Partners/ });
@@ -56,9 +56,40 @@ describe("AdvisorFunnelPage", () => {
     expect(within(acme).getByText("25%")).toBeInTheDocument();
     const direct = within(table).getByRole("row", { name: /No tagged link/ });
     expect(within(direct).getByText("0%")).toBeInTheDocument();
-    const [from, to] = loadIntakeSources.mock.calls[0] as [Date, Date];
+    const [from, to] = loadIntakeSourcesOfMyFirms.mock.calls[0] as [Date, Date];
     expect(Math.round((to.getTime() - from.getTime()) / DAY)).toBe(30);
     expect(screen.getByRole("link", { name: "Referral partners" })).toHaveAttribute("href", "/advisor/partners");
+  });
+
+  it("tells a member of two firms which firm each source row belongs to, one row for each, with no repeated key", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    loadFunnel.mockResolvedValue([{ step: 1, milestone: "started", intakes: 9, median_minutes: null }]);
+    loadIntakeSourcesOfMyFirms.mockResolvedValue({
+      firms: [{ id: "firm-a", name: "Alpha Advisory", address: "alpha" }, { id: "firm-b", name: "Beta Benefits", address: "beta" }],
+      rows: [
+        { firm_id: "firm-a", referral_code: null, partner_name: null, utm_source: null, utm_medium: null, utm_campaign: null, started: 5, answered: 1, certified: 0 },
+        { firm_id: "firm-b", referral_code: null, partner_name: null, utm_source: null, utm_medium: null, utm_campaign: null, started: 4, answered: 2, certified: 1 },
+      ],
+    });
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Intakes from each source that reached each step" });
+    const rows = within(table).getAllByRole("row", { name: /No tagged link/ });
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("Alpha Advisory")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Beta Benefits")).toBeInTheDocument();
+    expect(error.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    error.mockRestore();
+  });
+
+  it("names no firm for a member of one firm", async () => {
+    loadFunnel.mockResolvedValue([{ step: 1, milestone: "started", intakes: 3, median_minutes: null }]);
+    loadIntakeSourcesOfMyFirms.mockResolvedValue({
+      firms: [{ id: "firm-a", name: "Alpha Advisory", address: "alpha" }],
+      rows: [{ firm_id: "firm-a", referral_code: null, partner_name: null, utm_source: null, utm_medium: null, utm_campaign: null, started: 3, answered: 1, certified: 0 }],
+    });
+    renderPage();
+    await screen.findByRole("table", { name: "Intakes from each source that reached each step" });
+    expect(screen.queryByText("Alpha Advisory")).not.toBeInTheDocument();
   });
 
   it("loads another period when one is chosen", async () => {

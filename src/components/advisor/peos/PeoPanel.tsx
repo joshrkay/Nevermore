@@ -8,6 +8,7 @@ import { DiscardDraft, History, RecheckForm, ReviewAndPublish } from "./PeoActio
 import { buttonClass, primaryClass, type SectionKey } from "./shared";
 import { Section, SectionContents } from "./ProfileSections";
 import { AnswersEditor, CensusEditor, ContactsEditor, DocumentsEditor, QuestionsEditor, RulesEditor, type EditorProps } from "./SectionEditors";
+import { failureWords } from "@/components/workspace/form";
 
 const SECTIONS: SectionKey[] = ["rules", "answers", "census", "documents", "questions", "contacts"];
 
@@ -50,7 +51,7 @@ const PeoPanel = ({ peo, isAdmin, showContacts = true, today, onChanged }: PeoPa
         : `${peo.name} is back on the list.`);
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(failureWords(err, "That change wasn't saved. Check your connection and try again."));
     } finally {
       setListing(false);
     }

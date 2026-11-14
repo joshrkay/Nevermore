@@ -6,6 +6,8 @@ const auth = { user: { id: "u1", email: "sam@example.com" }, session: { access_t
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchMyFirms: vi.fn(), fetchOwnedFirms: vi.fn(), fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
+// The page also holds the "Leave this firm" action, which reaches the database through its own module; leaving is tested in AdvisorSettingsLeave.test.tsx.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
@@ -24,13 +26,14 @@ const renderPage = async (role: string) => {
 beforeEach(() => { firmAddress = { status: "none" }; api.fetchIsAdmin.mockResolvedValue(false); });
 
 describe("the Settings page", () => {
-  it("links an owner to Mailbox, Invitations, Activity, Referral partners, PEOs and Outbox", async () => {
+  it("links an owner to Mailbox, Invitations, Members, Activity, Referral partners, PEOs and Outbox", async () => {
     const list = await renderPage("owner");
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     const links = list.getAllByRole("link").map((l) => [l.querySelector("span span")?.textContent, l.getAttribute("href")]);
     expect(links).toEqual([
       ["Mailbox", "/advisor/mailbox"],
       ["Invitations", "https://alpha.nevermorepeo.com/firm/invitations"],
+      ["Members", "/advisor/members"],
       ["Activity", "/advisor/activity"],
       ["Referral partners", "/advisor/partners"],
       ["PEOs", "/advisor/peos"],

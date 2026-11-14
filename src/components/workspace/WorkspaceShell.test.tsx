@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = {
@@ -10,6 +11,8 @@ const auth = {
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchMyFirms: vi.fn(), fetchOwnedFirms: vi.fn(), fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
+// The shell's Settings page also holds the "Leave this firm" action, which reaches the database through its own module (tested in AdvisorSettingsLeave.test.tsx).
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
@@ -22,13 +25,15 @@ const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)
 
 const renderAt = async (at: string) => {
   const view = render(
-    <MemoryRouter initialEntries={[at]}>
-      <Routes>
-        <Route element={<WorkspaceShell />}>
-          <Route path="*" element={<p>The page</p>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[at]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="*" element={<p>The page</p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   await settle();
   return view;
@@ -73,6 +78,9 @@ describe("the workspace menu", () => {
     ["/advisor?status=under_review", "Quotes"],
     ["/advisor/submissions/abc", "Quotes"],
     ["/advisor?mail=new", "Inbox"],
+    // The queue rewrites mail=new to the filter it stands for (CRM-S3.5a); Inbox stays marked, and Quotes is not.
+    ["/advisor?filter=has_new_peo_mail:is:true", "Inbox"],
+    ["/advisor?view=won&filter=needs_action:is:true", "Quotes"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],
@@ -157,13 +165,15 @@ describe("the desktop menu", () => {
 describe("the workspace state", () => {
   it("asks whether the person is a platform admin once for each time the shell is shown, however many parts use it", async () => {
     render(
-      <MemoryRouter initialEntries={["/settings"]}>
-        <Routes>
-          <Route element={<WorkspaceShell />}>
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/settings"]}>
+          <Routes>
+            <Route element={<WorkspaceShell />}>
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     await settle();
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
@@ -208,5 +218,48 @@ describe("the menu at phone width", () => {
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("link", { name: "Reports" }));
     await settle();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+// The no-connection banner (CRM-S2.4a, D-182): said once when the connection goes, gone when it is back, on every page of the workspace.
+describe("the no-connection banner", () => {
+  const goOffline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false); window.dispatchEvent(new Event("offline")); });
+  const goOnline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true); window.dispatchEvent(new Event("online")); });
+  const offlineStatus = () => screen.queryAllByRole("status").find((s) => /offline/i.test(s.textContent ?? "")) ?? null;
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // Catches: nothing telling a person their screen has stopped updating, or a banner that is there all the time.
+  it("says so when the connection goes, over the page that is already loaded, and takes the words away when it is back", async () => {
+    await renderAt("/advisor");
+    expect(offlineStatus()).toBeNull();
+    goOffline();
+    expect(offlineStatus()).toHaveTextContent("You're offline. What's on screen may be out of date, and nothing can be saved until you're back online.");
+    expect(screen.getByText("The page")).toBeInTheDocument();
+    goOnline();
+    expect(offlineStatus()).toBeNull();
+  });
+
+  // Catches: a banner read out again on every poll, or put on screen as a new element each time, or one that is a live region only after it has words
+  // (a region inserted with its words is announced unreliably).
+  it("is one live region that is on the page before it has words, and its words are not replaced by a poll or a second offline event", async () => {
+    await renderAt("/advisor");
+    const region = screen.getByRole("status", { name: "Connection" });
+    expect(region).toHaveTextContent("");
+    goOffline();
+    expect(screen.getByRole("status", { name: "Connection" })).toBe(region);
+    const words = region.firstElementChild;
+    expect(words).not.toBeNull();
+    goOffline();
+    await settle();
+    expect(region.firstElementChild).toBe(words);
+    goOnline();
+    expect(region).toHaveTextContent("");
+  });
+
+  // Catches: a person who opens the workspace with no connection being told nothing.
+  it("shows at once when the workspace opens without a connection", async () => {
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    await renderAt("/advisor");
+    expect(offlineStatus()).toHaveTextContent("You're offline.");
   });
 });

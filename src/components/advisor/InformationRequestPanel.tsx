@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Loader2, MailQuestion, X } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/data/advisor";
 import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
 import { parseExtraQuestionRefs, type ExtraQuestionRef } from "@/data/extraAnswers";
+import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
 import { requestInformation, type InformationRequestRow } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
@@ -82,18 +83,21 @@ const InformationRequestPanel = ({
     setAdded((current) => (current.includes(f) ? current : [...current, f]));
   };
   const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The request wasn't sent. Check your connection and try again. What you typed is still here.");
+  const sendButton = useRef<HTMLButtonElement>(null);
   const blocked = informationRequestBlockedReason(status, certifiedOnce, intakeStatus);
   const others = REQUESTABLE_FIELDS.filter((f) => !fields.includes(f));
 
   const send = async () => {
     setSaving(true);
+    failure.clear();
     try {
       await requestInformation(sessionId, message, fields, questions);
       setMessage("");
       toast.success("Request sent. The prospect will get an email and see it in their intake.");
       onChanged();
     } catch (err) {
-      toast.error((err as Error).message);
+      failure.failed(err);
     } finally {
       setSaving(false);
     }
@@ -193,7 +197,9 @@ const InformationRequestPanel = ({
             </div>
           )}
 
+          <SaveFailed message={failure.message} returnFocusTo={sendButton} />
           <button
+            ref={sendButton}
             onClick={send}
             disabled={saving || message.trim() === ""}
             className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
