@@ -140,6 +140,8 @@ export type Database = {
           // The referral code and campaign tags of the link the intake started from (20261106100000): short codes
           // (src/data/intakeSource.ts), set when the intake is created and never changed.
           referral_code: string | null
+          // The firm the intake belongs to (20261116090000), set by the database.
+          firm_id: string
           utm_campaign: string | null
           utm_medium: string | null
           utm_source: string | null
@@ -428,8 +430,8 @@ export type Database = {
         Update: never
         Relationships: []
       }
-      // Organisations whose members get the advisor role without an admin (20261113100000). Admins read it; it is
-      // changed only through admin_add_allowed_organisation and admin_remove_allowed_organisation.
+      // The retired platform list of organisations whose members got the advisor role without an admin (20261113100000). Admins read it as
+      // history; nothing changes it since 20261118100000, which dropped the functions that did.
       allowed_organisations: {
         Row: {
           added_at: string
@@ -775,18 +777,6 @@ export type Database = {
         Args: { p_peo_id: number; p_template_id: number }
         Returns: string | null
       }
-      admin_add_allowed_organisation: {
-        Args: { p_provider: string; p_org_id: string; p_label: string }
-        Returns: Json
-      }
-      admin_remove_allowed_organisation: {
-        Args: { p_id: number }
-        Returns: Json
-      }
-      claim_advisor_role_by_organisation: {
-        Args: Record<PropertyKey, never>
-        Returns: Json
-      }
       // Whether the signed-in broker's own mailbox is connected, never the token (20261113090000).
       my_mailbox: {
         Args: Record<PropertyKey, never>
@@ -805,10 +795,10 @@ export type Database = {
         Args: { p_from: string; p_to: string }
         Returns: { step: number; milestone: string; intakes: number; median_minutes: number | null }[]
       }
-      // The funnel by source (20261106100000): for intakes started in the period, each source and how many of its
-      // intakes reached each step. Intakes with no source are one row whose codes are all null.
+      // The funnel by source (20261106100000), asked for one firm the caller belongs to (20261116200500): for that firm's intakes
+      // started in the period, each source and how many of its intakes reached each step. Intakes with no source are one row whose codes are all null.
       advisor_intake_sources: {
-        Args: { p_from: string; p_to: string }
+        Args: { p_from: string; p_to: string; p_firm_id: string }
         Returns: {
           referral_code: string | null
           partner_name: string | null
@@ -823,6 +813,8 @@ export type Database = {
           email_verified: number
           certified: number
           manuscript_downloaded: number
+          // The firm the row is about (20261116200500): a code is unique within a firm, not across firms.
+          firm_id: string
         }[]
       }
       // Adds a referral partner under a new code; a code already taken is refused (23505).
@@ -1032,7 +1024,25 @@ export type Database = {
           suspended: boolean
           suspended_at: string | null
           suspension_reason: string | null
+          closing_on: string | null
+          closed_on: string | null
+          closure_asked_at: string | null
+          closure_asked_by: string | null
+          closure_deleted: { [key: string]: number } | null
         }[]
+      }
+      // Closing a firm (20261118110000).
+      request_firm_closure: {
+        Args: { p_firm_id: string; p_firm_name: string }
+        Returns: string
+      }
+      withdraw_firm_closure: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      my_firm_closure: {
+        Args: { p_firm_id: string }
+        Returns: { asked_at: string; closes_at: string }[]
       }
       admin_suspend_firm: {
         Args: { p_firm_id: string; p_reason: string }
@@ -1084,6 +1094,64 @@ export type Database = {
       cancel_invitation: {
         Args: { p_invitation_id: string }
         Returns: undefined
+      }
+      // Join by organisation (20261118100000). The two tables are closed to the API; an owner reaches them through these.
+      add_firm_organisation: {
+        Args: { p_firm_id: string; p_provider: string; p_org_id: string; p_label: string }
+        Returns: Json
+      }
+      firm_organisations: {
+        Args: { p_firm_id: string }
+        Returns: { id: string; provider: string; org_id: string; label: string; added_at: string }[]
+      }
+      remove_firm_organisation: {
+        Args: { p_id: string }
+        Returns: undefined
+      }
+      // 'asked' or 'none': the same none for everyone who is not from an organisation the firm lists.
+      ask_to_join_firm: {
+        Args: { p_firm_address: string }
+        Returns: string
+      }
+      firm_join_requests: {
+        Args: { p_firm_id: string }
+        Returns: { request_id: string; email: string; asked_at: string; provider: string; org_label: string }[]
+      }
+      // Returns the role the person now holds.
+      approve_join_request: {
+        Args: { p_request_id: string; p_role: string }
+        Returns: string
+      }
+      decline_join_request: {
+        Args: { p_request_id: string }
+        Returns: undefined
+      }
+      leave_firm: {
+        Args: { p_firm_id: string }
+        Returns: undefined
+      }
+      remove_member: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      suspend_member: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      lift_member_suspension: {
+        Args: { p_firm_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      firm_members: {
+        Args: { p_firm_id: string }
+        Returns: {
+          user_id: string
+          email: string
+          role: string
+          state: string
+          since: string
+          is_you: boolean
+        }[]
       }
       accept_invitation: {
         Args: { p_token_hash: string; p_firm_address: string }

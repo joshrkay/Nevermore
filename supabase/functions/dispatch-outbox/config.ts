@@ -77,6 +77,8 @@ export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<ob
   return [
     ["advisor_notification", config.advisor],
     ["peo_mail_arrived", config.advisor],
+    ["member_left", config.advisor],
+    ["firm_closing", config.advisor],
     ["prospect_confirmation", config.prospect],
     ["information_request", config.prospectLink],
     ["draft_expiry_reminder", config.prospectLink],

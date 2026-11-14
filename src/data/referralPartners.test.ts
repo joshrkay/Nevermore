@@ -1,11 +1,15 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FUNNEL_STEPS } from "./funnel";
 import {
   campaignTags,
   countsByPartner,
+  partnerKey,
   describeSource,
   partnerKindLabel,
   partnerLink,
+  DEFAULT_FIRM_ID,
+  referralLinksWork,
   REFERRAL_PARTNER_KIND_LABELS,
   REFERRAL_PARTNER_KINDS,
   sourceRows,
@@ -85,8 +89,31 @@ describe("sourceRows", () => {
       { referral_code: null, utm_source: "linkedin", started: 9, certified: 4 },
     ]);
     const totals = countsByPartner(rows);
-    expect(totals.get("acme-cfo")).toEqual({ started: 5, certified: 3 });
-    expect(totals.get("other")).toEqual({ started: 1, certified: 0 });
+    expect(totals.get(partnerKey(undefined, "acme-cfo"))).toEqual({ started: 5, certified: 3 });
+    expect(totals.get(partnerKey(undefined, "other"))).toEqual({ started: 1, certified: 0 });
     expect(totals.size).toBe(2);
+  });
+
+  it("keeps two firms' partners apart when they use the same code", () => {
+    const totals = countsByPartner(sourceRows([
+      { firm_id: "f1", referral_code: "acme-cfo", started: 3, certified: 1 },
+      { firm_id: "f2", referral_code: "acme-cfo", started: 40, certified: 20 },
+      { firm_id: "f1", referral_code: "acme-cfo", utm_campaign: "x", started: 2, certified: 0 },
+    ]));
+    expect(totals.get(partnerKey("f1", "acme-cfo"))).toEqual({ started: 5, certified: 1 });
+    expect(totals.get(partnerKey("f2", "acme-cfo"))).toEqual({ started: 40, certified: 20 });
+    expect(totals.size).toBe(2);
+  });
+});
+
+describe("which firm's links reach it (D-101)", () => {
+  it("names the default firm the database does", () => {
+    const sql = readFileSync("supabase/migrations/20261116090000_firms.sql", "utf8");
+    expect(/default_firm_id\(\)[\s\S]*?SELECT '([0-9a-f-]{36})'::uuid/.exec(sql)?.[1]).toBe(DEFAULT_FIRM_ID);
+  });
+
+  it("works for the default firm only", () => {
+    expect(referralLinksWork(DEFAULT_FIRM_ID)).toBe(true);
+    expect(referralLinksWork("00000000-0000-4000-8000-00000000eaa2")).toBe(false);
   });
 });

@@ -114,6 +114,12 @@ export interface FirmState {
   suspended: boolean;
   suspendedAt: string | null;
   suspensionReason: string | null;
+  /** When the firm closes, while its owner's request is waiting out its 30 days (story CRM-P1.7); null otherwise. */
+  closingOn: string | null;
+  /** When the firm closed; null while it has not. A closed firm is shown at the address it held. */
+  closedOn: string | null;
+  /** A count per table of what closing deleted: numbers only, no names and no content. */
+  closureDeleted: Record<string, number> | null;
 }
 
 /** Every firm with its state, by name. Platform admins only. */
@@ -123,6 +129,7 @@ export async function fetchFirmStates(): Promise<FirmState[]> {
   return (data ?? []).map((f) => ({
     id: f.firm_id, name: f.name, address: f.address, state: f.state as FirmState["state"], signedUpAt: f.signed_up_at,
     suspended: f.suspended, suspendedAt: f.suspended_at, suspensionReason: f.suspension_reason,
+    closingOn: f.closing_on, closedOn: f.closed_on, closureDeleted: f.closure_deleted,
   }));
 }
 

@@ -129,7 +129,7 @@ describe("production domain", () => {
 // (the legal pages through their shared layout). A member's page sits inside the workspace shell, which carries them
 // (story CRM-S1.1a); a platform admin's page keeps the console header, which carries them.
 describe("legal links", () => {
-  const PLATFORM_PAGES = ["AdvisorHeldMailPage", "AdvisorFirmsPage", "AdvisorOrganisationsPage"];
+  const PLATFORM_PAGES = ["AdvisorHeldMailPage", "AdvisorFirmsPage"];
   const MEMBER_PAGE_OUTSIDE_ADVISOR_DIR = ["FirmInvitationsPage"];
   const pageFiles = readdirSync("src/pages")
     .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))

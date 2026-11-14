@@ -34,6 +34,21 @@ describe("AdvisorFirmsPage", () => {
     vi.mocked(toast.error).mockReset();
   });
 
+  // Catches: a firm waiting out its 30 days looks like any other, a closed one shows no date or no count, or a closed firm can still be suspended.
+  it("shows a firm that is closing with the day it closes, and a closed one with the day it closed and what was deleted", async () => {
+    firms.fetchFirmStates.mockResolvedValue([
+      state({ id: "c1", name: "Closing Co", address: "closing-co", closingOn: "2026-12-18T12:00:00Z" }),
+      state({ id: "c2", name: "Closed Co", address: "closed-co", closedOn: "2026-11-01T12:00:00Z", closureDeleted: { saved_views: 2, referral_partners: 1, memberships_ended: 3 } }),
+    ]);
+    renderPage();
+    const items = within(await screen.findByRole("list", { name: "Every firm" })).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Closing on December 18, 2026");
+    expect(within(items[0]).getByRole("button", { name: "Suspend Closing Co" })).toBeInTheDocument();
+    expect(items[1]).toHaveTextContent("Closed on November 1, 2026");
+    expect(items[1]).toHaveTextContent("Deleted, by table: saved views 2, referral partners 1, memberships ended 3.");
+    expect(within(items[1]).queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("is for admins, and loads nothing for anyone else", async () => {
     advisor.fetchIsAdmin.mockResolvedValue(false);
     renderPage();

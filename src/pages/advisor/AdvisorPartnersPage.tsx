@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -8,13 +8,16 @@ import {
   choiceRule, Field, FormActions, nameRule, SelectInput, useWorkspaceForm, WorkspaceForm, WorkspaceFormProvider,
 } from "@/components/workspace/form";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { funnelRange } from "@/data/funnel";
 import { SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import {
   countsByPartner,
   PARTNER_NAME_MAX,
   partnerKindLabel,
+  partnerKey,
   partnerLink,
+  referralLinksWork,
   REFERRAL_PARTNER_KIND_LABELS,
   REFERRAL_PARTNER_KINDS,
   sourceRows,
@@ -22,14 +25,23 @@ import {
 } from "@/data/referralPartners";
 import {
   addReferralPartner,
+  listMyFirms,
   listReferralPartners,
   loadIntakeSources,
   updateReferralPartner,
+  type MemberFirm,
   type ReferralPartner,
 } from "@/lib/advisorApi";
 
 type Counts = Map<string, { started: number; certified: number }>;
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; partners: ReferralPartner[]; counts: Counts };
+type Load =
+  | { kind: "loading" }
+  | { kind: "error"; error: Error }
+  /** The person belongs to no firm, or the firm at this address isn't one of theirs. */
+  | { kind: "no_firm" }
+  /** A member of several firms, on the bare domain, has not said which. */
+  | { kind: "choose" }
+  | { kind: "ready"; firmId: string; partners: ReferralPartner[]; counts: Counts };
 
 const CODE_RULE = "Use only lowercase letters, digits, dots, hyphens or underscores, starting with a letter or digit.";
 const buttonClass = "flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50";
@@ -51,18 +63,52 @@ async function copyLink(link: string) {
 const AdvisorPartnersPage = () => {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const firmParam = params.get("firm");
+  // At a firm's address the page is that firm's. On the bare domain a member of one firm needs to say nothing and a member of
+  // several is asked (?firm=<id>, as the activity page does); the database never guesses a firm for them.
+  const address = useFirmAddress();
+  const atAddress = address.status === "known" ? address.address : null;
+
+  // The firms the person belongs to, kept apart from what is loaded for one of them so that the chooser stays put while a firm loads.
+  const [firmList, setFirmList] = useState<MemberFirm[]>([]);
+  // Which firm the page was last asked for: a reload of the same one (after an edit) keeps the table on screen, but another firm
+  // never shows the previous one's table or controls while it loads, since a click there would change the wrong firm.
+  const loadedScope = useRef<string | null>(null);
+  const scope = `${atAddress ?? ""}|${firmParam ?? ""}`;
 
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading" });
-    const { from, to } = funnelRange("30d");
-    Promise.all([listReferralPartners(), loadIntakeSources(from, to)])
-      .then(([partners, sources]) => !cancelled && setLoad({ kind: "ready", partners, counts: countsByPartner(sourceRows(sources)) }))
+    const sameFirm = loadedScope.current === scope;
+    loadedScope.current = scope;
+    setLoad((prev) => (prev.kind === "ready" && sameFirm ? prev : { kind: "loading" }));
+    (async (): Promise<Load | null> => {
+      const firms = await listMyFirms();
+      if (!cancelled) setFirmList(firms);
+      let firm: MemberFirm | undefined;
+      if (atAddress !== null) firm = firms.find((f) => f.address === atAddress);
+      else if (firmParam !== null) firm = firms.find((f) => f.id === firmParam);
+      // A person with exactly one firm needs to say nothing, so a ?firm= that is none of theirs counts as absent: their firm's id
+      // replaces it in the address (which loads the page again, now matched).
+      if (!firm && atAddress === null && firms.length === 1) {
+        if (firmParam !== null) {
+          if (!cancelled) setParams({ firm: firms[0].id }, { replace: true });
+          return null;
+        }
+        firm = firms[0];
+      }
+      if (!firm) return atAddress === null && firms.length > 1 ? { kind: "choose" } : { kind: "no_firm" };
+      const { from, to } = funnelRange("30d");
+      const [partners, sources] = await Promise.all([listReferralPartners(firm.id), loadIntakeSources(from, to, firm.id)]);
+      return { kind: "ready", firmId: firm.id, partners, counts: countsByPartner(sourceRows(sources)) };
+    })()
+      .then((next) => next && !cancelled && setLoad(next))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
     };
-  }, [attempt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scope` is atAddress and firmParam; setParams is stable enough and must not reload
+  }, [attempt, atAddress, firmParam]);
 
   const reload = () => setAttempt((n) => n + 1);
 
@@ -76,7 +122,22 @@ const AdvisorPartnersPage = () => {
           see only the counts you send them, never a prospect's answers.
         </p>
 
-        <AddPartnerForm onAdded={reload} />
+        {atAddress === null && firmList.length > 1 && (
+          <div className="mb-6">
+            <label htmlFor="partners-firm" className="block text-xs text-muted-foreground">Firm</label>
+            <select
+              id="partners-firm"
+              value={firmParam ?? ""}
+              onChange={(e) => setParams(e.target.value ? { firm: e.target.value } : {}, { replace: true })}
+              className="min-h-11 bg-muted border border-border rounded-md px-3 text-sm"
+            >
+              {load.kind === "choose" && <option value="">Choose a firm</option>}
+              {firmList.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {load.kind === "ready" && <AddPartnerForm key={load.firmId} firmId={load.firmId} onAdded={reload} />}
 
         {load.kind === "loading" && (
           <div className="flex items-center justify-center py-16 text-muted-foreground" role="status">
@@ -84,13 +145,21 @@ const AdvisorPartnersPage = () => {
           </div>
         )}
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="the referral partners" onRetry={reload} />}
+        {load.kind === "no_firm" && <p role="status" className="text-sm">You aren't a member of a firm, so there are no referral partners to show.</p>}
+        {load.kind === "ready" && !referralLinksWork(load.firmId) && (
+          <p role="note" className="text-sm text-muted-foreground mt-6">
+            Referral links come when the firm can take intakes of its own. Until then referral partners and their codes are kept here, and no link is shown.
+          </p>
+        )}
         {load.kind === "ready" && (load.partners.length === 0 ? (
           <div className="border border-dashed border-border rounded-xl p-10 text-center mt-8">
             <p className="font-medium">No referral partners yet.</p>
-            <p className="text-sm text-muted-foreground">Add the first one above, then send them their link.</p>
+            <p className="text-sm text-muted-foreground">
+              {referralLinksWork(load.firmId) ? "Add the first one above, then send them their link." : "Add the first one above."}
+            </p>
           </div>
         ) : (
-          <PartnerTable partners={load.partners} counts={load.counts} onChanged={reload} />
+          <PartnerTable partners={load.partners} counts={load.counts} links={referralLinksWork(load.firmId)} onChanged={reload} />
         ))}
       </main>
     </div>
@@ -118,15 +187,16 @@ const KindOptions = ({ chooseOne }: { chooseOne: boolean }) => (
   </>
 );
 
-const AddPartnerForm = ({ onAdded }: { onAdded: () => void }) => {
+const AddPartnerForm = ({ firmId, onAdded }: { firmId: string; onAdded: () => void }) => {
+  const links = referralLinksWork(firmId);
   // Until the advisor types a code of their own, it follows the name.
   const [codeTyped, setCodeTyped] = useState(false);
   const api = useWorkspaceForm({
     schema: addSchema,
     defaultValues: { name: "", kind: "", code: "" },
     save: async (v) => {
-      const added = await addReferralPartner(v.code, v.name, v.kind);
-      toast.success(`Added ${added.name}. Send them ${partnerLink(added.code)}`);
+      const added = await addReferralPartner(firmId, v.code, v.name, v.kind);
+      toast.success(links ? `Added ${added.name}. Send them ${partnerLink(added.code)}` : `Added ${added.name}.`);
       return added;
     },
     onSaved: () => {
@@ -164,7 +234,7 @@ const AddPartnerForm = ({ onAdded }: { onAdded: () => void }) => {
         name="code"
         label="Code in their link"
         required
-        help={code !== "" && codeOk
+        help={code !== "" && codeOk && links
           ? `Their link: ${partnerLink(code)}. It can't be changed once the partner is added.`
           : "Lowercase letters, digits, dots, hyphens or underscores. It can't be changed once the partner is added."}
       >
@@ -185,14 +255,14 @@ const AddPartnerForm = ({ onAdded }: { onAdded: () => void }) => {
   );
 };
 
-const PartnerTable = ({ partners, counts, onChanged }: { partners: ReferralPartner[]; counts: Counts; onChanged: () => void }) => (
+const PartnerTable = ({ partners, counts, links, onChanged }: { partners: ReferralPartner[]; counts: Counts; links: boolean; onChanged: () => void }) => (
   <div className="overflow-x-auto mt-8">
     <table className="w-full text-sm border-collapse">
-      <caption className="sr-only">Referral partners, their links and their intakes in the last 30 days</caption>
+      <caption className="sr-only">{links ? "Referral partners, their links and their intakes in the last 30 days" : "Referral partners, their codes and their intakes in the last 30 days"}</caption>
       <thead>
         <tr className="text-left text-xs text-muted-foreground border-b border-border">
           <th scope="col" className="py-2 pr-4 font-normal">Partner</th>
-          <th scope="col" className="py-2 pr-4 font-normal">Their link</th>
+          <th scope="col" className="py-2 pr-4 font-normal">{links ? "Their link" : "Their code"}</th>
           <th scope="col" className="py-2 pr-4 font-normal text-right whitespace-nowrap">Started, 30 days</th>
           <th scope="col" className="py-2 pr-4 font-normal text-right whitespace-nowrap">Certified, 30 days</th>
           <th scope="col" className="py-2 font-normal"><span className="sr-only">Actions</span></th>
@@ -200,21 +270,21 @@ const PartnerTable = ({ partners, counts, onChanged }: { partners: ReferralPartn
       </thead>
       <tbody>
         {partners.map((p) => (
-          <PartnerRow key={p.code} partner={p} counts={counts.get(p.code)} onChanged={onChanged} />
+          <PartnerRow key={partnerKey(p.firm_id, p.code)} partner={p} counts={counts.get(partnerKey(p.firm_id, p.code))} links={links} onChanged={onChanged} />
         ))}
       </tbody>
     </table>
   </div>
 );
 
-const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; onChanged: () => void }) => {
+const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPartner; counts?: { started: number; certified: number }; links: boolean; onChanged: () => void }) => {
   const [editing, setEditing] = useState(false);
   const link = partnerLink(partner.code);
   const api = useWorkspaceForm({
     schema: partnerSchema,
     defaultValues: { name: partner.name, kind: partner.kind },
     save: async (v) => {
-      await updateReferralPartner(partner.code, v.name, v.kind);
+      await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind);
       toast.success("Partner saved");
     },
     savedValues: (_, v) => v,
@@ -228,7 +298,7 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
 
   return (
     <WorkspaceFormProvider api={api}>
-    <tr className="border-b border-border/60 align-top">
+    <tr className="border-b border-border/60 align-top" onKeyDown={api.onKeyDown}>
       <th scope="row" className="py-3 pr-4 font-normal text-left">
         {editing ? (
           <WorkspaceForm api={api} actions={null} aria-label={`Edit ${partner.name}`} className="space-y-2 min-w-48">
@@ -248,17 +318,21 @@ const PartnerRow = ({ partner, counts, onChanged }: { partner: ReferralPartner; 
         )}
       </th>
       <td className="py-3 pr-4">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs break-all">{link}</span>
-          <button
-            type="button"
-            onClick={() => void copyLink(link)}
-            aria-label={`Copy ${partner.name}'s link`}
-            className="shrink-0 p-1.5 rounded-md border border-border hover:bg-muted"
-          >
-            <Copy className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </div>
+        {links ? (
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs break-all">{link}</span>
+            <button
+              type="button"
+              onClick={() => void copyLink(link)}
+              aria-label={`Copy ${partner.name}'s link`}
+              className="shrink-0 p-1.5 rounded-md border border-border hover:bg-muted"
+            >
+              <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
+          <span className="font-mono text-xs break-all">{partner.code}</span>
+        )}
       </td>
       <td className="py-3 pr-4 text-right tabular-nums">{(counts?.started ?? 0).toLocaleString("en-US")}</td>
       <td className="py-3 pr-4 text-right tabular-nums">{(counts?.certified ?? 0).toLocaleString("en-US")}</td>

@@ -40,6 +40,15 @@ export const PARTNER_NAME_MAX = 120;
 /** The link a partner shares: the site's front page with their code. */
 export const partnerLink = (code: string) => `${SITE_ORIGIN}/?ref=${encodeURIComponent(code)}`;
 
+/**
+ * The firm every intake a browser starts belongs to (D-101): the one `default_firm_id()` returns (migration 20261116090000_firms.sql).
+ * Starting an intake for another firm arrives with New quote (Epic 5).
+ */
+export const DEFAULT_FIRM_ID = "00000000-0000-4000-8000-00000000eaa1";
+
+/** Whether a link carrying this firm's partner code reaches the firm: until intakes can start for other firms, only the default firm's does (D-101). */
+export const referralLinksWork = (firmId: string) => firmId === DEFAULT_FIRM_ID;
+
 /** A code to offer for a new partner, from its name: "Acme CFO Partners" gives "acme-cfo-partners". */
 export const suggestPartnerCode = (name: string) => cleanSourceCode(name) ?? "";
 
@@ -65,6 +74,8 @@ export function describeSource(source: IntakeSource, partnerName: string | null)
 
 /** One source on the funnel: its codes, the partner its referral code names, and how many intakes reached each step. */
 export interface SourceRow {
+  /** The firm the row is about; null when the database didn't say. */
+  firmId: string | null;
   source: IntakeSource;
   partnerName: string | null;
   counts: Record<FunnelStep, number>;
@@ -79,6 +90,7 @@ const codeOrNull = (v: unknown) => (typeof v === "string" && v !== "" ? v : null
 /** The database's rows (advisor_intake_sources) as the funnel page shows them, in the order it returned them. */
 export function sourceRows(raw: readonly Record<string, unknown>[]): SourceRow[] {
   return raw.map((r) => ({
+    firmId: codeOrNull(r.firm_id),
     source: {
       referral_code: codeOrNull(r.referral_code),
       utm_source: codeOrNull(r.utm_source),
@@ -106,14 +118,18 @@ export function sourceTitle(row: Pick<SourceRow, "source" | "partnerName">): { t
   return { title: tags ?? "No tagged link", detail: null };
 }
 
-/** Each partner's intakes started and certified, summed over every campaign their link was tagged with. */
+/** A partner is one firm's: a code is unique within a firm, not across firms, so anything kept for a partner is keyed by both. */
+export const partnerKey = (firmId: string | null | undefined, code: string) => `${firmId ?? ""}|${code}`;
+
+/** Each partner's intakes started and certified, summed over every campaign their link was tagged with, by `partnerKey`. */
 export function countsByPartner(rows: readonly SourceRow[]): Map<string, { started: number; certified: number }> {
   const totals = new Map<string, { started: number; certified: number }>();
   for (const row of rows) {
     const code = row.source.referral_code;
     if (!code) continue;
-    const t = totals.get(code) ?? { started: 0, certified: 0 };
-    totals.set(code, { started: t.started + row.counts.started, certified: t.certified + row.counts.certified });
+    const key = partnerKey(row.firmId, code);
+    const t = totals.get(key) ?? { started: 0, certified: 0 };
+    totals.set(key, { started: t.started + row.counts.started, certified: t.certified + row.counts.certified });
   }
   return totals;
 }

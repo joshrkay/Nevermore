@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const auth = { user: { id: "u1", email: "owner@example.test" } as { id: string; email?: string } | null, loading: false, isAnonymous: false, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -11,10 +13,15 @@ vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current })
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 const api = { fetchMyFirm: vi.fn(), fetchPendingInvitations: vi.fn(), inviteMember: vi.fn(), resendInvitation: vi.fn(), cancelInvitation: vi.fn() };
 vi.mock("@/lib/invitationApi", () => api);
+// The organisations and requests to join have their own sections, tested in FirmInvitationsPage.join.test.tsx: here they are empty.
+vi.mock("@/lib/joinByOrganisationApi", () => ({
+  fetchOrganisations: vi.fn().mockResolvedValue([]), fetchJoinRequests: vi.fn().mockResolvedValue([]),
+  addOrganisation: vi.fn(), removeOrganisation: vi.fn(), approveJoinRequest: vi.fn(), declineJoinRequest: vi.fn(),
+}));
 
 const { default: FirmInvitationsPage } = await import("./FirmInvitationsPage");
 
-const renderPage = () => render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter>);
+const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /><Route path="/login" element={<p>Sign-in page</p>} /></Routes></MemoryRouter></QueryClientProvider>);
 const pending = (over: Record<string, unknown> = {}) => ({
   id: "i1", email: "newcomer@example.test", role: "agent", invitedAt: "2026-11-16T10:00:00Z", expiresAt: "2099-11-23T10:00:00Z", expired: false,
   resentAt: null, delivery: "sent", emailError: null, ...over,
@@ -167,6 +174,26 @@ describe("FirmInvitationsPage", () => {
     expect(within(screen.getByRole("form", { name: "Invite someone" })).getAllByRole("alert")).toHaveLength(1);
   });
 
+  // The page tells these two refusals apart by their words (the server sends no code the page can read). The sentences are
+  // read from the migration that raises them, so rewording one there fails here instead of quietly moving the error away
+  // from the email field.
+  it("puts every 'already a member' and 'already invited' sentence the database raises under the email field", async () => {
+    const sql = readFileSync("supabase/migrations/20261116190500_invitation_fixes.sql", "utf8");
+    const raised = [...sql.matchAll(/RAISE EXCEPTION '((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+    const about = raised.filter((m) => /already a member|pending invitation to this firm/i.test(m));
+    expect(about.length).toBeGreaterThanOrEqual(2);
+    for (const sentence of new Set(about)) {
+      api.inviteMember.mockReset().mockRejectedValue(new Error(sentence));
+      const { unmount } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /></Routes></MemoryRouter></QueryClientProvider>);
+      const user = userEvent.setup();
+      await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
+      await user.click(screen.getByRole("button", { name: "Send invitation" }));
+      await screen.findByText(sentence);
+      expect(screen.getByLabelText("Email address")).toHaveAccessibleDescription(new RegExp(sentence.slice(0, 15)));
+      unmount();
+    }
+  });
+
   describe("the invite form's rules", () => {
     const open = async () => {
       renderPage();
@@ -257,7 +284,7 @@ describe("FirmInvitationsPage", () => {
         ],
         { initialEntries: ["/firm/invitations"] },
       );
-      render(<RouterProvider router={router} />);
+      render(<QueryClientProvider client={new QueryClient()}><RouterProvider router={router} /></QueryClientProvider>);
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
       await user.click(screen.getByRole("link", { name: "Elsewhere" }));

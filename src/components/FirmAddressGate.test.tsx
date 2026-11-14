@@ -21,6 +21,9 @@ vi.mock("@/lib/firmApi", () => ({
   recordFirmSignIn: (...a: unknown[]) => recordFirmSignIn(...a),
 }));
 
+const askToJoinFirm = vi.fn();
+vi.mock("@/lib/joinByOrganisationApi", () => ({ askToJoinFirm: (...a: unknown[]) => askToJoinFirm(...a) }));
+
 const { FirmAddressProvider } = await import("@/hooks/useFirmAddress");
 const { default: FirmAddressGate } = await import("./FirmAddressGate");
 const { notifyMembershipChanged } = await import("@/lib/membershipChanged");
@@ -48,6 +51,7 @@ describe("the firm address gate", () => {
     fetchIsMemberOfFirmAddress.mockReset().mockResolvedValue(true);
     recordFirmSignIn.mockReset().mockResolvedValue(true);
     fetchIsMySuspendedFirmAtAddress.mockReset().mockResolvedValue(false);
+    askToJoinFirm.mockReset().mockResolvedValue("none");
     try { window.localStorage.clear(); } catch { /* no storage here */ }
   });
 
@@ -138,6 +142,66 @@ describe("the firm address gate", () => {
     renderAt("acme-brokers.nevermorepeo.com");
     fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  // Joining by organisation (CRM-P1.4): a person who is not a member, signed in from an organisation the firm lists, is told they
+  // have asked to join. Anyone else is told what they were told before.
+  describe("a person who is not a member", () => {
+    // Catches: the person is asked nothing about joining, or is shown the plain refusal though an owner is waiting to decide.
+    it("is told they have asked to join, and that an owner must approve them, when the database holds their request", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+      askToJoinFirm.mockResolvedValue("asked");
+      auth.user = { id: "u1" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "You've asked to join Acme Brokers" })).toBeInTheDocument();
+      expect(screen.getByText(/An owner of Acme Brokers has to approve you before you can use it/)).toBeInTheDocument();
+      expect(askToJoinFirm).toHaveBeenCalledWith("acme-brokers");
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "You aren't a member of this firm" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+      expect(auth.signOut).toHaveBeenCalledTimes(1);
+    });
+
+    // Catches: the person has to reload to find out an owner approved them.
+    it("can check again, and gets in once an owner has approved them", async () => {
+      let member = false;
+      fetchIsMemberOfFirmAddress.mockImplementation(async () => member);
+      askToJoinFirm.mockResolvedValue("asked");
+      auth.user = { id: "u1" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      member = true;
+      fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+    });
+
+    // Catches: a person from no listed organisation sees anything new (a hint that the firm lists organisations), or the ask changes
+    // what they were shown.
+    it("sees exactly what they saw before when the database holds no request for them", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+      askToJoinFirm.mockResolvedValue("none");
+      auth.user = { id: "u1" };
+      const { container } = renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
+      expect(askToJoinFirm).toHaveBeenCalledWith("acme-brokers");
+      expect(container.textContent).not.toMatch(/asked to join|approve/i);
+      expect(screen.getAllByRole("button")).toHaveLength(1);
+    });
+
+    // Catches: a member, a signed-out visitor or a guest is sent through the asking, which is for someone who is not a member.
+    it("is the only one asked about joining: not a member, not a signed-out visitor, not a guest", async () => {
+      auth.user = { id: "u1" };
+      renderAt("acme-brokers.nevermorepeo.com");
+      await screen.findByText("The console");
+      auth.user = null;
+      renderAt("acme-brokers.nevermorepeo.com");
+      auth.user = { id: "g1" };
+      auth.isAnonymous = true;
+      renderAt("acme-brokers.nevermorepeo.com");
+      await waitFor(() => expect(fetchFirmName).toHaveBeenCalled());
+      expect(askToJoinFirm).not.toHaveBeenCalled();
+    });
   });
 
   it("shows the console to no one while it is still checking", async () => {

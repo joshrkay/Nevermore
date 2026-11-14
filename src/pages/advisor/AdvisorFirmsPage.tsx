@@ -16,6 +16,7 @@ type Load =
 
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 
+const formatDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 const STATE_LABELS: Record<FirmState["state"], string> = { waiting: "Waiting for approval", approved: "Approved", refused: "Refused" };
 
 /**
@@ -145,6 +146,8 @@ const AdvisorFirmsPage = () => {
                   Suspending a firm shuts its members out of its records and stops its alerts, and mail for it is still held. Nothing is deleted, and
                   lifting the suspension gives everything back as it was. It does not change whether a firm is approved. Suspending and lifting are
                   recorded, and the firm sees them as done by Nevermore.
+                  A firm whose owner has asked to close is shown with the day it closes, and after that with the day it closed and a count of
+                  what was deleted. Only the firm's owners ask or withdraw; you can't do either for them.
                 </p>
               </div>
               {load.states.length === 0 ? (
@@ -158,13 +161,20 @@ const AdvisorFirmsPage = () => {
                         <span className="font-mono text-xs text-muted-foreground break-all">{firmHostname(f.address)}</span>
                         <span className="text-xs rounded-full border border-border px-2 py-0.5">{STATE_LABELS[f.state]}</span>
                         {f.suspended && <span className="text-xs rounded-full border border-destructive text-destructive px-2 py-0.5">Suspended</span>}
+                        {f.closingOn && <span className="text-xs rounded-full border border-border px-2 py-0.5">{`Closing on ${formatDate(f.closingOn)}`}</span>}
+                        {f.closedOn && <span className="text-xs rounded-full border border-border px-2 py-0.5">{`Closed on ${formatDate(f.closedOn)}`}</span>}
                       </div>
+                      {f.closedOn && f.closureDeleted && (
+                        <p className="text-sm text-muted-foreground">
+                          {`Deleted, by table: ${Object.entries(f.closureDeleted).map(([table, n]) => `${table.replace(/_/g, " ")} ${n}`).join(", ")}.`}
+                        </p>
+                      )}
                       {f.suspended && (
                         <p className="text-sm text-muted-foreground">
                           {`Suspended${f.suspendedAt ? ` ${formatDateTime(f.suspendedAt)}` : ""}: ${f.suspensionReason ?? ""}`}
                         </p>
                       )}
-                      {changing?.id === f.id ? (
+                      {f.closedOn ? null : changing?.id === f.id ? (
                         <div className="space-y-2">
                           {f.suspended ? (
                             <p className="text-sm">Lift the suspension? Its members get everything back as it was.</p>

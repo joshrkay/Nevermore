@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/sidebar";
 import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
+import ClosingBanner from "./ClosingBanner";
 import { MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
 import { useWorkspace, WorkspaceProvider } from "./useWorkspace";
 
@@ -156,6 +157,7 @@ const WorkspaceShell = () => {
       </Sidebar>
       <div className="min-w-0 flex-1 bg-background text-foreground">
         <PhoneBar />
+        <ClosingBanner />
         <Outlet />
         <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
       </div>

@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = { user: { id: "u1", email: "advisor@example.com" }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -102,6 +102,55 @@ describe("the advisor header's Activity link", () => {
   });
 });
 
+// The members page (CRM-P1.5) is for the owners of the firm the console shows, offered by the same rule as the record of who did what:
+// the link is there for them and for no one else, so a member, a platform admin or an owner of another firm never walks into a refusal.
+describe("the advisor header's Members link", () => {
+  const owner = (f: { firm_id: string; name: string; address: string }) => ({ ...f, role: "owner" });
+  const alphaFirm = { firm_id: "firm-1", name: "Alpha", address: "alpha" };
+  beforeEach(() => {
+    clearOwnedFirms();
+    clearMyFirms();
+    auth.session = { access_token: "tok-1" };
+    firmAddress = { status: "none" };
+    api.fetchOwnedFirms.mockReset();
+    api.fetchMyFirms.mockReset().mockResolvedValue([{ ...alphaFirm, role: "agent" }]);
+    api.fetchIsAdmin.mockReset().mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    firmAddress = { status: "none" };
+  });
+
+  it("is offered to the owner of the firm the console shows", async () => {
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm)]);
+    renderHeader();
+    expect(await screen.findByRole("link", { name: "Members" })).toHaveAttribute("href", "/advisor/members");
+  });
+
+  it("is not offered to a member who is not an owner", async () => {
+    renderHeader();
+    await settle();
+    expect(await screen.findByRole("link", { name: "Submissions" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
+  });
+
+  it("is not offered to a platform admin who belongs to no firm (D-16)", async () => {
+    api.fetchMyFirms.mockResolvedValue([]);
+    api.fetchIsAdmin.mockResolvedValue(true);
+    renderHeader();
+    await settle();
+    expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
+  });
+
+  it("is not offered at the address of a firm the owner of another firm does not belong to", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm)]);
+    renderHeader();
+    await settle();
+    expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
+  });
+});
+
 // The console's menu is the firm's (story P-1.4): its links are the ones the person can open, and nothing in it names another
 // firm or says "advisor" of a member.
 describe("the console header's menu", () => {
@@ -128,7 +177,7 @@ describe("the console header's menu", () => {
     for (const name of ["Submissions", "Outbox & Notifications", "Funnel", "Partners", "PEOs", "Mailbox"]) {
       expect(await screen.findByRole("link", { name })).toBeInTheDocument();
     }
-    for (const name of ["Held mail", "Firms", "Organisations"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    for (const name of ["Held mail", "Firms", "Organisations"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument(); // Organisations moved into each firm (CRM-P1.4)
   });
 
   it("offers a platform admin who belongs to no firm the platform's pages and none of a firm's (D-16)", async () => {
@@ -136,7 +185,9 @@ describe("the console header's menu", () => {
     api.fetchIsAdmin.mockResolvedValue(true);
     renderHeader();
     await settle();
-    for (const name of ["Held mail", "Firms", "Organisations"]) expect(await screen.findByRole("link", { name })).toBeInTheDocument();
+    for (const name of ["Held mail", "Firms"]) expect(await screen.findByRole("link", { name })).toBeInTheDocument();
+    // The platform's own list of organisations is retired (CRM-P1.4, D-23): each firm keeps its own on its Invitations page.
+    expect(screen.queryByRole("link", { name: "Organisations" })).not.toBeInTheDocument();
     for (const name of ["Submissions", "Outbox & Notifications", "Funnel", "Partners", "PEOs", "Mailbox", "Activity"]) {
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }

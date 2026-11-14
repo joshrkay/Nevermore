@@ -98,6 +98,25 @@ CRM-P1.5 and CRM-P1.1.
 
 New migration files are named to sort after `20261115140000`.
 
+### The three lines of work, brought together (2026-11-14)
+
+Epic 1's late stories (CRM-P1.5, CRM-P2.2 and their fixes) were merged into `crm/epic-01-firms-security` only, CRM-P1.8 and
+CRM-S1.1b went to `main`, and Epic 2's review fixes stayed on `crm/epic-02-shell-tables`. All three are merged into one line
+on `claude/friendly-feynman-wlpj9j`, and every remaining story is built there, one after another, in the build order below.
+
+| # | Decision |
+|---|---|
+| D-103 | Where two lines disagreed about a member of several firms, one firm at a time wins (D-40, ADR 0016): the Members page, like every member page, lets them in at a firm's address and sends them to "Choose a firm" on the bare domain. The Members page sits inside the workspace shell and is linked from Settings, for owners |
+| D-104 | Six database objects were each rewritten by two lines that did not see each other, so the later file undid the earlier one's rule (a suspended firm's members were let back in; suspending a member failed). `20261117160000_epics_reconciled.sql` states each once with every rule. The two migrations that restate the list of activity kinds (`20261116220000`, `20261116230000`) were edited to accept each other's kinds: without that, whichever is applied second is refused on a database that already holds the other's entries. This is the one edit to an old migration, and it changes nothing on a database where both are already applied |
+| D-105 | A story's SQL test loads every migration, not only those up to its own, whenever a later migration restates something the story made. Migrations for the stories still to build are named to sort after `20261117160000`, in the order they are built; the timestamps in the Epic 2 table below are replaced by that rule |
+| D-106 | An outbox row belongs to an intake or, for a firm-level notice such as "a member left" (CRM-P1.6), to a firm and no intake. Firm-level rows are not shown on the firm's Outbox page (that page lists events through their intakes), are withheld while the firm is suspended, and are deleted 90 days after they were queued, by the same daily job that prunes the firm's record (`prune_firm_activity`, then `prune_firm_outbox_events`), with the same window |
+| D-107 | A suspended member, and any member of a suspended firm, cannot leave a firm: they are not current members, so there is nothing for them to end. An owner removes a suspended member (CRM-P1.5) |
+| D-108 | One organisation (a Google domain or a Microsoft tenant) may be listed by several firms. A listing grants nothing by itself: an owner of the firm approves each person who asks to join from it (CRM-P1.4) |
+| D-109 | A declined request, and an ended membership of that firm (removed or left), are final for the automatic ask: signing in again lists the person for no one, and an owner brings them back only by invitation. Removing a listing leaves the requests already open, which an owner can still approve or decline (CRM-P1.4) |
+| D-110 | A platform admin never asks to join a firm: they join only by an owner's invitation, so a firm that lists Nevermore's domain learns no staff email (D-33). A sign-in made with a password is vouched for by no provider, even if the account once linked Google or Microsoft. The token does not say which provider a provider sign-in used, so an account with both is matched through either (CRM-P1.4) |
+| D-111 | The old platform-wide organisation list was not copied to any firm: its two tables are kept read-only as a record, and people who got the advisor role through it keep the role (CRM-P1.4, D-23) |
+| D-112 | Owners are not emailed when someone asks to join: they see the request on the Invitations page. "Approved with a role and a team" is built as a role only; the team waits for CRM-X1.1 (D-20) (CRM-P1.4) |
+
 ## Epic 2 decisions (2026-11-13)
 
 These came from reading Epic 2's stories against the code as it stands at Epic 1's tip, where P-1.1,

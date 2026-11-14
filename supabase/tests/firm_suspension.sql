@@ -107,10 +107,26 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116190500_invitation_fixes.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
+\i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
+\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
 \i supabase/migrations/20261116230000_firm_suspension.sql
+\i supabase/migrations/20261116240000_held_mail_to_the_right_firm.sql
+\i supabase/migrations/20261117090000_one_firm_at_a_time.sql
+\i supabase/migrations/20261117090500_one_firm_at_a_time_fixes.sql
+\i supabase/migrations/20261117100000_queue_query.sql
+\i supabase/migrations/20261117100500_queue_query_fast_path.sql
+\i supabase/migrations/20261117120000_table_settings.sql
+\i supabase/migrations/20261117120500_table_settings_fixes.sql
+\i supabase/migrations/20261117160000_epics_reconciled.sql
+\i supabase/migrations/20261118090000_leave_a_firm.sql
+\i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
+\i supabase/migrations/20261118100000_join_by_organisation.sql
+\i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
+\i supabase/migrations/20261118110000_close_a_firm.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

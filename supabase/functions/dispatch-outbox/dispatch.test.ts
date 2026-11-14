@@ -67,6 +67,9 @@ const prospectRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
 
 /** The current members of the firm the intake belongs to, as the database answers for it. */
 const FIRM_MEMBERS = ["advisors@example.com"];
+/** The current owners of the firm a "member left" email is about, as the database answers for it. */
+const FIRM_OWNERS = ["owner@firm-a.example"];
+const FIRM = "99999999-8888-7777-6666-555555555555";
 
 const PII = ["jo@acme.example", "Joanna", "Jo Doe", "Acme", "advisors@example.com", "support@example.com"];
 
@@ -105,6 +108,7 @@ function harness(over: Partial<DispatchDeps> = {}, sendResult: SendResult = { ok
     complete: vi.fn(async () => {}),
     fail: vi.fn(async () => {}),
     advisorRecipients: vi.fn(async () => FIRM_MEMBERS),
+    ownerRecipients: vi.fn(async () => FIRM_OWNERS),
     log: (line) => logs.push(line),
     ...over,
   };
@@ -436,7 +440,11 @@ describe("reusing a frozen message", () => {
       ["21 hours", 21 * HOUR],
       ["a week", 168 * HOUR],
     ])("replaces a message frozen %s ago: rebuilt from the current settings, overwriting the stored one", async (_name, age) => {
-      const stored = pendingSend({ frozen_at: new Date(NOW - age).toISOString() });
+      // It names the people who are still the team: age frees the message to be rebuilt, never the recipients to change (D-35).
+      const stored = pendingSend({
+        frozen_at: new Date(NOW - age).toISOString(),
+        message: { ...pendingSend().message, to: ["new-team@example.com", "second@example.com"] },
+      });
       const { deps, sent, logs } = harness({ config: configFrom(changedEnv), advisorRecipients: vi.fn(async () => ["new-team@example.com", "second@example.com"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       const [id, attempt, message, replace] = vi.mocked(deps.freeze).mock.calls[0];
@@ -945,8 +953,8 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing"]);
     // The emails that link to the intake need the app's address; the confirmation doesn't.
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
@@ -1175,6 +1183,8 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blockedKinds(noSender, null).map((b) => [b.kind, b.problem])).toEqual([
       ["advisor_notification", "EMAIL_FROM is not set to a valid sender address"],
       ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
+      ["member_left", "EMAIL_FROM is not set to a valid sender address"],
+      ["firm_closing", "EMAIL_FROM is not set to a valid sender address"],
       ["prospect_confirmation", "EMAIL_FROM is not set to a valid sender address"],
       ["information_request", "EMAIL_FROM is not set to a valid sender address"],
       ["draft_expiry_reminder", "EMAIL_FROM is not set to a valid sender address"],
@@ -1188,6 +1198,8 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blocked).toEqual([
       { kind: "advisor_notification", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "member_left", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "firm_closing", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
@@ -1198,11 +1210,13 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blockedKinds(config, "RESEND_API_KEY is not set")).toEqual([
       { kind: "advisor_notification", problem: "RESEND_API_KEY is not set" },
       { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
+      { kind: "member_left", problem: "RESEND_API_KEY is not set" },
+      { kind: "firm_closing", problem: "RESEND_API_KEY is not set" },
       { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[2].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[4].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1218,7 +1232,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(5);
+    expect(note).toHaveBeenCalledTimes(7);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
@@ -1311,11 +1325,107 @@ describe("who an advisor alert goes to", () => {
       expect(sent[0].key).not.toBe(stored.key);
     });
 
+    // D-35: who is told is fixed when the alert is first prepared. A retry only drops the people who have left; it never adds the
+    // people who joined since, whose address would change the message's key for everyone who already has it.
+    it.each(kinds)("rebuilds a frozen %s for the people it named who are still members, and does not add anyone who joined since", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("rebuilds a frozen %s for the current members, with a new key, when everyone it named has left (D-102)", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      const stored = frozen(["gone@firm-a.example"]);
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
+    // D-35 and D-102: the first-preparation recipients are stored on the row itself, apart from the disposable frozen message, so a
+    // freeze that has aged out or was cleared by a definitive failure does not let a retry reach someone who joined after preparation.
+    it.each(kinds)("sends a %s whose freeze is gone only to the stored first recipients who are still members", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: ["stayer@firm-a.example", "gone@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("does the same when the %s's freeze is older than the key window", async (_name, makeRow) => {
+      const old = pendingSend({ frozen_at: new Date(NOW - 21 * 60 * 60 * 1000).toISOString(), message: { ...pendingSend().message, to: ["stayer@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 3, pending_send: jsonb(old), first_recipients: ["stayer@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("prefers the stored first recipients over the people a later freeze named, for a %s", async (_name, makeRow) => {
+      const later = pendingSend({ message: { ...pendingSend().message, to: ["gone@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 3, pending_send: jsonb(later), first_recipients: ["stayer@firm-a.example", "gone@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("sends a %s whose old freeze is all it has (no stored first recipients) only to those the freeze named who are still members", async (_name, makeRow) => {
+      const old = pendingSend({ frozen_at: new Date(NOW - 21 * 60 * 60 * 1000).toISOString(), message: { ...pendingSend().message, to: ["stayer@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 3, pending_send: jsonb(old), first_recipients: null })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("treats an empty stored first-recipient list as none, and falls back to the people the %s's freeze named", async (_name, makeRow) => {
+      const old = pendingSend({ frozen_at: new Date(NOW - 21 * 60 * 60 * 1000).toISOString(), message: { ...pendingSend().message, to: ["stayer@firm-a.example"] } });
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(old), first_recipients: [] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("treats stored first recipients that are not a list of addresses as none, and sends the %s to the current members", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: [1, null] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+    });
+
+    it.each(kinds)("sends a %s with no freeze and no one left of its first recipients to the current members (D-102)", async (_name, makeRow) => {
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: null, first_recipients: ["gone@firm-a.example"] })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+    });
+
     it.each(kinds)("sends nothing from a frozen %s when no one is left to tell", async (_name, makeRow) => {
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => []) });
       await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
       expect(sent).toHaveLength(0);
       expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
+    });
+
+    it("sends a frozen alert whose every named person has left to the current members, since none of them can have had it, once, under a new key (D-102, which amends D-35)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+      expect(deps.freeze).toHaveBeenCalledTimes(1);
+    });
+
+    it("rebuilds an alert frozen to the shared inbox, as it was before alerts went to members, for the current members", async () => {
+      const stored = frozen(["advisory@shared-inbox.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["a@firm-a.example", "b@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["a@firm-a.example", "b@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
     });
 
     it("sends nothing from a frozen message when the current members cannot be looked up", async () => {
@@ -1332,12 +1442,246 @@ describe("who an advisor alert goes to", () => {
       expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
     });
 
-    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member", async () => {
+    it("recognises a stayer whose address differs only in case when it rebuilds for someone who left", async () => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@Firm-A.example", "joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["Stayer@Firm-A.example"]);
+    });
+
+    it.each(kinds)("a frozen %s rebuilt because someone left, while a stayer remains, goes to the stayers only: a joiner never gets it (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    });
+
+    it.each(kinds)("a %s frozen more than 20 hours ago is rebuilt for the people it named who are still members, not for a member who joined since or one who left (D-35)", async (_name, makeRow) => {
+      const stored = frozen(["stayer@firm-a.example", "gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 21 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["stayer@firm-a.example", "joined@firm-a.example"]) });
+      await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      const [, , message, replace] = vi.mocked(deps.freeze).mock.calls[0];
+      expect(replace).toBe(true);
+      expect(message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+      expect(sent[0].key).not.toBe(stored.key);
+    });
+
+    it("sends an aged alert whose every named person has left to the current members (D-102)", async () => {
+      const stored = frozen(["gone@firm-a.example"]);
+      stored.frozen_at = new Date(NOW - 168 * HOUR).toISOString();
+      const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
+      await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
+    });
+
+    // D-35: recipients are fixed when the alert is first prepared. A later joiner is deliberately NOT added to a frozen alert: rebuilding
+    // changes the send key, so the people who already received it would get it twice. They receive every alert prepared after they joined.
+    it("still reuses a frozen message, as stored with its key, while everyone it names is a current member, even if others have joined since (D-35)", async () => {
       const stored = frozen(["stayer@firm-a.example"]);
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["Stayer@firm-a.example", "joined@firm-a.example"]) });
       await dispatchEvents([advisorRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
       expect(sent).toEqual([{ message: stored.message, key: stored.key }]);
       expect(deps.freeze).not.toHaveBeenCalled();
     });
+  });
+});
+
+// The email to a firm's owners when a member leaves (story CRM-P1.6). It belongs to the firm, not to an intake, and goes through the
+// same dispatcher as the firm's other alerts: the same sender, the same retry, and the same rule about who is told on a retry (D-35).
+const memberLeftRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-left",
+  kind: "member_left",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z", firm_name: "Acme Brokers" },
+  ...over,
+});
+
+describe("dispatching the email that a member left", () => {
+  // Catches: the owners are asked for by the wrong thing (the intake's members, or nobody, since the event has no intake), or a
+  // platform-wide list is used.
+  it("goes to the firm's owners, asked for by the event's firm, and never to the intake members' list", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    const summary = await dispatchEvents([memberLeftRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    expect(sent[0].message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(JSON.stringify(sent[0])).not.toContain("platform-list@example.com");
+  });
+
+  // Catches: the email names someone else, omits when they left, says more than who and when (a role, a reason, a link into the
+  // firm's records), or lets a name carry markup into the HTML.
+  it("names who left and when, and nothing else", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents(
+      [memberLeftRow({ payload: { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z", firm_name: "Acme Brokers", role: "owner", reason: "new job", leads: ["Zelda Co"] } })],
+      deps,
+    );
+    const { message } = sent[0];
+    expect(message.subject).toBe("sam@firm-a.example left Acme Brokers");
+    expect(message.text).toContain("sam@firm-a.example left Acme Brokers on 2026-11-18 14:05 UTC.");
+    expect(message.html).toContain("sam@firm-a.example left Acme Brokers on 2026-11-18 14:05 UTC.");
+    for (const leaked of ["owner", "new job", "Zelda", "http"]) {
+      expect(message.text).not.toContain(leaked);
+      expect(message.html).not.toContain(leaked.startsWith("http") ? "href=" : leaked);
+    }
+  });
+
+  it("escapes a firm's name in the HTML", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([memberLeftRow({ payload: { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z", firm_name: "<b>Evil</b> & Co" } })], deps);
+    expect(sent[0].message.html).toContain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co");
+    expect(sent[0].message.html).not.toContain("<b>Evil</b>");
+  });
+
+  // Catches: a payload without who or when is sent as an empty email, or retried for ever.
+  it.each([
+    ["no member", { left_at: "2026-11-18T14:05:09Z", firm_name: "Acme Brokers" }],
+    ["no time", { member_email: "sam@firm-a.example", firm_name: "Acme Brokers" }],
+    ["no firm", { member_email: "sam@firm-a.example", left_at: "2026-11-18T14:05:09Z" }],
+    ["a time that is not one", { member_email: "sam@firm-a.example", left_at: "yesterday", firm_name: "Acme Brokers" }],
+  ])("gives up on a payload with %s, sending nothing", async (_why, payload) => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([memberLeftRow({ payload })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-left", "invalid_payload", null, 1, false);
+  });
+
+  // Catches: an event with no firm is looked up by a null id and told to nobody, or sent to the wrong people.
+  it("gives up on an event that names no firm", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([memberLeftRow({ firm_id: null })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.ownerRecipients).not.toHaveBeenCalled();
+  });
+
+  // Catches: an email with nobody to send to is sent anyway, or is dropped for good when the owners can't be looked up.
+  it("holds back, sending nothing, when the firm has no owner to tell or the owners can't be looked up, and tries again", async () => {
+    const none = harness({ ownerRecipients: vi.fn(async () => []) });
+    const a = await dispatchEvents([memberLeftRow()], none.deps);
+    expect(none.sent).toHaveLength(0);
+    expect(a.retrying).toBe(1);
+    expect(none.deps.fail).toHaveBeenCalledWith("evt-left", "no_recipients", 60, 1, false);
+    const down = harness({ ownerRecipients: vi.fn(async () => { throw new Error("db down"); }) });
+    const b = await dispatchEvents([memberLeftRow()], down.deps);
+    expect(down.sent).toHaveLength(0);
+    expect(b.retrying).toBe(1);
+    expect(down.deps.fail).toHaveBeenCalledWith("evt-left", "recipients_failed", 60, 1, false);
+  });
+
+  // D-35: an owner who has since left the firm, or stopped being an owner, is not sent the email on a retry; one who became an owner
+  // since the first preparation is not added (that would change the key for everyone who already has it).
+  it("on a retry drops an owner who is no longer one, and adds nobody who became one since", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["stayer@firm-a.example", "gone@firm-a.example"] } });
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => ["stayer@firm-a.example", "new-owner@firm-a.example"]) });
+    await dispatchEvents([memberLeftRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+    expect(sent[0].key).not.toBe(stored.key);
+  });
+
+  it("resends a stored message as it is while every owner it names is still an owner", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["owner@firm-a.example"] } });
+    const { deps, sent } = harness();
+    await dispatchEvents([memberLeftRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(deps.freeze).not.toHaveBeenCalled();
+    expect(sent[0].key).toBe(stored.key);
+  });
+
+  // Catches: the kind is not sendable (it would wait for ever) or is sent when the sender isn't set up.
+  it("is sent whenever the advisor sender is set up, and waits with the reason when it is not", async () => {
+    expect(sendableKinds(config)).toContain("member_left");
+    const { deps, sent } = harness({ config: configFrom({ ...env, EMAIL_FROM: "" }) });
+    await dispatchEvents([memberLeftRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-left", "not_configured", 60, 1, false);
+  });
+});
+
+// The email to a firm's owners when an owner asks to close the firm, or withdraws the request (story CRM-P1.7). A firm's own email, like
+// the leaving notice: it goes to the firm's owners, asked for by the event's firm, with the same sender and retry rules.
+const closingRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-closing",
+  kind: "firm_closing",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: { event: "asked", by_email: "sam@firm-a.example", firm_name: "Acme Brokers", closes_at: "2026-12-18T14:05:09Z" },
+  ...over,
+});
+
+describe("dispatching the email that a request to close the firm was made or withdrawn", () => {
+  // Catches: the owners are not the ones told (the intake members' list, or nobody), or the date or the way back is left out.
+  it("tells the firm's owners who asked, which firm and when it closes", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    await dispatchEvents([closingRow()], deps);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    expect(sent[0].message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(sent[0].message.subject).toBe("sam@firm-a.example asked to close Acme Brokers");
+    expect(sent[0].message.text).toContain("It closes on 2026-12-18 unless an owner withdraws the request first.");
+    expect(sent[0].message.text).toContain("withdraw the request in Settings");
+  });
+
+  // Catches: a withdrawal reads like a request, or still names a closing date.
+  it("says a withdrawal leaves the firm open and nothing deleted", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([closingRow({ payload: { event: "withdrawn", by_email: "sam@firm-a.example", firm_name: "Acme Brokers" } })], deps);
+    expect(sent[0].message.subject).toBe("sam@firm-a.example withdrew the request to close Acme Brokers");
+    expect(sent[0].message.text).toContain("The firm stays open and nothing was deleted.");
+    expect(sent[0].message.text).not.toContain("closes on");
+  });
+
+  it("escapes a firm's name in the HTML and carries nothing else the payload held", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([closingRow({ payload: { event: "asked", by_email: "sam@firm-a.example", firm_name: "<b>Evil</b> & Co", closes_at: "2026-12-18T14:05:09Z", reason: "secret reason" } })], deps);
+    expect(sent[0].message.html).toContain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co");
+    expect(sent[0].message.html).not.toContain("<b>Evil</b>");
+    expect(sent[0].message.text).not.toContain("secret reason");
+  });
+
+  // Catches: an event that cannot say who, what or when is sent as an empty email, or retried for ever.
+  it.each([
+    ["no event", { by_email: "sam@firm-a.example", firm_name: "Acme Brokers", closes_at: "2026-12-18T14:05:09Z" }],
+    ["no person", { event: "asked", firm_name: "Acme Brokers", closes_at: "2026-12-18T14:05:09Z" }],
+    ["a request with no date", { event: "asked", by_email: "sam@firm-a.example", firm_name: "Acme Brokers" }],
+    ["a date that is not one", { event: "asked", by_email: "sam@firm-a.example", firm_name: "Acme Brokers", closes_at: "soon" }],
+  ])("gives up on a payload with %s, sending nothing", async (_why, payload) => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([closingRow({ payload })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-closing", "invalid_payload", null, 1, false);
+  });
+
+  // D-35 for this kind: an owner who is no longer one is not sent it on a retry.
+  it("on a retry drops an owner who is no longer one", async () => {
+    const stored = pendingSend({ message: { ...pendingSend().message, to: ["stayer@firm-a.example", "gone@firm-a.example"] } });
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => ["stayer@firm-a.example"]) });
+    await dispatchEvents([closingRow({ attempts: 2, pending_send: jsonb(stored) })], deps);
+    expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
+  });
+
+  it("is sent whenever the advisor sender is set up, and waits with the reason when it is not", async () => {
+    expect(sendableKinds(config)).toContain("firm_closing");
+    const { deps, sent } = harness({ config: configFrom({ ...env, EMAIL_FROM: "" }) });
+    await dispatchEvents([closingRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-closing", "not_configured", 60, 1, false);
   });
 });

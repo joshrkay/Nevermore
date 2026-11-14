@@ -85,7 +85,6 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/advisor\/activity$/, "Activity"],
   [/^\/advisor\/held$/, "Held mail"],
   [/^\/advisor\/firms$/, "Firm approvals"],
-  [/^\/advisor\/organisations$/, "Organisations"],
   [/^\/advisor(\/.*)?$/, "Advisor Console"],
 ];
 

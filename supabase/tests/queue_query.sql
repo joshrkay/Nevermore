@@ -379,8 +379,9 @@ SELECT pg_temp.is((SELECT jsonb_array_length(snap::jsonb) FROM old_out WHERE lab
 SELECT pg_temp.is((SELECT jsonb_array_length(snap::jsonb) FROM old_out WHERE label = 'unpaged' AND who = 'agent_b2'), 3, 'setup: firm B''s queue');
 SELECT pg_temp.is((SELECT snap FROM old_out WHERE label = 'page 1' AND who = 'nobody'), '42501', 'setup: a person with no firm is refused');
 
--- ---------- the migration ----------
+-- ---------- the migrations ----------
 \i supabase/migrations/20261117100000_queue_query.sql
+\i supabase/migrations/20261117100500_queue_query_fast_path.sql
 
 -- ---------- 1. ...and after it: exactly the same ----------
 DO $$
@@ -818,5 +819,109 @@ SELECT pg_temp.is((SELECT view_name FROM public.queue_view_counts($$[{"name":"x'
   $$x'); DROP TABLE public.chamber_sessions; --$$, 'a view''s name comes back as it was sent');
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT count(*) FROM public.chamber_sessions), (SELECT n FROM before_injection), 'every intake is still there');
+
+-- ---------- 9. The faster path (20261117100500) ----------
+-- Requests advisor_list_submissions can answer with its own arguments are answered from one paged call to it. The faster
+-- path and the full path give the same rows, order and total, page by page, the page past the end included (where the
+-- faster path takes the total from the first row alone), with and without a search, for each caller's own firm.
+CREATE TEMP TABLE fast_cases (filters jsonb, sort text, dir text, search text);
+INSERT INTO fast_cases VALUES
+  ('[]', NULL, 'asc', NULL), ('[]', NULL, 'desc', NULL), ('[]', NULL, 'asc', 'acme'), ('[]', NULL, 'asc', 'filler'), ('[]', NULL, 'asc', 'nothing at all'),
+  ('[{"field":"pipeline_status","op":"any_of","value":["draft"]}]', NULL, 'asc', NULL),
+  ('[{"field":"pipeline_status","op":"any_of","value":["QUOTED"]}]', NULL, 'asc', NULL),
+  ('[{"field":"needs_action","op":"is","value":false}]', NULL, 'asc', NULL),
+  ('[{"field":"needs_action","op":"is","value":true}]', NULL, 'asc', NULL),
+  ('[{"field":"waiting_on_peo","op":"is","value":true}]', NULL, 'asc', NULL),
+  ('[{"field":"waiting_on_peo","op":"is","value":false}]', NULL, 'asc', 'filler'),
+  ('[{"field":"pipeline_status","op":"any_of","value":["draft"]},{"field":"needs_action","op":"is","value":false},{"field":"waiting_on_peo","op":"is","value":false}]', NULL, 'asc', NULL),
+  ('[]', 'oldest_waiting_on', 'asc', NULL),
+  ('[{"field":"needs_action","op":"is","value":false}]', 'earliest_quote_expires_on', 'asc', NULL),
+  ('[]', 'earliest_quote_expires_on', 'asc', 'acme');
+
+DO $$
+DECLARE
+  w text;
+  c record;
+  p integer;
+  args jsonb;
+  full_res jsonb;
+  fast_res jsonb;
+  listed jsonb;
+  fast_pages integer := 0;
+  past_end integer := 0;
+BEGIN
+  FOREACH w IN ARRAY ARRAY['agent_a1', 'owner_b'] LOOP
+    FOR c IN SELECT * FROM fast_cases LOOP
+      args := public.queue_fast_arguments(public.queue_filters_checked(c.filters, current_date), c.sort, c.dir);
+      IF args IS NULL THEN RAISE EXCEPTION 'FAIL: % / % % takes the full path; the faster path can answer it', c.filters, c.sort, c.dir; END IF;
+      FOR p IN 1..3 LOOP
+        -- As the caller, by their token; the internal functions are called as their owner, as the browser's call does.
+        PERFORM pg_temp.as_user(w);
+        RESET ROLE;
+        full_res := public.queue_page_full(c.filters, c.sort, c.dir, p, c.search, 'UTC');
+        fast_res := public.queue_page_fast(args, p, c.search);
+        PERFORM pg_temp.as_user(w);
+        listed := public.queue_list_submissions(c.filters, c.sort, c.dir, p, c.search, 'UTC');
+        PERFORM pg_temp.as_owner();
+        IF listed IS DISTINCT FROM full_res THEN
+          RAISE EXCEPTION 'FAIL: as %, % / sort % % / search % page % differs from the full path', w, c.filters, c.sort, c.dir, c.search, p;
+        END IF;
+        IF fast_res IS DISTINCT FROM full_res THEN
+          RAISE EXCEPTION 'FAIL: as %, % / sort % / search % page %: the faster path gave % rows of total %, the full path % of %',
+            w, c.filters, c.sort, c.search, p, jsonb_array_length(fast_res -> 'rows'), fast_res ->> 'total',
+            jsonb_array_length(full_res -> 'rows'), full_res ->> 'total';
+        END IF;
+        IF jsonb_array_length(full_res -> 'rows') = 0 AND p > 1 AND (full_res ->> 'total')::bigint > 0 THEN
+          past_end := past_end + 1;
+        ELSE
+          fast_pages := fast_pages + 1;
+        END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  -- Both kinds happened: pages the faster path answered (some second pages among them), and pages past the end it left.
+  IF fast_pages < 35 OR past_end < 20 THEN RAISE EXCEPTION 'FAIL: % faster pages and % past the end with rows before it: the comparison proves little', fast_pages, past_end; END IF;
+  RAISE NOTICE 'queue_query: the faster path matched the full path on % pages and % pages past the end', fast_pages, past_end;
+END $$;
+SELECT pg_temp.as_owner();
+
+-- What the faster path leaves to the full one: anything advisor_list_submissions can't say with its own arguments.
+SELECT pg_temp.is(public.queue_fast_arguments(public.queue_filters_checked(f::jsonb, current_date), s, d), NULL::jsonb, 'the full path for ' || f || ' ' || COALESCE(s, '') || ' ' || d)
+FROM (VALUES
+  ('[{"field":"pipeline_status","op":"any_of","value":["draft","quoted"]}]', NULL, 'asc'),
+  ('[{"field":"pipeline_status","op":"none_of","value":["draft"]}]', NULL, 'asc'),
+  ('[{"field":"pipeline_status","op":"any_of","value":["draft"]},{"field":"pipeline_status","op":"any_of","value":["quoted"]}]', NULL, 'asc'),
+  ('[{"field":"needs_action","op":"is","value":true},{"field":"needs_action","op":"is","value":false}]', NULL, 'asc'),
+  ('[{"field":"has_new_peo_mail","op":"is","value":true}]', NULL, 'asc'),
+  ('[{"field":"company_name","op":"is_empty"}]', NULL, 'asc'),
+  ('[]', 'oldest_waiting_on', 'desc'),
+  ('[]', 'earliest_quote_expires_on', 'desc'),
+  ('[]', 'company_name', 'asc'),
+  ('[]', 'created_at', 'desc')
+) v(f, s, d);
+SELECT pg_temp.is(public.queue_fast_arguments('[]', NULL, 'desc'), '{"sort":null,"action":null,"status":null,"waiting":null}'::jsonb, 'no sort: the direction says nothing');
+-- And the browser's call still refuses as before, whichever path would have run.
+SELECT pg_temp.as_user('agent_a1');
+SELECT pg_temp.refused($$SELECT pg_temp.q('[]', 'firm_id', 'asc')$$, '22023', 'to sort by', 'a bad sort is refused on the faster path''s requests');
+SELECT pg_temp.refused($$SELECT pg_temp.q('[]', NULL, 'sideways')$$, '22023', 'asc or desc', 'a bad direction too');
+SELECT pg_temp.refused($$SELECT pg_temp.q('[]', NULL, 'asc', 0)$$, '22023', 'page number', 'and a bad page');
+SELECT pg_temp.expect($$SELECT public.queue_page_full('[]', NULL, 'asc', 1, NULL, 'UTC')$$, '42501', 'a member can''t call the full path directly');
+SELECT pg_temp.expect($$SELECT public.queue_page_fast('{}', 1, NULL)$$, '42501', 'or the faster one');
+SELECT pg_temp.expect($$SELECT public.queue_fast_arguments('[]', NULL, 'asc')$$, '42501', 'or ask which would run');
+SELECT pg_temp.as_user('nobody');
+SELECT pg_temp.expect($$SELECT public.queue_list_submissions()$$, '42501', 'a person with no firm is still refused');
+SELECT pg_temp.as_owner();
+
+-- ---------- 10. The time zone is an IANA name or UTC (20261117100500) ----------
+SELECT pg_temp.as_user('agent_a1');
+SELECT pg_temp.refused(format('SELECT pg_temp.q(''[]'', NULL, ''asc'', 1, NULL, %L)', tz), '22023', 'Unknown time zone', 'the time zone ' || tz || ' is refused')
+FROM unnest(ARRAY['PST', 'EST', 'GMT', 'Z', 'zulu', 'localtime', 'Factory', 'posixrules', 'EST5EDT', 'utc', 'posix/America/New_York',
+                  'right/Europe/London', 'America/Nowhere', '']) tz;
+SELECT pg_temp.is(pg_temp.total('[]', tz), 58::bigint, 'the time zone ' || tz || ' is taken')
+FROM unnest(ARRAY['UTC', 'America/New_York', 'Europe/London', 'Asia/Kolkata', 'America/Argentina/Buenos_Aires']) tz;
+SELECT pg_temp.is(pg_temp.found('[{"field":"created_at","op":"on","value":"2026-03-10"}]', 'Asia/Kolkata'), ARRAY['noname'],
+  'in Kolkata, 02:30 UTC on the 11th is already the 11th');
+SELECT pg_temp.refused($$SELECT * FROM public.queue_view_counts('[{"name":"All"}]', NULL, 'PST')$$, '22023', 'Unknown time zone', 'the counts refuse an abbreviation too');
+SELECT pg_temp.as_owner();
 
 \echo queue_query: ok

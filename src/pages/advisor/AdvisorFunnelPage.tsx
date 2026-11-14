@@ -15,9 +15,9 @@ import {
   type FunnelStep,
 } from "@/data/funnel";
 import { sourceRows, sourceTitle, type SourceRow } from "@/data/referralPartners";
-import { loadFunnel, loadIntakeSources } from "@/lib/advisorApi";
+import { loadFunnel, loadIntakeSourcesOfMyFirms, type MemberFirm } from "@/lib/advisorApi";
 
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[] };
+type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[]; firms: MemberFirm[] };
 
 /**
  * The pilot funnel: of the intakes started in a period, how many reached each step, and the median time it took.
@@ -34,8 +34,8 @@ const AdvisorFunnelPage = () => {
     let cancelled = false;
     setLoad({ kind: "loading" });
     const { from, to } = funnelRange(period);
-    Promise.all([loadFunnel(from, to), loadIntakeSources(from, to)])
-      .then(([raw, sources]) => !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw), sources: sourceRows(sources) }))
+    Promise.all([loadFunnel(from, to), loadIntakeSourcesOfMyFirms(from, to)])
+      .then(([raw, mine]) => !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw), sources: sourceRows(mine.rows), firms: mine.firms }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
@@ -86,7 +86,7 @@ const AdvisorFunnelPage = () => {
         ) : (
           <>
             <FunnelTable rows={load.rows} />
-            <SourceTable sources={load.sources} />
+            <SourceTable sources={load.sources} firms={load.firms} />
           </>
         ))}
 
@@ -140,7 +140,7 @@ const SOURCE_STEPS: { step: FunnelStep; label: string }[] = [
 ];
 
 /** The same intakes, by the link each started from: the sources with the most intakes first. */
-const SourceTable = ({ sources }: { sources: SourceRow[] }) => (
+const SourceTable = ({ sources, firms }: { sources: SourceRow[]; firms: MemberFirm[] }) => (
   <section aria-labelledby="by-source-heading" className="mt-10">
     <h2 id="by-source-heading" className="font-display text-xl font-bold mb-1">By source</h2>
     <p className="text-sm text-muted-foreground mb-4">
@@ -164,11 +164,15 @@ const SourceTable = ({ sources }: { sources: SourceRow[] }) => (
           {sources.map((row) => {
             const { title, detail } = sourceTitle(row);
             const started = row.counts.started;
+            // A member of several firms sees each firm's rows apart, so each row says whose it is. Unreachable for now: RequireFirm keeps
+            // a member of several firms out of the console (ADR 0014) until the Epic 2 workspace shell lets them choose one firm.
+            const firmName = firms.length > 1 ? firms.find((f) => f.id === row.firmId)?.name : undefined;
             return (
-              <tr key={[row.source.referral_code, row.source.utm_source, row.source.utm_medium, row.source.utm_campaign].join("|")} className="border-b border-border/60">
+              <tr key={[row.firmId, row.source.referral_code, row.source.utm_source, row.source.utm_medium, row.source.utm_campaign].join("|")} className="border-b border-border/60">
                 <th scope="row" className="py-2.5 pr-4 font-normal text-left">
                   <span className="block">{title}</span>
                   {detail && <span className="block text-xs text-muted-foreground font-mono">{detail}</span>}
+                  {firmName && <span className="block text-xs text-muted-foreground">{firmName}</span>}
                 </th>
                 {SOURCE_STEPS.map((s) => (
                   <td key={s.step} className="py-2.5 pr-4 text-right tabular-nums">{row.counts[s.step].toLocaleString("en-US")}</td>
