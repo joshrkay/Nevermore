@@ -1040,6 +1040,7 @@ $$;
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

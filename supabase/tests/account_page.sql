@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh account_page
 -- An account's page, the database side (story CRM-A2.1a; docs/BROKER_CRM_BUILD.md D-24, D-28, D-33, D-44, D-46, D-186, D-187, D-197, D-199, D-206, D-209,
--- D-211, D-212, D-213, D-216; 20261119140000_account_page.sql). The level rule for changes, the page's one read (the account, each tab's count and first
+-- D-211, D-212, D-213, D-216; 20261119140000_account_page.sql; the tabs' pages, CRM-A2.1b, 20261119145000_account_tab.sql). The level rule for changes, the page's one read (the account, each tab's count and first
 -- five rows), the Files list, the save of an account's own fields with its version, and a submission's account. Two firms are used throughout: Acme sees
 -- by level, Zenith shows everyone everything. Every migration is loaded, in filename order (D-105), this story's last.
 \set ON_ERROR_STOP 1
@@ -141,6 +141,7 @@
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -749,6 +750,64 @@ BEGIN
   PERFORM public.end_support_session(sess);
   RESET ROLE;
   RAISE NOTICE 'account_page: the files passed';
+END $$;
+
+-- ---------- a tab beyond its first five rows ----------
+-- Break caught: a tab of the page is a different list from the first five rows of the same tab on the page (the two are built by one function); a page of
+-- a tab is not a page (a place before the first, too long, no size) or leaves out rows beyond the fifth; a tab that does not exist is answered with
+-- rows; or a person who may not see the account is given its rows (another firm's member, a former member, a platform admin, a signed-out caller).
+CREATE FUNCTION pg_temp.tab(who text, firm text, account text, tabname text, lim integer DEFAULT 50, off integer DEFAULT 0, addr text DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user(who, addr);
+  r := public.account_tab(pg_temp.id(firm), COALESCE(pg_temp.id(account), gen_random_uuid()), tabname, lim, off);
+  RESET ROLE;
+  RETURN r;
+END $$;
+
+DO $$
+DECLARE p jsonb; t jsonb; tabname text;
+BEGIN
+  p := pg_temp.page('acme_agent1', 'acme', 'a1');
+  -- the first five rows of every tab are the same rows the page holds
+  FOREACH tabname IN ARRAY ARRAY['contacts', 'opportunities', 'quotes', 'activity', 'files'] LOOP
+    t := pg_temp.tab('acme_agent1', 'acme', 'a1', tabname, 5, 0);
+    PERFORM pg_temp.is(t, p #> ARRAY['tabs', tabname], 'the first five of ' || tabname || ' are the page''s own');
+  END LOOP;
+  -- the whole of a tab
+  t := pg_temp.tab('acme_agent1', 'acme', 'a1', 'contacts');
+  PERFORM pg_temp.is((t ->> 'count')::int, 7, 'seven contacts in all');
+  PERFORM pg_temp.is(jsonb_array_length(t -> 'rows'), 7, 'and all seven are given, past the fifth');
+  PERFORM pg_temp.is(t #>> '{rows,0,last_name}', 'Marsh', 'the main contact still first');
+  t := pg_temp.tab('acme_agent1', 'acme', 'a1', 'opportunities');
+  PERFORM pg_temp.is(jsonb_array_length(t -> 'rows'), 7, 'all seven opportunities');
+  PERFORM pg_temp.is(jsonb_array_length(pg_temp.tab('acme_agent1', 'acme', 'a1', 'quotes') -> 'rows'), 5, 'and the five quote requests');
+  t := pg_temp.tab('acme_agent1', 'acme', 'a1', 'activity');
+  PERFORM pg_temp.is(jsonb_array_length(t -> 'rows')::bigint, (t ->> 'count')::bigint, 'every history entry, as many rows as the count says');
+  PERFORM pg_temp.is((t ->> 'count')::bigint > 5, true, 'more than five of them');
+  -- pages
+  PERFORM pg_temp.is((SELECT string_agg(r ->> 'last_name', ',' ORDER BY ord) FROM jsonb_array_elements(pg_temp.tab('acme_agent1', 'acme', 'a1', 'contacts', 2, 5) -> 'rows') WITH ORDINALITY AS e (r, ord)),
+    (SELECT string_agg(r ->> 'last_name', ',' ORDER BY ord) FROM jsonb_array_elements(pg_temp.tab('acme_agent1', 'acme', 'a1', 'contacts') -> 'rows') WITH ORDINALITY AS e (r, ord) WHERE ord > 5),
+    'a page from the sixth row is the rows after the fifth');
+  PERFORM pg_temp.is(pg_temp.tab('acme_agent1', 'acme', 'a1', 'contacts', 2, 7), jsonb_build_object('count', 7, 'rows', '[]'::jsonb), 'a page past the end has no rows and the same count');
+  PERFORM pg_temp.as_user('acme_agent1');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.account_tab(%L, %L, 'contacts', 101, 0)$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '22023: A page is 0 to 100 rows, from a place that is not before the first', 'a page is at most 100');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_tab(%L, %L, 'contacts', 10, -1)$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '22023', 'and does not start before the first');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_tab(%L, %L, 'contacts', NULL, 0)$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '22023', 'and has a size');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.account_tab(%L, %L, 'renewals', 5, 0)$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '22023: An account has no tab called "renewals"', 'there is no Renewals tab (D-186)');
+  RESET ROLE;
+  -- who may be given the rows
+  PERFORM pg_temp.is(pg_temp.tab('acme_agent2', 'acme', 'a1', 'contacts'), NULL::jsonb, 'an agent who may not see the account gets nothing');
+  PERFORM pg_temp.is(pg_temp.tab('acme_removed', 'acme', 'a1', 'contacts'), NULL::jsonb, 'nor a former member');
+  PERFORM pg_temp.is(pg_temp.tab('zenith_owner', 'acme', 'a1', 'contacts'), NULL::jsonb, 'nor another firm''s owner');
+  PERFORM pg_temp.is(pg_temp.tab('zenith_owner', 'zenith', 'a1', 'contacts'), NULL::jsonb, 'naming their own firm does not help');
+  PERFORM pg_temp.is(pg_temp.tab('platform_admin', 'acme', 'a1', 'contacts', 50, 0, 'acme-brokers'), NULL::jsonb, 'nor a platform admin with no session');
+  PERFORM pg_temp.is(pg_temp.tab('acme_owner', 'acme', 'not-an-account', 'contacts'), NULL::jsonb, 'an account that is not there gives the same');
+  PERFORM pg_temp.is(jsonb_typeof(pg_temp.tab('acme_owner', 'acme', 'a1', 'contacts')), 'object', 'an owner of the firm is given the rows');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_tab(%L, %L, 'contacts')$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '42501', 'a signed-out caller may not call it');
+  RESET ROLE;
+  RAISE NOTICE 'account_page: the tabs passed';
 END $$;
 
 -- ---------- a submission's account ----------
