@@ -1589,6 +1589,33 @@ describe("saved views on the queue (CRM-S3.4a)", () => {
     });
   });
 
+  describe("a second table on the page", () => {
+    // Catches: the reasons a button can't be used having ids fixed in the code ("save-view-unavailable", "save-changes-unavailable"), so a second table on a page (the
+    // next tables come with the same controls) repeats them and a button's description (`aria-describedby`) points at whichever reason comes first.
+    it("gives the reasons its buttons can't be used ids of their own", async () => {
+      stored = [stored1({ name: "Hot leads" })];
+      rpc.mockImplementation((name: string, args: Record<string, unknown>) => (name === "my_table_columns" ? new Promise(() => {}) : database(name, args)));
+      render(
+        <WorkspaceContext.Provider value={workspace()}>
+          <QueryClientProvider client={new QueryClient()}>
+            <MemoryRouter initialEntries={["/advisor?view=view-1&filter=waiting_on_peo:is:true"]}>
+              <Routes><Route path="/advisor" element={<><AdvisorDashboardPage /><AdvisorDashboardPage /></>} /></Routes>
+            </MemoryRouter>
+          </QueryClientProvider>
+        </WorkspaceContext.Provider>,
+      );
+      await waitFor(() => expect(screen.getAllByRole("button", { name: "Save changes to this view" })).toHaveLength(2));
+      const buttons = [...screen.getAllByRole("button", { name: "Save this as a view" }), ...screen.getAllByRole("button", { name: "Save changes to this view" })];
+      expect(buttons).toHaveLength(4);
+      for (const button of buttons) {
+        const reason = button.getAttribute("aria-describedby");
+        expect(reason).toBeTruthy();
+        expect(document.querySelectorAll(`[id="${reason}"]`)).toHaveLength(1);
+        expect(button).toHaveAccessibleDescription("Available once your columns have loaded");
+      }
+    });
+  });
+
   describe("a bookmark of a saved view", () => {
     // Catches: a bookmark of a saved view landing on "All statuses" (and asking for the wrong rows first) because the views had not arrived on the first draw.
     it("asks for no rows until the views have arrived, then shows the view's rows and keeps it in the address", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BookmarkPlus, Users } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
@@ -40,6 +40,8 @@ function keepsInWords<K extends TableFields, Row, Context>(table: TableDefinitio
  */
 export function ViewTabs<K extends TableFields, Row, Context>({ table, address, hrefFor, counts, manage, onRetry }: Props<K, Row, Context>) {
   const root = useRef<HTMLDivElement>(null);
+  // The reason "Save this as a view" can't be used is described by an id of its own: a page may hold more than one table.
+  const unavailableId = useId();
   const [saving, setSaving] = useState(false);
   const openView = viewOf(table, address.view);
   const tabs = [
@@ -96,14 +98,14 @@ export function ViewTabs<K extends TableFields, Row, Context>({ table, address, 
               <button
                 type="button"
                 aria-disabled={manage.unavailable ? true : undefined}
-                aria-describedby={manage.unavailable ? "save-view-unavailable" : undefined}
+                aria-describedby={manage.unavailable ? unavailableId : undefined}
                 onClick={manage.unavailable ? (e) => e.preventDefault() : undefined}
                 className={cn("inline-flex min-h-9 items-center gap-1 rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring", manage.unavailable ? "opacity-50" : "hover:text-foreground")}
               >
                 <BookmarkPlus className="h-4 w-4" aria-hidden="true" /> Save this as a view
               </button>
             </PopoverTrigger>
-            {manage.unavailable && <span id="save-view-unavailable" className="sr-only">{manage.unavailable}</span>}
+            {manage.unavailable && <span id={unavailableId} className="sr-only">{manage.unavailable}</span>}
             <PopoverContent
               align="start"
               className="w-96"

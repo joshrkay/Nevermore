@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { TableFields } from "@/lib/tableQuery";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -30,6 +30,7 @@ export function ViewBar<K extends TableFields>({ view, modified, manage }: Props
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const saveChangesButton = useRef<HTMLButtonElement>(null);
+  const unavailableId = useId();
   const offline = !online;
   const unavailable = offline ? "You're offline. Saving is back when you are." : manage.unavailable;
 
@@ -63,13 +64,13 @@ export function ViewBar<K extends TableFields>({ view, modified, manage }: Props
             variant="outline"
             disabled={busy}
             aria-disabled={unavailable ? true : undefined}
-            aria-describedby={unavailable ? "save-changes-unavailable" : undefined}
+            aria-describedby={unavailable ? unavailableId : undefined}
             onClick={() => void saveChanges()}
             className={`h-9 rounded-md ${unavailable ? "opacity-50" : ""}`}
           >
             Save changes to this view
           </Button>
-          {unavailable && <span id="save-changes-unavailable" className="sr-only">{unavailable}</span>}
+          {unavailable && <span id={unavailableId} className="sr-only">{unavailable}</span>}
           <SaveFailed message={failure} returnFocusTo={saveChangesButton} />
         </>
       )}
