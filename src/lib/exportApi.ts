@@ -101,5 +101,5 @@ export async function exportRows(request: ExportRequest): Promise<ExportResult> 
   if (error) throw refusal(error);
   const parsed = answer.safeParse(data);
   if (!parsed.success || parsed.data.count !== parsed.data.rows.length) throw new ExportError("failed", FALLBACK);
-  return parsed.data;
+  return parsed.data as ExportResult;
 }

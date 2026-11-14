@@ -250,11 +250,11 @@ BEGIN
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Sigma Suspended', 'sigma-suspended', now(), 'approved', now()) RETURNING id INTO sigma;
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Big Brokers', 'big-brokers', now(), 'approved', now()) RETURNING id INTO big;
   INSERT INTO fx VALUES ('acme', acme), ('zenith', zenith), ('cinder', cinder), ('sigma', sigma), ('big', big);
-  PERFORM pg_temp.new_user(n) FROM unnest(ARRAY['acme_owner', 'acme_lead', 'acme_agent', 'acme_agent2', 'acme_admin_member', 'acme_removed', 'rep1', 'rep2', 'rep3', 'rep4',
+  PERFORM pg_temp.new_user(n) FROM unnest(ARRAY['acme_owner', 'acme_lead', 'acme_agent', 'acme_agent2', 'acme_admin_member', 'acme_removed', 'rep1', 'rep2', 'rep3', 'rep4', 'rep5',
     'zenith_owner', 'both', 'cinder_owner', 'cinder_agent', 'sigma_owner', 'big_owner', 'big_agent', 'platform_admin', 'nobody']) AS n;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
     (acme, pg_temp.id('acme_owner'), 'owner'), (acme, pg_temp.id('acme_lead'), 'lead'), (acme, pg_temp.id('acme_agent'), 'agent'), (acme, pg_temp.id('acme_agent2'), 'agent'),
-    (acme, pg_temp.id('acme_admin_member'), 'agent'), (acme, pg_temp.id('rep1'), 'agent'), (acme, pg_temp.id('rep2'), 'agent'), (acme, pg_temp.id('rep3'), 'agent'), (acme, pg_temp.id('rep4'), 'agent'),
+    (acme, pg_temp.id('acme_admin_member'), 'agent'), (acme, pg_temp.id('rep1'), 'agent'), (acme, pg_temp.id('rep2'), 'agent'), (acme, pg_temp.id('rep3'), 'agent'), (acme, pg_temp.id('rep4'), 'agent'), (acme, pg_temp.id('rep5'), 'agent'),
     (acme, pg_temp.id('both'), 'agent'), (zenith, pg_temp.id('both'), 'agent'), (zenith, pg_temp.id('zenith_owner'), 'owner'),
     (cinder, pg_temp.id('cinder_owner'), 'owner'), (cinder, pg_temp.id('cinder_agent'), 'agent'), (sigma, pg_temp.id('sigma_owner'), 'owner'),
     (big, pg_temp.id('big_owner'), 'owner'), (big, pg_temp.id('big_agent'), 'agent');
@@ -574,8 +574,7 @@ END $$;
 -- ---------- the owners' alert ----------
 -- Break caught: a large export (more than 500 rows) is not told; exactly 500 is; the third export in an hour is not told, or the second is;
 -- the fourth is told again; exports more than an hour apart are counted together; one member's exports are counted with another's; the alert
--- holds a row, or something the owners were not meant to see, or is not about the firm; two of the same member racing are not counted
--- together; a failed export tells the owners.
+-- holds a row, or something the owners were not meant to see, or is not about the firm (two of the same member at once: below).
 DO $$
 DECLARE acme uuid := pg_temp.id('acme'); big uuid := pg_temp.id('big'); p jsonb; n0 bigint;
 BEGIN
@@ -735,4 +734,58 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.refusal($q$INSERT INTO public.outbox_events (kind, dedupe_key, payload) VALUES ('export_alert', 'y', '{}')$q$) LIKE '23514:%', true, 'nor about no firm');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.outbox_events (kind, firm_id, dedupe_key, payload) VALUES ('export_alert', %L, 'z', '{}')$q$, acme)), 'ok', 'it is about a firm');
   RAISE NOTICE 'export: the alert kind passed';
+END $$;
+
+-- ---------- two exports by one member at the same moment ----------
+-- Break caught: two exports by the same member that overlap do not see each other (each counts the other's entry as not yet there), so the
+-- third and the fourth both read "the third in an hour" and the owners are told twice. Two real connections (dblink): the first makes the
+-- third export and has not committed; the second starts and must wait for it, then count the first, and is the fourth.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- The two earlier exports are committed first: the two connections must see them.
+DO $$
+BEGIN
+  INSERT INTO public.firm_activity (firm_id, actor_id, kind, record_type, record_id, row_count, at) VALUES
+    (pg_temp.id('acme'), pg_temp.id('rep5'), 'export_made', 'table', 'referral_partners', 1, now() - interval '20 minutes'),
+    (pg_temp.id('acme'), pg_temp.id('rep5'), 'export_made', 'table', 'referral_partners', 1, now() - interval '10 minutes');
+END $$;
+DO $$
+DECLARE
+  acme uuid := pg_temp.id('acme');
+  who uuid := pg_temp.id('rep5');
+  claims text := jsonb_build_object('sub', pg_temp.id('rep5'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'rep5@example.test')::text;
+  stmt text := format($q$DO $do$ BEGIN PERFORM public.export_rows(%L, 'referral_partners', '{}', '["acme-cfo"]'); END $do$ $q$, acme);
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'), split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; before_alerts bigint;
+BEGIN
+  before_alerts := pg_temp.alerts(acme);
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L', claims));
+  PERFORM race.dblink_exec('ra', stmt);
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L', claims));
+  PERFORM race.dblink_send_query('rb', stmt);
+  WHILE tries < 80 LOOP
+    IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
+    IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('ra', 'COMMIT');
+  PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
+  BEGIN PERFORM * FROM race.dblink_get_result('rb') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_exec('rb', 'COMMIT');
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  PERFORM pg_temp.is(waited, true, 'the second export waits for the first');
+  PERFORM pg_temp.is(pg_temp.alerts(acme), before_alerts + 1, 'so the third is told and the fourth is not');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = who AND kind = 'export_made'), 4::bigint, 'and both are recorded');
+  RAISE NOTICE 'export: two at once passed';
 END $$;
