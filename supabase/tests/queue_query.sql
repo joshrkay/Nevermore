@@ -431,6 +431,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
+\i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119140000_account_page.sql
 
 -- ---------- reading the new call ----------
