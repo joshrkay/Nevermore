@@ -30,7 +30,7 @@ rules every story's build follows. Where this page and a story disagree, this pa
 |---|---|---|---|
 | 1 | Firms and security | `crm/epic-01-firms-security` | P-1.1, CRM-S5.1, CRM-P2.1, P-1.4, CRM-P1.2, CRM-P1.3, CRM-P1.5, CRM-P1.6, CRM-P1.4, CRM-P1.1 with Q-1.2, CRM-P1.7, CRM-P1.8, CRM-P2.2, CRM-P2.3 with Q-3.1, CRM-P2.4, CRM-P2.5 with P-2.3 |
 | 2 | Shell and tables | `crm/epic-02-shell-tables` | CRM-S1.1, CRM-S2.1 to S2.4, CRM-S3.1 to S3.5, CRM-S3.8, CRM-S4.1, CRM-S5.2 |
-| 3 | Accounts and contacts | `crm/epic-03-accounts-contacts` | CRM-Q1.1, CRM-Q1.3, CRM-A1.1 to A1.3, CRM-S3.6 and CRM-S3.7 (D-47), CRM-A2.1, CRM-A2.2, CRM-C1.1, CRM-E1.5, CRM-S4.2, CRM-S4.3, CRM-S1.2 |
+| 3 | Accounts and contacts | `crm/epic-03-accounts-contacts` | CRM-S3.1a, CRM-S3.4a, CRM-S3.8a and S3.8b (D-205), CRM-Q1.1, CRM-Q1.3, CRM-A1.1 to A1.3, CRM-S3.6 and CRM-S3.7 (D-47), CRM-A2.1, CRM-A2.2, CRM-C1.1, CRM-E1.5, CRM-S4.2, CRM-S4.3, CRM-S1.2 |
 | 4 | Opportunities | `crm/epic-04-opportunities` | CRM-O1.1, CRM-O1.2, CRM-A2.3, CRM-A2.4, CRM-O1.3 with Q-4.1 |
 | 5 | Quotes and New quote | `crm/epic-05-quotes` | P-2.1, P-2.2, P-2.4, M-1.1, CRM-Q2.1 to Q2.5, CRM-Q1.2, CRM-Q3.1 with N-1.2, CRM-Q3.2, CRM-Q3.4, CRM-Q4.1 |
 | 6 | Sending and email | `crm/epic-06-sending-email` | M-2.1 to M-2.4, Q-2.1, Q-2.2, CRM-Q2.6, CRM-E1.1 to E1.4 |
@@ -369,6 +369,50 @@ no table, page or function for accounts, contacts or opportunities. Four Epic 2 
 | D-203 | A merge is made by anyone allowed to change both records. The removed record is deleted; its history moves to the kept record marked as from the merged record; its address leads to the kept record. There is no unmerge |
 | D-204 | "Deleted by its owner" (CRM-A1.1) means the account's record owner or a firm owner. Its contacts, calls, notes and tasks are deleted with it |
 | D-205 | Epic 2's rows 16 to 19 were never built and come first in Epic 3, on the pages Epic 2 named: CRM-S3.1a (the columns menu, the first column kept in view), CRM-S3.4a (saved views on screen), CRM-S3.8b (export in the database, D-48, refusing a support session, D-128) and CRM-S3.8a (the Export button and the CSV). The database half of columns and saved views exists (`table_settings`); no screen uses it |
+| D-206 | Until CRM-O1.2 an opportunity's stage is worked out from its submission's pipeline stage, never stored: draft, submitted, under review and information requested are Intake under way; ready for market is Ready to send; sent to PEOs is In market; quoted is Quoted; won is Won; lost and archived are Lost. Reopening an archived submission brings its opportunity back. An opportunity is open until it is won or lost |
+| D-207 | An opportunity holds at most one intake, by a constraint (D-29). Next year's renewal is a new opportunity on the same account |
+| D-208 | "Prospect" stays on screens as an account's status. In writing it is "a prospect account", never the person the glossary calls the Prospect |
+| D-209 | Who may change a record follows level whatever the firm's visibility: an agent their own, a lead their team's, an owner the firm's; a record with no owner, an owner only. That covers its fields, its owner, archiving, deleting and moving a contact. Adding a contact, call, note or task is open to anyone who may see the record. Owners assign unowned records, in bulk with CRM-S3.7. Single changes and bulk changes ask the same rule |
+| D-210 | Only two contacts on the same account can be merged. Contacts on two accounts are moved first, or their accounts merged |
+| D-211 | An account's source is set by the product and never edited: Employer's intake (with the referral partner's name when the intake came by a partner's link), Added by hand, and later New quote, Lead and Import. Brought-in submissions are Employer's intake |
+| D-212 | An account's Activity tab is one list, newest first, of its calls, notes and tasks (from Epic 6 its emails) and its record history, filtered by All, Calls, Notes, Tasks or Changes. Until CRM-E1.5 it holds the history alone. It is never the firm activity record |
+| D-213 | A submission's page shows "Account: <name>", linking to its account (CRM-A2.1b) |
+| D-214 | Settled with the above. Changing an account's owner offers to change its open opportunities' owner too, as CRM-A1.1 says. A prospect's contact is the main contact of an account made from a submission. Records made from an employer's intake or brought in have no owner until assigned (Edgar Allan Advisory sees everything, D-15). A new account's owner is the person who made it unless they choose another. Selecting rows and bulk edit go on the accounts table only. Search's recent records are kept in the database per person (D-43). Every new table has its two-firm probe (D-28), its function registry entries and its line in `firm_closing_plan()` |
+| D-215 | How three stories run side by side (D-25). Each builder works in its own working copy on its own branch, with its own Postgres cluster on its own port (`run.sh`'s database names are fixed, so two runs on one server collide) and its own `E2E_DATABASE`, `E2E_GATEWAY_PORT` and `E2E_APP_PORT`. Its migration takes the timestamp in the table below. Before it merges, the epic branch is merged into it and every SQL test's migration list is brought up to date (`scripts/sqlMigrationOrder.ts`), then the gate is run again |
+
+### Epic 3 build order
+
+Lanes: **Q** the queue and the table frame (`src/components/workspace/table/`); **P** the partners and activity
+pages; **D** the database; **A** the accounts and contacts pages. A story marked a or b is one story split by
+seam. "Risky" marks the stories D-189 names. Under D-105 every migration sorts after `20261118160500`, in this
+order.
+
+| # | Story | What it covers | Needs | Builder | Migration |
+|---|---|---|---|---|---|
+| 1 | CRM-S3.1a | Columns: show, hide and reorder; the first column stays in view when the table scrolls sideways; kept per person. On the queue (Epic 2 row 16) | none | Sonnet (Q) | none |
+| 2 | CRM-S3.8b | Export in the database (D-48): one function returns the rows and records the export; the owners' alert and the fresh sign-in for a whole table; refuses a support session (D-128). Referral partners and, for owners, the activity record (Epic 2 row 18) | none | Sonnet (D) | `20261119090000` |
+| 3 | CRM-Q1.1a | The records: accounts, contacts and opportunities, each with its firm and owner, row security by `can_see_firm_record` (a contact and an opportunity by their account's), history and version (`record_track`), status (CRM-A1.3, D-197) and stage (D-206) worked out, one main contact per account and one intake per opportunity as constraints, two-firm probes, the closing list | none | Sonnet (D) | `20261119100000` |
+| 4 | CRM-S3.4a | Saved views on screen: tabs with counts, the queue's status tabs as its built-in views, save, rename, delete and share (Epic 2 row 17) | 1 | Sonnet (Q) | none |
+| 5 | CRM-S3.8a | The Export button and the CSV, on referral partners and the activity record (Epic 2 row 19) | 1, 2 | Sonnet (P) | none |
+| 6 | CRM-Q1.1b | The chain at the first certification (D-192): the duplicate match (D-193), a new account marked "Possible duplicate of", the account filled from the certified answers (D-196), the contact from the prospect (D-194), the opportunity named (D-188), source Employer's intake (D-211); the same step twice makes one chain | 3 | Sonnet (D), risky | `20261119110000` |
+| 7 | CRM-Q1.3 | Bring the existing submissions in by the same step (D-195), reporting how many of each; run twice it makes nothing new. Then the rule that every submission and every quote request sits on one opportunity | 6 | Sonnet (D), risky | `20261119120000` |
+| 8 | CRM-A1.1b | The accounts table's query: its fields, person filters (any of, me, my team; D-173), sort, 50 a page, search, view counts, and the worked-out columns (main contact; the open opportunity with the nearest target start and "+1 more"; quotes back of sent and the nearest expiry; last activity so far, D-201). `accounts` joins the saved-views and export lists | 3, 2 | Sonnet (D) | `20261119130000` |
+| 9 | CRM-A2.1a | An account's page in the database: the account with each list and its count, the Files list (D-199), history readable for accounts and contacts, the save with its version (D-46) and the level rule (D-209) | 3 | Sonnet (D) | `20261119140000` |
+| 10 | CRM-A1.1a | The Accounts page (`/accounts`) and its menu item: the columns, views, filters (Owner, State, Employees), page states and export | 8, 4, 5 | Sonnet (A) | none |
+| 11 | CRM-A2.1b | An account's page (`/accounts/:id`): the header, tabs with counts, Overview, lists whose names open their records (D-187), edit in place, the archived banner, the Activity tab with the history (D-212), and "Account: <name>" on a submission's page (D-213) | 9 | Sonnet (A) | none |
+| 12 | CRM-A1.2 | Create an account (screen 23): the form, the phone, state and date rules, source Added by hand, owner its maker (D-214); it opens the new account. "Save and add a contact" arrives with row 14 | 10, 11 | Sonnet (A) | `20261119150000` |
+| 13 | CRM-A1.1c | Archive, restore and delete (D-204), and change an account's owner with the offer for its open opportunities, from the table and from the account's page | 10, 11 | Sonnet (A) | `20261119160000` |
+| 14 | CRM-A2.2 | Add a contact on an account (screen 24): the form, one main contact, moving a contact to another account (D-209) | 11, 12 | Sonnet (A) | `20261119170000` |
+| 15 | CRM-S3.6 | Selecting rows on the accounts table: checkboxes, the page, "Select all N that match", the bulk bar | 10 | Sonnet (Q) | none |
+| 16 | CRM-E1.5 | Calls, notes and tasks (screen 27) on an account and a contact: the follow-up task, D-200's note rule, the Activity tab, last activity | 11 | Sonnet (A) | `20261119180000` |
+| 17 | CRM-C1.1 | A contact's page: the header, details, opportunities, calls, notes and tasks; "Do not email" is kept for Epic 6 (D-186) | 14, 16 | Sonnet (A) | `20261119190000` |
+| 18 | CRM-S4.2 | Spotting a duplicate while creating an account or a contact, and the masked match for a record the person may not see | 6, 12, 14 | Sonnet (A) | `20261119200000` |
+| 19 | CRM-S3.7b | Bulk changes in the database: labels (D-198); change owner, set a field, add or remove a label, archive, export the selection; all or none, at most 1,000, the level rule, skipped rows named, one history entry per record, undo for ten minutes (D-202) | 8, 2 | Sonnet (D), risky | `20261119210000` |
+| 20 | CRM-S3.7a | Bulk edit on screen (screens 35, 36): the bulk bar's actions, the dialog that says exactly what will happen, Undo; the Label column and filter | 15, 19 | Sonnet (Q) | none |
+| 21 | CRM-S4.3b | Merging in the database: two accounts (contacts, opportunities with their intakes and quotes, calls, notes, tasks, labels, history; D-203), two contacts on one account (D-210), and "keep separate", which clears the possible-duplicate mark | 7, 14, 16, 19 | Sonnet (D), risky | `20261119220000` |
+| 22 | CRM-S4.3a | Merging on screen: from the bulk bar (exactly two) and from the possible-duplicate banner, the field-by-field choice, the old address leading to the kept record | 17, 20, 21 | Sonnet (A) | none |
+| 23 | CRM-S1.2b | Search in the database: accounts, contacts, opportunities and quotes by name, business, email, phone, web domain, File ID and PEO, five per kind, by visibility, never an intake's answers; each person's recent records | 7 | Sonnet (D) | `20261119230000` |
+| 24 | CRM-S1.2a | The search box in the menu: grouped results with "see all", the last five opened, "Nothing matches" with New account | 11, 12, 17, 23 | Sonnet (A) | none |
 
 ## Rules for building one story
 

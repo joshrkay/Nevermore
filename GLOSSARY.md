@@ -36,7 +36,7 @@ _Avoid_: company (on its own), client, customer
 
 **Prospect**:
 The person who gives the answers and certifies them for an employer: the employer's owner or someone acting for it, such as its CFO.
-_Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet)
+_Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet), and "prospect" for a business (a prospect account is an account's status, see **Account**)
 
 **PEO**:
 A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one. The PEOs we list are kept by admins, each with its **Requirement profile**; a PEO is never removed, only marked not listed, after which nothing offers it but what was sent to it still reads. A PEO a prospect or advisor names that isn't listed stays a name in free text, with no profile.
@@ -403,7 +403,7 @@ A person who runs Nevermore itself: keeps the PEO list and its profiles, reads m
 _Avoid_: admin (on its own, where a firm's owner could be meant), super user
 
 **Record owner**:
-The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it.
+The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it. Who may change a record also follows level, whatever the firm's visibility: an agent their own, a lead their team's, an owner the firm's, and a record with no owner only an owner. That covers its fields, its owner, archiving, deleting and moving a contact. Adding to a record (a contact, a call, a note, a task) is open to anyone who may see it (D-209).
 _Avoid_: assignee, creator
 
 **Visibility helper** (code: `can_see_firm_record(firm, owner)`):
@@ -485,7 +485,7 @@ What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_d
 ### The broker's CRM
 
 **Account**:
-A business the firm quotes for: one of the firm's records, with a **Record owner**. Made by an agent, by bringing an existing submission in (CRM-Q1.3), or when an intake an employer started is first certified (ADR 0025); later also by New quote, by converting a lead and by an import. When it is made from a submission, its empty fields are filled from the certified answers (legal name, address, states of operation, employees, industry, current provider), never the FEIN, the census or anything about an employee (ADR 0006); once copied they are the firm's own fields. It is archived, never deleted, while it holds an intake; one with no intake, quote or email can be deleted by its record owner or a firm owner, and its contacts, calls, notes and tasks go with it. Its status is worked out, never set: a prospect account until one of its submissions is won, then a client (a former client arrives with the placement record in Epic 4).
+A business the firm quotes for: one of the firm's records, with a **Record owner**. Made by an agent, by bringing an existing submission in (CRM-Q1.3), or when an intake an employer started is first certified (ADR 0025); later also by New quote, by converting a lead and by an import. When it is made from a submission, its empty fields are filled from the certified answers (legal name, address, states of operation, employees, industry, current provider), never the FEIN, the census or anything about an employee (ADR 0006); once copied they are the firm's own fields. It is archived, never deleted, while it holds an intake; one with no intake, quote or email can be deleted by its record owner or a firm owner, and its contacts, calls, notes and tasks go with it. Its status is worked out, never set: Prospect until one of its submissions is won, then Client (Former client arrives with the placement record in Epic 4). A prospect account is never the person the glossary calls the **Prospect** (D-208). Its source is set by the product and never edited: Employer's intake (with the referral partner's name when the intake came by a partner's link), Added by hand, and later New quote, Lead and Import (D-211).
 _Avoid_: company, customer, employer (the employer is the business; the account is the firm's record of it)
 
 **Contact**:
@@ -493,8 +493,12 @@ A person at an account, on exactly one account, with a name and an email or a ph
 _Avoid_: PEO contact (a person at a PEO), prospect (the person who certifies; a prospect becomes a contact and the two stay separate records), lead
 
 **Opportunity**:
-One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known.
+One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known. It holds at most one intake; next year's renewal is a new opportunity on the same account. Until CRM-O1.2 its stage is worked out from its submission's pipeline stage, never stored: Intake under way (draft, submitted, under review, information requested), Ready to send (ready for market), In market (sent to PEOs), Quoted, Won, and Lost (lost or archived). It is open until it is won or lost (D-206).
 _Avoid_: deal, search (on its own), case
+
+**Activity tab**:
+The tab of an account's page that lists, newest first, its calls, notes and tasks (from Epic 6 its emails) together with its record history, with a filter for All, Calls, Notes, Tasks and Changes (D-212). It is never the **Firm activity** record.
+_Avoid_: activity feed, audit log, timeline (on its own)
 
 **The chain**:
 A quote request's opportunity and that opportunity's account, with the account's contacts. No quote request without an opportunity, no opportunity without an account, and every submission on one opportunity: the database refuses anything else. It is made in the same step a quote starts, and the same step run twice makes one chain, not two. An intake an employer started that has not been certified yet has none (ADR 0025).
