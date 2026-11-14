@@ -646,6 +646,8 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.f('[]', 'state', 'asc'), ARRAY['echo', 'alpha', 'delta', 'beta', 'emile', 'zulu'], 'state (NV, OR, OR, WA, then none)');
   PERFORM pg_temp.is(pg_temp.f('[]', 'owner', 'asc'), ARRAY['beta', 'echo', 'zulu', 'alpha', 'emile', 'delta'], 'owner by their name; no owner (and one whose membership ended) last');
   PERFORM pg_temp.is(pg_temp.f('[]', 'owner', 'desc'), ARRAY['alpha', 'zulu', 'echo', 'beta', 'emile', 'delta'], 'owner, descending: no owner still last');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'source', 'asc'), ARRAY['beta', 'alpha', 'emile', 'zulu', 'delta', 'echo'], 'source: by its place in the list (Employer''s intake, Added by hand, New quote, Lead, Import), not by its code');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'source', 'desc'), ARRAY['echo', 'alpha', 'emile', 'zulu', 'delta', 'beta'], 'source, descending');
   PERFORM pg_temp.is(pg_temp.f('[]', 'status', 'asc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'status: prospects before clients');
   PERFORM pg_temp.is(pg_temp.f('[]', 'status', 'desc'), ARRAY['beta', 'alpha', 'emile', 'zulu', 'echo', 'delta'], 'status, descending');
   PERFORM pg_temp.is(pg_temp.f('[]', 'opportunity_stage', 'asc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'stage: the one with an open opportunity first, the rest last');
@@ -1058,6 +1060,33 @@ BEGIN
   EXCEPTION WHEN SQLSTATE 'ZZ999' THEN NULL;
   END;
   RAISE NOTICE 'accounts_query: stages passed';
+END $$;
+
+-- ---------- a member with no name and no email ----------
+-- Break caught: a current member who has neither a name nor an email (an account's email may be empty or none) is given as nothing, so the owner column and
+-- the Owner filter's choices hold a null where they promise a name. The last word is "A member", as the export's alert calls such a member (D-218).
+DO $$
+DECLARE u uuid := gen_random_uuid(); r jsonb; e text;
+BEGIN
+  FOREACH e IN ARRAY ARRAY[NULL, '', '  '] LOOP
+    BEGIN
+      INSERT INTO auth.users (id, aud, role, email, email_confirmed_at, is_anonymous, created_at, updated_at, raw_user_meta_data)
+      VALUES (u, 'authenticated', 'authenticated', e, now(), false, now(), now(), '{"name": "  ", "full_name": 7}');
+      INSERT INTO fx VALUES ('ghost', u);
+      INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), u, 'agent');
+      PERFORM pg_temp.acct('ghost_acct', 'acme', 'ghost', 'Ghost Co', date '2026-10-17');
+      r := pg_temp.row_as_owner('ghost_acct');
+      PERFORM pg_temp.is(r ->> 'owner_name', 'A member', 'a member with no name and email ' || COALESCE('"' || e || '"', 'none') || ' is "A member" in the owner column');
+      PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+      PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_choices(pg_temp.id('acme')) c WHERE c.name IS NULL), 0::bigint, 'no choice of the Owner filter is nameless');
+      PERFORM pg_temp.is((SELECT c.name FROM public.firm_member_choices(pg_temp.id('acme')) c WHERE c.user_id = u), 'A member', 'the same word there');
+      PERFORM pg_temp.is((pg_temp.names(pg_temp.al('acme', '[]', 'owner', 'asc')))[1], 'ghost_acct', 'sorted by owner, "A member" sorts among the names (as "a member", before "acme_agent2")');
+      RESET ROLE;
+      RAISE EXCEPTION USING ERRCODE = 'ZZ999';
+    EXCEPTION WHEN SQLSTATE 'ZZ999' THEN NULL;
+    END;
+  END LOOP;
+  RAISE NOTICE 'accounts_query: a member with no name passed';
 END $$;
 
 -- ---------- the Quotes column is for the shown opportunity (CRM-A1.1) ----------

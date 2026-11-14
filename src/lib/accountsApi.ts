@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { AdvisorApiError, classifyApiError } from "@/lib/advisorApi";
@@ -103,6 +104,25 @@ const ROW_COLUMNS: Record<keyof AccountRow, true> = {
 };
 export const ACCOUNT_ROW_KEYS = Object.keys(ROW_COLUMNS) as (keyof AccountRow)[];
 
+// What the database answers, checked whole before the page sees it (as exportApi.ts does): an answer that is not exactly this shape is a failed load, never
+// "no accounts". Every column of a row is there (null where there is nothing); src/lib/accountsApi.test.ts compares the row's columns with the database's.
+const text = z.string();
+const maybeText = z.string().nullable();
+const count = z.number().int().min(0);
+const rowSchema = z.object({
+  id: text, name: text, trade_name: maybeText, website: maybeText, city: maybeText, state: maybeText, industry: maybeText,
+  employees: count.nullable(), states_of_operation: z.array(text), current_provider: maybeText,
+  source: z.enum(ACCOUNT_SOURCES), status: z.enum(ACCOUNT_STATUSES), archived: z.boolean(), archived_at: maybeText, created_at: text,
+  owner: maybeText, owner_name: maybeText, main_contact_id: maybeText, main_contact_name: maybeText, main_contact_email: maybeText, main_contact_phone: maybeText,
+  opportunity_id: maybeText, opportunity_name: maybeText, opportunity_stage: z.enum(ACCOUNT_OPEN_STAGES).nullable(), target_start: maybeText,
+  open_opportunities: count, quote_requests_sent: count, quotes_received: count, waiting_on_peo: z.boolean(), earliest_quote_expires_on: maybeText,
+  last_activity_at: text,
+});
+const pageSchema = z.object({ rows: z.array(rowSchema), total: count, page: z.number().int().min(1), page_size: z.number().int().min(1) });
+// A count the database sends as text (a big number) is a number here.
+const countsSchema = z.array(z.object({ view_name: text, total: z.union([count, z.string().regex(/^\d+$/).transform(Number)]) }));
+const membersSchema = z.array(z.object({ user_id: text.min(1), name: text.refine((n) => n.trim() !== "") }));
+
 export type AccountsPage = TablePage<AccountRow>;
 
 /** A person the Owner filter offers, in the shape a person field's `choices` take: the id the filter sends and the name it shows. */
@@ -151,13 +171,9 @@ export async function listAccounts(opts: {
     p_time_zone: opts.timeZone ?? browserTimeZone(),
   });
   if (error) fail(error, "Couldn't load accounts.");
-  const result = (data ?? {}) as { rows?: AccountRow[]; total?: number; page?: number; page_size?: number };
-  return {
-    rows: result.rows ?? [],
-    total: result.total ?? 0,
-    page: result.page ?? page,
-    pageSize: result.page_size ?? ACCOUNT_LIST_PAGE_SIZE,
-  };
+  const answer = pageSchema.safeParse(data);
+  if (!answer.success) throw new AdvisorApiError("Couldn't load accounts.");
+  return { rows: answer.data.rows as AccountRow[], total: answer.data.total, page: answer.data.page, pageSize: answer.data.page_size };
 }
 
 /**
@@ -176,7 +192,9 @@ export async function countAccountViews(
     p_time_zone: opts.timeZone ?? browserTimeZone(),
   });
   if (error) fail(error, "Couldn't count the views.");
-  return (data ?? []).map((r) => ({ name: r.view_name, total: Number(r.total) }));
+  const answer = countsSchema.safeParse(data);
+  if (!answer.success) throw new AdvisorApiError("Couldn't count the views.");
+  return answer.data.map((r) => ({ name: r.view_name, total: r.total }));
 }
 
 /**
@@ -186,5 +204,7 @@ export async function countAccountViews(
 export async function listFirmMembers(firmId: string | null): Promise<FirmMemberChoice[]> {
   const { data, error } = await supabase.rpc("firm_member_choices", { p_firm_id: firmId });
   if (error) fail(error, "Couldn't load the firm's people.");
-  return (data ?? []).map((m) => ({ value: m.user_id, label: m.name }));
+  const answer = membersSchema.safeParse(data);
+  if (!answer.success) throw new AdvisorApiError("Couldn't load the firm's people.");
+  return answer.data.map((m) => ({ value: m.user_id, label: m.name }));
 }

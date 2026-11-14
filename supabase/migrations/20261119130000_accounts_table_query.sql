@@ -194,7 +194,8 @@ REVOKE ALL ON FUNCTION public.workspace_filter_match_person(uuid, jsonb) FROM PU
 
 -- ---------- 2. The firm's members, by name ----------
 
--- A person's name as the workspace shows it (D-42): the name in their sign-up, else their email. Pure of the caller; internal.
+-- A person's name as the workspace shows it (D-42): the name in their sign-up, else their email, else "A member": an account's email may be empty or none, and
+-- the export's alert for such a member says the same (D-218), so a name is never nothing. Pure of the caller; internal.
 CREATE FUNCTION public.person_display_name(p_meta jsonb, p_email text)
 RETURNS text
 LANGUAGE sql
@@ -204,7 +205,8 @@ AS $$
   SELECT COALESCE(
     NULLIF(btrim(CASE WHEN jsonb_typeof(p_meta -> 'full_name') = 'string' THEN p_meta ->> 'full_name' END), ''),
     NULLIF(btrim(CASE WHEN jsonb_typeof(p_meta -> 'name') = 'string' THEN p_meta ->> 'name' END), ''),
-    p_email)
+    NULLIF(btrim(p_email), ''),
+    'A member')
 $$;
 
 REVOKE ALL ON FUNCTION public.person_display_name(jsonb, text) FROM PUBLIC, anon, authenticated, service_role;
@@ -662,7 +664,6 @@ BEGIN
         WHEN 'current_provider' THEN lower((m.r).current_provider COLLATE "und-x-icu")
         WHEN 'opportunity_name' THEN lower((m.r).opportunity_name COLLATE "und-x-icu")
         WHEN 'state' THEN lower((m.r).state COLLATE "und-x-icu")
-        WHEN 'source' THEN lower((m.r).source COLLATE "und-x-icu")
         WHEN 'owner' THEN lower((m.r).owner_name COLLATE "und-x-icu")
         WHEN 'states_of_operation' THEN lower(array_to_string((m.r).states_of_operation, ', ') COLLATE "und-x-icu")
       END), '') AS k_text,
@@ -675,6 +676,7 @@ BEGIN
         WHEN 'waiting_on_peo' THEN (m.r).waiting_on_peo::integer
         -- A choice by its place in the field's list; a value outside it, if one ever appears, after the listed ones.
         WHEN 'status' THEN COALESCE(array_position(choices, (m.r).status), cardinality(choices) + 1)
+        WHEN 'source' THEN COALESCE(array_position(choices, (m.r).source), cardinality(choices) + 1)
         WHEN 'opportunity_stage' THEN CASE WHEN (m.r).opportunity_stage IS NULL THEN NULL
           ELSE COALESCE(array_position(choices, (m.r).opportunity_stage), cardinality(choices) + 1) END
       END AS k_number,
