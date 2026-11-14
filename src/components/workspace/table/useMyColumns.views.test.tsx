@@ -226,6 +226,39 @@ describe("writes and answers on more than one view", () => {
     expect(fetchMyColumns.mock.calls.length).toBeGreaterThan(2);
   });
 
+  // Catches: the new revision's first fetch, already on its way when the write settled, being reused by the ask-again (it has no data yet, so the query library hands back the running
+  // request), so the answer from before the write lands and the person's kept change disappears.
+  it("asks again, and does not take the answer of a request begun before the write settled, for a revision whose first fetch was still on its way", async () => {
+    let server = ["company", "status"];
+    let calls = 0;
+    let answerOld: (v: unknown) => void = () => {};
+    fetchMyColumns.mockImplementation(() => {
+      calls++;
+      // The second ask is the new revision's first, and it is slow: its answer is the database's from before the write.
+      if (calls === 2) return new Promise((r) => { answerOld = r; });
+      return Promise.resolve({ columns: server, source: "mine_for_view" });
+    });
+    const write = later();
+    setMyColumns.mockReset().mockImplementation(async (_f: string, _t: string, _v: string | null, columns: string[]) => {
+      await write.p;
+      server = columns;
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(page("saved-1"));
+    await waitFor(() => expect(shown()).toEqual(["Company", "Status"]));
+    const menu = await open(user);
+    await user.click(within(menu).getByRole("checkbox", { name: "Contact" }));
+    rerender(page("saved-1", make("2026-11-02T09:00:00Z")));
+    await waitFor(() => expect(fetchMyColumns).toHaveBeenCalledTimes(2));
+    write.release();
+    await waitFor(() => expect(fetchMyColumns).toHaveBeenCalledTimes(3));
+    // The old request answers last, with what the database held before the write.
+    answerOld({ columns: ["company", "status"], source: "mine_for_view" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(shown()).toEqual(["Company", "Status", "Contact"]);
+    await waitFor(() => expect(client.getQueryData(["table", "firm-1", "submissions", "columns", "saved-1", "2026-11-02T09:00:00Z"])).toEqual({ columns: ["company", "status", "contact"], source: "mine_for_view" }));
+  });
+
   // Catches: a refused write rolling the screen back to the columns of ANOTHER revision of the view (the baseline was kept per view, the answers per revision).
   it("rolls a refused write back to the columns of its own revision, not the last confirmed on an earlier one", async () => {
     fetchMyColumns.mockImplementation(async () => ({ columns: ["company", "status"], source: "mine_for_view" }));

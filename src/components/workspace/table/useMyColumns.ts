@@ -107,7 +107,13 @@ export function useMyColumns<K extends TableFields, Row, Context>(table: TableDe
         // (or what it was rolled back to), so it is left alone, except after forgetting, where what applies next is the database's to say.
         const prefix = keyFor(view, null).slice(0, 5);
         const own = fullKey;
-        await client.invalidateQueries({ queryKey: prefix, predicate: (q) => (kept && forgettingOnAView) || JSON.stringify(q.queryKey) !== own });
+        const again = (q: { queryKey: readonly unknown[] }) => (kept && forgettingOnAView) || JSON.stringify(q.queryKey) !== own;
+        // A request of a revision that has no answer yet and is still on its way would be handed back by the ask-again (the query library reuses a running request
+        // when there is no data to replace), and its answer, from before this write, would be believed. Cancelling them first makes the ask-again a new request
+        // that begins after the write. (The alternative, refusing an answer whose request began before the last write settled, has nothing else to show for a
+        // revision with no answer, so it would only move the stale one.)
+        await client.cancelQueries({ queryKey: prefix, predicate: again });
+        await client.invalidateQueries({ queryKey: prefix, predicate: again });
       };
       mine.line = mine.line.then(write);
       return mine.line;
