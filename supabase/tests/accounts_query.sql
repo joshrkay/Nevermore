@@ -1063,3 +1063,24 @@ BEGIN
                      'the helpers are run by no API role');
   RAISE NOTICE 'accounts_query: how it is run passed';
 END $$;
+
+-- ---------- Nevermore support ----------
+-- Break caught: a support session at the firm's address cannot read the table (it reads what a member reads, ADR 0024), or reads it at another address, or exports.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme');
+BEGIN
+  INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at)
+  VALUES (acme, pg_temp.id('platform_admin'), 'platform_admin@example.test', 'Looking at a stuck quote', now(), now() + interval '1 hour');
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.names(pg_temp.al('acme')), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'a support session reads what an owner reads, at the firm''s address');
+  PERFORM pg_temp.is(pg_temp.counts('acme', pg_temp.views()), 'All=6, Open opportunities=1, Waiting on quotes=1, Clients=1, Archived=1', 'and its tabs');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_choices(acme)), 7::bigint, 'and the people the Owner filter offers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_rows(%L, 'accounts', '{}', NULL)$q$, acme)), 'PT423: Nevermore support can look, not change', 'but exports nothing');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.accounts_list(%L)$q$, acme)) LIKE '42501:%', true, 'on the bare domain it reads none');
+  PERFORM pg_temp.as_user('platform_admin', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.accounts_list(%L)$q$, acme)) LIKE '42501:%', true, 'nor at another firm''s address');
+  RESET ROLE;
+  DELETE FROM public.support_sessions WHERE firm_id = acme;
+  RAISE NOTICE 'accounts_query: support passed';
+END $$;
