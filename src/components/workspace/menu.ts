@@ -4,8 +4,14 @@ import { BarChart3, FileText, Mail, Settings, type LucideIcon } from "lucide-rea
 // Leads and Accounts are not listed until the stories that build them (CRM-Q2.1, CRM-H1, CRM-L1.1, CRM-A1.1), so the menu
 // has no dead buttons.
 
-/** The numbers the menu will show beside an item (story CRM-S1.1c, D-39). Not shown yet. */
+/** The numbers the menu shows beside an item (story CRM-S1.1c, D-39). Leads has none until CRM-L1.1. */
 export type MenuCountKey = "quotes" | "inbox";
+
+/** The largest number the badge writes in full; above it the badge says "99+" (a screen reader still hears the real number). */
+export const MENU_COUNT_CAP = 99;
+
+/** What the badge shows: nothing for zero, the number up to the cap, then "99+". */
+export const badgeText = (n: number): string | null => (n <= 0 ? null : n > MENU_COUNT_CAP ? `${MENU_COUNT_CAP}+` : String(n));
 
 export interface MenuItem {
   key: "quotes" | "inbox" | "reports" | "settings";
@@ -15,6 +21,8 @@ export interface MenuItem {
   icon: LucideIcon;
   /** Which count CRM-S1.1c puts beside it; null for an item that has none. */
   countKey: MenuCountKey | null;
+  /** What the number means, said after the item's name to a screen reader: "Quotes, 4 open". Null for an item with no count. */
+  countWords: ((n: number) => string) | null;
   /** Whether the page at this address belongs to the item, so the current section is marked (a record marks its section). */
   isCurrent: (pathname: string, search: URLSearchParams) => boolean;
 }
@@ -49,10 +57,11 @@ export const MENU_ITEMS: MenuItem[] = [
     to: QUEUE,
     icon: FileText,
     countKey: "quotes",
+    countWords: (n) => `${n} open`,
     isCurrent: (pathname, search) => (isQueue(pathname) && !isInbox(pathname, search)) || pathname.startsWith("/advisor/submissions/"),
   },
-  { key: "inbox", label: "Inbox", to: `${QUEUE}?${INBOX_PARAM.name}=${INBOX_PARAM.value}`, icon: Mail, countKey: "inbox", isCurrent: isInbox },
-  { key: "reports", label: "Reports", to: "/advisor/funnel", icon: BarChart3, countKey: null, isCurrent: (pathname) => pathname === "/advisor/funnel" },
+  { key: "inbox", label: "Inbox", to: `${QUEUE}?${INBOX_PARAM.name}=${INBOX_PARAM.value}`, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: isInbox },
+  { key: "reports", label: "Reports", to: "/advisor/funnel", icon: BarChart3, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/advisor/funnel" },
 ];
 
 /** Settings sits at the foot of the menu, with the signed-in person. Its pages mark it too. */
@@ -62,5 +71,6 @@ export const SETTINGS_ITEM: MenuItem = {
   to: SETTINGS_PATH,
   icon: Settings,
   countKey: null,
+  countWords: null,
   isCurrent: (pathname) => pathname === SETTINGS_PATH || SETTINGS_LINKS.some((l) => pathname === l.to),
 };

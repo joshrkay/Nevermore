@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = {
@@ -24,13 +25,15 @@ const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)
 
 const renderAt = async (at: string) => {
   const view = render(
-    <MemoryRouter initialEntries={[at]}>
-      <Routes>
-        <Route element={<WorkspaceShell />}>
-          <Route path="*" element={<p>The page</p>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[at]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="*" element={<p>The page</p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   await settle();
   return view;
@@ -159,13 +162,15 @@ describe("the desktop menu", () => {
 describe("the workspace state", () => {
   it("asks whether the person is a platform admin once for each time the shell is shown, however many parts use it", async () => {
     render(
-      <MemoryRouter initialEntries={["/settings"]}>
-        <Routes>
-          <Route element={<WorkspaceShell />}>
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/settings"]}>
+          <Routes>
+            <Route element={<WorkspaceShell />}>
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     await settle();
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();

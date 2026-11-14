@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
@@ -15,6 +16,7 @@ import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
+import { MENU_COUNTS_KEY } from "@/lib/menuCountsApi";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
@@ -131,6 +133,12 @@ const Detail = ({
   // The PEOs and their profiles in use, from the database: the quote requests' fit checks, the packet's checks and
   // the census layouts read them.
   const peoCatalog = usePeoCatalog();
+  // A thread marked read clears the mark on the queue; the menu's Inbox count follows at once, not at its next refresh (story CRM-S1.1c).
+  const queryClient = useQueryClient();
+  const threadOpened = useCallback(() => {
+    reload();
+    void queryClient.invalidateQueries({ queryKey: [...MENU_COUNTS_KEY] });
+  }, [reload, queryClient]);
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
   // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
@@ -211,7 +219,7 @@ const Detail = ({
             notes={detail.quoteRequestNotes}
             events={detail.quoteRequestEvents}
             reads={detail.quoteRequestThreadReads}
-            onOpened={reload}
+            onOpened={threadOpened}
           />
           <FieldReviewPanel
             sessionId={detail.id}

@@ -1252,6 +1252,11 @@ export type Database = {
         }
         Returns: Json
       }
+      // The numbers on the menu (20261118140000): { quotes, inbox } for the caller's current firm. Later stories add keys.
+      menu_counts: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       queue_view_counts: {
         Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]

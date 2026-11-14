@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // What a platform admin sees in a firm's workspace on a support session (story CRM-P2.4, D-33): a banner on every page that says whom they
@@ -23,13 +24,15 @@ const { default: WorkspaceShell } = await import("./WorkspaceShell");
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 const renderAt = async (at: string) => {
   render(
-    <MemoryRouter initialEntries={[at]}>
-      <Routes>
-        <Route element={<WorkspaceShell />}>
-          <Route path="*" element={<p>The page</p>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[at]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="*" element={<p>The page</p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   await settle();
 };

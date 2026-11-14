@@ -186,6 +186,7 @@
 \i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
 \i supabase/migrations/20261118130000_record_history.sql
 \i supabase/migrations/20261118130500_record_history_fixes.sql
+\i supabase/migrations/20261118140000_menu_counts.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1226,6 +1227,9 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.queue_list_submissions(''[]'', ''company_name'', ''asc'', 1)', 'the queue: one page, filtered and sorted in the database (D-44)'),
   ('queue_view_counts(p_views jsonb, p_search text, p_time_zone text)', 'advisor',
                                                                      'SELECT count(*) FROM public.queue_view_counts(''[{"name":"All"}]'')', 'the count on each of the queue''s view tabs');
+-- CRM-S1.1c (20261118140000_menu_counts.sql): the menu's counts, for the caller's own firm.
+INSERT INTO callable VALUES
+  ('menu_counts()', 'advisor', 'SELECT public.menu_counts()::text', 'the numbers on the menu (open quotes, intakes with new PEO mail): the caller''s own firm only, the same shape for no firm as for none');
 
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000; supabase/tests/table_settings.sql) ----
 INSERT INTO callable VALUES
@@ -1755,6 +1759,11 @@ INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
   ('queue_view_counts', 'advisor', 'count',
    $$SELECT total::text FROM public.queue_view_counts('[{"name":"Submitted","filters":[{"field":"intake_status","op":"any_of","value":["submitted"]}]}]')$$,
    $$SELECT count(*)::text FROM public.chamber_sessions s JOIN public.submission_workflow w ON w.session_id = s.id WHERE s.firm_id = {firm} AND s.status = 'submitted'$$);
+
+-- CRM-S1.1c: the menu's counts. Each count equals the caller's own firm's: sent quote requests, and intakes with unread PEO mail.
+INSERT INTO fprobe (fn, who, shape, call, expected) VALUES
+  ('menu_counts', 'advisor', 'count', $$SELECT (public.menu_counts() ->> 'quotes')$$,
+   $$SELECT count(*)::text FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm} AND q.status = 'sent'$$);
 
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
 -- Every function is a current member's, on their own firm's views: {view} is the agent's private view (advisor, agent_b),
@@ -3545,7 +3554,8 @@ SELECT unnest(ARRAY[
 -- not privileged and need no entry.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
-  ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)');
+  ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
+  ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)');
 
 -- Everything wrong between the registry and the catalogue, one per line, or NULL. It reads which functions exist and who may
 -- execute them, never what a function says.

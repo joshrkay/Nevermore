@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
@@ -164,14 +165,16 @@ describe("AdvisorActivityPage", () => {
 
   it("sits inside the workspace menu, under Settings, which links to it for an owner", async () => {
     render(
-      <MemoryRouter initialEntries={["/advisor/activity"]}>
-        <Routes>
-          <Route element={<WorkspaceShell />}>
-            <Route path="/advisor/activity" element={<AdvisorActivityPage />} />
-            <Route path="/settings" element={<AdvisorSettingsPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/advisor/activity"]}>
+          <Routes>
+            <Route element={<WorkspaceShell />}>
+              <Route path="/advisor/activity" element={<AdvisorActivityPage />} />
+              <Route path="/settings" element={<AdvisorSettingsPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     await screen.findByRole("table");
     const nav = screen.getByRole("navigation", { name: "Workspace" });

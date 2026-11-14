@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { Supplement } from "@/data/peoSupplement";
@@ -135,13 +136,17 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   ...over,
 });
 
+// The page tells the menu's counts when it marks a thread read (story CRM-S1.1c), so it needs the app's query client.
+const queryClient = new QueryClient();
 const renderPage = () =>
   render(
-    <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
-      <Routes>
-        <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+        <Routes>
+          <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 
 // The workspace as a platform admin on a support session sees it (CRM-P2.4): read only, and no file leaves the product.
@@ -152,13 +157,15 @@ const supportWorkspace = (isSupport: boolean) => ({
 const renderAs = async (isSupport: boolean) => {
   const { WorkspaceContext } = await import("@/components/workspace/useWorkspace");
   return render(
-    <WorkspaceContext.Provider value={supportWorkspace(isSupport)}>
-      <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
-        <Routes>
-          <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
-        </Routes>
-      </MemoryRouter>
-    </WorkspaceContext.Provider>,
+    <QueryClientProvider client={queryClient}>
+      <WorkspaceContext.Provider value={supportWorkspace(isSupport)}>
+        <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+          <Routes>
+            <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+          </Routes>
+        </MemoryRouter>
+      </WorkspaceContext.Provider>
+    </QueryClientProvider>,
   );
 };
 
@@ -168,13 +175,15 @@ const GoTo = ({ id }: { id: string }) => {
 };
 const renderWithNavigation = () =>
   render(
-    <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
-      <GoTo id="s2" />
-      <GoTo id="s1" />
-      <Routes>
-        <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+        <GoTo id="s2" />
+        <GoTo id="s1" />
+        <Routes>
+          <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 
 // The request being drafted lives in Ask the prospect. Role queries over the whole page cost seconds each in a page this
@@ -1148,6 +1157,28 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(threads).getByText("Proposal attached.")).toBeInTheDocument();
     await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalledWith(7, "2026-11-10T15:00:05.5+00:00"));
     await waitFor(() => expect(api.loadSubmission.mock.calls.length).toBeGreaterThan(loads));
+  });
+
+  // Catches: the Inbox count in the menu staying as it was for up to a minute after the member opened the thread that cleared its mark.
+  it("tells the menu's counts to refresh as soon as a thread is marked read, so Inbox and the queue's mark stay in step", async () => {
+    const request = { id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+      quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null };
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      quoteRequests: [request],
+      quoteRequestMessages: [{ id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null,
+        direction: "received", is_automatic: false, new_sender: true, from_address: "dana@trinet.example", from_name: "Dana", to_addresses: [], cc_addresses: [],
+        subject: "Proposal", body_text: "Proposal attached.", body_truncated: false, headers: {}, sent_at: "2026-11-10T15:00:00Z", recorded_at: "2026-11-10T15:00:05.5+00:00" }],
+    }));
+    api.openQuoteRequestThread.mockResolvedValue(undefined);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    renderPage();
+    const threads = await screen.findByRole("region", { name: "PEO threads" });
+    expect(invalidate).not.toHaveBeenCalled();
+    fireEvent.click(within(threads).getByRole("button", { name: /TriNet/ }));
+    await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalled());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
+    invalidate.mockRestore();
   });
 
   it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {
