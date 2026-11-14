@@ -6,9 +6,8 @@ import { toast } from "sonner";
 import { blobBytes, blobText } from "@/test/blob";
 
 const signOut = vi.fn();
-const signIn = vi.fn();
-// How the person signed in decides how they step up for an export: `providers` is what Supabase says their account can sign in with.
-const auth = { user: { email: "adv@example.com", app_metadata: { providers: ["email"] } } as { email: string; app_metadata: { providers: string[] } }, signOut, signIn };
+// Whether the person has an authenticator decides how they step up for an export (`mfa` below), not how they signed in.
+const auth = { user: { email: "adv@example.com", app_metadata: { providers: ["email"] } } as { email: string; app_metadata: { providers: string[] } }, signOut };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 let firmAddress: { status: string; address?: string; name?: string } = { status: "none" };
@@ -62,7 +61,6 @@ describe("AdvisorPartnersPage", () => {
     vi.mocked(toast.error).mockReset();
     firmAddress = { status: "none" };
     signOut.mockReset();
-    signIn.mockReset();
     mfa.listFactors.mockReset().mockResolvedValue({ data: { totp: [], all: [] }, error: null });
     mfa.challengeAndVerify.mockReset();
     auth.user = { email: "adv@example.com", app_metadata: { providers: ["email"] } };
@@ -1212,7 +1210,6 @@ describe("AdvisorPartnersPage", () => {
         expect((await theFile()).name).toBe("referral-partners-2026-11-19.csv");
         // Nobody was signed out, and the dialog is gone.
         expect(signOut).not.toHaveBeenCalled();
-        expect(signIn).not.toHaveBeenCalled();
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       });
 
@@ -1242,52 +1239,25 @@ describe("AdvisorPartnersPage", () => {
         expect(await screen.findByText("Exported 1 referral partner.")).toBeInTheDocument();
       });
 
-      it("asks a person with a password and no authenticator for the password, in a dialog, and exports again once it is right", async () => {
-        signIn.mockResolvedValue({ error: null });
-        refusedThenGiven();
-        renderPage();
-        const dialog = await press();
-        expect(mfa.listFactors).toHaveBeenCalled();
-        signIn.mockResolvedValueOnce({ error: Object.assign(new Error("Invalid login credentials"), { code: "invalid_credentials" }) });
-        fireEvent.change(within(dialog).getByLabelText("Password"), { target: { value: "wrong" } });
-        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
-        expect(await within(dialog).findByRole("alert")).toHaveTextContent("That password didn't work. Check it and try again.");
-        expect(exportRows).toHaveBeenCalledTimes(1);
-        fireEvent.change(within(dialog).getByLabelText("Password"), { target: { value: "correct-horse" } });
-        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
-        expect(await screen.findByText("Exported 1 referral partner.")).toBeInTheDocument();
-        expect(signIn).toHaveBeenLastCalledWith("adv@example.com", "correct-horse");
-        expect(exportRows).toHaveBeenCalledTimes(2);
-        expect(exportRows.mock.calls[1]).toEqual(exportRows.mock.calls[0]);
-        expect(signOut).not.toHaveBeenCalled();
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      });
-
-      it("asks nothing of a password that cannot be checked just now but says so in words", async () => {
-        signIn.mockResolvedValue({ error: new Error("network") });
-        refusedThenGiven();
-        renderPage();
-        const dialog = await press();
-        fireEvent.change(within(dialog).getByLabelText("Password"), { target: { value: "x" } });
-        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
-        expect(await within(dialog).findByText(/couldn't check your password/)).toBeInTheDocument();
-        expect(exportRows).toHaveBeenCalledTimes(1);
-      });
-
-      it("signs out of this device only, and no other, a person who signed in with Google or Microsoft, who has neither a code nor a password to give", async () => {
-        auth.user = { email: "adv@example.com", app_metadata: { providers: ["google"] } };
-        refusedThenGiven();
-        renderPage();
-        const dialog = await press();
-        expect(within(dialog).queryByLabelText("Password")).not.toBeInTheDocument();
-        expect(within(dialog).queryByLabelText(/6-digit code/)).not.toBeInTheDocument();
-        expect(dialog).toHaveTextContent("This signs you out on this device only");
-        expect(signOut).not.toHaveBeenCalled();
-        fireEvent.click(within(dialog).getByRole("button", { name: "Sign in again" }));
-        // The sign-out that keeps the person's other devices and brings them back to this page (useAuth, RequireAccess).
-        expect(signOut).toHaveBeenCalledWith("step_up");
-        expect(exportRows).toHaveBeenCalledTimes(1);
-      });
+      // D-19: a password sign-in that has not done its second factor opens no firm's data, so a password is no way to step up. Without an authenticator
+      // the person signs in again, on this device only, whatever they signed in with.
+      it.each([["a password", ["email"]], ["Google or Microsoft", ["google"]], ["a password and Google", ["email", "google"]]])(
+        "signs in again, on this device only, a person with no authenticator who signed in with %s: no code, no password",
+        async (_, providers) => {
+          auth.user = { email: "adv@example.com", app_metadata: { providers } };
+          refusedThenGiven();
+          renderPage();
+          const dialog = await press();
+          expect(within(dialog).queryByLabelText("Password")).not.toBeInTheDocument();
+          expect(within(dialog).queryByLabelText(/6-digit code/)).not.toBeInTheDocument();
+          expect(dialog).toHaveTextContent("This signs you out on this device only");
+          expect(signOut).not.toHaveBeenCalled();
+          fireEvent.click(within(dialog).getByRole("button", { name: "Sign in again" }));
+          // The sign-out that keeps the person's other devices and brings them back to this page (useAuth, RequireAccess).
+          expect(signOut).toHaveBeenCalledWith("step_up");
+          expect(exportRows).toHaveBeenCalledTimes(1);
+        },
+      );
 
       it("leaves the dialog without exporting when the person cancels, and a later press asks again", async () => {
         mfa.listFactors.mockResolvedValue({ data: { totp: [{ id: "factor-1" }], all: [] }, error: null });

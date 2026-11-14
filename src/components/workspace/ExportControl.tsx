@@ -38,12 +38,12 @@ interface Props {
  * "Export": a CSV of every row of a table that matches the page's filters (story CRM-S3.8a, D-48). It is one call to the database, which decides what the
  * person may take, records the export in the firm's record and gives the rows; this makes them a file of the columns the page shows and says how many,
  * or says in words why not. When the database finds the last sign-in too old for a whole table, the person proves who they are again without leaving the
- * page (an authenticator code, or a password), and the export is asked again with the same filters.
+ * page (the authenticator's code, or signing in again on this device), and the export is asked again with the same filters.
  * Nevermore support is offered no download (ADR 0024): where the button was, one plain line says so, and nothing is asked of the database.
  */
 export function ExportControl({ firmId, table, columns, filters = {}, address = {} }: Props) {
   const off = useDownloadsOff();
-  const { user, signOut } = useAuth();
+  const { signOut } = useAuth();
   const [, setParams] = useSearchParams();
   const [outcome, setOutcome] = useState<Outcome>({ kind: "none" });
   // One export at a time, however fast the clicks come.
@@ -69,7 +69,7 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
     } catch (error) {
       if (error instanceof ExportError && error.kind === "signInAgain") {
         try {
-          next = { kind: "step_up", way: await stepUpWay(user) };
+          next = { kind: "step_up", way: await stepUpWay() };
         } catch {
           next = { kind: "refused", message: GENERIC };
         }

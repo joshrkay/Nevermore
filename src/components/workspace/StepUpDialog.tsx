@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useAuth } from "@/hooks/useAuth";
 import { checkCode } from "@/lib/secondFactor";
 import type { StepUp } from "@/lib/stepUp";
 
@@ -18,12 +17,11 @@ interface Props {
 }
 
 /**
- * "Sign in again to export a whole table", in place (story CRM-S3.8a): the person's authenticator code, or their password, or (for someone who signed in
- * with Google or Microsoft) a button that signs them in again from the sign-in page and brings them back. Nothing is exported from here: it only says
+ * "Sign in again to export a whole table", in place (story CRM-S3.8a): the person's authenticator code, or (for someone with no authenticator) a button that
+ * signs them in again on this device from the sign-in page and brings them back. Never a password: see `StepUp`. Nothing is exported from here: it only says
  * when the person has proved who they are again, and the export asks the database again.
  */
 export function StepUpDialog({ way, onDone, onCancel, onSignInAgain }: Props) {
-  const { signIn } = useAuth();
   const [value, setValue] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -32,25 +30,15 @@ export function StepUpDialog({ way, onDone, onCancel, onSignInAgain }: Props) {
     e.preventDefault();
     if (busy || way.kind === "sign_in_again") return;
     setProblem(null);
-    if (way.kind === "code") {
-      const digits = value.replace(/\s/g, "");
-      if (!/^\d{6}$/.test(digits)) return setProblem("Enter the 6 digits from your authenticator app.");
-      setBusy(true);
-      const result = await checkCode(way.factorId, digits);
-      setBusy(false);
-      if (result === "ok") return onDone();
-      return setProblem(result === "wrong_code"
-        ? "That code didn't work. Check it, or wait for the next one, and try again."
-        : "We couldn't check your code just now. Try again in a minute.");
-    }
-    if (value === "") return setProblem("Enter your password.");
+    const digits = value.replace(/\s/g, "");
+    if (!/^\d{6}$/.test(digits)) return setProblem("Enter the 6 digits from your authenticator app.");
     setBusy(true);
-    const { error } = await signIn(way.email, value);
+    const result = await checkCode(way.factorId, digits);
     setBusy(false);
-    if (!error) return onDone();
-    return setProblem((error as { code?: string }).code === "invalid_credentials"
-      ? "That password didn't work. Check it and try again."
-      : "We couldn't check your password just now. Try again in a minute.");
+    if (result === "ok") return onDone();
+    return setProblem(result === "wrong_code"
+      ? "That code didn't work. Check it, or wait for the next one, and try again."
+      : "We couldn't check your code just now. Try again in a minute.");
   };
 
   return (
@@ -60,7 +48,6 @@ export function StepUpDialog({ way, onDone, onCancel, onSignInAgain }: Props) {
           <DialogTitle>Sign in again to export a whole table.</DialogTitle>
           <DialogDescription>
             {way.kind === "code" && "Your last sign-in was a while ago. Type the 6-digit code your authenticator app shows for Nevermore, and the export goes on."}
-            {way.kind === "password" && "Your last sign-in was a while ago. Type your password, and the export goes on."}
             {way.kind === "sign_in_again" && "Your last sign-in was a while ago. This signs you out on this device only; sign in again and you come back to this page."}
           </DialogDescription>
         </DialogHeader>
@@ -73,13 +60,12 @@ export function StepUpDialog({ way, onDone, onCancel, onSignInAgain }: Props) {
           <form onSubmit={(e) => void submit(e)} className="space-y-4">
             <div>
               <label htmlFor="step-up-value" className="block text-xs text-muted-foreground mb-1.5">
-                {way.kind === "code" ? "6-digit code from your authenticator app" : "Password"}
+                6-digit code from your authenticator app
               </label>
               <input
                 id="step-up-value"
-                type={way.kind === "code" ? "text" : "password"}
-                inputMode={way.kind === "code" ? "numeric" : undefined}
-                autoComplete={way.kind === "code" ? "one-time-code" : "current-password"}
+                inputMode="numeric"
+                autoComplete="one-time-code"
                 autoFocus
                 value={value}
                 onChange={(e) => setValue(e.target.value)}

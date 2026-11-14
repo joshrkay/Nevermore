@@ -7,7 +7,7 @@ import { blobBytes, blobText } from "@/test/blob";
 
 // The session is the signed-in person's: its token names the sign-in, and the page must hand it to the one shared answer
 // about which firms they own, so an answer given before the second factor is not handed out after it.
-const auth = { user: { id: "u1", email: "owner@example.com", app_metadata: { providers: ["email"] } }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn(), signIn: vi.fn() };
+const auth = { user: { id: "u1", email: "owner@example.com", app_metadata: { providers: ["email"] } }, session: { access_token: "tok-1" } as { access_token: string } | null, signOut: vi.fn() };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 // The page's calls to the database, by the names advisorApi gives them; AdvisorApiError is the real one, so a refusal is read as it is.
 const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn(), listFirmActivityPeople: vi.fn(), listFirmActivity: vi.fn() };
@@ -48,7 +48,6 @@ describe("AdvisorActivityPage", () => {
     exportRows.mockReset();
     downloadBlob.mockReset();
     auth.signOut.mockReset();
-    auth.signIn.mockReset();
     auth.user = { id: "u1", email: "owner@example.com", app_metadata: { providers: ["email"] } };
     mfa.listFactors.mockReset().mockResolvedValue({ data: { totp: [], all: [] }, error: null });
     mfa.challengeAndVerify.mockReset();
@@ -953,24 +952,8 @@ describe("AdvisorActivityPage", () => {
         expect(auth.signOut).not.toHaveBeenCalled();
       });
 
-      it("steps up in place with the password for a person with no authenticator, and exports again with the same filters", async () => {
-        auth.signIn.mockResolvedValue({ error: null });
-        exportRows.mockRejectedValueOnce(tooOld());
-        exportRows.mockResolvedValue(answer([line()]));
-        renderPage();
-        fireEvent.change(await screen.findByLabelText("Kind"), { target: { value: "sign_in" } });
-        await waitFor(() => expect(api.listFirmActivity).toHaveBeenLastCalledWith("firm-1", { person: null, kind: "sign_in", after: null }));
-        fireEvent.click(await exportButton());
-        const dialog = await screen.findByRole("dialog");
-        fireEvent.change(within(dialog).getByLabelText("Password"), { target: { value: "correct-horse" } });
-        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
-        await screen.findByText("Exported 1 entry in the firm's record.");
-        expect(auth.signIn).toHaveBeenCalledWith("owner@example.com", "correct-horse");
-        expect(exportRows).toHaveBeenLastCalledWith({ firmId: "firm-1", table: "firm_activity", filters: { kind: "sign_in" } });
-      });
-
-      it("keeps the page's filters in the address when a person who signed in with Google must sign in again, and reads them back from it", async () => {
-        auth.user = { id: "u1", email: "owner@example.com", app_metadata: { providers: ["google"] } };
+      it.each([["Google", ["google"]], ["a password", ["email"]]])("keeps the page's filters in the address when a person with no authenticator, who signed in with %s, must sign in again, and reads them back from it", async (_, providers) => {
+        auth.user = { id: "u1", email: "owner@example.com", app_metadata: { providers } };
         const lead = "5f1c2a9e-0000-4000-8000-000000000002";
         api.listFirmActivityPeople.mockResolvedValue([{ user_id: lead, email: "lead@example.com", is_nevermore: false }]);
         exportRows.mockRejectedValue(tooOld());
