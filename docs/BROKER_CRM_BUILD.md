@@ -98,6 +98,18 @@ CRM-P1.5 and CRM-P1.1.
 
 New migration files are named to sort after `20261115140000`.
 
+### The three lines of work, brought together (2026-11-14)
+
+Epic 1's late stories (CRM-P1.5, CRM-P2.2 and their fixes) were merged into `crm/epic-01-firms-security` only, CRM-P1.8 and
+CRM-S1.1b went to `main`, and Epic 2's review fixes stayed on `crm/epic-02-shell-tables`. All three are merged into one line
+on `claude/friendly-feynman-wlpj9j`, and every remaining story is built there, one after another, in the build order below.
+
+| # | Decision |
+|---|---|
+| D-103 | Where two lines disagreed about a member of several firms, one firm at a time wins (D-40, ADR 0016): the Members page, like every member page, lets them in at a firm's address and sends them to "Choose a firm" on the bare domain. The Members page sits inside the workspace shell and is linked from Settings, for owners |
+| D-104 | Six database objects were each rewritten by two lines that did not see each other, so the later file undid the earlier one's rule (a suspended firm's members were let back in; suspending a member failed). `20261117160000_epics_reconciled.sql` states each once with every rule. The two migrations that restate the list of activity kinds (`20261116220000`, `20261116230000`) were edited to accept each other's kinds: without that, whichever is applied second is refused on a database that already holds the other's entries. This is the one edit to an old migration, and it changes nothing on a database where both are already applied |
+| D-105 | A story's SQL test loads every migration, not only those up to its own, whenever a later migration restates something the story made. Migrations for the stories still to build are named to sort after `20261117160000`, in the order they are built; the timestamps in the Epic 2 table below are replaced by that rule |
+
 ## Epic 2 decisions (2026-11-13)
 
 These came from reading Epic 2's stories against the code as it stands at Epic 1's tip, where P-1.1,

@@ -298,7 +298,7 @@ const PartnerRow = ({ partner, counts, links, onChanged }: { partner: ReferralPa
 
   return (
     <WorkspaceFormProvider api={api}>
-    <tr className="border-b border-border/60 align-top">
+    <tr className="border-b border-border/60 align-top" onKeyDown={api.onKeyDown}>
       <th scope="row" className="py-3 pr-4 font-normal text-left">
         {editing ? (
           <WorkspaceForm api={api} actions={null} aria-label={`Edit ${partner.name}`} className="space-y-2 min-w-48">

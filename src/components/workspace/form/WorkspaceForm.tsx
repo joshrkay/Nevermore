@@ -1,4 +1,4 @@
-import { createContext, forwardRef, useContext, type ComponentPropsWithoutRef, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
+import { createContext, forwardRef, useContext, useEffect, useRef, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import type { ControllerRenderProps, FieldValues } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -39,14 +39,8 @@ export const WorkspaceForm = ({ api, children, actions, className, ...aria }: {
   "aria-labelledby"?: string;
 }) => {
   const inherited = useContext(ApiContext) === api;
-  const onKeyDown = (e: KeyboardEvent<HTMLFormElement>) => {
-    if (e.key === "Escape" && !e.defaultPrevented && api.cancel) {
-      e.preventDefault();
-      api.cancel();
-    }
-  };
   const body = (
-    <form id={api.formId} noValidate onSubmit={(e) => void api.submit(e)} onKeyDown={onKeyDown} className={cn("space-y-4", className)} {...aria}>
+    <form id={api.formId} noValidate onSubmit={(e) => void api.submit(e)} onKeyDown={api.onKeyDown} className={cn("space-y-4", className)} {...aria}>
       {children}
       {actions === undefined ? <FormActions /> : actions}
     </form>
@@ -65,13 +59,19 @@ export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", c
   className?: string;
 }) => {
   const api = useApi();
+  const save = useRef<HTMLButtonElement>(null);
+  // The Save button was disabled while the request ran, so the browser dropped the focus from it. When the save fails with a
+  // message beside the buttons, the focus goes back there (and the message, an alert, is announced once as it appears).
+  useEffect(() => {
+    if (api.saveError && !api.saving) save.current?.focus();
+  }, [api.saveError, api.saving]);
   return (
     <div className={cn("flex flex-wrap items-center justify-end gap-2", className)}>
       {api.saveError && <p role="alert" className="basis-full text-sm font-medium text-destructive">{api.saveError}</p>}
       {api.cancel && (
         <Button type="button" variant="outline" className="h-11 rounded-md" disabled={api.saving} onClick={api.cancel}>{cancelLabel}</Button>
       )}
-      <Button type="submit" form={api.formId} className="h-11 rounded-md" disabled={api.saving} aria-busy={api.saving}>
+      <Button ref={save} type="submit" form={api.formId} className="h-11 rounded-md" disabled={api.saving} aria-busy={api.saving}>
         {api.saving && <Loader2 className="animate-spin" aria-hidden="true" />}
         {api.saving ? savingLabel : submitLabel}
       </Button>

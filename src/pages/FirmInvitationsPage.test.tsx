@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom";
@@ -165,6 +166,26 @@ describe("FirmInvitationsPage", () => {
     await waitFor(() => expect(screen.getByLabelText("Email address")).toHaveFocus());
     expect(screen.getByLabelText("Email address")).toHaveValue("hire@example.test");
     expect(within(screen.getByRole("form", { name: "Invite someone" })).getAllByRole("alert")).toHaveLength(1);
+  });
+
+  // The page tells these two refusals apart by their words (the server sends no code the page can read). The sentences are
+  // read from the migration that raises them, so rewording one there fails here instead of quietly moving the error away
+  // from the email field.
+  it("puts every 'already a member' and 'already invited' sentence the database raises under the email field", async () => {
+    const sql = readFileSync("supabase/migrations/20261116190500_invitation_fixes.sql", "utf8");
+    const raised = [...sql.matchAll(/RAISE EXCEPTION '((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+    const about = raised.filter((m) => /already a member|pending invitation to this firm/i.test(m));
+    expect(about.length).toBeGreaterThanOrEqual(2);
+    for (const sentence of new Set(about)) {
+      api.inviteMember.mockReset().mockRejectedValue(new Error(sentence));
+      const { unmount } = render(<MemoryRouter initialEntries={["/firm/invitations"]}><Routes><Route path="/firm/invitations" element={<FirmInvitationsPage />} /></Routes></MemoryRouter>);
+      const user = userEvent.setup();
+      await user.type(await screen.findByLabelText("Email address"), "hire@example.test");
+      await user.click(screen.getByRole("button", { name: "Send invitation" }));
+      await screen.findByText(sentence);
+      expect(screen.getByLabelText("Email address")).toHaveAccessibleDescription(new RegExp(sentence.slice(0, 15)));
+      unmount();
+    }
   });
 
   describe("the invite form's rules", () => {

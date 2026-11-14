@@ -220,13 +220,48 @@ describe("AdvisorPartnersPage", () => {
       expect(screen.getByRole("button", { name: "Add partner" })).toBeEnabled();
     });
 
-    it("says so when it can't reach the server at all, in words rather than a blank", async () => {
-      api.addReferralPartner.mockRejectedValue(new Error(""));
+    // The real client answers a dropped network with this shape; its text must never reach the person.
+    it("says so in plain words when it can't reach the server, never the client's own text", async () => {
+      api.addReferralPartner.mockRejectedValue(Object.assign(new Error("TypeError: Failed to fetch"), { code: "" }));
       const user = await ready();
       await user.type(field("Name"), "Another Acme");
       await user.selectOptions(field("Kind of partner"), "other");
       await user.click(screen.getByRole("button", { name: "Add partner" }));
-      expect(await within(form()).findByRole("alert")).toHaveTextContent(/Couldn't add the partner.*connection/);
+      const alert = await within(form()).findByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't add the partner. Check your connection and try again.");
+      expect(alert).not.toHaveTextContent("TypeError");
+    });
+
+    // Catches: a timeout or server fault from the database shown as its own words.
+    it.each([["57014", "canceling statement due to statement timeout"], ["PGRST301", "JWSError JWSInvalidSignature"]])("does not show a database fault (%s) as the reason", async (code, raw) => {
+      api.addReferralPartner.mockRejectedValue(Object.assign(new Error(raw), { code }));
+      const user = await ready();
+      await user.type(field("Name"), "Another Acme");
+      await user.selectOptions(field("Kind of partner"), "other");
+      await user.click(screen.getByRole("button", { name: "Add partner" }));
+      const alert = await within(form()).findByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't add the partner. Check your connection and try again.");
+      expect(alert).not.toHaveTextContent(raw);
+    });
+
+    // Catches: focus dropped to the page when the disabled Save button comes back.
+    it("puts the focus back on Add partner when the save fails, with one message announced", async () => {
+      let fail: (e: Error) => void = () => {};
+      api.addReferralPartner.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+      const user = await ready();
+      await user.type(field("Name"), "Another Acme");
+      await user.selectOptions(field("Kind of partner"), "other");
+      await user.click(screen.getByRole("button", { name: "Add partner" }));
+      await screen.findByRole("button", { name: "Adding…" });
+      // A real browser drops the focus from a button that becomes disabled.
+      field("Name").focus();
+      document.body.tabIndex = -1;
+      document.body.focus();
+      document.body.removeAttribute("tabindex");
+      fail(new Error("Couldn't add the partner."));
+      await within(form()).findByRole("alert");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Add partner" })).toHaveFocus());
+      expect(within(form()).getAllByRole("alert")).toHaveLength(1);
     });
 
     // The one time Save is disabled, and it says why.
@@ -341,6 +376,46 @@ describe("AdvisorPartnersPage", () => {
       expect(within(screen.getByRole("row", { name: /Save/ })).getByLabelText("Name")).toHaveValue("Acme CFO Partners II");
     });
 
+    it("says so in plain words when a row save can't reach the server", async () => {
+      api.updateReferralPartner.mockRejectedValue(Object.assign(new Error("TypeError: Failed to fetch"), { code: "" }));
+      const { user, row } = await openEdit();
+      await user.type(within(row).getByLabelText("Name"), " II");
+      await user.click(within(row).getByRole("button", { name: "Save" }));
+      const alert = await within(row).findByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't save the partner. Check your connection and try again.");
+      expect(alert).not.toHaveTextContent("TypeError");
+      await waitFor(() => expect(within(row).getByRole("button", { name: "Save" })).toHaveFocus());
+    });
+
+    // Catches: focus left on the page after the question closes, so a keyboard user starts again from the top.
+    it("returns the focus to where it was when the question closes with Keep editing, by button or by Escape", async () => {
+      const { user, row } = await openEdit();
+      const name = within(row).getByLabelText("Name");
+      await user.type(name, " II");
+      await user.keyboard("{Escape}");
+      await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+      await waitFor(() => expect(name).toHaveFocus());
+      await user.keyboard("{Escape}");
+      await screen.findByRole("alertdialog");
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(name).toHaveFocus());
+    });
+
+    // Catches: Escape working only while the cursor is in a field of the row.
+    it("asks first on Escape pressed on the row's own Cancel or Save button", async () => {
+      const { user, row } = await openEdit();
+      await user.type(within(row).getByLabelText("Name"), " II");
+      within(row).getByRole("button", { name: "Cancel" }).focus();
+      await user.keyboard("{Escape}");
+      const ask = await screen.findByRole("alertdialog");
+      await user.click(within(ask).getByRole("button", { name: "Keep editing" }));
+      within(row).getByRole("button", { name: "Save" }).focus();
+      await user.keyboard("{Escape}");
+      await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+      expect(screen.getByRole("button", { name: "Edit Acme CFO Partners" })).toBeInTheDocument();
+    });
+
     it("does not ask about a saved edit afterwards", async () => {
       api.updateReferralPartner.mockResolvedValue({ ...acme, name: "Acme CFO Partners II" });
       const { user, row } = await openEdit();
@@ -394,6 +469,57 @@ describe("AdvisorPartnersPage", () => {
       expect(await screen.findByText("Funnel page")).toBeInTheDocument();
     });
 
+    // Catches: the question vanishing when the save lands and the move the person asked for being dropped.
+    it("goes on to the page the person asked for when a save in flight finishes under the question", async () => {
+      let finish: (v: unknown) => void = () => {};
+      api.addReferralPartner.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+      const user = renderInRouter();
+      await screen.findByRole("row", { name: /Acme CFO Partners/ });
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "Slow One");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+      await screen.findByRole("button", { name: "Adding…" });
+      await user.click(screen.getByRole("link", { name: "Go to the funnel" }));
+      await screen.findByRole("alertdialog");
+      finish({ ...acme, code: "slow-one", name: "Slow One" });
+      expect(await screen.findByText("Funnel page")).toBeInTheDocument();
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    // The router keeps one blocker; two dirty forms on a page must still ask once, and ask until both are clean.
+    it("asks once for two forms with unsaved changes, and keeps asking until both are saved or discarded", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      api.updateReferralPartner.mockResolvedValue({ ...acme, name: "Acme CFO Partners II" });
+      api.addReferralPartner.mockResolvedValue({ ...acme, code: "new-one", name: "New One" });
+      const user = renderInRouter();
+      await user.click(await screen.findByRole("button", { name: "Edit Acme CFO Partners" }));
+      const row = screen.getByRole("row", { name: /Save/ });
+      await user.type(within(row).getByLabelText("Name"), " II");
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "New One");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+
+      await user.click(screen.getByRole("link", { name: "Go to the funnel" }));
+      expect(await screen.findAllByRole("alertdialog")).toHaveLength(1);
+      await user.click(screen.getByRole("button", { name: "Keep editing" }));
+
+      // Discard the row's change: the add form still has typing in it, so the page still asks.
+      await user.click(within(row).getByRole("button", { name: "Cancel" }));
+      await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+      await user.click(screen.getByRole("link", { name: "Go to the funnel" }));
+      await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+      expect(screen.queryByText("Funnel page")).not.toBeInTheDocument();
+
+      // Save the add form too: now nothing is unsaved, so the move goes straight through.
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(within(add).getByLabelText("Name")).toHaveValue(""));
+      await user.click(screen.getByRole("link", { name: "Go to the funnel" }));
+      expect(await screen.findByText("Funnel page")).toBeInTheDocument();
+      expect(warn.mock.calls.flat().join(" ")).not.toMatch(/one blocker/);
+      warn.mockRestore();
+    });
+
     it("moves on without asking when nothing was typed", async () => {
       const user = renderInRouter();
       await screen.findByRole("row", { name: /Acme CFO Partners/ });
@@ -413,6 +539,35 @@ describe("AdvisorPartnersPage", () => {
       await waitFor(() => expect(within(add).getByLabelText("Name")).toHaveValue(""));
       await user.click(screen.getByRole("link", { name: "Go to the funnel" }));
       expect(await screen.findByText("Funnel page")).toBeInTheDocument();
+    });
+  });
+
+  describe("while the list refreshes", () => {
+    const beta = { ...acme, code: "beta-law", name: "Beta Law", kind: "law_firm" };
+
+    // The list request answers late here, as it does for a real person: the rows must stay on the page meanwhile.
+    it("keeps a row being edited, with its typed text, when another form saves and the list reloads", async () => {
+      let answer: (v: unknown[]) => void = () => {};
+      api.listReferralPartners.mockReset().mockResolvedValueOnce([acme, beta]).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+      api.addReferralPartner.mockResolvedValue({ ...acme, code: "gamma", name: "Gamma", kind: "other" });
+      renderPage();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Edit Beta Law" }));
+      const row = screen.getByRole("row", { name: /Save/ });
+      await user.clear(within(row).getByLabelText("Name"));
+      await user.type(within(row).getByLabelText("Name"), "Beta Legal");
+
+      const add = screen.getByRole("form", { name: "Add a partner" });
+      await user.type(within(add).getByLabelText("Name"), "Gamma");
+      await user.selectOptions(within(add).getByLabelText("Kind of partner"), "other");
+      await user.click(within(add).getByRole("button", { name: "Add partner" }));
+      await waitFor(() => expect(api.listReferralPartners).toHaveBeenCalledTimes(2)); // the refresh is in flight
+      expect(within(screen.getByRole("row", { name: /Save/ })).getByLabelText("Name")).toHaveValue("Beta Legal");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(); // no "Loading partners…" over a list already shown
+
+      answer([acme, beta, { ...acme, code: "gamma", name: "Gamma", kind: "other" }]);
+      await screen.findByRole("row", { name: /Gamma/ });
+      expect(within(screen.getByRole("row", { name: /Save/ })).getByLabelText("Name")).toHaveValue("Beta Legal");
     });
   });
 

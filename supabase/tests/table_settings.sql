@@ -6,7 +6,7 @@
 -- stops sharing one. Nobody else reads, counts, changes or deletes any of it: not the other firm's members, not a person whose
 -- membership has ended, not a platform admin who belongs to no firm, not a guest token, not a password sign-in without its
 -- second factor. Two firms are used throughout.
--- Every migration loads, in filename order, this story's last.
+-- Every migration loads, in filename order (this story's and its fixes, 20261117120500_table_settings_fixes.sql, among them).
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -109,18 +109,15 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116190500_invitation_fixes.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
-\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
-\i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
-\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
-\i supabase/migrations/20261116230000_firm_suspension.sql
-\i supabase/migrations/20261116240000_held_mail_to_the_right_firm.sql
 \i supabase/migrations/20261117090000_one_firm_at_a_time.sql
 \i supabase/migrations/20261117090500_one_firm_at_a_time_fixes.sql
 \i supabase/migrations/20261117100000_queue_query.sql
+\i supabase/migrations/20261117100500_queue_query_fast_path.sql
 \i supabase/migrations/20261117120000_table_settings.sql
+\i supabase/migrations/20261117120500_table_settings_fixes.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -180,6 +177,19 @@ BEGIN
 END $$;
 
 -- A statement's single value, run as the caller and rolled back: 'ok:<value>' or the SQLSTATE it raised.
+-- The message a statement raised, as the caller, rolled back; NULL when it raised nothing.
+CREATE FUNCTION pg_temp.message_of(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE m text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = 'no error';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS m = MESSAGE_TEXT;
+    RETURN NULLIF(m, 'no error');
+  END;
+END $$;
+
 CREATE FUNCTION pg_temp.value_of(stmt text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE v text; s text; m text;
 BEGIN
@@ -605,7 +615,7 @@ BEGIN
   FOREACH v IN ARRAY ARRAY['{}', '"status"', '[1]', '["status"]', '[{"field":"status"}]', '[{"op":"is","value":"x"}]', '[{"field":1,"op":"is"}]',
     '[{"field":"status","op":2}]', '[{"field":"","op":"is"}]', '[{"field":"status","op":""}]', '[{"field":"status","op":"is","value":"x","extra":true}]',
     format('[{"field":"%s","op":"is"}]', repeat('f', 65)), format('[{"field":"status","op":"%s"}]', repeat('o', 33)), many_filters,
-    format('[{"field":"f","op":"any_of","value":%s}]', (SELECT jsonb_agg(repeat('x', 200)) FROM generate_series(1, 90)))] LOOP
+    (SELECT jsonb_agg(jsonb_build_object('field', 'f' || n, 'op', 'any_of', 'value', (SELECT jsonb_agg(repeat('x', 200)) FROM generate_series(1, 100)))) FROM generate_series(1, 4) n)::text] LOOP
     PERFORM pg_temp.as_user('acme_agent');
     PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.save_view(%L, ''submissions'', ''Bad'', %L, NULL, NULL)::text', acme, v)), '22023', 'saving filters ' || left(v, 80));
     PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.change_saved_view(%L, %L, NULL, NULL)::text', vid, v)), '22023', 'changing to filters ' || left(v, 80));
@@ -616,7 +626,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format('INSERT INTO public.saved_views (firm_id, user_id, table_name, name, filters) VALUES (%L, %L, ''submissions'', ''Null filters'', NULL)', acme, ag)),
     '23502', 'the table keeping no filters at all (an empty list is none)');
   FOREACH v IN ARRAY ARRAY['[]', fine_filters, '[{"field":"status","op":"is_empty"}]', '[{"field":"n","op":"between","value":[1,2]}]',
-    format('[{"field":"f","op":"any_of","value":%s}]', (SELECT jsonb_agg(repeat('x', 140)) FROM generate_series(1, 100)))] LOOP
+    format('[{"field":"f","op":"any_of","value":%s}]', (SELECT jsonb_agg(repeat('x', 200)) FROM generate_series(1, 100)))] LOOP
     PERFORM pg_temp.as_user('acme_agent');
     PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.change_saved_view(%L, %L, NULL, NULL)::text', vid, v)), 'ok:', 'keeping filters ' || left(v, 80));
   END LOOP;
@@ -663,6 +673,150 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.set_my_table_columns(%L, ''submissions'', %L, ''["x"]'')::text', acme, vid)), 'ok:', 'columns kept on a view of that table');
   RESET ROLE;
   RAISE NOTICE 'table_settings: shape and limit cases passed';
+END $$;
+
+-- ---------- review: a private view may share its name with someone else's shared one ----------
+-- Break caught: the list hides one of two views of the same name (the person's own private one and a view someone else
+-- shared), or gives them the same id, so the page could not tell their tabs or their counts apart. Views are told apart by
+-- view_id everywhere; refusing the name when a view is shared would tell the owner a private name exists.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); ov uuid := pg_temp.id('owner_view'); own_one uuid; n bigint;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent_2');
+  own_one := public.save_view(acme, 'submissions', 'Firm queue', NULL, NULL, NULL);
+  SELECT count(DISTINCT l.view_id) INTO n FROM public.list_saved_views(acme, 'submissions') l WHERE l.name = 'Firm queue';
+  PERFORM pg_temp.is(n, 2::bigint, 'the person lists both "Firm queue" views, each with its own id');
+  PERFORM pg_temp.is((SELECT string_agg(CASE WHEN l.mine THEN 'mine' ELSE 'shared' END, ',' ORDER BY l.mine) FROM public.list_saved_views(acme, 'submissions') l WHERE l.name = 'Firm queue'),
+    'shared,mine', 'one is the firm''s shared view and one their own');
+  PERFORM pg_temp.is((SELECT bool_and(l.view_id IN (ov, own_one)) FROM public.list_saved_views(acme, 'submissions') l WHERE l.name = 'Firm queue'), true, 'by their own ids');
+  PERFORM public.delete_saved_view(own_one);
+  RESET ROLE;
+  RAISE NOTICE 'table_settings: same-name cases passed';
+END $$;
+
+-- ---------- review: filters up to 64 KB, and a size refusal that says so ----------
+-- Break caught: a filter the queue's query accepts (an "any of" with 100 values of 200 characters, about 20 KB) can't be
+-- kept; or filters over 64 KB are kept; or the refusal for size talks about how many filters there are.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); vid uuid := pg_temp.id('agent_view'); one text; huge text;
+BEGIN
+  one := format('[{"field":"f","op":"any_of","value":%s}]', (SELECT jsonb_agg(repeat('x', 200)) FROM generate_series(1, 100)));
+  huge := (SELECT jsonb_agg(jsonb_build_object('field', 'f' || n, 'op', 'any_of', 'value', (SELECT jsonb_agg(repeat('x', 200)) FROM generate_series(1, 100)))) FROM generate_series(1, 4) n)::text;
+  PERFORM pg_temp.as_user('acme_agent');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.change_saved_view(%L, %L, NULL, NULL)::text', vid, one)), 'ok:', 'a 100-value filter of 200-character values is kept');
+  PERFORM pg_temp.is(octet_length(huge) > 65536, true, '(the large list is over 64 KB)');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.change_saved_view(%L, %L, NULL, NULL)::text', vid, huge)), '22023', 'filters over 64 KB are refused');
+  PERFORM pg_temp.is(pg_temp.message_of(format('SELECT public.change_saved_view(%L, %L, NULL, NULL)::text', vid, huge)), 'A view''s filters can hold at most 64 KB',
+    'and the refusal says it is the size');
+  PERFORM pg_temp.is(pg_temp.message_of(format('SELECT public.save_view(%L, ''submissions'', ''Big'', %L, NULL, NULL)::text', acme, huge)), 'A view''s filters can hold at most 64 KB',
+    'saving says the same');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt(format('INSERT INTO public.saved_views (firm_id, user_id, table_name, name, filters) VALUES (%L, %L, ''submissions'', ''Big'', %L)', acme, pg_temp.id('acme_agent'), huge)),
+    '23514', 'the table refuses filters over 64 KB');
+  RAISE NOTICE 'table_settings: filter size cases passed';
+END $$;
+
+-- ---------- review: a shared view is the firm's while it is shared ----------
+-- Break caught: an owner who shared a view and is then made an agent can still change, rename or delete it (or the list
+-- says they may); or they lose their own private views; or, once an owner unshares it, its saver can't change it again.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); sv uuid; pv uuid; stmt text;
+BEGIN
+  PERFORM pg_temp.new_user('acme_demoted');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, pg_temp.id('acme_demoted'), 'owner');
+  PERFORM pg_temp.as_user('acme_demoted');
+  sv := public.save_view(acme, 'submissions', 'Demoted shared', NULL, NULL, NULL);
+  pv := public.save_view(acme, 'submissions', 'Demoted private', NULL, NULL, NULL);
+  PERFORM public.share_saved_view(sv);
+  PERFORM pg_temp.is((SELECT string_agg(l.name || ':' || l.can_change, ',' ORDER BY l.name) FROM public.list_saved_views(acme, 'submissions') l WHERE l.mine),
+    'Demoted private:true,Demoted shared:true', 'while an owner, they may change both');
+  -- Made an agent: the owner membership ends and an agent one begins.
+  RESET ROLE;
+  UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('acme_demoted') AND firm_id = acme AND valid_until IS NULL;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, pg_temp.id('acme_demoted'), 'agent');
+  PERFORM pg_temp.as_user('acme_demoted');
+  PERFORM pg_temp.is((SELECT string_agg(l.name || ':' || l.can_change, ',' ORDER BY l.name) FROM public.list_saved_views(acme, 'submissions') l WHERE l.mine),
+    'Demoted private:true,Demoted shared:false', 'as an agent, the list says the shared one is no longer theirs to change');
+  FOREACH stmt IN ARRAY ARRAY['SELECT public.rename_saved_view(%L, ''Taken back'')::text', 'SELECT public.change_saved_view(%L, ''[]'', NULL, ''["x"]'')::text',
+    'SELECT public.delete_saved_view(%L)::text'] LOOP
+    PERFORM pg_temp.is(pg_temp.value_of(format(stmt, sv)), '42501', 'the demoted saver: ' || stmt || ' on the view they shared');
+    PERFORM pg_temp.is(pg_temp.value_of(format(stmt, pv)), 'ok:', 'the demoted saver: ' || stmt || ' on their private view');
+  END LOOP;
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.unshare_saved_view(sv);
+  PERFORM pg_temp.as_user('acme_demoted');
+  PERFORM pg_temp.is((SELECT l.can_change FROM public.list_saved_views(acme, 'submissions') l WHERE l.view_id = sv), true, 'unshared, it is its saver''s to change again');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.rename_saved_view(%L, ''Mine again'')::text', sv)), 'ok:', 'and they rename it');
+  RESET ROLE;
+  RAISE NOTICE 'table_settings: demoted owner cases passed';
+END $$;
+
+-- ---------- review: names: no whitespace of any kind around them, no invisible characters, case folded the same anywhere ----------
+-- Break caught: a name with a non-breaking or other Unicode space around it, or a zero-width or other format character in it,
+-- is kept (two names that look the same would be two names); or "Équipe" and "équipe" are two names because case is folded by
+-- the database's collation (under C only ASCII letters fold). The rule is the same on a C and a UTF-8 collated database.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); ag uuid := pg_temp.id('acme_agent'); v text; e uuid;
+BEGIN
+  FOREACH v IN ARRAY ARRAY[E' Hot', E'Hot ', E'　Hot', E'Hot ', E'Hot ', E'
+Hot', E'Ho​t', E'Hot‍', E'﻿Hot',
+    E'Ho‏t', E'Ho‮t', E'Ho⁠t', E'Ho­t', E'Ho⁦t'] LOOP
+    PERFORM pg_temp.as_user('acme_agent');
+    PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.save_view(%L, ''submissions'', %L, NULL, NULL, NULL)::text', acme, v)), '22023',
+      format('saving a view named %s', to_json(v)));
+    RESET ROLE;
+    PERFORM pg_temp.is(pg_temp.attempt(format('INSERT INTO public.saved_views (firm_id, user_id, table_name, name) VALUES (%L, %L, ''submissions'', %L)', acme, ag, v)),
+      '23514', format('the table keeping a view named %s', to_json(v)));
+  END LOOP;
+  PERFORM pg_temp.as_user('acme_agent');
+  e := public.save_view(acme, 'submissions', 'Équipe', NULL, NULL, NULL);
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.save_view(%L, ''submissions'', ''équipe'', NULL, NULL, NULL)::text', acme)), 'PT409',
+    format('"équipe" beside "Équipe" (database collation %s)', (SELECT datcollate FROM pg_database WHERE datname = current_database())));
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.save_view(%L, ''submissions'', ''Café Grande'', NULL, NULL, NULL)::text', acme)) LIKE 'ok:%', true, 'an accented name is kept');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt(format('INSERT INTO public.saved_views (firm_id, user_id, table_name, name) VALUES (%L, %L, ''submissions'', ''ÉQUIPE'')', acme, ag)),
+    '23505', 'the table refuses "ÉQUIPE" beside "Équipe" for one person');
+  INSERT INTO public.saved_views (firm_id, user_id, table_name, name, shared, shared_at) VALUES (acme, pg_temp.id('acme_owner'), 'submissions', 'Œuvre', true, now());
+  PERFORM pg_temp.is(pg_temp.attempt(format('INSERT INTO public.saved_views (firm_id, user_id, table_name, name, shared, shared_at) VALUES (%L, %L, ''submissions'', ''œuvre'', true, now())', acme, pg_temp.id('acme_owner_2'))),
+    '23505', 'the table refuses a shared "œuvre" beside a shared "Œuvre" in one firm');
+  DELETE FROM public.saved_views WHERE name = 'Œuvre';
+  DELETE FROM public.saved_views WHERE id = e OR (user_id = ag AND name = 'Café Grande');
+  RAISE NOTICE 'table_settings: name character and case cases passed';
+END $$;
+
+-- ---------- review: forgetting a column choice on a view the person can no longer read ----------
+-- Break caught: once a shared view is unshared, a person's own column choice on it can't be cleared (it stays behind); or
+-- forgetting tells apart a view that exists from one that never did; or it reaches a row of another firm or person.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); zenith uuid := pg_temp.id('zenith'); tv uuid;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner');
+  tv := public.save_view(acme, 'submissions', 'Briefly shared', NULL, NULL, NULL);
+  PERFORM public.share_saved_view(tv);
+  PERFORM pg_temp.as_user('acme_agent_2');
+  PERFORM public.set_my_table_columns(acme, 'submissions', tv, '["status"]');
+  PERFORM pg_temp.as_user('both_firms');
+  PERFORM public.set_my_table_columns(acme, 'submissions', tv, '["status"]');
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.unshare_saved_view(tv);
+  PERFORM pg_temp.as_user('acme_agent_2');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.set_my_table_columns(%L, ''submissions'', %L, ''["x"]'')::text', acme, tv)), 'PT404', 'a choice can''t be kept on it now');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.set_my_table_columns(%L, ''submissions'', %L, NULL)::text', acme, tv)), 'ok:', 'but it can be forgotten');
+  PERFORM public.set_my_table_columns(acme, 'submissions', tv, NULL);
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.set_my_table_columns(%L, ''submissions'', %L, NULL)::text', acme, gen_random_uuid())), 'ok:',
+    'with the same answer as for a view that never existed');
+  -- The member of two firms names Zenith: their Acme row stays.
+  PERFORM pg_temp.as_user('both_firms');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.set_my_table_columns(%L, ''submissions'', %L, NULL)::text', zenith, tv)), 'ok:', 'forgetting through another firm says nothing');
+  PERFORM public.set_my_table_columns(zenith, 'submissions', tv, NULL);
+  PERFORM pg_temp.as_user('zenith_owner');
+  PERFORM pg_temp.is(pg_temp.value_of(format('SELECT public.set_my_table_columns(%L, ''submissions'', %L, NULL)::text', acme, tv)), '42501', 'another firm''s member is no member here');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.table_preferences WHERE saved_view_id = tv AND user_id = pg_temp.id('acme_agent_2')), 0::bigint, 'the agent''s row is gone');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.table_preferences WHERE saved_view_id = tv AND user_id = pg_temp.id('both_firms')), 1::bigint,
+    'the other person''s row, named through the wrong firm, is untouched');
+  DELETE FROM public.saved_views WHERE id = tv;
+  RAISE NOTICE 'table_settings: forgetting cases passed';
 END $$;
 
 -- ---------- at most thirty views per person per table ----------
@@ -755,6 +909,49 @@ BEGIN
   SELECT count(*) INTO kept FROM public.saved_views WHERE user_id = pg_temp.id('racer');
   PERFORM pg_temp.is(kept, 30::bigint, 'views kept after two were saved at once');
   RAISE NOTICE 'table_settings: two-session ceiling race passed';
+END $$;
+
+-- ---------- review: another firm's caller never waits on a view's lock ----------
+-- Break caught: a change takes the view's row lock before asking whether the caller may read it, so a member of another
+-- firm who knows an id waits while someone in the firm holds the view (learning that it exists) and then holds a lock on
+-- another firm's row. One connection holds the view in an open change; another firm's owner, with a short lock timeout,
+-- must get PT404 at once. A member of the firm, who may read it, does wait: the control that proves the lock was held.
+DO $$
+DECLARE
+  ov uuid := pg_temp.id('owner_view');
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  claims text;
+  who text;
+  s text;
+BEGIN
+  PERFORM race.dblink_connect('hold', dsn);
+  PERFORM race.dblink_exec('hold', 'BEGIN');
+  PERFORM race.dblink_exec('hold', 'SET LOCAL ROLE authenticated');
+  PERFORM * FROM race.dblink('hold', format($q$SELECT set_config('request.jwt.claims', %L, true)$q$,
+    jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text)) AS t(c text);
+  PERFORM * FROM race.dblink('hold', format($q$SELECT public.rename_saved_view(%L, 'Firm queue')::text$q$, ov)) AS t(r text);
+  FOREACH who IN ARRAY ARRAY['zenith_owner', 'acme_owner_2'] LOOP
+    PERFORM race.dblink_connect('probe', dsn);
+    PERFORM race.dblink_exec('probe', 'BEGIN');
+    PERFORM race.dblink_exec('probe', 'SET LOCAL lock_timeout = ''1s''');
+    PERFORM race.dblink_exec('probe', 'SET LOCAL ROLE authenticated');
+    claims := jsonb_build_object('sub', pg_temp.id(who), 'role', 'authenticated', 'is_anonymous', false, 'email', who || '@example.test')::text;
+    PERFORM * FROM race.dblink('probe', format($q$SELECT set_config('request.jwt.claims', %L, true)$q$, claims)) AS t(c text);
+    BEGIN
+      PERFORM * FROM race.dblink('probe', format($q$SELECT public.rename_saved_view(%L, 'Probe')::text$q$, ov)) AS t(r text);
+      s := 'ok';
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    END;
+    PERFORM race.dblink_disconnect('probe');
+    PERFORM pg_temp.is(s, CASE who WHEN 'zenith_owner' THEN 'PT404' ELSE '55P03' END,
+      CASE who WHEN 'zenith_owner' THEN 'another firm''s owner is answered at once, without waiting on the lock'
+               ELSE 'a member of the firm waits on it (the lock was held)' END);
+  END LOOP;
+  PERFORM race.dblink_exec('hold', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('hold');
+  RAISE NOTICE 'table_settings: lock-before-check cases passed';
 END $$;
 
 \echo 'table_settings: all cases passed'

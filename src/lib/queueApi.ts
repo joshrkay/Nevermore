@@ -4,11 +4,12 @@ import { AdvisorApiError, classifyApiError, type SubmissionSummary } from "@/lib
 import type { TableFields, TableFilter, TablePage, TableSort, ViewCount } from "@/lib/tableQuery";
 
 // The submissions queue's query, run in the database (story CRM-S3.3b, D-44): filters, sort, pages of 50 and the counts
-// for view tabs. supabase/migrations/20261117100000_queue_query.sql holds the rules; every call is authorized there.
+// for view tabs. supabase/migrations/20261117100000_queue_query.sql (and its faster path, 20261117100500) holds the rules;
+// every call is authorized there.
 
 /**
  * The queue's fields a filter or a sort may name, with the kind of each. The database holds the same list
- * (queue_field_kind; src/data/schemaSync.test.ts compares them) and refuses any other name.
+ * (queue_field_kind's `queue_fields` block; src/lib/queueApi.test.ts compares them) and refuses any other name.
  */
 export const QUEUE_FIELDS = {
   company_name: "text",

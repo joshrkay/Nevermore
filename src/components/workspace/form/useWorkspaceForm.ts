@@ -1,4 +1,4 @@
-import { useCallback, useState, type BaseSyntheticEvent, type ReactNode } from "react";
+import { useCallback, useState, type BaseSyntheticEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useForm, type FieldValues, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
@@ -42,6 +42,8 @@ export interface WorkspaceFormApi {
   /** What failed, in words, for the place beside the form's buttons. Null when the last save did not fail or the failure belongs to a field. */
   saveError: string | null;
   dirty: boolean;
+  /** Escape closes a form that has a Cancel, asking first when something changed. Put it on the form, and on any wider element (a table row) whose buttons sit outside it. */
+  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
   /** The form's submit handler. */
   submit: (e?: BaseSyntheticEvent) => Promise<void>;
   /** Cancel: asks first when something changed, then clears the form and calls `onCancel`. Undefined when the form has no `onCancel`. */
@@ -52,10 +54,24 @@ export interface WorkspaceFormApi {
   prompt: ReactNode;
 }
 
+/**
+ * Whether an error's text is meant for a person. The client's own failures are not: a dropped network arrives as
+ * "TypeError: Failed to fetch" with no code, and the database's timeouts and gateway faults carry codes of the kinds below
+ * (PostgREST "PGRST…", connection, resource, operator-intervention and internal classes). The rules the product raises itself
+ * (a code already taken, a role refused) carry their own plain sentences and codes outside those kinds.
+ */
+const TECHNICAL_MESSAGE = /^(TypeError|FetchError|NetworkError|AbortError|SyntaxError|AuthRetryableFetchError|AuthUnknownError)\b|failed to fetch|load failed|networkerror|network request failed/i;
+const TECHNICAL_CODE = /^(PGRST|08|53|54|55|57|58|XX|P0)/i;
+const hasWordsOfItsOwn = (error: Error) => {
+  const code = (error as { code?: unknown }).code;
+  const message = error.message.trim();
+  if (message === "" || TECHNICAL_MESSAGE.test(message)) return false;
+  return !(typeof code === "string" && TECHNICAL_CODE.test(code));
+};
+
 const wordsOf = (error: unknown, fallback: string): Explained => {
   if (error instanceof SaveRefused) return { message: error.message, field: error.field };
-  const message = error instanceof Error ? error.message.trim() : "";
-  return { message: message || fallback };
+  return { message: error instanceof Error && hasWordsOfItsOwn(error) ? error.message.trim() : fallback };
 };
 
 let formCount = 0;
@@ -105,5 +121,13 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
       })
     : undefined;
 
-  return { form, formId, saving, saveError, dirty, submit, cancel, requestClose: useCallback(requestClose, [requestClose]), prompt: guard.prompt };
+  // Whichever element sees Escape first handles it; one that comes after sees it already handled.
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key === "Escape" && !e.defaultPrevented && cancel) {
+      e.preventDefault();
+      cancel();
+    }
+  };
+
+  return { form, formId, saving, saveError, dirty, submit, onKeyDown, cancel, requestClose: useCallback(requestClose, [requestClose]), prompt: guard.prompt };
 }

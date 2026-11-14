@@ -138,7 +138,10 @@
 \i supabase/migrations/20261117090000_one_firm_at_a_time.sql
 \i supabase/migrations/20261117090500_one_firm_at_a_time_fixes.sql
 \i supabase/migrations/20261117100000_queue_query.sql
+\i supabase/migrations/20261117100500_queue_query_fast_path.sql
 \i supabase/migrations/20261117120000_table_settings.sql
+\i supabase/migrations/20261117120500_table_settings_fixes.sql
+\i supabase/migrations/20261117160000_epics_reconciled.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
