@@ -483,6 +483,16 @@ SEV-1, always. The incident lead and counsel are called first.
    and by when (state breach laws set deadlines). The advisory lead sends them as counsel words them.
 5. **Review** as above, including whether `docs/SECURITY_REVIEW.md` needs a new finding.
 
+## Releases with an order of their own
+
+The setup script pushes the migrations, then deploys the functions (`docs/SUPABASE_SETUP.md`). One release
+does not go that way:
+
+- **Epic 3's export (the Epic 3 branch, from 2026-11-14):** deploy `dispatch-outbox` *before* pushing the
+  migrations, so the owners' export alerts the push rewrites are sent, not marked dead. A database that had the
+  Epic 3 branch pushed before 2026-11-14 is reset, not pushed, and never `supabase migration repair`ed. Why,
+  how to tell such a database, and the commands: `docs/SUPABASE_SETUP.md`, "Epic 3's export (2026-11-14)".
+
 ## Backup and recovery
 
 Expectations, to confirm against the production project's plan before launch (J-1.1, J-1.2):
