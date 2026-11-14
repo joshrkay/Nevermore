@@ -7,6 +7,8 @@ import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
 import { endTime, fetchFirmSupportUses, type FirmSupportUse } from "@/lib/supportApi";
 import { ENTRY_KINDS, entryLabel, kindLabel, recordLabel } from "@/data/firmActivity";
+import { exportedWords } from "@/data/exportTables";
+import { ExportControl } from "@/components/workspace/ExportControl";
 import {
   listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
@@ -47,10 +49,12 @@ const who = (byNevermore: boolean, actorId: string | null, email: string | null)
   byNevermore ? "Nevermore" : (email ?? (actorId ? "A former member" : "System"));
 
 /**
- * The record an entry was about: what it is and its id, for a membership the person it was about and their role, and for an invitation the role it offered.
+ * The record an entry was about: what it is and its id (for an export, how many rows of which table), for a membership the person it was about and their role, and for an invitation the role it offered.
  * A use of Nevermore support (CRM-P2.4) says why and when, in the words the admin wrote for the firm's owners, never who.
  */
 function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): string {
+  // An export is about a table and says how many rows it took (CRM-S3.8b): "Exported 42 referral partners", not "Table referral_partners".
+  if (e.kind === "export_made" && e.record_type === "table" && e.row_count !== null && e.row_count !== undefined) return exportedWords(e.record_id, e.row_count);
   if (e.record_type === "support_session" || e.record_type === "support_session_end") {
     const use = uses.get(e.record_id);
     if (!use) return recordLabel(e.record_type);
@@ -138,6 +142,8 @@ const AdvisorActivityPage = () => {
   };
 
   const filtered = person !== null || kind !== null;
+  // The filters the page has set, as the database's export takes them (the same words as the record's own: a person's id or "nevermore", a kind).
+  const exportFilters = { ...(person !== null ? { person } : {}), ...(kind !== null ? { kind } : {}) };
   // Ten seconds with nothing to show (not a changed filter or the next page, which keep the entries on screen, D-49).
   const retryLoad = useCallback(() => setAttempt((n) => n + 1), []);
   const slowLoad = useSlowLoad(load.kind === "loading", retryLoad);
@@ -241,6 +247,10 @@ const AdvisorActivityPage = () => {
                   {ENTRY_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
                 </select>
               </div>
+              {/* Every entry that matches the person and the kind chosen, not only the page on screen (the database reads the rest; CRM-S3.8a). */}
+              {load.kind === "ready" && !isEmpty && (
+                <div className="ml-auto"><ExportControl firmId={load.firmId} table="firm_activity" filters={exportFilters} /></div>
+              )}
             </div>
 
             {/* One table, whether its rows are grey, real or none (CRM-S2.2): an empty answer is one cell under the same headers, so nothing is rebuilt.
