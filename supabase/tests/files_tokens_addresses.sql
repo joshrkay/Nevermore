@@ -145,6 +145,7 @@
 \i supabase/migrations/20261118160500_record_version_fixes.sql
 \i supabase/migrations/20261118170000_export.sql
 \i supabase/migrations/20261118170500_export_fixes.sql
+\i supabase/migrations/20261118171000_export_fixes_again.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

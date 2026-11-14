@@ -9,6 +9,8 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@exampl
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 let firmAddress: { status: string; address?: string; name?: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
+// The Export button (CRM-S3.8a, tested in AdvisorPartnersPage.export.test.tsx) reaches the database through src/lib/exportApi.ts, which holds the client: not used here.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const api = {
   listMyFirms: vi.fn(),
   listReferralPartners: vi.fn(),
