@@ -476,7 +476,7 @@ A view a table ships with (for the queue, today's status tabs), written in the p
 _Avoid_: default view (the table's default sort and columns are something else)
 
 **Column choice** (code: `table_preferences`, `my_table_columns`, `set_my_table_columns`):
-Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults.
+Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults. It is a list of column ids in order, the columns shown, and a person makes it with the **Columns menu**. A column not in the list is not shown, so a column a table gains later stays under "Not shown" until the person shows it; a person with no choice follows the table's **default columns**. An id the table no longer has is left out, and a list that names no column the table has is no choice at all.
 _Avoid_: layout, column settings, preferences (on its own)
 
 **Entry kind** (code: `firm_activity.kind`):
@@ -493,7 +493,7 @@ How a workspace table asks the database for its rows (D-44): a list of **filters
 _Avoid_: dynamic query, search (a search is the words typed in the search box, which is one part of the query)
 
 **Table frame** (code: `src/components/workspace/table/`; story CRM-S3.5a):
-The one piece every workspace table is drawn with: its **table address** read from the page, its rows fetched through the query library (asked again on focus and every 60 seconds, the rows staying on screen while the next arrive), the table itself, and the pager. A table gives the frame a **column definition** list and its fields (a constant: what a cell needs besides its row comes through the frame's `context`); the frame owns what a view means for the query (the view's filters, then the address's, within the 20 the database takes) and draws the view tabs; the frame leaves named places for what later stories add: `empty` and `error` (Epic 2's page-state stories), the filter row (built, CRM-S3.3a: `FilterRow`), the columns menu, saved views and row selection. The queue is the first table on it.
+The one piece every workspace table is drawn with: its **table address** read from the page, its rows fetched through the query library (asked again on focus and every 60 seconds, the rows staying on screen while the next arrive), the table itself, and the pager. A table gives the frame a **column definition** list and its fields (a constant: what a cell needs besides its row comes through the frame's `context`); the frame owns what a view means for the query (the view's filters, then the address's, within the 20 the database takes) and draws the view tabs; the frame leaves named places for what later stories add: `empty` and `error` (Epic 2's page-state stories), the filter row (built, CRM-S3.3a: `FilterRow`), the columns menu (built, CRM-S3.1a: `ColumnsMenu`), saved views and row selection. The queue is the first table on it.
 _Avoid_: grid, data table (in screen words, say "table")
 
 **Loading state** (code: `src/components/workspace/states/`; story CRM-S2.1, D-143 to D-146):
@@ -556,6 +556,18 @@ _Avoid_: filter bar, filter panel, facets
 **Filter chip** (code: in `FilterRow`):
 One filter the address holds, shown as its words (`filterInWords`: "Employees is more than 50"): the chip itself opens its editor and the small button beside it ("Remove filter: Employees is more than 50") takes it off. A filter that belongs to the current tab is not a chip (it is not in the address; the tab is its control). A filter held for a field that has not loaded yet (D-141) is a quiet chip with its text as written, which can only be removed.
 _Avoid_: tag, pill, token
+
+**Columns menu** (code: `ColumnsMenu`, `useTableColumns`, `columnChoice.ts`, `src/components/workspace/table/`; story CRM-S3.1a, D-185 to D-195):
+The "Columns" button over a table and the small panel it opens, where a person shows, hides and reorders the table's columns. The **name column** is listed first as "Always shown", with nothing to change it by. Each shown column has a checkbox (clear it to hide the column) and "Move Contact up" and "Move Contact down" buttons; under "Not shown", each hidden column has a checkbox (set it to show the column, at the end). "Back to default columns" puts the table's own back and has the database forget the choice. There is no Apply: each change is on the table at once and is kept (the **column choice**, one save after another). It works by keyboard alone, focus stays on the control that was used wherever its row went, and one polite status in the panel says what the change did ("States is now column 2 of 10."). A choice that can't be kept (the firm is closing, or Nevermore support is looking in) stays on screen and says why next to the button. It is unavailable, with the reason, until the person's choice has loaded, and until then the table is in its loading state so no row is drawn in columns the person is about to lose.
+_Avoid_: column picker, column settings, customise (in screen words)
+
+**Name column** (code: `ColumnDefinition.isName`):
+A table's first column, the one that names the record (the queue's Company). It can't be hidden or moved and no choice can put another column before it (a stored choice that leaves it out or puts it elsewhere is read with it first), and it is **pinned**: it stays in view at the left of the table's scroll box when the table scrolls sideways, in the header and in every row, including the grey rows of the loading state. Its cell is each row's header cell.
+_Avoid_: key column, frozen column
+
+**Default columns** (code: `TableDefinition.columns`):
+The columns a table ships with, in its order: what a person sees until they choose their own, and what "Back to default columns" restores. Today every column a table lists is a default column.
+_Avoid_: standard columns, built-in columns
 
 **View count** (code: `queue_view_counts`):
 The number on a view's tab: how many rows that view's filters match, under the same rules as the table, for several views in one call.
