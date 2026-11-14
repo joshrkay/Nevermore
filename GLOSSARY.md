@@ -564,6 +564,10 @@ _Avoid_: activity feed, audit log, timeline (on its own)
 A quote request's opportunity and that opportunity's account, with the account's contacts. No quote request without an opportunity, no opportunity without an account, and every submission on one opportunity: the database refuses anything else. It is made in the same step a quote starts, and the same step run twice makes one chain, not two. An intake an employer started that has not been certified yet has none (ADR 0025).
 _Avoid_: hierarchy, link, filing
 
+**Bringing in** (the existing submissions):
+Giving every submission that existed before the chain did its account, contact and opportunity (CRM-Q1.3), by the same step a first certification takes, owned by nobody. Each gets its own account; where two match, the later is marked "Possible duplicate of" the earlier, by when each was first certified, and nothing is merged. Its quote requests are on its opportunity because they are on its intake: a quote request has no table of its own for this. A closed firm's submissions are left alone. It can be run again and then makes nothing, and it reports how many of each it made. From then on the database refuses a submission, or a quote request, with no opportunity: a closed firm's intakes and a firm that is closing (which deletes its opportunities) are the only exceptions.
+_Avoid_: import (that is a file of records from elsewhere), migration (for the people who read it)
+
 **Quote** (on the workspace's screens):
 One row of the Quotes list or of an account's Quotes tab: a **Quote request** together with the **Quote** it returns, if any (D-185). In code and in the entries above, the two keep their own names.
 

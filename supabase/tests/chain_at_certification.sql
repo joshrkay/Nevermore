@@ -147,6 +147,7 @@
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119140000_account_page.sql
 SET client_min_messages = notice;
 
@@ -614,6 +615,9 @@ BEGIN
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = sid), 'in_progress', 'the edit withdrew the certification');
   -- Its chain goes (as for a submission certified before the chain existed), and the step makes it.
+  -- (CRM-Q1.3 refuses a submission with no opportunity at the end of the statement; here the chain is gone and made again in one transaction, so the rule
+  -- is asked at its end.)
+  SET CONSTRAINTS opportunities_keep_intake_delete DEFERRED;
   DELETE FROM public.opportunities WHERE intake_id = sid;
   DELETE FROM public.accounts WHERE name LIKE 'Snapshot %';
   r := public.make_intake_chain(sid);
@@ -944,11 +948,15 @@ BEGIN
   PERFORM pg_temp.new_prospect('race_p7');
   PERFORM pg_temp.start_intake('i_race7', 'race_p7', pg_temp.answers('Race Seven Corp', 'ID'), 'acme');
   PERFORM pg_temp.is(pg_temp.certify('i_race7', 'race_p7'), 'ok', 'and one more');
+  -- Take their chains away: now they are submissions certified before the chain existed, which CRM-Q1.3 brings in. That rule refuses the deletion of the
+  -- opportunity of a submission, and this fixture needs them to stay without one past the end of the block (the races below make them), so its trigger is off
+  -- for these statements.
+  ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_keep_intake_delete;
   DELETE FROM public.opportunities WHERE intake_id = pg_temp.id('i_race7');
   DELETE FROM public.accounts WHERE name = 'Race Seven Corp';
-  -- Take their chains away: now they are submissions certified before the chain existed, which CRM-Q1.3 will bring in.
   DELETE FROM public.opportunities WHERE intake_id IN (pg_temp.id('i_race4'), pg_temp.id('i_race5'), pg_temp.id('i_race6'));
   DELETE FROM public.accounts WHERE name IN ('Race Four Corp', 'Race Five Corp', 'Race Six Other Name');
+  ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_keep_intake_delete;
 END $$;
 
 -- The same intake certified at once from two places makes one chain.
@@ -1040,8 +1048,10 @@ BEGIN
   PERFORM pg_temp.new_prospect('race_p9');
   PERFORM pg_temp.start_intake('i_race9', 'race_p9', pg_temp.answers('Race Nine Corp', 'ID'), 'race_closing2');
   PERFORM pg_temp.is(pg_temp.certify('i_race9', 'race_p9'), 'ok', 'certified before the closing');
+  ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_keep_intake_delete; -- the submission must stay without its opportunity past this block (CRM-Q1.3)
   DELETE FROM public.opportunities WHERE intake_id = pg_temp.id('i_race9');
   DELETE FROM public.accounts WHERE name = 'Race Nine Corp';
+  ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_keep_intake_delete;
 END $$;
 DO $$
 DECLARE r text; f uuid := pg_temp.id('race_closing1');
