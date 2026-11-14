@@ -21,6 +21,11 @@ describe("migration files", () => {
   // Two branches that renumber the same file to different versions merge into two copies of it, and
   // `db push` then runs that migration twice ("column ... already exists"). A repeated name or a repeated
   // body is such a copy.
+  // One pair shares a name and is not a copy: CRM-S3.8b was built twice, on main and on the Epic 3 branch, with
+  // different bodies; Epic 3's wins (docs/BROKER_CRM_BUILD.md "Superseded by Epic 3") and
+  // 20261118180000_epic3_export_supersedes.sql runs between them. Neither can be renamed: main's may be applied in
+  // production and Epic 3's is merged (D-221). Their bodies are still held to being different.
+  const sameNameOnPurpose = ["20261118170000_export.sql", "20261119090000_export.sql"].join(" ");
   it("hold each migration once", () => {
     const groups = new Map<string, string[]>();
     for (const f of files) {
@@ -28,6 +33,7 @@ describe("migration files", () => {
         groups.set(key, [...(groups.get(key) ?? []), f]);
       }
     }
-    expect([...groups.values()].filter((names) => names.length > 1)).toEqual([]);
+    const repeated = [...groups.entries()].filter(([key, names]) => names.length > 1 && !(key.startsWith("name ") && names.join(" ") === sameNameOnPurpose));
+    expect(repeated.map(([, names]) => names)).toEqual([]);
   });
 });
