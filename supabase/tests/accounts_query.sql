@@ -532,3 +532,322 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'accounts_query: the worked-out columns passed';
 END $$;
+
+-- ---------- filters ----------
+-- The names a list gives for these filters, sort and search, as Acme's owner (who sees all of Acme's accounts) at Acme's address.
+CREATE FUNCTION pg_temp.f(p_filters jsonb DEFAULT '[]', p_sort text DEFAULT NULL, p_dir text DEFAULT 'asc', p_page integer DEFAULT 1, p_search text DEFAULT NULL, p_tz text DEFAULT 'UTC') RETURNS text[] LANGUAGE sql AS $$
+  SELECT pg_temp.names(pg_temp.al('acme', p_filters, p_sort, p_dir, p_page, p_search, p_tz))
+$$;
+CREATE FUNCTION pg_temp.f(p_filters text) RETURNS text[] LANGUAGE sql AS $$ SELECT pg_temp.f(p_filters::jsonb) $$;
+CREATE FUNCTION pg_temp.total(p_filters jsonb DEFAULT '[]', p_search text DEFAULT NULL) RETURNS bigint LANGUAGE sql AS $$
+  SELECT (pg_temp.al('acme', p_filters, NULL, 'asc', 1, p_search) ->> 'total')::bigint
+$$;
+-- A refusal of this SQLSTATE whose message holds these words.
+CREATE FUNCTION pg_temp.refused(stmt text, code text, words text, label text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE r text := pg_temp.refusal(stmt);
+BEGIN
+  IF r NOT LIKE code || ': %' OR strpos(r, words) = 0 THEN RAISE EXCEPTION 'FAIL: % gave %, expected % with "%"', label, r, code, words; END IF;
+END $$;
+CREATE FUNCTION pg_temp.q(p_filters jsonb, p_sort text DEFAULT NULL, p_dir text DEFAULT 'asc') RETURNS jsonb LANGUAGE sql AS $$ SELECT pg_temp.al('acme', p_filters, p_sort, p_dir) $$;
+
+-- Break caught: a filter on a field the table lists reads the wrong column or the wrong operator; the archived rule leaks archived accounts into other
+-- views; a date is read in the wrong day; a field the list does not hold (an id, a firm, the main contact) is let through.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  -- text
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"name","op":"contains","value":"CO"}]'), ARRAY['alpha', 'zulu', 'echo'], 'a name contains, ignoring case');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"name","op":"is","value":" BETA INC "}]'), ARRAY['beta'], 'a name is, ignoring case and surrounding spaces');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"trade_name","op":"is","value":"alfa trading"}]'), ARRAY['alpha'], 'the trade name');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"trade_name","op":"is_empty"}]'), ARRAY['emile', 'zulu', 'echo', 'delta', 'beta'], 'accounts with no trade name');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"website","op":"contains","value":"alpha-co"}]'), ARRAY['alpha'], 'the website');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"city","op":"is","value":"seattle"}]'), ARRAY['beta'], 'the city');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"industry","op":"contains","value":"consult"}]'), ARRAY['emile'], 'the industry');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"current_provider","op":"contains","value":"adp"}]'), ARRAY['alpha'], 'the current provider');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"opportunity_name","op":"contains","value":"sooner"}]'), ARRAY['alpha'], 'the open opportunity''s name: the one the column shows');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"opportunity_name","op":"contains","value":"later"}]'), '{}'::text[], 'not the other open opportunity''s');
+  -- number
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"employees","op":"more_than","value":40}]'), ARRAY['alpha', 'echo'], 'employees more than');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"employees","op":"less_than","value":12}]'), ARRAY['beta'], 'employees less than');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"employees","op":"between","value":[12,8]}]'), ARRAY['delta', 'beta'], 'employees between, the ends in either order and included');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"employees","op":"is","value":8}]'), ARRAY['beta'], 'employees is');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"open_opportunities","op":"more_than","value":0}]'), ARRAY['alpha'], 'open opportunities');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"open_opportunities","op":"is","value":0}]'), ARRAY['emile', 'zulu', 'echo', 'delta', 'beta'], 'none open (a won opportunity is not open)');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"quote_requests_sent","op":"is","value":2}]'), ARRAY['alpha'], 'quotes asked for');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"quotes_received","op":"more_than","value":0}]'), ARRAY['alpha'], 'quotes back');
+  -- date: a moment is the day it falls on for the caller
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"created_at","op":"between","value":["2026-10-10","2026-10-12"]}]'), ARRAY['delta', 'beta'], 'created between two days');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"created_at","op":"on","value":"2026-10-10"}]'), ARRAY['beta'], 'created on a day, in UTC');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"created_at","op":"on","value":"2026-10-10"}]', NULL, 'asc', 1, NULL, 'America/Los_Angeles'), ARRAY['delta'], 'the same day is another account in Los Angeles, where midnight UTC is the evening before');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"last_activity_at","op":"on","value":"2026-10-20"}]'), ARRAY['alpha'], 'last activity on a day');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"last_activity_at","op":"before","value":"2026-10-12"}]'), ARRAY['delta', 'beta'], 'last activity before a day');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"target_start","op":"before","value":"2027-03-01"}]'), ARRAY['alpha'], 'the target start of the open opportunity shown (Feb 1, not Mar 1)');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"earliest_quote_expires_on","op":"on","value":"2026-12-31"}]'), ARRAY['alpha'], 'the nearest expiry');
+  -- choices
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"state","op":"any_of","value":["or"]}]'), ARRAY['alpha', 'delta'], 'state is any of, ignoring case');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"state","op":"none_of","value":["OR","WA"]}]'), ARRAY['emile', 'zulu', 'echo'], 'state is none of keeps those with none');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"state","op":"is_empty"}]'), ARRAY['emile', 'zulu'], 'state is empty');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"source","op":"any_of","value":["import","employer_intake"]}]'), ARRAY['echo', 'beta'], 'the source');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"status","op":"any_of","value":["client"]}]'), ARRAY['beta'], 'a client');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"status","op":"any_of","value":["prospect"]}]'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta'], 'a prospect account');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"opportunity_stage","op":"any_of","value":["in_market"]}]'), ARRAY['alpha'], 'the open opportunity''s stage');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"opportunity_stage","op":"is_empty"}]'), ARRAY['emile', 'zulu', 'echo', 'delta', 'beta'], 'no open opportunity');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"states_of_operation","op":"any_of","value":["wa"]}]'), ARRAY['alpha'], 'states of operation holds any of');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"states_of_operation","op":"is_empty"}]'), ARRAY['emile', 'zulu', 'echo', 'delta', 'beta'], 'states of operation is empty');
+  -- yes or no
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"waiting_on_peo","op":"is","value":true}]'), ARRAY['alpha'], 'waiting on a PEO');
+  PERFORM pg_temp.is(pg_temp.total('[{"field":"waiting_on_peo","op":"is","value":false}]'), 5::bigint, 'not waiting');
+  -- archived: left out of every view unless asked for
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"archived","op":"is","value":true}]'), ARRAY['gamma'], 'archived is yes: only the archived ones');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"archived","op":"is","value":false}]'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'archived is no: the rest');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"state","op":"any_of","value":["CA"]}]'), '{}'::text[], 'an archived account is in no other view, whatever matches it');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"state","op":"any_of","value":["CA"]},{"field":"archived","op":"is","value":true}]'), ARRAY['gamma'], 'and is found again with the archived filter');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"employees","op":"more_than","value":0},{"field":"status","op":"any_of","value":["prospect"]}]'), ARRAY['alpha', 'echo', 'delta'], 'filters combine with and');
+  PERFORM pg_temp.is(pg_temp.total('null'), 6::bigint, 'a JSON null is no filters');
+  PERFORM pg_temp.is(pg_temp.total(NULL), 6::bigint, 'nor is NULL');
+  -- what is refused
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"firm_id","op":"is","value":"x"}]')$q$, '22023', 'The accounts table has no field "firm_id"', 'a column not in the list is refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"id","op":"is","value":"x"}]')$q$, '22023', 'no field "id"', 'the account''s id is not a field');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"owner_id","op":"me"}]')$q$, '22023', 'no field "owner_id"', 'the owner is the field "owner"');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"main_contact","op":"contains","value":"ann"}]')$q$, '22023', 'no field "main_contact"', 'the main contact has no filter');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"name; DROP TABLE accounts","op":"is","value":"x"}]')$q$, '22023', 'no field', 'a field is a name, never SQL');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"employees","op":"contains","value":"x"}]')$q$, '22023', 'A number field can''t be filtered with "contains"', 'an operator the kind has not is refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"state","op":"any_of","value":["ZZ"]}]')$q$, '22023', 'state codes', 'a state that does not exist is refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"states_of_operation","op":"any_of","value":["Oregon"]}]')$q$, '22023', 'state codes', 'a state is its code');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"source","op":"any_of","value":["bogus"]}]')$q$, '22023', 'isn''t one of the field''s values', 'a source that does not exist is refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"status","op":"any_of","value":["former_client"]}]')$q$, '22023', 'isn''t one of the field''s values', 'a former client arrives with the placement record (D-197)');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"opportunity_stage","op":"any_of","value":["won"]}]')$q$, '22023', 'isn''t one of the field''s values', 'an open opportunity is never won or lost');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"owner","op":"is","value":"x"}]')$q$, '22023', 'A person field can''t be filtered with "is"', 'a person has any of, me and my team');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('{"field":"name","op":"is_empty"}')$q$, '22023', 'Filters are a list', 'filters that are not a list are refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q((SELECT jsonb_agg('{"field":"name","op":"is_empty"}'::jsonb) FROM generate_series(1, 21)))$q$, '22023', 'at most 20', 'more than 20 filters are refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.al('acme', '[]', NULL, 'asc', 1, NULL, 'PST')$q$, '22023', 'Unknown time zone', 'a time zone that is an abbreviation is refused');
+  -- a value that looks like SQL is only a value
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"name","op":"contains","value":"x''; DROP TABLE public.accounts; --"}]'), '{}'::text[], 'a value with quotes and SQL in it matches nothing');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'x''; DROP TABLE public.accounts; --'), '{}'::text[], 'nor does a search');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts), 9::bigint, 'and no account is gone');
+  RAISE NOTICE 'accounts_query: filters passed';
+END $$;
+
+-- ---------- sort ----------
+-- Break caught: text sorts by code point (so Émile follows zulu) or by case (beta after Echo); a sort by number or date reads another column; empty values
+-- come first when descending; equal values and the unsorted table are not in last activity order; the main contact can be sorted by.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f(), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'no sort: last activity, newest first');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'last_activity_at', 'desc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'last activity, newest first, asked for');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'last_activity_at', 'asc'), ARRAY['beta', 'delta', 'echo', 'zulu', 'emile', 'alpha'], 'last activity, oldest first');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'name', 'asc'), ARRAY['alpha', 'beta', 'delta', 'echo', 'emile', 'zulu'], 'name: the alphabet, case ignored, "Émile" after "Echo" and before "zulu"');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'name', 'desc'), ARRAY['zulu', 'emile', 'echo', 'delta', 'beta', 'alpha'], 'name, descending');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'employees', 'asc'), ARRAY['beta', 'delta', 'alpha', 'echo', 'emile', 'zulu'], 'employees, the empty ones last (and in last activity order)');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'employees', 'desc'), ARRAY['echo', 'alpha', 'delta', 'beta', 'emile', 'zulu'], 'employees, descending: the empty ones still last');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'created_at', 'asc'), ARRAY['alpha', 'beta', 'delta', 'echo', 'zulu', 'emile'], 'created');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'state', 'asc'), ARRAY['echo', 'alpha', 'delta', 'beta', 'emile', 'zulu'], 'state (NV, OR, OR, WA, then none)');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'owner', 'asc'), ARRAY['beta', 'echo', 'zulu', 'alpha', 'emile', 'delta'], 'owner by their name; no owner (and one whose membership ended) last');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'owner', 'desc'), ARRAY['alpha', 'zulu', 'echo', 'beta', 'emile', 'delta'], 'owner, descending: no owner still last');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'status', 'asc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'status: prospects before clients');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'status', 'desc'), ARRAY['beta', 'alpha', 'emile', 'zulu', 'echo', 'delta'], 'status, descending');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'opportunity_stage', 'asc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'stage: the one with an open opportunity first, the rest last');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'target_start', 'desc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'target start');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'earliest_quote_expires_on', 'asc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'nearest expiry');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'quote_requests_sent', 'desc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'quotes asked for');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'waiting_on_peo', 'desc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'waiting on a PEO');
+  PERFORM pg_temp.is(pg_temp.f('[]', 'states_of_operation', 'asc'), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'states of operation');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"archived","op":"is","value":true}]', 'name', 'asc'), ARRAY['gamma'], 'the archived view sorts too');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[]', 'main_contact')$q$, '22023', 'no field "main_contact" to sort by', 'the main contact is not sorted by (CRM-A1.1)');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[]', 'main_contact_name')$q$, '22023', 'to sort by', 'nor its name');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[]', 'id')$q$, '22023', 'no field "id" to sort by', 'nor the id');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[]', 'name; DROP TABLE accounts')$q$, '22023', 'to sort by', 'a sort is a field''s name, never SQL');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[]', 'name', 'sideways')$q$, '22023', 'asc or desc', 'a direction is asc or desc');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[]', 'name', NULL)$q$, '22023', 'asc or desc', 'and not nothing');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: sort passed';
+END $$;
+
+-- ---------- search ----------
+-- Break caught: a search misses the trade name, the web domain or a contact's name or email; reads a character as a pattern; finds another firm's
+-- contact or one the person may not see; or leaks an archived account into a view.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'alpha'), ARRAY['alpha'], 'by account name');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, '  ALPHA  '), ARRAY['alpha'], 'ignoring case and surrounding spaces');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'alfa'), ARRAY['alpha'], 'by trade name');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'alpha-co.example'), ARRAY['alpha'], 'by web domain');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'https://www.alpha-co.example/home'), ARRAY['alpha'], 'by a web address pasted whole');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'www.alpha-co.example'), ARRAY['alpha'], 'by a web address with www');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'ann alpha'), ARRAY['alpha'], 'by a contact''s name');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'zebra'), ARRAY['alpha'], 'by a contact who is not the main one');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'zed@zebra.example'), ARRAY['alpha'], 'by a contact''s email');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'bea'), ARRAY['beta'], 'a contact with only a phone, by name');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'ann zebra'), ARRAY['alpha'], 'every word, anywhere in the account or its contacts');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'alpha nothing'), '{}'::text[], 'a word that is nowhere is no match');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'émile'), ARRAY['emile'], 'a name with an accent');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, '   '), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'blanks are no search');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, NULL), ARRAY['alpha', 'emile', 'zulu', 'echo', 'delta', 'beta'], 'nor is nothing');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, '%'), '{}'::text[], 'a percent sign is a character, not a pattern');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'al_ha'), '{}'::text[], 'nor is an underscore');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'zenithian'), '{}'::text[], 'another firm''s contact is not found');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'zenith'), '{}'::text[], 'nor another firm''s account');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'gamma'), '{}'::text[], 'an archived account is not found in the table');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"archived","op":"is","value":true}]', NULL, 'asc', 1, 'gamma'), ARRAY['gamma'], 'but is in the Archived view');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"status","op":"any_of","value":["prospect"]}]', NULL, 'asc', 1, 'co'), ARRAY['alpha', 'zulu', 'echo'], 'a search and a filter together');
+  PERFORM pg_temp.is(pg_temp.total('[]', 'co'), 3::bigint, 'the total counts what the search matches');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'alpha'), '{}'::text[], 'an agent searching for another''s account finds nothing');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'zebra'), '{}'::text[], 'nor another''s contact');
+  PERFORM pg_temp.is(pg_temp.f('[]', NULL, 'asc', 1, 'bea'), ARRAY['beta'], 'but their own''s contact');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: search passed';
+END $$;
+
+-- ---------- pages ----------
+-- A firm of its own with 120 accounts, all in one city, so a sort by city has only ties.
+-- Break caught: a page holds other than 50; a page past the end is an error or has another total; equal values put a row on two pages or none.
+DO $$
+DECLARE firm uuid; pg integer; seen uuid[] := '{}'; ids uuid[]; j jsonb;
+BEGIN
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Bulk Brokers', 'bulk-brokers', now()) RETURNING id INTO firm;
+  INSERT INTO fx VALUES ('bulk', firm);
+  PERFORM pg_temp.new_user('bulk_owner');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (firm, pg_temp.id('bulk_owner'), 'owner');
+  INSERT INTO public.accounts (source, firm_id, name, city, created_at)
+  SELECT 'import', firm, 'Bulk ' || lpad(n::text, 3, '0'), 'Same', timestamptz '2026-01-01 00:00+00' + (n || ' minutes')::interval FROM generate_series(1, 120) n;
+  PERFORM pg_temp.as_user('bulk_owner', 'bulk-brokers');
+  j := pg_temp.al('bulk');
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), 50, 'a page holds 50');
+  PERFORM pg_temp.is(j ->> 'total', '120', 'with the total of all');
+  PERFORM pg_temp.is((j ->> 'page_size')::integer, 50, 'and says the size');
+  PERFORM pg_temp.is(j -> 'rows' -> 0 ->> 'name', 'Bulk 120', 'newest activity first');
+  FOREACH pg IN ARRAY ARRAY[1, 2, 3] LOOP
+    j := pg_temp.al('bulk', '[]', 'city', 'asc', pg);
+    SELECT array_agg((r ->> 'id')::uuid) INTO ids FROM jsonb_array_elements(j -> 'rows') r;
+    PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), CASE WHEN pg = 3 THEN 20 ELSE 50 END, 'page ' || pg || ' of a sort of ties');
+    PERFORM pg_temp.is(ids && seen, false, 'page ' || pg || ' shares no row with an earlier page');
+    seen := seen || ids;
+    PERFORM pg_temp.is((j ->> 'page')::integer, pg, 'the page asked for is the page given');
+  END LOOP;
+  PERFORM pg_temp.is(cardinality(seen), 120, 'the pages together hold every row once');
+  j := pg_temp.al('bulk', '[]', NULL, 'asc', 4);
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), 0, 'a page past the end has no rows');
+  PERFORM pg_temp.is(j ->> 'total', '120', 'and the same total');
+  PERFORM pg_temp.is(pg_temp.al('bulk', '[{"field":"name","op":"contains","value":"bulk 11"}]') ->> 'total', '10', 'the total is of what matches');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.al('bulk', '[]', NULL, 'asc', 0)$q$, '22023', '1 to 100000', 'page 0 is refused');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.al('bulk', '[]', NULL, 'asc', 100001)$q$, '22023', '1 to 100000', 'a page beyond the limit is refused');
+  PERFORM pg_temp.is(pg_temp.al('bulk', '[]', NULL, 'asc', NULL) ->> 'page', '1', 'no page is page 1');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: pages passed';
+END $$;
+
+-- ---------- view counts ----------
+-- Break caught: a tab counts what its rows would not show (another firm's, another person's, archived ones outside Archived), or a refused filter is
+-- dropped from a view.
+CREATE FUNCTION pg_temp.views() RETURNS jsonb LANGUAGE sql AS $$
+  SELECT '[{"name":"All","filters":[]},
+           {"name":"Open opportunities","filters":[{"field":"open_opportunities","op":"more_than","value":0}]},
+           {"name":"Waiting on quotes","filters":[{"field":"waiting_on_peo","op":"is","value":true}]},
+           {"name":"Clients","filters":[{"field":"status","op":"any_of","value":["client"]}]},
+           {"name":"Archived","filters":[{"field":"archived","op":"is","value":true}]}]'::jsonb
+$$;
+CREATE FUNCTION pg_temp.counts(p_firm text, p_views jsonb, p_search text DEFAULT NULL, p_tz text DEFAULT 'UTC') RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg(view_name || '=' || total, ', ') FROM public.accounts_view_counts(pg_temp.id(p_firm), p_views, p_search, p_tz)
+$$;
+DO $$
+DECLARE who text; v jsonb; got text; want text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.counts('acme', pg_temp.views()), 'All=6, Open opportunities=1, Waiting on quotes=1, Clients=1, Archived=1', 'an owner''s tabs, in the order asked');
+  PERFORM pg_temp.is(pg_temp.counts('acme', pg_temp.views(), 'co'), 'All=3, Open opportunities=1, Waiting on quotes=1, Clients=0, Archived=0', 'under a search');
+  PERFORM pg_temp.as_user('acme_lead', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.counts('acme', pg_temp.views()), 'All=2, Open opportunities=0, Waiting on quotes=0, Clients=1, Archived=0', 'a lead''s tabs count only what the lead sees');
+  PERFORM pg_temp.as_user('acme_agent3', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.counts('acme', pg_temp.views()), 'All=0, Open opportunities=0, Waiting on quotes=0, Clients=0, Archived=1', 'an agent with only an archived account');
+  -- every tab equals what the list totals under the same filters, for every kind of person
+  FOREACH who IN ARRAY ARRAY['acme_owner', 'acme_lead', 'acme_agent1', 'acme_agent2', 'acme_agent3', 'both'] LOOP
+    PERFORM pg_temp.as_user(who, 'acme-brokers');
+    FOR v IN SELECT e FROM jsonb_array_elements(pg_temp.views()) e LOOP
+      got := pg_temp.counts('acme', jsonb_build_array(v), 'o');
+      want := (v ->> 'name') || '=' || (pg_temp.al('acme', v -> 'filters', NULL, 'asc', 1, 'o') ->> 'total');
+      PERFORM pg_temp.is(got, want, who || '''s tab "' || (v ->> 'name') || '" equals the list''s total');
+    END LOOP;
+  END LOOP;
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.counts('acme', '[{"name":"A","filters":[{"field":"main_contact","op":"is_empty"}]}]')$q$, '22023', 'View "A": The accounts table has no field "main_contact"', 'a refused filter refuses the call and names the view');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.counts('acme', '[{"name":"A"},{"name":"A"}]')$q$, '22023', 'Two views are named "A"', 'names are unique');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.counts('acme', '[]')$q$, '22023', '1 to 20', 'at least one view');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.counts('acme', (SELECT jsonb_agg(jsonb_build_object('name', n)) FROM generate_series(1, 21) n))$q$, '22023', '1 to 20', 'at most 20');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.counts('acme', '[{"name":"A","fields":[]}]')$q$, '22023', 'a name and its filters', 'a view holds a name and its filters, nothing else');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.counts('acme', '[{"name":" "}]')$q$, '22023', '1 to 100 characters', 'a name is not blank');
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.accounts_view_counts(%L, %L)$q$, pg_temp.id('acme'), pg_temp.views())) LIKE '42501:%', true, 'another firm''s owner is refused');
+  PERFORM pg_temp.as_user('acme_removed', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.accounts_view_counts(%L, %L)$q$, pg_temp.id('acme'), pg_temp.views())) LIKE '42501:%', true, 'a former member is refused');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.accounts_view_counts(%L, %L)$q$, pg_temp.id('acme'), pg_temp.views())) LIKE '42501:%', true, 'a signed-out caller is refused');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: view counts passed';
+END $$;
+
+-- ---------- person filters (D-173) ----------
+-- Break caught: "me" is another person; "my team" is only the lead's own team, or leaves out the teams under it, or shows what the lead may not see;
+-- "any of" shows an account the person may not see, or one whose owner has left; a person filter is let through for a field that has none.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"me"}]'), ARRAY['zulu'], 'me is the account''s owner (an owner''s own account)');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"my_team"}]'), '{}'::text[], 'an owner who is on no team has no team');
+  PERFORM pg_temp.is(pg_temp.f(format('[{"field":"owner","op":"any_of","value":["%s","%s"]}]', pg_temp.id('acme_agent1'), pg_temp.id('acme_agent4'))), ARRAY['alpha', 'echo'], 'any of two people');
+  PERFORM pg_temp.is(pg_temp.f(format('[{"field":"owner","op":"any_of","value":["%s"]}]', upper(pg_temp.id('acme_agent1')::text))), ARRAY['alpha'], 'an id in capitals');
+  PERFORM pg_temp.is(pg_temp.f(format('[{"field":"owner","op":"any_of","value":["%s"]}]', pg_temp.id('acme_removed'))), '{}'::text[], 'a person who has left owns nothing here: their account reads as no owner');
+  PERFORM pg_temp.is(pg_temp.f(format('[{"field":"owner","op":"any_of","value":["%s"]}]', gen_random_uuid())), '{}'::text[], 'a person nobody knows owns nothing');
+  PERFORM pg_temp.is(pg_temp.f(format('[{"field":"owner","op":"any_of","value":["%s"]},{"field":"status","op":"any_of","value":["client"]}]', pg_temp.id('acme_agent2'))), ARRAY['beta'], 'with another filter');
+  PERFORM pg_temp.as_user('acme_lead', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"my_team"}]'), ARRAY['echo', 'beta'], 'my team is the lead''s team and the team under it');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"me"}]'), '{}'::text[], 'the lead owns none');
+  PERFORM pg_temp.is(pg_temp.f(format('[{"field":"owner","op":"any_of","value":["%s"]}]', pg_temp.id('acme_agent1'))), '{}'::text[], 'a lead filtering on a person outside the team sees nothing of theirs');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"my_team"}]'), ARRAY['beta'], 'an agent''s team is the one they are on and under it; they still see only their own');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"me"}]'), ARRAY['beta'], 'me, for an agent');
+  PERFORM pg_temp.as_user('acme_agent4', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.f('[{"field":"owner","op":"my_team"}]'), ARRAY['echo'], 'an agent on the team under Sales has only that team, not the one above it');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.counts('acme', '[{"name":"Mine","filters":[{"field":"owner","op":"me"}]},{"name":"Team","filters":[{"field":"owner","op":"my_team"}]}]'), 'Mine=1, Team=0', 'a tab of my accounts');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"owner","op":"any_of","value":["x"]}]')$q$, '22023', 'takes people by their id', 'a person is named by their id');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"owner","op":"me","value":"x"}]')$q$, '22023', 'takes no value', 'me takes no value');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"name","op":"me"}]')$q$, '22023', 'A text field can''t be filtered with "me"', 'a text field has no me');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: person filters passed';
+END $$;
+
+-- ---------- the members the Owner filter offers ----------
+-- Break caught: the list shows a person who left, another firm's people, or is given to someone who is no member; a person is shown by their id.
+CREATE FUNCTION pg_temp.members(p_firm text) RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg(name, ' | ' ORDER BY ord) FROM (SELECT name, row_number() OVER () AS ord FROM public.firm_member_choices(pg_temp.id(p_firm))) m
+$$;
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.members('acme'),
+    'acme_agent2@example.test | acme_agent3@example.test | acme_agent4@example.test | acme_owner@example.test | Ann Agent | both@example.test | Lena Lead',
+    'the current members by name (else email), in the alphabet; not the person who left, and no one of another firm');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_choices(pg_temp.id('acme')) c WHERE c.user_id = pg_temp.id('acme_agent1') AND c.name = 'Ann Agent'), 1::bigint, 'with the id the filter takes');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_choices(NULL)), 7::bigint, 'no firm is the one at the address');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_member_choices(pg_temp.id('acme'))), 7::bigint, 'an agent is offered the same people');
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.members('zenith'), 'both@example.test | zenith_agent@example.test | zenith_owner@example.test', 'another firm''s own members');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_member_choices(%L)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'another firm''s member is refused');
+  PERFORM pg_temp.as_user('acme_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_member_choices(%L)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'at another firm''s address the firm of the address only');
+  PERFORM pg_temp.as_user('acme_removed', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_member_choices(%L)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'a former member is refused');
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_member_choices(%L)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'a platform admin who is no member is refused');
+  PERFORM pg_temp.as_user('nobody', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_member_choices(%L)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'a person of no firm is refused');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_member_choices(%L)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'a signed-out caller is refused');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: members passed';
+END $$;
