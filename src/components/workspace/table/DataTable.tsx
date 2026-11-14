@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { MouseEvent, ReactNode, Ref } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { SortDirection, TableFields, TableSort } from "@/lib/tableQuery";
 import { cn } from "@/lib/utils";
@@ -26,8 +26,10 @@ interface Props<K extends TableFields, Row, Context> {
    * order is the frame's). Left out, the headers only show the sort.
    */
   onSort?: (sort: TableSort<keyof K & string>) => void;
-  /** The rows are the previous ones while the next arrive. */
+  /** The rows are the previous ones while the next arrive: the body is dimmed and marked busy (never the headers, which stay usable). */
   busy?: boolean;
+  /** The scroll box, so the frame can put focus there when a control that was focused goes away. */
+  scrollRef?: Ref<HTMLDivElement>;
   /** A click anywhere on a row, outside its links and buttons, opens it. */
   onOpenRow?: (row: Row) => void;
   /**
@@ -38,7 +40,7 @@ interface Props<K extends TableFields, Row, Context> {
 }
 
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
-export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader }: Props<K, Row, Context>) {
   const openRow = (e: MouseEvent, row: Row) => {
     if (!onOpenRow || (e.target as HTMLElement).closest("a, button, input, select, label")) return;
     onOpenRow(row);
@@ -48,8 +50,8 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
       role="region"
       aria-label={`${caption}, scrolls sideways`}
       tabIndex={0}
-      aria-busy={busy || undefined}
-      className={cn("overflow-x-auto rounded-xl border border-border bg-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring", busy && "opacity-70")}
+      ref={scrollRef}
+      className="overflow-x-auto rounded-xl border border-border bg-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
     >
       <table className="w-full min-w-max caption-bottom text-sm">
         <caption className="sr-only">{caption}</caption>
@@ -72,14 +74,16 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                   className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right")}
                 >
                   {!renderHeader && onSort && field !== undefined ? (
+                    // The name is the header's words and nothing else; `aria-sort` on the cell says the state, and the title says what a click does
+                    // (read as the button's description, not as part of the column's name that is read at every cell).
                     <button
                       type="button"
                       onClick={() => onSort({ field, direction: next })}
-                      aria-label={`${column.header}, ${sorted ? `sorted ${word(sorted)}` : "not sorted"}. Sort ${word(next)}`}
+                      title={`Sort ${word(next)}`}
                       className={cn("flex h-11 w-full items-center gap-1 px-4 uppercase tracking-wide hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring", right && "flex-row-reverse", sorted && "text-foreground")}
                     >
                       <span>{column.header}</span>
-                      {/* A shape, not a colour: an arrow on the sorted column, a faint up-down mark on the others to say they sort. */}
+                      {/* A shape, not a colour, and decorative: an arrow on the sorted column, a faint up-down mark on the others to say they sort. */}
                       {mark ?? <ArrowUpDown className="h-3 w-3 shrink-0 opacity-40" aria-hidden="true" />}
                     </button>
                   ) : (
@@ -94,7 +98,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
           </tr>
         </thead>
         {placeholder ?? (
-        <tbody>
+        <tbody aria-busy={busy || undefined} className={cn(busy && "opacity-70")}>
           {rows.map((row) => (
             <tr
               key={table.rowKey(row)}

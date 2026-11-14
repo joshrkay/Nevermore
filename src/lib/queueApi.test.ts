@@ -140,9 +140,10 @@ describe("the queue's fields agree with the database", () => {
       return number;
     };
     const cases: [string, number, RegExp, RegExp, string[], string[]?, ("latest" | "first")?][] = [
-      ["a page", MAX_TABLE_PAGE, /pg < 1 OR pg > (\d+)/, /A page number is 1 to (\d+)/, ["queue_page_full"], ["queue_list_submissions"]],
-      // The first definition of the call lives on, renamed, as queue_page_full (the faster path in 20261117100500 asks it for what it can't answer), and both check the page.
-      ["a page, in the full path", MAX_TABLE_PAGE, /pg < 1 OR pg > (\d+)/, /A page number is 1 to (\d+)/, ["queue_page_full"], ["queue_list_submissions"], "first"],
+      ["a page", MAX_TABLE_PAGE, /pg < 1 OR pg > (\d+)/, /A page number is 1 to (\d+)/, ["queue_list_submissions"]],
+      // The full path (queue_page_full) was the first definition of the call, renamed when the faster path came in 20261117100500, and is
+      // restated in 20261118150000 (text sorted by the ICU collation); its latest definition must still check the page.
+      ["a page, in the full path", MAX_TABLE_PAGE, /pg < 1 OR pg > (\d+)/, /A page number is 1 to (\d+)/, ["queue_page_full"]],
       ["filters in all", TABLE_FILTER_LIMIT, /jsonb_array_length\(p_filters\) > (\d+)/, /A table takes at most (\d+) filters/, ["queue_filters_checked"]],
       ["a text value", FILTER_TEXT_MAX, /char_length\(v #>> '\{\}'\) > (\d+)/, /takes at most (\d+) characters/, ["workspace_filter_check"]],
       ["a list value", FILTER_TEXT_MAX, /char_length\(item #>> '\{\}'\) > (\d+)/, /takes values of 1 to (\d+) characters/, ["workspace_filter_check"]],

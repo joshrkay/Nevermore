@@ -45,6 +45,7 @@ export const NEW_PEO_MAIL_FILTER: QueueFilter = { field: "has_new_peo_mail", op:
  * the table, and offers "Back to newest first" once a column is sorted (CRM-S3.2a).
  */
 const DEFAULT_SORT_LABEL = "Newest first";
+const DEFAULT_SORT_RESET = "Back to newest first";
 
 /** Today's status tabs, as the queue's built-in views: the view's id is the status. */
 export const QUEUE_VIEWS: TableView<Fields>[] = PIPELINE_STATUSES.map((status) => ({
@@ -96,9 +97,10 @@ const FIELD_CHOICES: Partial<Record<QueueField, readonly FieldChoice[]>> = {
 
 /**
  * A first click on a date column sorts newest first, except these two, where the person wants the oldest day first: the longest wait on a
- * PEO is the earliest "waiting since", and the quote about to lapse is the earliest expiry (the two orders the old Sort box offered).
+ * PEO is the earliest "waiting since", and the quote about to lapse is the earliest expiry (the two orders the old Sort box offered). A
+ * first click on Quotes sorts the most requests first (an intake with none has the number 0 and would otherwise fill the first page).
  */
-const FIRST_DIRECTIONS: Partial<Record<QueueField, "asc" | "desc">> = { oldest_waiting_on: "asc", earliest_quote_expires_on: "asc" };
+const FIRST_DIRECTIONS: Partial<Record<QueueField, "asc" | "desc">> = { oldest_waiting_on: "asc", earliest_quote_expires_on: "asc", quote_requests_sent: "desc" };
 
 /** The queue's fields: each id and kind from the list the database holds (`QUEUE_FIELDS`), with its words and choices. */
 const queueFields = Object.fromEntries(
@@ -167,7 +169,8 @@ const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
     header: "Submitted",
     sortField: "submitted_at",
     filterField: "submitted_at",
-    text: submittedText,
+    // An export writes the day as ISO (every date column does); a draft has no date, so it keeps the words that say why.
+    text: (row) => (row.submitted_at ? row.submitted_at.slice(0, 10) : submittedText(row)),
     cell: (row) => (
       <span className="text-sm">{row.submitted_at ? submittedText(row) : <span className="text-muted-foreground">{submittedText(row)}</span>}</span>
     ),
@@ -211,13 +214,13 @@ const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
   {
     id: "quotes",
     header: "Quotes",
-    // Sorts by how many quote requests were sent (the "3" of "1 / 3 quoted").
+    // Sorts by how many quote requests were sent (the "3" of "1 / 3 quoted"), and a row with none says "None", so what sorts as 0 reads as a value.
     sortField: "quote_requests_sent",
     filterField: "quote_requests_sent",
-    text: (row) => (row.quote_requests_sent > 0 ? `${row.quotes_received} / ${row.quote_requests_sent} quoted` : ""),
+    text: (row) => (row.quote_requests_sent > 0 ? `${row.quotes_received} / ${row.quote_requests_sent} quoted` : "None"),
     cell: (row) => (
       <div className="text-sm space-y-1">
-        {row.quote_requests_sent > 0 && <p>{`${row.quotes_received} / ${row.quote_requests_sent} quoted`}</p>}
+        <p>{row.quote_requests_sent > 0 ? `${row.quotes_received} / ${row.quote_requests_sent} quoted` : <span className="text-muted-foreground">None</span>}</p>
         {row.new_peo_mail_requests > 0 && (
           <p>
             <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground whitespace-nowrap font-semibold">
@@ -239,7 +242,13 @@ const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
     sortField: "oldest_waiting_on",
     filterField: "oldest_waiting_on",
     text: (row) => row.oldest_waiting_on ?? "",
-    cell: (row) => (row.oldest_waiting_on ? <span className="text-sm">{waitingLabel(row.oldest_waiting_on)}</span> : dash),
+    // The day the wait began (so ascending is the longest wait first, which is true of a date), with how long that is under it.
+    cell: (row) => (row.oldest_waiting_on ? (
+      <>
+        <span className="text-sm">{formatDay(row.oldest_waiting_on)}</span>
+        <p className="text-xs text-muted-foreground">{waitingLabel(row.oldest_waiting_on)}</p>
+      </>
+    ) : dash),
   },
   {
     id: "quote_expires",
@@ -247,7 +256,7 @@ const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
     sortField: "earliest_quote_expires_on",
     filterField: "earliest_quote_expires_on",
     text: (row) => row.earliest_quote_expires_on ?? "",
-    cell: (row) => (row.earliest_quote_expires_on ? <span className="text-sm">{`Expires ${formatDay(row.earliest_quote_expires_on)}`}</span> : dash),
+    cell: (row) => (row.earliest_quote_expires_on ? <span className="text-sm">{formatDay(row.earliest_quote_expires_on)}</span> : dash),
   },
 ];
 
@@ -284,6 +293,7 @@ export const QUEUE_TABLE: QueueTableDefinition = {
   allViewLabel: "All statuses",
   defaultSort: null,
   defaultSortLabel: DEFAULT_SORT_LABEL,
+  defaultSortReset: DEFAULT_SORT_RESET,
   searchMinChars: QUEUE_SEARCH_MIN_CHARS,
   legacy,
 };

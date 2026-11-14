@@ -46,7 +46,7 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
   header: string;
   /** What the cell shows for a row. The first column's cell is the row's header cell, so it should name the row. `context` is what the page hands the frame for cells that need more than the row (a lookup by row). */
   cell: (row: Row, context: Context) => ReactNode;
-  /** The plain value of the cell, for an export (CRM-S3.8a writes it to the CSV). A column without one is left out of an export. */
+  /** The plain value of the cell, for an export (CRM-S3.8a writes it to the CSV). A column without one is left out of an export. A date is written as an ISO day (YYYY-MM-DD) in every table, a number as its digits. */
   text?: (row: Row, context: Context) => string;
   /** The field the database sorts this column by (CRM-S3.2a gives it a header button), or none when the column has no sort: a plain header. */
   sortField?: Field;
@@ -114,8 +114,10 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
    * sort and the frame says `defaultSortLabel` in a line over the table (CRM-S3.2a), with the way back to it once a column is sorted.
    */
   defaultSort: TableSort<keyof K & string> | null;
-  /** The words for the table's own order ("Newest first"): the line over the table, and the way back to it ("Back to newest first"). */
+  /** The words for the table's own order ("Newest first"), in the line over the table. */
   defaultSortLabel: string;
+  /** The words on the button that goes back to the table's own order ("Back to newest first"). Written out, not made from the label. */
+  defaultSortReset: string;
   /** Searches shorter than this (spaces left out) are not run. */
   searchMinChars: number;
   /** Old parameters mapped onto the new shape, so today's links keep working. A field an old parameter and a new filter both name is the new filter's. */

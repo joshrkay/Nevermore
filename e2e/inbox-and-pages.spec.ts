@@ -85,13 +85,18 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
 
   await test.step("a column header sorts the whole queue, the address carries the sort, the next click reverses it, and Back undoes page and sort", async () => {
     const firstRow = () => page.getByRole("row").nth(1).getByRole("link").first();
-    await page.getByRole("button", { name: /^Company,/ }).click();
+    await page.getByRole("button", { name: "Company" }).click();
     await expect(page).toHaveURL(/\?sort=company_name$/);
-    await expect(page.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "ascending");
+    await expect(page.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "ascending");
     await expect(firstRow()).toHaveText(/Filler Co 03/);
-    await page.getByRole("button", { name: /^Company,/ }).click();
+    // The whole header cell is the button: its box is the cell's.
+    const cellBox = await page.getByRole("columnheader", { name: "Company" }).boundingBox();
+    const buttonBox = await page.getByRole("button", { name: "Company" }).boundingBox();
+    expect(Math.abs(buttonBox!.width - cellBox!.width)).toBeLessThan(1.5);
+    expect(Math.abs(buttonBox!.height - cellBox!.height)).toBeLessThan(1.5);
+    await page.getByRole("button", { name: "Company" }).click();
     await expect(page).toHaveURL(/\?sort=-company_name$/);
-    await expect(page.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "descending");
+    await expect(page.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "descending");
     await expect(firstRow()).toHaveText(/Quiet Co/);
     await page.getByRole("link", { name: "Next" }).click();
     await expect(page.getByText("51 to 52 of 52")).toBeVisible();
@@ -100,7 +105,11 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await page.goBack();
     await expect(page.getByText("1 to 50 of 52")).toBeVisible();
     await expect(page).toHaveURL(/\?sort=-company_name$/);
+    // Reversing the same column replaced the entry, so one more Back undoes the whole sort.
     await page.goBack();
+    await expect(page).not.toHaveURL(/sort=/);
+    await expect(page.getByText("Order: Newest first")).toBeVisible();
+    await page.getByRole("button", { name: "Company" }).click();
     await expect(page).toHaveURL(/\?sort=company_name$/);
     await page.getByRole("button", { name: "Back to newest first" }).click();
     await expect(page).not.toHaveURL(/sort=/);

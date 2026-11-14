@@ -8,7 +8,7 @@ import { PLACEHOLDER_ROWS, type PlaceholderColumn } from "./placeholderShapes";
  */
 export function PlaceholderBody({ columns, rows = PLACEHOLDER_ROWS, cellClassName = "px-4 py-3 align-top" }: { columns: PlaceholderColumn[]; rows?: number; cellClassName?: string }) {
   return (
-    <tbody aria-hidden="true">
+    <tbody aria-hidden="true" aria-busy="true">
       {Array.from({ length: rows }, (_, r) => (
         <tr key={r} className="border-b border-border last:border-0">
           {columns.map((column) => (

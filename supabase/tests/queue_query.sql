@@ -116,9 +116,16 @@
 \i supabase/migrations/20261116190000_firm_invitations.sql
 \i supabase/migrations/20261116190500_invitation_fixes.sql
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
+\i supabase/migrations/20261116200500_firm_scope_fixes.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
 \i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
+\i supabase/migrations/20261116220000_remove_or_suspend_a_member.sql
+\i supabase/migrations/20261116220500_remove_or_suspend_fixes.sql
+\i supabase/migrations/20261116230000_firm_suspension.sql
+\i supabase/migrations/20261116240000_held_mail_to_the_right_firm.sql
+\i supabase/migrations/20261117090000_one_firm_at_a_time.sql
+\i supabase/migrations/20261117090500_one_firm_at_a_time_fixes.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -397,6 +404,25 @@ BEGIN
 END $$;
 SELECT pg_temp.as_owner();
 
+-- Every migration after the faster path, so the queue is read as the whole schema leaves it (the sort collation among them).
+\i supabase/migrations/20261117120000_table_settings.sql
+\i supabase/migrations/20261117120500_table_settings_fixes.sql
+\i supabase/migrations/20261117160000_epics_reconciled.sql
+\i supabase/migrations/20261118090000_leave_a_firm.sql
+\i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
+\i supabase/migrations/20261118100000_join_by_organisation.sql
+\i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
+\i supabase/migrations/20261118110000_close_a_firm.sql
+\i supabase/migrations/20261118110500_close_a_firm_fixes.sql
+\i supabase/migrations/20261118111000_close_a_firm_races.sql
+\i supabase/migrations/20261118120000_help_from_nevermore.sql
+\i supabase/migrations/20261118120500_help_from_nevermore_fixes.sql
+\i supabase/migrations/20261118130000_record_history.sql
+\i supabase/migrations/20261118130500_record_history_fixes.sql
+\i supabase/migrations/20261118140000_menu_counts.sql
+\i supabase/migrations/20261118140500_menu_counts_fixes.sql
+\i supabase/migrations/20261118150000_queue_sort_collation.sql
+
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,
   search text DEFAULT NULL, tz text DEFAULT 'UTC') RETURNS jsonb LANGUAGE sql AS $$
@@ -653,6 +679,49 @@ SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'oldest_waiting_on', 'desc', 2)
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'submitted_at', 'asc', 1)))[1], 'cert_a', 'a date with empty values: the one date first, ascending');
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'submitted_at', 'desc', 1)))[1], 'cert_a', 'a date with empty values: the one date first, descending too (empties last both ways)');
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'created_at', 'desc', 1)))[1:2], ARRAY['cert_a', 'zeta'], 'moments sort by time, latest first');
+-- Text sorts in alphabetical order, not code-point order (CRM-S3.2a, 20261118150000): an accented letter sits beside its plain one
+-- ("Émile" with "emile"), not after "z", and case is still ignored. Four intakes are renamed for this and put back after. Each text
+-- field the fixtures can set is checked, ascending and descending: company (the intake's data), target start (the intake's data), the
+-- advisor's note (the workflow), and contact (the profile). "COLLATE ÉMILE" and "Collate émile"
+-- differ only by case, so they tie and keep the queue's order (acme_upper changed last) both ways.
+SELECT pg_temp.as_owner();
+CREATE TEMP TABLE collate_saved AS
+  SELECT f.name, s.id, s.chamber_data, p.contact_name AS contact, w.needs_action_note AS note, w.needs_action AS act
+  FROM fx f JOIN public.chamber_sessions s ON s.id = f.id LEFT JOIN public.profiles p ON p.user_id = s.user_id
+  LEFT JOIN public.submission_workflow w ON w.session_id = s.id
+  WHERE f.name IN ('acme_upper', 'acme_lower', 'zeta', 'beta');
+CREATE TEMP TABLE collate_words (name text, word text);
+INSERT INTO collate_words VALUES ('acme_upper', 'ÉMILE'), ('acme_lower', 'émile'), ('zeta', 'Zeta'), ('beta', 'Ünal');
+DO $$
+BEGIN
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.chamber_sessions s SET chamber_data = s.chamber_data || jsonb_build_object('company_name', 'Collate ' || c.word, 'start_month', c.word)
+  FROM collate_words c WHERE s.id = pg_temp.id(c.name);
+  UPDATE public.profiles p SET contact_name = c.word FROM collate_words c, public.chamber_sessions s WHERE s.id = pg_temp.id(c.name) AND p.user_id = s.user_id;
+  UPDATE public.submission_workflow w SET needs_action = true, needs_action_note = c.word FROM collate_words c WHERE w.session_id = pg_temp.id(c.name);
+END $$;
+SELECT pg_temp.is((SELECT count(*) FROM collate_saved), 4::bigint, 'setup: four intakes renamed for the alphabet checks');
+SELECT pg_temp.as_user('agent_a1');
+CREATE FUNCTION pg_temp.alpha(field text, dir text) RETURNS text[] LANGUAGE sql AS $$
+  SELECT pg_temp.names(pg_temp.q('[{"field":"company_name","op":"contains","value":"collate "}]', field, dir, 1))
+$$;
+SELECT pg_temp.is(pg_temp.alpha('company_name', 'asc'), ARRAY['acme_upper', 'acme_lower', 'beta', 'zeta'], 'company: accents sit beside their letters, ascending, case ignored');
+SELECT pg_temp.is(pg_temp.alpha('company_name', 'desc'), ARRAY['zeta', 'beta', 'acme_upper', 'acme_lower'], 'company: and descending');
+SELECT pg_temp.is(pg_temp.alpha('start_month', 'asc'), ARRAY['acme_upper', 'acme_lower', 'beta', 'zeta'], 'target start: accents beside their letters, ascending');
+SELECT pg_temp.is(pg_temp.alpha('start_month', 'desc'), ARRAY['zeta', 'beta', 'acme_upper', 'acme_lower'], 'target start: and descending');
+SELECT pg_temp.is(pg_temp.alpha('needs_action_note', 'asc'), ARRAY['acme_upper', 'acme_lower', 'beta', 'zeta'], 'the advisor''s note: accents beside their letters, ascending');
+SELECT pg_temp.is(pg_temp.alpha('needs_action_note', 'desc'), ARRAY['zeta', 'beta', 'acme_upper', 'acme_lower'], 'the advisor''s note: and descending');
+SELECT pg_temp.is(pg_temp.alpha('contact_name', 'asc'), ARRAY['acme_upper', 'acme_lower', 'beta', 'zeta'], 'contact: accents beside their letters, ascending');
+SELECT pg_temp.is(pg_temp.alpha('contact_name', 'desc'), ARRAY['zeta', 'beta', 'acme_upper', 'acme_lower'], 'contact: and descending');
+SELECT pg_temp.as_owner();
+DO $$
+BEGIN
+  SET LOCAL session_replication_role = replica;
+  UPDATE public.chamber_sessions s SET chamber_data = c.chamber_data FROM collate_saved c WHERE s.id = c.id;
+  UPDATE public.profiles p SET contact_name = c.contact FROM collate_saved c, public.chamber_sessions s WHERE s.id = c.id AND p.user_id = s.user_id;
+  UPDATE public.submission_workflow w SET needs_action_note = c.note, needs_action = c.act FROM collate_saved c WHERE w.session_id = c.id;
+END $$;
+SELECT pg_temp.as_user('agent_a1');
 -- A stage sorts by where it is in the pipeline, not alphabetically: under review, then ready for market, then quoted.
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'pipeline_status', 'asc', 2)))[6:8], ARRAY['acme_upper', 'cert_a', 'zeta'], 'stages in pipeline order');
 SELECT pg_temp.is((pg_temp.names(pg_temp.q('[]', 'pipeline_status', 'desc', 1)))[1:3], ARRAY['zeta', 'cert_a', 'acme_upper'], 'stages in pipeline order, reversed');

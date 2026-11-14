@@ -220,6 +220,9 @@ export function judgeAddress<K extends TableFields>(table: TableDefinition<K, ne
   if (sortRead && "sort" in sortRead) sort = sortRead.sort;
   else if (sortRead && "unknown" in sortRead && fieldsLoading) held.sort = sortRead.unknown;
 
+  // A sort equal to the table's own default is no sort: the address never holds it, so the order line and its way back don't show for it.
+  if (sort && table.defaultSort && sort.field === table.defaultSort.field && sort.direction === table.defaultSort.direction) sort = null;
+
   // The view's filters count first against the table's limit; the address takes the room that is left (held ones count too).
   const room = Math.max(0, TABLE_FILTER_LIMIT - viewFilters(table, view).length);
   const known: { text: string; filter: TableFilter<K> }[] = [];

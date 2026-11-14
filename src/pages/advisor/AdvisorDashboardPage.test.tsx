@@ -99,6 +99,8 @@ const renderAt = (url = "/advisor") =>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+// The table's body: the rows (or the grey rows). It, not the headers, is what is busy and dimmed while the next answer arrives.
+const tableBody = () => screen.getByRole("table").querySelector("tbody")!;
 const where = () => screen.getByTestId("location").textContent;
 
 const companyOrder = () =>
@@ -180,7 +182,7 @@ describe("AdvisorDashboardPage", () => {
       // The slow-load line's status is already on the page, empty, ready to be filled; neither is inside a busy element.
       expect(allStatuses()).toHaveLength(2);
       expectStatusesOutsideBusy();
-      expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
+      expect(tableBody()).toHaveAttribute("aria-busy", "true");
       expect(screen.queryByRole("link", { name: "Next" })).not.toBeInTheDocument();
     });
 
@@ -261,7 +263,7 @@ describe("AdvisorDashboardPage", () => {
         expect(screen.getByRole("searchbox", { name: "Search" })).toBeEnabled();
         expect(screen.getByLabelText("Needs advisor action only")).toBeEnabled();
         expect(screen.getByLabelText("Waiting on a PEO only")).toBeEnabled();
-        expect(screen.getByRole("button", { name: /^Company,/ })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Company" })).toBeEnabled();
         // Refresh stays in the tab order, says why it can't be used, and ignores the click.
         const refresh = screen.getByRole("button", { name: "Refresh" });
         expect(refresh).toHaveAttribute("aria-disabled", "true");
@@ -395,7 +397,7 @@ describe("AdvisorDashboardPage", () => {
         const asked = listQueue.mock.calls.length;
         // The rows of the tab just left stay, dimmed and marked busy, and there is no slow line over them.
         expect(screen.getByText("Company 1")).toBeInTheDocument();
-        expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
+        expect(tableBody()).toHaveAttribute("aria-busy", "true");
         await tick(30_000);
         expect(slowLine()).not.toBeInTheDocument();
         listQueue.mockResolvedValue([row({ company_name: "Won Co" })]);
@@ -403,7 +405,7 @@ describe("AdvisorDashboardPage", () => {
         await tick(0);
         expect(listQueue.mock.calls.length).toBeGreaterThan(asked);
         expect(screen.getByText("Won Co")).toBeInTheDocument();
-        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
+        expect(tableBody()).not.toHaveAttribute("aria-busy");
       });
 
       // Catches: a refresh of the question already on screen dimming the rows (dimming says "these answer another question"; a refresh changes nothing).
@@ -416,8 +418,8 @@ describe("AdvisorDashboardPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
         await tick(0);
         expect(listQueue).toHaveBeenCalledTimes(2);
-        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
-        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveClass("opacity-70");
+        expect(tableBody()).not.toHaveAttribute("aria-busy");
+        expect(tableBody()).not.toHaveClass("opacity-70");
       });
 
       // Catches (D-49): a refresh that finds nothing to show but the rows already there counting as loading: grey rows over the list, or
@@ -980,7 +982,7 @@ describe("AdvisorDashboardPage", () => {
 
       fireEvent.click(screen.getByRole("link", { name: "Next" }));
       await screen.findByText("51 to 100 of 375 submissions matching “acme”");
-      fireEvent.click(screen.getByRole("button", { name: /^Company,/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Company" }));
       await waitFor(() => expect(where()).toBe("?view=won&q=acme&filter=waiting_on_peo:is:true&sort=company_name"));
       expect(listQueue).toHaveBeenLastCalledWith(query({
         filters: [pipeline("won"), yes("waiting_on_peo")], search: "acme", sort: { field: "company_name", direction: "asc" },
@@ -993,8 +995,8 @@ describe("AdvisorDashboardPage", () => {
     renderAt("/advisor?sort=-submitted_at");
     await screen.findByRole("link", { name: "Acme" });
     expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "submitted_at", direction: "desc" } }));
-    expect(screen.getByRole("columnheader", { name: /^Submitted/ })).toHaveAttribute("aria-sort", "descending");
-    expect(screen.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "none");
+    expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
+    expect(screen.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "none");
   });
 
   it("has an empty state", async () => {
@@ -1071,13 +1073,13 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([
         row({ company_name: "One", new_peo_mail_requests: 1, quote_requests_sent: 1 }),
         row({ session_id: "s2", company_name: "Two", new_peo_mail_requests: 3, quote_requests_sent: 3 }),
-        row({ session_id: "s3", company_name: "None" }),
+        row({ session_id: "s3", company_name: "Quiet" }),
       ]);
       renderAt();
       const one = (await screen.findByText("One")).closest("tr")!;
       expect(within(one).getByText("New PEO mail")).toBeInTheDocument();
       expect(within(screen.getByText("Two").closest("tr")!).getByText("New PEO mail (3)")).toBeInTheDocument();
-      expect(within(screen.getByText("None").closest("tr")!).queryByText(/New PEO mail/)).not.toBeInTheDocument();
+      expect(within(screen.getByText("Quiet").closest("tr")!).queryByText(/New PEO mail/)).not.toBeInTheDocument();
     });
 
     it("shows quotes back out of sent, the longest wait, the earliest expiry, the target start and an older version", async () => {
@@ -1091,8 +1093,10 @@ describe("AdvisorDashboardPage", () => {
       renderAt();
       const acme = (await screen.findByText("Acme")).closest("tr")!;
       expect(within(acme).getByText("1 / 3 quoted")).toBeInTheDocument();
+      // "Waiting since" shows the day the wait began, with how long that is under it; "Quote expires" shows just the day.
+      expect(within(acme).getByText("Nov 10, 2026")).toBeInTheDocument();
       expect(within(acme).getByText("Waiting 6 days")).toBeInTheDocument();
-      expect(within(acme).getByText("Expires Dec 14, 2026")).toBeInTheDocument();
+      expect(within(acme).getByText("Dec 14, 2026")).toBeInTheDocument();
       expect(within(acme).getByText("A PEO has an older version")).toBeInTheDocument();
       expect(within(acme).getByText("April 2027")).toBeInTheDocument();
       const beta = screen.getByText("Beta").closest("tr")!;
@@ -1417,9 +1421,17 @@ describe("AdvisorDashboardPage", () => {
     const r = row({ needs_action: true });
     const text = Object.fromEntries(QUEUE_TABLE.columns.map((c) => [c.id, c.text?.(r, { problems: new Map() })]));
     expect(text).toEqual({
-      company: "Acme", contact: "Pat Prospect", states: "CA, NY", employees: "12", submitted: "Oct 1, 2026", status: "Submitted",
-      completeness: "Complete", quotes: "", waiting_since: "", quote_expires: "",
+      company: "Acme", contact: "Pat Prospect", states: "CA, NY", employees: "12", submitted: "2026-10-01", status: "Submitted",
+      completeness: "Complete", quotes: "None", waiting_since: "", quote_expires: "",
     });
+  
+  });
+
+  // Catches: one date column exporting "Oct 1, 2026" and another "2026-11-10", so a spreadsheet can't sort or read them as one kind.
+  it("writes every date column's plain text as an ISO day", () => {
+    const text = (id: string, r: QueueRow) => QUEUE_TABLE.columns.find((c) => c.id === id)!.text!(r, { problems: new Map() });
+    const r = row({ oldest_waiting_on: "2026-11-10", earliest_quote_expires_on: "2026-12-14", submitted_at: "2026-10-01T12:00:00Z" });
+    expect(["submitted", "waiting_since", "quote_expires"].map((id) => text(id, r))).toEqual(["2026-10-01", "2026-11-10", "2026-12-14"]);
   });
 
   describe("keeping up with a definition that changes", () => {
@@ -1521,12 +1533,12 @@ describe("AdvisorDashboardPage", () => {
       setTable({ ...QUEUE_TABLE, defaultSort: { field: "submitted_at", direction: "desc" } });
       renderAt();
       await screen.findByRole("link", { name: "Acme" });
-      expect(screen.getByRole("columnheader", { name: /^Submitted/ })).toHaveAttribute("aria-sort", "descending");
+      expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
       cleanup();
       renderAt("/advisor?sort=company_name");
       await screen.findByRole("link", { name: "Acme" });
-      expect(screen.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "ascending");
-      expect(screen.getByRole("columnheader", { name: /^Submitted/ })).toHaveAttribute("aria-sort", "none");
+      expect(screen.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "ascending");
+      expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "none");
     });
 
     it("shows no sort in the queue's header when the address holds none: its own order is no column's", async () => {
@@ -1620,7 +1632,7 @@ describe("AdvisorDashboardPage", () => {
       // Still the first page's rows, and no loading spinner.
       expect(screen.getByText("Company 1")).toBeInTheDocument();
       expect(screen.queryByText(/Loading submissions/)).not.toBeInTheDocument();
-      expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
+      expect(tableBody()).toHaveAttribute("aria-busy", "true");
       // The range is a polite live region.
       expect(screen.getByText("1 to 50 of 375 submissions")).toHaveAttribute("aria-live", "polite");
       await act(async () => arrive(pageOf(2, 375)));
@@ -1666,14 +1678,14 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       renderAt();
       await screen.findByRole("link", { name: "Acme" });
-      fireEvent.click(sortButton("Company, not sorted. Sort ascending"));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=company_name"));
       await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "company_name", direction: "asc" } })));
-      fireEvent.click(sortButton("Company, sorted ascending. Sort descending"));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=-company_name"));
       await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "company_name", direction: "desc" } })));
       // A third click reverses again; it never clears the sort (the way back to the default order is its own control).
-      fireEvent.click(sortButton("Company, sorted descending. Sort ascending"));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=company_name"));
       expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "company_name", direction: "asc" } }));
     });
@@ -1683,15 +1695,15 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       renderAt();
       await screen.findByRole("link", { name: "Acme" });
-      fireEvent.click(sortButton(/^Submitted,/));
+      fireEvent.click(sortButton("Submitted"));
       await waitFor(() => expect(where()).toBe("?sort=-submitted_at"));
-      fireEvent.click(sortButton(/^Employees,/));
+      fireEvent.click(sortButton("Employees"));
       await waitFor(() => expect(where()).toBe("?sort=employee_count"));
-      fireEvent.click(sortButton(/^Status,/));
+      fireEvent.click(sortButton("Status"));
       await waitFor(() => expect(where()).toBe("?sort=pipeline_status"));
-      fireEvent.click(sortButton(/^Quote expires,/));
+      fireEvent.click(sortButton("Quote expires"));
       await waitFor(() => expect(where()).toBe("?sort=earliest_quote_expires_on"));
-      fireEvent.click(sortButton(/^Waiting since,/));
+      fireEvent.click(sortButton("Waiting since"));
       await waitFor(() => expect(where()).toBe("?sort=oldest_waiting_on"));
     });
 
@@ -1701,15 +1713,15 @@ describe("AdvisorDashboardPage", () => {
       renderAt("/advisor?sort=-company_name");
       await screen.findByRole("link", { name: "Acme" });
       expect(sorted()).toEqual(["Company"]);
-      const company = screen.getByRole("columnheader", { name: /^Company/ });
+      const company = screen.getByRole("columnheader", { name: "Company" });
       expect(company).toHaveAttribute("aria-sort", "descending");
       expect(company.querySelector(".lucide-arrow-down")).not.toBeNull();
       expect(company.querySelector(".lucide-arrow-up")).toBeNull();
-      expect(screen.getByRole("columnheader", { name: /^Contact/ })).toHaveAttribute("aria-sort", "none");
-      fireEvent.click(sortButton(/^Contact,/));
+      expect(screen.getByRole("columnheader", { name: "Contact" })).toHaveAttribute("aria-sort", "none");
+      fireEvent.click(sortButton("Contact"));
       await waitFor(() => expect(sorted()).toEqual(["Contact"]));
-      expect(screen.getByRole("columnheader", { name: /^Contact/ }).querySelector(".lucide-arrow-up")).not.toBeNull();
-      expect(screen.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "none");
+      expect(screen.getByRole("columnheader", { name: "Contact" }).querySelector(".lucide-arrow-up")).not.toBeNull();
+      expect(screen.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "none");
     });
 
     // Catches: a worked-out column (Completeness) given a button the database can't honour.
@@ -1728,21 +1740,11 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       renderAt();
       await screen.findByRole("link", { name: "Acme" });
-      sortButton(/^Contact,/).focus();
+      sortButton("Contact").focus();
       await user.keyboard("{Enter}");
       await waitFor(() => expect(where()).toBe("?sort=contact_name"));
       await user.keyboard(" ");
       await waitFor(() => expect(where()).toBe("?sort=-contact_name"));
-    });
-
-    // Catches: the whole header cell not being the click target (only the words), which is a small target.
-    it("makes the whole header cell the button", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderAt();
-      await screen.findByRole("link", { name: "Acme" });
-      const button = sortButton(/^Company,/);
-      expect(button.parentElement).toBe(screen.getByRole("columnheader", { name: /^Company/ }));
-      expect(button.className).toMatch(/w-full/);
     });
 
     // Catches: a sort keeping the old page number, so page 3 of the old order is shown.
@@ -1750,14 +1752,15 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       renderAt("/advisor?page=3");
       await screen.findByText("101 to 150 of 375 submissions");
-      fireEvent.click(sortButton(/^Company,/));
+      fireEvent.click(sortButton("Company"));
       await screen.findByText("1 to 50 of 375 submissions");
       expect(where()).toBe("?sort=company_name");
       expect(listQueue).toHaveBeenLastCalledWith(query({ page: 1, sort: { field: "company_name", direction: "asc" } }));
     });
 
-    // Catches: a sort replacing the history entry, so Back leaves the queue instead of undoing the sort.
-    it("lets the browser's Back undo a sort, one click at a time", async () => {
+    // Catches: a sort replacing the history entry, so Back leaves the queue instead of undoing the sort; and reversing the same column pushing
+    // an entry each time, so asc, desc, asc takes three Backs to unwind.
+    it("lets the browser's Back undo a sort: a new column is a step, and reversing the same column is not", async () => {
       listQueue.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 375));
       const BackButton = () => {
         const navigate = useNavigate();
@@ -1773,10 +1776,15 @@ describe("AdvisorDashboardPage", () => {
         </QueryClientProvider>,
       );
       await screen.findByText("51 to 100 of 375 submissions");
-      fireEvent.click(sortButton(/^Company,/));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=company_name"));
-      fireEvent.click(sortButton(/^Company,/));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=-company_name"));
+      fireEvent.click(sortButton("Company"));
+      await waitFor(() => expect(where()).toBe("?sort=company_name"));
+      fireEvent.click(sortButton("Contact"));
+      await waitFor(() => expect(where()).toBe("?sort=contact_name"));
+      // Back leaves Contact for Company as it was last set, then (one Back, however many reversals) the page the person came from.
       fireEvent.click(screen.getByRole("button", { name: "Browser back" }));
       await waitFor(() => expect(where()).toBe("?sort=company_name"));
       fireEvent.click(screen.getByRole("button", { name: "Browser back" }));
@@ -1800,6 +1808,136 @@ describe("AdvisorDashboardPage", () => {
       expect(sorted()).toEqual([]);
     });
 
+    // Catches: the header's name carrying its state ("Company, sorted ascending. Sort descending"), which a screen reader reads at every cell
+    // move on top of aria-sort; the name is the header's words, the state is aria-sort and what a click does is the button's description.
+    it("names the header by its words alone, with the state in aria-sort and what a click does as the button's description", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?sort=company_name");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "ascending");
+      expect(sortButton("Company")).toHaveAccessibleDescription("Sort descending");
+      expect(sortButton("Contact")).toHaveAccessibleDescription("Sort ascending");
+      expect(sortButton("Submitted")).toHaveAccessibleDescription("Sort descending");
+      // The mark is decoration.
+      for (const icon of Array.from(sortButton("Company").querySelectorAll("svg"))) expect(icon).toHaveAttribute("aria-hidden", "true");
+    });
+
+    // Catches: a header cell that is only partly the button (words outside it, or padding around it).
+    it("makes the whole header cell the button: the cell holds nothing else and no padding of its own", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt();
+      await screen.findByRole("link", { name: "Acme" });
+      const th = screen.getByRole("columnheader", { name: "Company" });
+      expect(th.children).toHaveLength(1);
+      expect(th.firstElementChild).toBe(sortButton("Company"));
+      expect(th.textContent).toBe(sortButton("Company").textContent);
+      expect(th).toHaveClass("p-0");
+    });
+
+    // Catches: a most-requests-first sort that starts with the many rows that have none (0 is a real number), and a blank cell for them.
+    it("starts Quotes with the most requests, and says None where there are none", async () => {
+      listQueue.mockResolvedValue([row({ company_name: "Busy", quote_requests_sent: 3, quotes_received: 1 }), row({ session_id: "s2", company_name: "Idle" })]);
+      renderAt();
+      await screen.findByRole("link", { name: "Busy" });
+      expect(within(screen.getByText("Idle").closest("tr")!).getByText("None")).toBeInTheDocument();
+      fireEvent.click(sortButton("Quotes"));
+      await waitFor(() => expect(where()).toBe("?sort=-quote_requests_sent"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "quote_requests_sent", direction: "desc" } }));
+    });
+
+    // Catches: "Waiting since" over a duration ("Waiting 70 days") with an up arrow that lists the LARGEST durations first; it shows the day
+    // the wait began, so ascending is the longest wait first, and the first click is ascending.
+    it("shows the day a wait began under 'Waiting since', and its first click is ascending (the longest wait first)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-16T15:00:00"));
+      listQueue.mockResolvedValue([row({ oldest_waiting_on: "2026-09-07", quote_requests_sent: 1 })]);
+      renderAt();
+      const cell = (await screen.findByText("Sep 7, 2026")).closest("td")!;
+      expect(within(cell).getByText("Waiting 70 days")).toBeInTheDocument();
+      vi.useRealTimers();
+      fireEvent.click(sortButton("Waiting since"));
+      await waitFor(() => expect(where()).toBe("?sort=oldest_waiting_on"));
+      expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "oldest_waiting_on", direction: "asc" } }));
+    });
+
+    // Catches: the old link's other sort parameter (oldest_waiting) no longer marking its column.
+    it("shows an old link's oldest-wait sort in the Waiting since header", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?sort=oldest_waiting");
+      await screen.findByRole("link", { name: "Acme" });
+      expect(screen.getByRole("columnheader", { name: "Waiting since" })).toHaveAttribute("aria-sort", "ascending");
+      await waitFor(() => expect(where()).toBe("?sort=oldest_waiting_on"));
+    });
+
+    describe("focus", () => {
+      // Catches: the sort button losing focus when the sorted rows arrive (the header being rebuilt or the table being swapped), which drops a
+      // keyboard user back to the top of the page after every sort.
+      it("stays on the header button after a click and after the new rows arrive", async () => {
+        listQueue.mockResolvedValueOnce([row({ company_name: "First" })]);
+        renderAt();
+        await screen.findByText("First");
+        const button = sortButton("Company");
+        button.focus();
+        let arrive: (rows: unknown) => void = () => {};
+        listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
+        fireEvent.click(button);
+        await waitFor(() => expect(where()).toBe("?sort=company_name"));
+        expect(document.activeElement).toBe(button);
+        await act(async () => arrive([row({ company_name: "Second" })]));
+        await screen.findByText("Second");
+        expect(sortButton("Company")).toBe(button);
+        expect(document.activeElement).toBe(button);
+      });
+
+      // Catches: "Back to newest first" being pressed and removed, so focus falls to the page and a keyboard user starts again from the top.
+      it("moves to the table's scroll box when 'Back to newest first' is pressed and goes away", async () => {
+        const user = userEvent.setup();
+        listQueue.mockResolvedValue([row()]);
+        renderAt("/advisor?sort=company_name");
+        await screen.findByRole("link", { name: "Acme" });
+        await user.tab();
+        screen.getByRole("button", { name: "Back to newest first" }).focus();
+        await user.keyboard("{Enter}");
+        await waitFor(() => expect(where()).toBe(""));
+        expect(screen.queryByRole("button", { name: "Back to newest first" })).not.toBeInTheDocument();
+        expect(document.activeElement).toBe(screen.getByRole("region", { name: /Submissions/ }));
+      });
+    });
+
+    // Catches: the order line being a live region too, so one click is announced by aria-sort, by the button and by the line.
+    it("keeps the order line plain text, not a live region", async () => {
+      listQueue.mockResolvedValue([row()]);
+      renderAt("/advisor?sort=company_name");
+      await screen.findByRole("link", { name: "Acme" });
+      const line = screen.getByText("Sorted by Company, ascending.");
+      expect(line.closest("[aria-live], [role=status], [role=alert]")).toBeNull();
+    });
+
+    // Catches: the busy mark and the dimming sitting on the whole box, so the headers (and the button a person just pressed) are dimmed and
+    // marked busy while the sorted page loads.
+    it("marks only the body busy and dims only the body while the sorted page loads, never the headers", async () => {
+      listQueue.mockResolvedValueOnce([row({ company_name: "Old order" })]);
+      renderAt();
+      await screen.findByText("Old order");
+      listQueue.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(sortButton("Company"));
+      await waitFor(() => expect(tableBody()).toHaveAttribute("aria-busy", "true"));
+      expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
+      expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveClass("opacity-70");
+      expect(screen.getByRole("table").querySelector("thead")!.closest("[aria-busy=true], .opacity-70")).toBeNull();
+    });
+
+    // Catches: a sort equal to the table's default being kept in the address, so the line and "Back to" show for the order the table has anyway.
+    it("treats a sort equal to the table's default as no sort, and drops it from the address", async () => {
+      listQueue.mockResolvedValue([row()]);
+      setTable({ ...QUEUE_TABLE, defaultSort: { field: "submitted_at", direction: "desc" }, defaultSortLabel: "Newest certified", defaultSortReset: "Back to newest certified" });
+      renderAt("/advisor?sort=-submitted_at&q=acme");
+      await screen.findByRole("link", { name: "Acme" });
+      await waitFor(() => expect(where()).toBe("?q=acme"));
+      expect(screen.queryByRole("button", { name: "Back to newest certified" })).not.toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
+    });
+
     describe("the order when no column is sorted", () => {
       // Catches: the queue's compound order being invisible when no header can show it, and no way back to it after a column sort.
       it("says what the order is when the address holds no sort, and offers the way back only once one is set", async () => {
@@ -1809,7 +1947,7 @@ describe("AdvisorDashboardPage", () => {
         expect(screen.getByText("Order: Newest first")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /Back to newest first/ })).not.toBeInTheDocument();
         expect(sorted()).toEqual([]);
-        fireEvent.click(sortButton(/^Company,/));
+        fireEvent.click(sortButton("Company"));
         await waitFor(() => expect(where()).toBe("?sort=company_name"));
         expect(screen.queryByText("Order: Newest first")).not.toBeInTheDocument();
         expect(screen.getByText("Sorted by Company, ascending.")).toBeInTheDocument();
@@ -1831,19 +1969,19 @@ describe("AdvisorDashboardPage", () => {
       // Catches: a table with its own one-column default (a table other than the queue) not showing it, or offering no way back to it.
       it("for a table whose default is one column, shows it in the header, says no order line, and offers the way back after another sort", async () => {
         listQueue.mockResolvedValue([row()]);
-        setTable({ ...QUEUE_TABLE, defaultSort: { field: "submitted_at", direction: "desc" }, defaultSortLabel: "Newest certified" });
+        setTable({ ...QUEUE_TABLE, defaultSort: { field: "submitted_at", direction: "desc" }, defaultSortLabel: "Newest certified", defaultSortReset: "Back to newest certified" });
         renderAt();
         await screen.findByRole("link", { name: "Acme" });
-        expect(screen.getByRole("columnheader", { name: /^Submitted/ })).toHaveAttribute("aria-sort", "descending");
+        expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
         expect(screen.queryByText(/^Order:/)).not.toBeInTheDocument();
         // The default's column reverses from where it is.
-        fireEvent.click(sortButton(/^Submitted,/));
+        fireEvent.click(sortButton("Submitted"));
         await waitFor(() => expect(where()).toBe("?sort=submitted_at"));
-        fireEvent.click(sortButton(/^Company,/));
+        fireEvent.click(sortButton("Company"));
         await waitFor(() => expect(where()).toBe("?sort=company_name"));
         fireEvent.click(screen.getByRole("button", { name: "Back to newest certified" }));
         await waitFor(() => expect(where()).toBe(""));
-        expect(screen.getByRole("columnheader", { name: /^Submitted/ })).toHaveAttribute("aria-sort", "descending");
+        expect(screen.getByRole("columnheader", { name: "Submitted" })).toHaveAttribute("aria-sort", "descending");
       });
     });
 
@@ -1852,7 +1990,7 @@ describe("AdvisorDashboardPage", () => {
       listQueue.mockResolvedValue([row()]);
       renderAt("/advisor?sort=earliest_expiry");
       await screen.findByRole("link", { name: "Acme" });
-      expect(screen.getByRole("columnheader", { name: /^Quote expires/ })).toHaveAttribute("aria-sort", "ascending");
+      expect(screen.getByRole("columnheader", { name: "Quote expires" })).toHaveAttribute("aria-sort", "ascending");
       expect(screen.queryByLabelText("Sort")).not.toBeInTheDocument();
     });
 
@@ -1861,11 +1999,11 @@ describe("AdvisorDashboardPage", () => {
       it("works over the grey rows, and shows the address's sort", async () => {
         listQueue.mockReturnValue(new Promise(() => {}));
         renderAt("/advisor?sort=-employee_count");
-        expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
-        expect(screen.getByRole("columnheader", { name: /^Employees/ })).toHaveAttribute("aria-sort", "descending");
-        fireEvent.click(sortButton(/^Company,/));
+        expect(tableBody()).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("columnheader", { name: "Employees" })).toHaveAttribute("aria-sort", "descending");
+        fireEvent.click(sortButton("Company"));
         await waitFor(() => expect(where()).toBe("?sort=company_name"));
-        expect(screen.getByRole("columnheader", { name: /^Company/ })).toHaveAttribute("aria-sort", "ascending");
+        expect(screen.getByRole("columnheader", { name: "Company" })).toHaveAttribute("aria-sort", "ascending");
         expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "company_name", direction: "asc" } }));
       });
 
@@ -1876,14 +2014,14 @@ describe("AdvisorDashboardPage", () => {
         await screen.findByText("Old order");
         let arrive: (rows: unknown) => void = () => {};
         listQueue.mockReturnValue(new Promise((r) => { arrive = r; }));
-        fireEvent.click(sortButton(/^Company,/));
+        fireEvent.click(sortButton("Company"));
         await waitFor(() => expect(where()).toBe("?sort=company_name"));
         expect(screen.getByText("Old order")).toBeInTheDocument();
-        expect(screen.getByRole("region", { name: /Submissions/ })).toHaveAttribute("aria-busy", "true");
-        expect(screen.getByRole("region", { name: /Submissions/ })).toHaveClass("opacity-70");
+        expect(tableBody()).toHaveAttribute("aria-busy", "true");
+        expect(tableBody()).toHaveClass("opacity-70");
         await act(async () => arrive([row({ company_name: "New order" })]));
         expect(await screen.findByText("New order")).toBeInTheDocument();
-        expect(screen.getByRole("region", { name: /Submissions/ })).not.toHaveAttribute("aria-busy");
+        expect(tableBody()).not.toHaveAttribute("aria-busy");
       });
     });
 
@@ -1894,10 +2032,10 @@ describe("AdvisorDashboardPage", () => {
       await screen.findByRole("link", { name: "Acme" });
       await waitFor(() => expect(countQueueViews).toHaveBeenCalled());
       const counted = countQueueViews.mock.calls.length;
-      fireEvent.click(sortButton(/^Company,/));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=company_name"));
       await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "company_name", direction: "asc" } })));
-      fireEvent.click(sortButton(/^Company,/));
+      fireEvent.click(sortButton("Company"));
       await waitFor(() => expect(where()).toBe("?sort=-company_name"));
       await act(async () => {});
       expect(countQueueViews.mock.calls.length).toBe(counted);

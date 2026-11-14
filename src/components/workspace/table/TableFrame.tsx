@@ -1,4 +1,4 @@
-import { useEffect, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
@@ -93,8 +93,16 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
   // The sort the headers show: the address's, or else the table's own when one column shows it. With neither, no header is marked and the
   // line over the table says what the order is.
   const shownSort = address.sort ?? table.defaultSort;
-  // A sort is a place a person comes back to (Back undoes it, as it does a page), not a correction of one: it pushes a history entry.
-  const sortBy = (sort: NonNullable<typeof shownSort>) => change({ sort }, { push: true });
+  // A sort that puts a new column in the address is a place a person comes back to (Back undoes it, as it does a page): it pushes a history
+  // entry. Reversing the column already in the address only corrects it, so it replaces the entry and asc, desc, asc is one Back.
+  const sortBy = (sort: NonNullable<typeof shownSort>) => change({ sort }, address.sort?.field === sort.field ? { replace: true } : { push: true });
+  // "Back to newest first" is gone once pressed (the line only offers it while a sort is set), which would drop focus to the page: it goes to
+  // the table's scroll box, which is always there.
+  const scrollBox = useRef<HTMLDivElement>(null);
+  const resetSort = () => {
+    change({ sort: null }, { push: true });
+    scrollBox.current?.focus();
+  };
   return (
     <div>
       {typeof toolbar === "function" ? toolbar({ loading: loadingNow, slowLine }) : <>{toolbar}{slowLine}</>}
@@ -114,7 +122,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       ) : placeholdering || page.rows.length > 0 ? (
         <>
           {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
-          <OrderLine table={table} sort={address.sort} onReset={() => change({ sort: null }, { push: true })} />
+          <OrderLine table={table} sort={address.sort} onReset={resetSort} />
           <DataTable
             table={table}
             context={context}
@@ -124,6 +132,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             caption={caption}
             sort={shownSort}
             onSort={sortBy}
+            scrollRef={scrollBox}
             // Rows on screen are dimmed and marked busy only while they answer a different question than the address now asks (the next page,
             // tab or filter, D-144); a refresh of the same question changes nothing on screen.
             busy={placeholdering || data.isPlaceholder}
