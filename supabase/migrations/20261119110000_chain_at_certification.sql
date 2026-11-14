@@ -29,7 +29,9 @@
 
 -- ---------- 1. Pure helpers ----------
 -- Whether a web domain (as web_domain_of gives it) is a free-mail provider's: many businesses share it, so it can never say two accounts are one business
--- (D-193). The one list. Pure.
+-- (D-193). This is the list of the duplicate match. A twin, is_consumer_organisation (20261113100000), keeps a list for the sign-in organisations a firm may
+-- allow: it answers another question and already differs (it has passport.com, which this lacks; this has aim.com, rocketmail.com, bellsouth.net, cox.net
+-- and charter.net, which it lacks). The two are not kept in step. Pure.
 CREATE FUNCTION public.is_free_mail_domain(p_domain text)
 RETURNS boolean
 LANGUAGE sql
@@ -43,6 +45,41 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION public.is_free_mail_domain(text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Whether a web domain is a site many businesses use as theirs (a Facebook page, a Google Sites page, a bare site-builder address): the same domain on two
+-- accounts then says nothing about the business. A social site counts with every subdomain (m.facebook.com); a site builder only as the bare address,
+-- because acme.wixsite.com is one business's own. Pure.
+CREATE FUNCTION public.is_shared_web_host(p_domain text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT lower(btrim(p_domain)) = ANY (ARRAY[
+      'sites.google.com', 'wixsite.com', 'weebly.com', 'squarespace.com', 'godaddysites.com', 'business.site', 'github.io', 'wordpress.com', 'blogspot.com'])
+    OR EXISTS (SELECT 1 FROM unnest(ARRAY[
+      'facebook.com', 'fb.com', 'instagram.com', 'linkedin.com', 'twitter.com', 'x.com', 'youtube.com', 'youtu.be', 'tiktok.com', 'pinterest.com', 'yelp.com',
+      'linktr.ee']) h WHERE lower(btrim(p_domain)) = h OR lower(btrim(p_domain)) LIKE '%.' || h)
+$$;
+
+REVOKE ALL ON FUNCTION public.is_shared_web_host(text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Whether a web domain is one that says which business it is, so the duplicate match may use it: host-shaped (labels of letters, digits and hyphens with a dot
+-- between, and a top-level domain of letters), not a free-mail domain and not a shared site. The website answer is free text ("N/A", "none", "-" reduce to
+-- "n", "none", "-"), so a domain is never trusted for its shape alone. Pure.
+CREATE FUNCTION public.is_matchable_web_domain(p_domain text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(
+    lower(p_domain) ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+    AND lower(p_domain) ~ '\.([a-z]{2,}|xn--[a-z0-9-]+)$'
+    AND NOT public.is_free_mail_domain(p_domain) AND NOT public.is_shared_web_host(p_domain), false)
+$$;
+
+REVOKE ALL ON FUNCTION public.is_matchable_web_domain(text) FROM PUBLIC, anon, authenticated, service_role;
 
 -- The name the duplicate match compares (D-193): the last word dropped when it is a legal designator (LLC, Inc, Corp, Co, Ltd, LLP, PC or PLLC, with or
 -- without its punctuation, and only when another word is left), and only then in lower case with letters and digits only. "Acme Co." and "Acme" are
@@ -99,7 +136,7 @@ REVOKE ALL ON FUNCTION public.crm_split_person_name(text) FROM PUBLIC, anon, aut
 
 -- ---------- 2. The duplicate match ----------
 -- The firm's earliest account that may be the same business as the one described (D-193), or NULL. Exact, never by likeness: the same web domain (never a
--- free-mail one), the same name and state by account_name_key (both must have a state), or a contact with the same email ignoring case. Reads every account
+-- free-mail one, a shared site or free text), the same name and state by account_name_key (both must have a state), or a contact with the same email ignoring case. Reads every account
 -- of the firm whoever may see it: a caller decides what to show. No API role can run it.
 CREATE FUNCTION public.find_duplicate_account(p_firm_id uuid, p_web_domain text, p_name text, p_state text, p_email text)
 RETURNS uuid
@@ -112,7 +149,7 @@ AS $$
   SELECT m.id
   FROM (
     SELECT a.id, a.created_at FROM public.accounts a
-    WHERE p_web_domain IS NOT NULL AND NOT public.is_free_mail_domain(p_web_domain) AND a.firm_id = p_firm_id AND a.web_domain = p_web_domain
+    WHERE public.is_matchable_web_domain(p_web_domain) AND a.firm_id = p_firm_id AND a.web_domain = p_web_domain
     UNION ALL
     SELECT a.id, a.created_at FROM public.accounts a
     WHERE public.account_name_key(p_name) IS NOT NULL AND p_state IS NOT NULL AND a.firm_id = p_firm_id AND a.state = p_state

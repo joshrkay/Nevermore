@@ -4,7 +4,7 @@
 -- ADR 0006, 0023, 0024, 0025; 20261119110000_chain_at_certification.sql). When an intake an employer started is first certified, the same transaction
 -- makes its account (or, when the duplicate match finds one, a new account marked as a possible duplicate of it), the account's fields from the
 -- certified answers, the contact from the prospect (the main contact) and the opportunity that holds the intake. Every certification here is the real
--- one: the prospect saves the intake as themselves, with the role the browser has. Every migration is loaded, in filename order (D-105), this story's last.
+-- one: the prospect saves the intake as themselves, with the role the browser has. Every migration is loaded, in filename order (D-105).
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
@@ -139,9 +139,15 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261118170000_export.sql
+\i supabase/migrations/20261118170500_export_fixes.sql
+\i supabase/migrations/20261118171000_export_fixes_again.sql
+\i supabase/migrations/20261118180000_epic3_export_supersedes.sql
 \i supabase/migrations/20261119090000_export.sql
+\i supabase/migrations/20261119090500_epic3_export_carried.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119140000_account_page.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -516,6 +522,58 @@ BEGIN
   ztwo := pg_temp.certified('zarch', 'zenith', 'Acme Corp', 'TX');
   PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = ztwo), z1, 'an archived account still matches');
   RAISE NOTICE 'chain_at_certification: the duplicate match passed';
+END $$;
+
+-- Break caught: free text in the website answer ("N/A", "none", "-") or a page on a site everyone shares (a Facebook page) is taken for a business's own
+-- domain, so unrelated businesses are marked as possible duplicates of one another.
+DO $$
+DECLARE d text; ok boolean; n integer := 0; first_id uuid; next_id uuid;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  FOREACH d IN ARRAY ARRAY['n', 'none', '-', 'n.a', 'a.b', '192.168.1.1', 'localhost', 'x_y.example', '-.example', 'facebook.com', 'm.facebook.com', 'fb.com', 'sites.google.com',
+    'linkedin.com', 'instagram.com', 'gmail.com'] LOOP
+    PERFORM pg_temp.is(public.is_matchable_web_domain(d), false, d || ' is not a domain that says which business');
+  END LOOP;
+  FOREACH d IN ARRAY ARRAY['acme.example', 'my-biz.co.uk', 'shop.acme.example', 'google.com', 'xn--bcher-kva.example', 'a1.io'] LOOP
+    PERFORM pg_temp.is(public.is_matchable_web_domain(d), true, d || ' is');
+  END LOOP;
+  PERFORM pg_temp.is(public.is_matchable_web_domain(NULL), false, 'no domain is not');
+
+  -- Through certification, in a firm of their own so only the website could match: the same free text, then pages on shared sites.
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Shared Hosts Brokers', 'shared-hosts', now());
+  INSERT INTO fx SELECT 'hosts', id FROM public.firms WHERE address = 'shared-hosts';
+  FOREACH d IN ARRAY ARRAY['N/A', 'none', '-', 'https://www.facebook.com/acmepage', 'https://m.facebook.com/otherpage', 'https://sites.google.com/view/one',
+    'linkedin.com/company/two', 'https://www.instagram.com/three'] LOOP
+    n := n + 1;
+    first_id := pg_temp.certified('h' || n || 'a', 'hosts', 'Hosts Name A ' || n, 'MO', d);
+    next_id := pg_temp.certified('h' || n || 'b', 'hosts', 'Hosts Different B ' || n, 'MS', d);
+    PERFORM pg_temp.is((SELECT web_domain FROM public.accounts WHERE id = next_id) IS NOT NULL, true, d || ': the site is kept as given');
+    PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = next_id), NULL::uuid, d || ' is not a business''s own domain');
+  END LOOP;
+  -- A real domain, with a hyphen and a path, still matches.
+  first_id := pg_temp.certified('real_a', 'hosts', 'Real A', 'MO', 'https://www.real-biz.example/about');
+  next_id := pg_temp.certified('real_b', 'hosts', 'Real B Wholly Different', 'MS', 'http://REAL-biz.example');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = next_id), first_id, 'a real domain still matches');
+  RAISE NOTICE 'chain_at_certification: shared hosts and free text passed';
+END $$;
+
+-- Break caught: the email match reads another firm's contacts, so a prospect whose email is a contact of another firm is marked a possible duplicate of that
+-- firm's account (and the certification fails on the cross-firm foreign key).
+DO $$
+DECLARE acme_account uuid; zid uuid; zenith_contact uuid;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO public.accounts (firm_id, name, source, state) VALUES (pg_temp.id('acme'), 'Acme Side Account', 'added_by_hand', 'OH') RETURNING id INTO acme_account;
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email) VALUES (pg_temp.id('acme'), acme_account, 'Shared', 'shared.person@example.test');
+  zid := pg_temp.certified('xfirm', 'zenith', 'Cross Firm Email Co', 'OH', NULL, 'Shared.Person@example.test');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = zid), NULL::uuid, 'another firm''s contact with the same email is no match');
+  PERFORM pg_temp.is((SELECT firm_id FROM public.accounts WHERE id = zid), pg_temp.id('zenith'), 'the account is in the intake''s firm');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE possible_duplicate_of = acme_account), 0::bigint, 'and nothing refers to the other firm''s account');
+  -- And the other way: a Zenith contact, an Acme prospect.
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email) VALUES (pg_temp.id('zenith'), zid, 'Other', 'acme.side@example.test');
+  zid := pg_temp.certified('xfirm2', 'acme', 'Cross Firm Email Two', 'OH', NULL, 'ACME.side@example.test');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = zid), NULL::uuid, 'and the same the other way');
+  RAISE NOTICE 'chain_at_certification: email across firms passed';
 END $$;
 
 -- Break caught: the same person certifying a second intake is not recognised, or the second intake takes over the first's contact.
