@@ -1021,6 +1021,17 @@ BEGIN
     -- Put away straight from won, it stays won (D-216); reopened it is open again.
     PERFORM pg_temp.move('intake_alpha', 'archived');
     PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'status', 'client', 'a won file put away keeps its account a client (D-216)');
+    -- Marking it as needing action, and clearing that, writes a history row from archived to archived, which is not a move: still a client, as account_status says.
+    PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+    PERFORM public.set_submission_needs_action(pg_temp.id('intake_alpha'), true, 'check the renewal');
+    RESET ROLE;
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'status', 'client', 'marked as needing action, the put-away won file still keeps its account a client');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'status', public.account_status(pg_temp.id('alpha')), 'and the table says what account_status says');
+    PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+    PERFORM public.set_submission_needs_action(pg_temp.id('intake_alpha'), false, NULL);
+    RESET ROLE;
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'status', 'client', 'and once cleared');
+    PERFORM pg_temp.is(pg_temp.row_as_owner('alpha') ->> 'status', public.account_status(pg_temp.id('alpha')), 'still what account_status says');
     PERFORM pg_temp.move('intake_alpha', 'submitted');
     r := pg_temp.row_as_owner('alpha');
     PERFORM pg_temp.is(r ->> 'status', 'prospect', 'reopened, the account is a prospect again');
