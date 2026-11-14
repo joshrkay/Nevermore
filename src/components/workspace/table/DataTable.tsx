@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode, Ref } from "react";
+import { useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { SortDirection, TableFields, TableSort } from "@/lib/tableQuery";
 import { cn } from "@/lib/utils";
@@ -39,8 +39,18 @@ interface Props<K extends TableFields, Row, Context> {
   renderHeader?: (column: ColumnDefinition<Row, keyof K & string, Context>, sort: TableSort<keyof K & string> | null) => ReactNode;
 }
 
+/**
+ * The first column stays in view when the table scrolls sideways (CRM-S3.1a): its header and its cells stick to the left edge, with a solid
+ * background so what scrolls under them is hidden. A row's hover colour is passed on to its pinned cell through `group`. The edge (a shadow)
+ * shows only once the table has been scrolled, so a table that fits has no stray line.
+ */
+const PINNED = "sticky left-0";
+const EDGE = "shadow-[2px_0_4px_-2px_hsl(var(--foreground)/0.25)]";
+
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
 export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+  // Whether the table has been scrolled sideways: only then does the pinned column need an edge.
+  const [scrolled, setScrolled] = useState(false);
   const openRow = (e: MouseEvent, row: Row) => {
     if (!onOpenRow || (e.target as HTMLElement).closest("a, button, input, select, label")) return;
     onOpenRow(row);
@@ -51,13 +61,14 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
       aria-label={`${caption}, scrolls sideways`}
       tabIndex={0}
       ref={scrollRef}
+      onScroll={(e) => setScrolled(e.currentTarget.scrollLeft > 0)}
       className="overflow-x-auto rounded-xl border border-border bg-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
     >
       <table className="w-full min-w-max caption-bottom text-sm">
         <caption className="sr-only">{caption}</caption>
         <thead className="border-b border-border bg-muted/60">
           <tr>
-            {columns.map((column) => {
+            {columns.map((column, index) => {
               const field = column.sortField;
               const sorted = sort && field !== undefined && field === sort.field ? sort.direction : null;
               const right = column.align === "right";
@@ -71,7 +82,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                   scope="col"
                   // Every sortable column says where it stands ("none" on the unsorted ones); a column with no sort says nothing.
                   aria-sort={field === undefined ? undefined : sorted ? word(sorted) : "none"}
-                  className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right")}
+                  className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", index === 0 && cn(PINNED, "z-20 bg-muted", scrolled && EDGE), !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right")}
                 >
                   {!renderHeader && onSort && field !== undefined ? (
                     // The name is the header's words and nothing else; `aria-sort` on the cell says the state, and the title says what a click does
@@ -103,7 +114,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
             <tr
               key={table.rowKey(row)}
               onClick={onOpenRow ? (e) => openRow(e, row) : undefined}
-              className={cn("border-b border-border last:border-0 hover:bg-muted/50", onOpenRow && "cursor-pointer")}
+              className={cn("group border-b border-border last:border-0 hover:bg-muted/50", onOpenRow && "cursor-pointer")}
             >
               {/* CRM-S3.6 (D-47): the row's checkbox goes here, before the first column. Nothing selects rows yet. */}
               {columns.map((column, i) => {
@@ -111,7 +122,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                 const className = cn("px-4 py-3 align-top", column.align === "right" && "text-right");
                 // The first column names the row, so a screen reader reading a cell can say whose it is.
                 return i === 0 ? (
-                  <th key={column.id} scope="row" className={cn(className, "text-left font-normal")}>{cell}</th>
+                  <th key={column.id} scope="row" className={cn(className, "text-left font-normal", PINNED, "z-10 bg-card group-hover:bg-muted", scrolled && EDGE)}>{cell}</th>
                 ) : (
                   <td key={column.id} className={className}>{cell}</td>
                 );
