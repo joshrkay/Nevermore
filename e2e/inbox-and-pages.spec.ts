@@ -56,6 +56,9 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
         [prospect, firmId, JSON.stringify({ company_name: name })],
       );
       if (i === 1) {
+        // A quote request sits on an opportunity (CRM-Q1.3): this fixture gives its intake an account and an opportunity.
+        const account = await client.query("INSERT INTO public.accounts (firm_id, name, source) VALUES ($1, 'Mail Waiting Co', 'added_by_hand') RETURNING id", [firmId]);
+        await client.query("INSERT INTO public.opportunities (firm_id, account_id, intake_id, name) VALUES ($1, $2, $3, 'PEO search')", [firmId, account.rows[0].id, session.rows[0].id]);
         // Sent to a PEO, which has written back and nobody has opened the thread: the queue's "has new PEO mail".
         const q = await client.query("INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) VALUES ($1, 'TriNet', 'sent', current_date - 1) RETURNING id", [session.rows[0].id]);
         await client.query(

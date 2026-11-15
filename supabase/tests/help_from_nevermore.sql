@@ -159,6 +159,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
@@ -266,6 +267,7 @@ END $$;
 DO $$
 DECLARE fa uuid; fb uuid; fs uuid; fr uuid; fo uuid; fz uuid; s uuid; sb uuid; q bigint; sv uuid; m bigint;
 BEGIN
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity; -- the fixture puts a quote request on a draft that sits on no opportunity (CRM-Q1.3)
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Alpha Brokers', 'alpha-brokers', now(), 'approved', now()) RETURNING id INTO fa;
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Beta Benefits', 'beta-benefits', now(), 'approved', now()) RETURNING id INTO fb;
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Sigma Suspended', 'sigma-suspended', now(), 'approved', now()) RETURNING id INTO fs;
@@ -312,6 +314,7 @@ BEGIN
   INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES (pg_temp.id('invitee'), fa, '{}') RETURNING id INTO sv;
   INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, status) VALUES (sv, pg_temp.id('invitee'), 'request', 'probe', 'failed') RETURNING id INTO sv;
   INSERT INTO fx VALUES ('deletion_a', sv);
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
 END $$;
 
 -- A note on alpha's quote request by its agent, as the firm's own people make one.

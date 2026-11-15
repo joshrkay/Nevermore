@@ -168,6 +168,7 @@
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
@@ -321,6 +322,7 @@ DECLARE
   sid uuid;
   qr bigint;
 BEGIN
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity; -- the fixture puts a quote request on a draft that sits on no opportunity (CRM-Q1.3)
   FOREACH n IN ARRAY ARRAY['two', 'only_a', 'only_b', 'admin_w', 'platform_admin', 'founder_r', 'founder_w', 'former_b', 'prospect'] LOOP
     PERFORM pg_temp.new_user(n);
   END LOOP;
@@ -355,6 +357,7 @@ BEGIN
     INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (pg_temp.id(n), 'cfo-' || n, 'CFO of ' || n, 'accounting');
     INSERT INTO public.firm_teams (firm_id, name) VALUES (pg_temp.id(n), 'Team ' || n);
   END LOOP;
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
 END $$;
 
 -- The firm tables the two firms' rows are counted in, each row found by the firm it hangs off.
