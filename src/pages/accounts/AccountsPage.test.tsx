@@ -29,7 +29,7 @@ vi.mock("@/lib/accountsApi", async (original) => ({
   countAccountViews: (...a: unknown[]) => countAccountViews(...a),
   listFirmMembers: (...a: unknown[]) => listFirmMembers(...a),
 }));
-const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn() };
+const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn(), accountsCanChange: vi.fn() };
 vi.mock("@/lib/accountActionsApi", () => actions);
 vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const fetchMyColumns = vi.fn();
@@ -97,6 +97,7 @@ beforeEach(() => {
   fetchMyColumns.mockResolvedValue({ columns: null, source: "none" });
   setMyColumns.mockResolvedValue(undefined);
   saveView.mockResolvedValue("v1");
+  actions.accountsCanChange.mockResolvedValue(["a1", "a2"]);
 });
 afterEach(() => cleanup());
 
@@ -561,7 +562,26 @@ describe("the Accounts page: each row's actions (story CRM-A1.1c)", () => {
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Actions for Harborview Dental Group" }));
     await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
-    expect(await screen.findByLabelText(/Also change the owner of its open opportunities \(1\)/)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Also change the owner of its 1 open opportunity/)).toBeInTheDocument();
+  });
+
+  // Catches: an action menu on every row, so a colleague's account (seen, not changeable), a closing firm's and a support session's rows offer what the database refuses (D-24).
+  it("asks which of the page's accounts the person may change, and draws a menu on those only", async () => {
+    actions.accountsCanChange.mockResolvedValue(["a2"]);
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    expect(await screen.findByRole("button", { name: "Actions for Kestrel Software" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions for Harborview Dental Group" })).toBeNull();
+    expect(actions.accountsCanChange).toHaveBeenCalledWith("f1", ["a1", "a2"]);
+  });
+
+  // Catches: a failed question (or no answer yet) offering every row's menu, which could only be refused.
+  it("draws no menu while the question is open or when it failed", async () => {
+    actions.accountsCanChange.mockRejectedValue(new Error("down"));
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await waitFor(() => expect(actions.accountsCanChange).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
   });
 
   // Catches: opening an account when its action menu is clicked.

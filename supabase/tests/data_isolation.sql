@@ -1349,9 +1349,11 @@ INSERT INTO callable VALUES
   ('restore_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for restores an archived account by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('delete_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for deletes an account that holds no intake, with its contacts, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there; PT409 for an account that holds an intake (archive only)'),
+   'a current member of the firm the call acts for deletes an account that has no opportunity, with its contacts, calls, notes and tasks, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there; PT409 for an account that has an opportunity (archive only)'),
   ('change_account_owner(p_account_id uuid, p_owner_id uuid, p_change_open_opportunities boolean, p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for gives an account to another current member, and when asked its open opportunities the caller may change, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there');
+   'a current member of the firm the call acts for gives an account to another current member, and when asked its open opportunities the caller may change, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('accounts_can_change(p_firm_id uuid, p_ids uuid[])', 'own', NULL,
+   'a current member of the firm the call acts for is told which of up to 100 account ids they may see and change by the level rule, for the table''s row actions; nothing for a closing firm and a support session; 42501 for anyone who is no member of that firm');
 -- CRM-E1.5 (20261119180000_calls_notes_tasks.sql; supabase/tests/calls_notes_tasks.sql): calls, notes and tasks on an account.
 INSERT INTO callable VALUES
   ('log_activity(p_kind text, p_account_id uuid, p_contact_id uuid, p_opportunity_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
@@ -1930,7 +1932,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
-  ('change_account_owner', 'advisor', 'by_id', $$SELECT public.change_account_owner({acct}, auth.uid(), true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"opportunities_changed"');
+  ('change_account_owner', 'advisor', 'by_id', $$SELECT public.change_account_owner({acct}, auth.uid(), true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"opportunities_changed"'),
+  ('accounts_can_change', 'advisor', 'by_id', $$SELECT public.accounts_can_change({firm}, ARRAY[{acct}]::uuid[])::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:');
 
 -- CRM-E1.5: calls, notes and tasks ({anote} is a note on the firm's account, {atask} a task on it, both written by the superuser as fixtures). The member
 -- is the owner of that account, who may change anything on it.
@@ -3669,8 +3672,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('archive_account', 'firm_scoped', 'a current member of the firm the call acts for archives an account by the level rule; refused for another firm''s account as for one that is not there (4e)'),
   ('restore_account', 'firm_scoped', 'the same for restoring an archived account (4e)'),
-  ('delete_account', 'firm_scoped', 'the same for deleting an account that holds no intake, with its contacts and its empty opportunities (4e)'),
+  ('delete_account', 'firm_scoped', 'the same for deleting an account that has no opportunity, with its contacts, calls, notes and tasks (4e)'),
   ('change_account_owner', 'firm_scoped', 'the same for giving an account, and when asked its open opportunities the caller may change, to another current member (4e)'),
+  ('accounts_can_change', 'firm_scoped', 'a current member of the firm the call acts for is told which of the given accounts they may change, by the level rule; another firm''s account is never named (4e)'),
   ('account_to_change', 'service_only', 'the one start of those four: the firm''s account, held, after the may-see and level-rule questions; no API role can call it'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
 

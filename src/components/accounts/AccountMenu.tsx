@@ -11,7 +11,7 @@ import { restoreWithWords, wordsOf, type ActionAccount } from "./restoreWithWord
 import { AccountError } from "@/lib/accountPageApi";
 
 // Archive, restore, delete and change the owner of one account (story CRM-A1.1c), from a row of the Accounts table and from the account's page. The database
-// decides who may (the level rule, D-209), a closing firm and Nevermore support, and an account that holds an intake (it can only be archived); every refusal
+// decides who may (the level rule, D-209), a closing firm and Nevermore support, and an account that has an opportunity (it can only be archived); every refusal
 // comes back in words and is shown in the dialog that asked. Selecting rows and doing this to many is CRM-S3.7's.
 
 /** What happened, for the screen to refresh from: the account's page reloads, the table asks again, a deleted account is left. */
@@ -100,7 +100,7 @@ function ArchiveDialog({ firmId, account, onClose, onDone }: DialogProps) {
 function DeleteDialog({ firmId, account, onClose, onDone, onArchiveInstead }: DialogProps & { onArchiveInstead: () => void }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [holdsIntake, setHoldsIntake] = useState(false);
+  const [hasOpportunities, setHoldsIntake] = useState(false);
   const run = async () => {
     setBusy(true);
     setProblem(null);
@@ -110,7 +110,7 @@ function DeleteDialog({ firmId, account, onClose, onDone, onArchiveInstead }: Di
       onClose();
       onDone("deleted");
     } catch (e) {
-      setHoldsIntake(e instanceof AccountError && e.kind === "holdsIntake");
+      setHoldsIntake(e instanceof AccountError && e.kind === "hasOpportunities");
       setProblem(wordsOf(e, "Couldn't delete the account. Try again."));
       setBusy(false);
     }
@@ -121,16 +121,16 @@ function DeleteDialog({ firmId, account, onClose, onDone, onArchiveInstead }: Di
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {account.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This deletes the account with its contacts and cannot be undone. An account that holds an intake can only be archived.
+            This deletes the account with its contacts, calls, notes and tasks, and cannot be undone. An account that has opportunities can only be archived.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <Problem message={problem} />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-          {holdsIntake && !account.archived ? (
+          {hasOpportunities && !account.archived ? (
             <Button onClick={onArchiveInstead}>Archive instead</Button>
           ) : (
-            <Button variant="destructive" onClick={() => void run()} disabled={busy || holdsIntake}>Delete</Button>
+            <Button variant="destructive" onClick={() => void run()} disabled={busy || hasOpportunities}>Delete</Button>
           )}
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -155,10 +155,10 @@ function OwnerDialog({ firmId, account, onClose, onDone }: DialogProps) {
     setProblem(null);
     try {
       const done = await changeAccountOwner(firmId, account.id, owner, offer && withOpen);
-      const left = done.opportunitiesSkipped > 0 ? ` ${plural(done.opportunitiesSkipped, "open opportunity was", "open opportunities were")} left with ${done.opportunitiesSkipped === 1 ? "its" : "their"} owner because you can't change ${done.opportunitiesSkipped === 1 ? "it" : "them"}.` : "";
+      const left = done.opportunitiesSkipped > 0 ? ` ${plural(done.opportunitiesSkipped, "open opportunity was", "open opportunities were")} left as ${done.opportunitiesSkipped === 1 ? "it was" : "they were"} because you can't change ${done.opportunitiesSkipped === 1 ? "it" : "them"}.` : "";
       toast({
         title: `${account.name} now belongs to ${done.ownerName ?? "the new owner"}.`,
-        description: (done.opportunitiesChanged > 0 ? `${plural(done.opportunitiesChanged, "open opportunity", "open opportunities")} changed too.` : "") + left || undefined,
+        description: ((done.opportunitiesChanged > 0 ? `${plural(done.opportunitiesChanged, "open opportunity", "open opportunities")} changed too.` : "") + left).trim() || undefined,
       });
       onClose();
       onDone("owner");
@@ -193,8 +193,9 @@ function OwnerDialog({ firmId, account, onClose, onDone }: DialogProps) {
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" checked={withOpen} onChange={(e) => setWithOpen(e.target.checked)} disabled={busy} className="mt-1" />
               <span>
-                Also change the owner of its open opportunities
-                {account.openOpportunities ? ` (${account.openOpportunities})` : ""}
+                {account.openOpportunities
+                  ? `Also change the owner of its ${plural(account.openOpportunities, "open opportunity", "open opportunities")}`
+                  : "Also change the owner of its open opportunities"}
               </span>
             </label>
           )}

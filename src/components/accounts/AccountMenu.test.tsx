@@ -77,22 +77,22 @@ describe("AccountMenu: delete", () => {
     show();
     await openMenu(user);
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
-    expect(screen.getByText(/deletes the account with its contacts and cannot be undone/)).toBeInTheDocument();
+    expect(screen.getByText(/deletes the account with its contacts, calls, notes and tasks, and cannot be undone. An account that has opportunities can only be archived/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(client.deleteAccount).toHaveBeenCalledWith("f1", "a1"));
     expect(done).toHaveBeenCalledWith("deleted");
   });
 
-  // Catches: an account that holds an intake offered a Delete that can only fail again, with no way to the archive the database says to use.
-  it("when the account holds an intake, says so and offers to archive it instead", async () => {
+  // Catches: an account that has an opportunity offered a Delete that can only fail again, with no way to the archive the database says to use.
+  it("when the account has an opportunity, says so and offers to archive it instead", async () => {
     const user = userEvent.setup();
-    client.deleteAccount.mockRejectedValue(new AccountError("holdsIntake", "This account holds an intake, so it can't be deleted. Archive it instead.", "PT409"));
+    client.deleteAccount.mockRejectedValue(new AccountError("hasOpportunities", "This account has opportunities. Archive it instead.", "PT409"));
     client.archiveAccount.mockResolvedValue({ changed: true });
     show();
     await openMenu(user);
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("This account holds an intake, so it can't be deleted. Archive it instead.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("This account has opportunities. Archive it instead.");
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Archive instead" }));
     await user.click(await screen.findByRole("button", { name: "Archive" }));
@@ -110,7 +110,7 @@ describe("AccountMenu: change owner", () => {
     await openMenu(user);
     await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
     await user.selectOptions(await screen.findByLabelText("New owner"), "u2");
-    expect(screen.getByLabelText(/Also change the owner of its open opportunities \(2\)/)).toBeChecked();
+    expect(screen.getByLabelText(/Also change the owner of its 2 open opportunities/)).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Change owner" }));
     await waitFor(() => expect(client.changeAccountOwner).toHaveBeenCalledWith("f1", "a1", "u2", true));
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Harborview Dental Group now belongs to Marcus Hale.", description: "2 open opportunities changed too." }));
@@ -150,7 +150,29 @@ describe("AccountMenu: change owner", () => {
     await user.selectOptions(await screen.findByLabelText("New owner"), "u2");
     await user.click(screen.getByRole("button", { name: "Change owner" }));
     await waitFor(() => expect(toast).toHaveBeenCalled());
-    expect(toast.mock.calls[0][0].description).toBe("1 open opportunity changed too. 2 open opportunities were left with their owner because you can't change them.");
+    expect(toast.mock.calls[0][0].description).toBe("1 open opportunity changed too. 2 open opportunities were left as they were because you can't change them.");
+  });
+
+  // Catches: "left with their owner" said of an opportunity that has none, or of the one a person can't change when it is only one.
+  it("words the ones left for one as well as many, owned or not", async () => {
+    const user = userEvent.setup();
+    client.changeAccountOwner.mockResolvedValue({ ownerName: "Marcus Hale", opportunitiesChanged: 0, opportunitiesSkipped: 1 });
+    show();
+    await openMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    await user.selectOptions(await screen.findByLabelText("New owner"), "u2");
+    await user.click(screen.getByRole("button", { name: "Change owner" }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(toast.mock.calls[0][0].description).toBe("1 open opportunity was left as it was because you can't change it.");
+  });
+
+  // Catches: the count missing or worded as a bracket where the screen words it "its 2 open opportunities"; or a number invented when the page does not know it.
+  it("words the offer as the screen does, and gives no number when it is not known", async () => {
+    const user = userEvent.setup();
+    show({ ...base, openOpportunities: null });
+    await openMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    expect(await screen.findByLabelText("Also change the owner of its open opportunities")).toBeInTheDocument();
   });
 
   // Catches: Change owner sent with nobody chosen.

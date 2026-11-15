@@ -151,6 +151,7 @@
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -467,39 +468,55 @@ BEGIN
 END $$;
 
 -- ---------- delete ----------
--- Break caught: an account that holds an intake (a submission, a quote request on it) is deleted, by anyone, which would leave the intake on no opportunity
--- (CRM-Q1.3's rule) or erase a prospect's file (PRD question 6); the refusal deletes anything on its way; an account with no intake keeps its contacts or its
--- empty opportunities or its history after it is deleted, or an account that marked it as a possible duplicate keeps pointing at it; someone the level rule
--- refuses deletes; a firm owner can't delete an account with no owner.
+-- Break caught: an account that has an opportunity is deleted (any opportunity, one a colleague owns, one holding an intake or a quote request: D-219), by
+-- anyone; the refusal deletes anything on its way; an account with no opportunity keeps its contacts, its calls, notes and tasks or its history after it is
+-- deleted, or an account that marked it as a possible duplicate keeps pointing at it; archive or restore takes its calls, notes and tasks away, or an archived
+-- account takes a new one (D-233); someone the level rule refuses deletes; a firm owner can't delete an account with no owner.
 DO $$
-DECLARE r text; hist bigint;
+DECLARE r text;
 BEGIN
   RESET ROLE;
+  -- d1: agent3's, two contacts, a call, a note and a task, no opportunity. a6 marks it as its possible duplicate.
+  PERFORM pg_temp.account('d1', 'acme', 'acme_agent3');
+  PERFORM pg_temp.contact('d1c1', 'd1', 'acme_agent3', 'd1c1@x.test', NULL, true);
+  PERFORM pg_temp.contact('d1c2', 'd1', 'acme_agent3', 'd1c2@x.test');
   PERFORM pg_temp.account('a6', 'acme', 'acme_agent3');
-  UPDATE public.accounts SET possible_duplicate_of = pg_temp.id('a1') WHERE id = pg_temp.id('a6');
-  PERFORM pg_temp.is(pg_temp.remove('acme_agent2', 'a1'), 'PT404: That account isn''t available', 'an agent who does not see the account can not delete it');
-  PERFORM pg_temp.is(pg_temp.remove('acme_lead2', 'a1'), 'PT404: That account isn''t available', 'nor a lead whose team does not reach it');
-  PERFORM pg_temp.is(pg_temp.remove('acme_removed', 'a1'), '42501: Not a member of that firm', 'nor a former member');
+  UPDATE public.accounts SET possible_duplicate_of = pg_temp.id('d1') WHERE id = pg_temp.id('a6');
+  INSERT INTO public.activities (firm_id, account_id, kind, author_id, outcome, body) VALUES (pg_temp.id('acme'), pg_temp.id('d1'), 'call', pg_temp.id('acme_agent3'), 'spoke', 'Hello');
+  INSERT INTO public.activities (firm_id, account_id, kind, author_id, body) VALUES (pg_temp.id('acme'), pg_temp.id('d1'), 'note', pg_temp.id('acme_agent3'), 'A note');
+  INSERT INTO public.activities (firm_id, account_id, kind, author_id, title, due_on) VALUES (pg_temp.id('acme'), pg_temp.id('d1'), 'task', pg_temp.id('acme_agent3'), 'Send it', current_date);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('d1')), 3::bigint, 'set-up: a call, a note and a task');
+  PERFORM pg_temp.is((SELECT count(*) > 0 FROM public.record_history x WHERE x.record_key IN (pg_temp.id('d1')::text, pg_temp.id('d1c1')::text, pg_temp.id('d1c2')::text)), true, 'set-up: history');
+
+  PERFORM pg_temp.is(pg_temp.remove('acme_agent2', 'd1'), 'PT404: That account isn''t available', 'an agent who does not see the account can not delete it');
+  PERFORM pg_temp.is(pg_temp.remove('acme_lead2', 'd1'), 'PT404: That account isn''t available', 'nor a lead whose team does not reach it');
+  PERFORM pg_temp.is(pg_temp.remove('acme_removed', 'd1'), '42501: Not a member of that firm', 'nor a former member');
   PERFORM pg_temp.is(pg_temp.remove('zenith_agent2', 'z1', 'zenith'), '42501: Only the account''s owner, a lead of the owner''s team or an owner of the firm can change it.', 'a colleague who sees it (visibility) still may not delete it');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('a1')), 1::bigint, 'set-up: nothing was deleted by a refusal');
 
-  SELECT count(*) INTO hist FROM public.record_history x WHERE x.record_key IN (pg_temp.id('a1')::text, pg_temp.id('c1')::text, pg_temp.id('c2')::text, pg_temp.id('o1')::text, pg_temp.id('o2')::text);
-  PERFORM pg_temp.is(hist > 0, true, 'set-up: the account, its contacts and its opportunities have history');
-  r := pg_temp.remove('acme_agent1', 'a1');
-  PERFORM pg_temp.is((r::jsonb ->> 'deleted')::boolean, true, 'an agent deletes their own account with no intake');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('a1')), 0::bigint, 'it is gone');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = pg_temp.id('a1')), 0::bigint, 'with its contacts');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE account_id = pg_temp.id('a1')), 0::bigint, 'and its opportunities that held nothing');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history x WHERE x.record_key IN (pg_temp.id('a1')::text, pg_temp.id('c1')::text, pg_temp.id('c2')::text, pg_temp.id('o1')::text, pg_temp.id('o2')::text)), 0::bigint, 'and their history');
+  -- Archive and restore leave the calls, notes and tasks, and an archived account takes no new one (D-233).
+  PERFORM pg_temp.archive('acme_agent3', 'd1');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('d1')), 3::bigint, 'archiving leaves its calls, notes and tasks');
+  PERFORM pg_temp.is(left(pg_temp.run('acme_agent3', format($q$SELECT public.log_activity('note', %L, NULL, NULL, NULL, NULL, 'Late', NULL, NULL, NULL, NULL, NULL, NULL, %L)::text$q$, pg_temp.id('d1'), pg_temp.id('acme'))), 6), '55000:', 'an archived account takes no new note');
+  PERFORM pg_temp.restore('acme_agent3', 'd1');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('d1')), 3::bigint, 'restoring leaves them too');
+
+  r := pg_temp.remove('acme_agent3', 'd1');
+  PERFORM pg_temp.is((r::jsonb ->> 'deleted')::boolean, true, 'an agent deletes their own account with no opportunity');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('d1')), 0::bigint, 'it is gone');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = pg_temp.id('d1')), 0::bigint, 'with its contacts');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('d1')), 0::bigint, 'and its calls, notes and tasks (D-204)');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history x WHERE x.record_key IN (pg_temp.id('d1')::text, pg_temp.id('d1c1')::text, pg_temp.id('d1c2')::text)), 0::bigint, 'and their history');
   PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = pg_temp.id('a6')), NULL::uuid, 'an account marked as its duplicate is kept, the mark cleared');
-  PERFORM pg_temp.is(pg_temp.remove('acme_agent1', 'a1'), 'PT404: That account isn''t available', 'deleting it again says it is not available');
+  PERFORM pg_temp.is(pg_temp.remove('acme_agent3', 'd1'), 'PT404: That account isn''t available', 'deleting it again says it is not available');
 
-  -- An account that holds an intake, with a quote request on it, can't be deleted by anyone: archive only.
+  -- Any opportunity refuses, and nothing is deleted on the way: a1 has two (one a colleague's); a4 holds an intake with a quote request on it; a5 a won one.
   INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (pg_temp.id('i4'), 'PEO A', 'sent');
-  PERFORM pg_temp.is(pg_temp.remove('acme_agent1', 'a4'), 'PT409: This account holds an intake, so it can''t be deleted. Archive it instead.', 'an account that holds an intake is not deleted by its owner');
-  PERFORM pg_temp.is(pg_temp.remove('acme_owner', 'a4'), 'PT409: This account holds an intake, so it can''t be deleted. Archive it instead.', 'nor by an owner of the firm');
-  PERFORM pg_temp.is(pg_temp.remove('acme_owner', 'a5'), 'PT409: This account holds an intake, so it can''t be deleted. Archive it instead.', 'including one whose intake is won, though it has open opportunities with none');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE account_id IN (pg_temp.id('a4'), pg_temp.id('a5'))), 5::bigint, 'the refusal deleted none of their opportunities');
+  FOR r IN SELECT unnest(ARRAY['a1', 'a4', 'a5']) LOOP
+    PERFORM pg_temp.is(pg_temp.remove('acme_owner', r), 'PT409: This account has opportunities, so it can''t be deleted. Archive it instead.', 'an owner of the firm can not delete ' || r || ', which has opportunities');
+  END LOOP;
+  PERFORM pg_temp.is(pg_temp.remove('acme_agent1', 'a1'), 'PT409: This account has opportunities, so it can''t be deleted. Archive it instead.', 'nor can its own agent');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE account_id IN (pg_temp.id('a1'), pg_temp.id('a4'), pg_temp.id('a5'))), 7::bigint, 'the refusals deleted no opportunity (a colleague''s included)');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = pg_temp.id('a1')), 2::bigint, 'nor a contact');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_requests WHERE session_id = pg_temp.id('i4')), 1::bigint, 'nor the quote request');
   PERFORM pg_temp.is((pg_temp.archive('acme_agent1', 'a4')::jsonb ->> 'changed')::boolean, true, 'it can be archived');
   PERFORM pg_temp.restore('acme_agent1', 'a4');
@@ -562,18 +579,20 @@ BEGIN
   RAISE NOTICE 'account_archive_delete_owner: owner change passed';
 END $$;
 
--- ---------- delete races a new opportunity and an intake ----------
--- Break caught: delete_account asks "does it hold an intake" before holding the account's opportunities, so an intake that joins an empty opportunity, or an
--- opportunity added to the account, between the question and the delete is lost or left on no account (an intake on no opportunity, CRM-Q1.3). The second
--- session is seen WAITING on the first's rows, and when the delete commits it finds the row gone.
+-- ---------- delete races a new opportunity ----------
+-- Break caught: delete_account looks for opportunities without holding the account's row first, so a delete that runs while an opportunity is being added
+-- (not yet committed) sees none, and the account and the new opportunity meet at the foreign key (an error that names no reason). The delete is seen
+-- WAITING on the uncommitted opportunity, and once it commits is refused in words, the account kept. The refusal itself is caught too: with it gone the
+-- delete would answer the foreign key's error, not PT409.
 CREATE SCHEMA race;
 CREATE EXTENSION dblink SCHEMA race;
 
-CREATE FUNCTION pg_temp.race_delete(a_who text, a_stmt text, b_stmt text) RETURNS text LANGUAGE plpgsql AS $$
+-- A runs `first_stmt` (as the superuser) in a transaction it leaves open; B runs its statement as a person and is waited for; then A commits.
+CREATE FUNCTION pg_temp.race_delete(first_stmt text, b_who text, b_stmt text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
   dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
     split_part(current_setting('unix_socket_directories'), ',', 1));
-  b_pid integer; tries integer := 0; waited boolean := false; ra text; rb text;
+  b_pid integer; tries integer := 0; waited boolean := false; rb text;
 BEGIN
   PERFORM race.dblink_connect('ra', dsn);
   PERFORM race.dblink_connect('rb', dsn);
@@ -581,11 +600,11 @@ BEGIN
   PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
   SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
   PERFORM race.dblink_exec('ra', 'BEGIN');
-  PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
-  PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L',
-    jsonb_build_object('sub', pg_temp.id(a_who), 'role', 'authenticated', 'is_anonymous', false, 'email', a_who || '@example.test')::text));
-  SELECT r INTO ra FROM race.dblink('ra', a_stmt) AS t(r text);
+  PERFORM race.dblink_exec('ra', first_stmt);
   PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L',
+    jsonb_build_object('sub', pg_temp.id(b_who), 'role', 'authenticated', 'is_anonymous', false, 'email', b_who || '@example.test')::text));
   PERFORM race.dblink_send_query('rb', b_stmt);
   WHILE tries < 80 LOOP
     IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
@@ -602,36 +621,65 @@ BEGIN
   BEGIN PERFORM race.dblink_exec('rb', 'ROLLBACK'); EXCEPTION WHEN OTHERS THEN NULL; END;
   PERFORM race.dblink_disconnect('ra');
   PERFORM race.dblink_disconnect('rb');
-  RETURN CASE WHEN waited THEN 'waited' ELSE 'did not wait' END || '|' || ra || '|' || rb;
+  RETURN CASE WHEN waited THEN 'waited' ELSE 'did not wait' END || '|' || COALESCE(rb, '<null>');
 END $$;
 
 DO $$
 BEGIN
   RESET ROLE;
   PERFORM pg_temp.account('r1', 'acme', 'acme_agent1');
-  PERFORM pg_temp.opportunity('r1o', 'r1', 'acme_agent1');
-  PERFORM pg_temp.intake('ri', 'acme');
-  PERFORM pg_temp.account('r2', 'acme', 'acme_agent1');
 END $$;
 
 DO $$
 DECLARE r text; firm uuid := pg_temp.id('acme');
 BEGIN
   RESET ROLE;
-  -- An intake joins an opportunity of the account while its delete is open.
-  r := pg_temp.race_delete('acme_agent1',
-    format($q$SELECT public.delete_account(%L, %L)::text$q$, pg_temp.id('r1'), firm),
-    format($q$WITH u AS (UPDATE public.opportunities SET intake_id = %L WHERE id = %L RETURNING 1) SELECT count(*)::text FROM u$q$, pg_temp.id('ri'), pg_temp.id('r1o')));
-  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'an intake joining the opportunity waits for the delete');
-  PERFORM pg_temp.is(split_part(r, '|', 3), '0', 'and finds the opportunity gone: the intake is not placed on a deleted account');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('r1')), 0::bigint, 'the delete went through');
-  -- A new opportunity on the account while its delete is open.
-  r := pg_temp.race_delete('acme_agent1',
-    format($q$SELECT public.delete_account(%L, %L)::text$q$, pg_temp.id('r2'), firm),
-    format($q$INSERT INTO public.opportunities (firm_id, account_id, name) VALUES (%L, %L, 'late') RETURNING id::text$q$, firm, pg_temp.id('r2')));
-  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'a new opportunity waits for the delete');
-  PERFORM pg_temp.is(split_part(r, '|', 3), '23503', 'and is refused once the account is gone');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE name = 'late'), 0::bigint, 'none is left on no account');
-  -- The other way round: an intake already placed (committed) when the delete runs is seen.
-  RAISE NOTICE 'account_archive_delete_owner: the races passed';
+  r := pg_temp.race_delete(
+    format($q$INSERT INTO public.opportunities (firm_id, account_id, name) VALUES (%L, %L, 'in flight')$q$, firm, pg_temp.id('r1')),
+    'acme_agent1',
+    format($q$SELECT public.delete_account(%L, %L)::text$q$, pg_temp.id('r1'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the delete waits for the opportunity being added');
+  PERFORM pg_temp.is(split_part(r, '|', 2), 'PT409', 'and, once it has committed, refuses in words');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('r1')), 1::bigint, 'the account is kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE name = 'in flight'), 1::bigint, 'and so is the opportunity');
+  RAISE NOTICE 'account_archive_delete_owner: the race passed';
+END $$;
+
+-- ---------- which accounts the caller may change ----------
+-- Break caught: the table offers row actions on accounts the database will refuse (a colleague's in a firm that shows everyone everything, an unowned one to a
+-- lead, any in a closing firm or a support session); another firm's account id, or one the caller may not see, is answered as changeable; more than 100 ids
+-- are answered; a non-member is served; the function is callable signed out.
+CREATE FUNCTION pg_temp.changeable(who text, firm text, ids text[], addr text DEFAULT NULL) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.run(who, format('SELECT (SELECT COALESCE(string_agg(f.name, '','' ORDER BY f.name), '''') FROM unnest(public.accounts_can_change(%L, %L)) u JOIN fx f ON f.id = u)',
+    pg_temp.id(firm), (SELECT array_agg(pg_temp.id(x)) FROM unnest(ids) x)), addr)
+$$;
+
+DO $$
+DECLARE sess uuid; many text;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('z3', 'zenith', 'zenith_agent2');
+  PERFORM pg_temp.is(pg_temp.changeable('acme_agent1', 'acme', ARRAY['a2', 'a4', 'a5', 'a8']), 'a4', 'an agent is offered their own only (a5 was given away) (the others are not even seen)');
+  PERFORM pg_temp.is(pg_temp.changeable('acme_lead', 'acme', ARRAY['a2', 'a4', 'a8']), 'a2,a8', 'a lead is offered their team''s and their own, not an agent outside it');
+  PERFORM pg_temp.is(pg_temp.changeable('acme_owner', 'acme', ARRAY['a2', 'a4', 'a5', 'a8', 'z1']), 'a2,a4,a5,a8', 'an owner of the firm is offered the firm''s, never another firm''s account');
+  PERFORM pg_temp.is(pg_temp.changeable('zenith_agent2', 'zenith', ARRAY['z1', 'z2', 'z3']), 'z3', 'where everyone sees everything an agent is offered only their own: colleagues'' accounts are seen, not changeable');
+  PERFORM pg_temp.is(pg_temp.changeable('acme_agent1', 'acme', ARRAY[]::text[]), '', 'no ids, none');
+  PERFORM pg_temp.is(pg_temp.changeable('acme_removed', 'acme', ARRAY['a4']), '42501: Not a member of that firm', 'a former member is refused');
+  PERFORM pg_temp.is(pg_temp.changeable('nobody', 'acme', ARRAY['a4']), '42501: Not a member of that firm', 'so is a person with no firm');
+  SELECT string_agg(quote_literal(gen_random_uuid()::text), ',') INTO many FROM generate_series(1, 101);
+  PERFORM pg_temp.is(left(pg_temp.run('acme_owner', format('SELECT public.accounts_can_change(%L, ARRAY[%s]::uuid[])::text', pg_temp.id('acme'), many)), 6), '22023:', 'more than 100 ids are refused');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.accounts_can_change(%L, '{}')$q$, pg_temp.id('acme'))), '42501', 'signed out has no right to run it');
+  RESET ROLE;
+  -- A closing firm and Nevermore support are offered nothing: every change would be refused.
+  INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('acme'), pg_temp.id('acme_owner'), now() + interval '30 days');
+  PERFORM pg_temp.is(pg_temp.changeable('acme_owner', 'acme', ARRAY['a2', 'a4']), '', 'a closing firm is offered nothing');
+  DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
+  PERFORM pg_temp.as_user('platform_admin');
+  sess := (SELECT t.session_id FROM public.start_support_session(pg_temp.id('acme'), 'Looking at an account the firm asked about') t);
+  PERFORM pg_temp.is(pg_temp.changeable('platform_admin', 'acme', ARRAY['a2', 'a4'], 'acme-brokers'), '', 'Nevermore support is offered nothing');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.end_support_session(sess);
+  RESET ROLE;
+  RAISE NOTICE 'account_archive_delete_owner: which accounts may be changed passed';
 END $$;

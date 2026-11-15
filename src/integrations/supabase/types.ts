@@ -951,10 +951,11 @@ export type Database = {
         Returns: Json
       }
       // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
-      // (PT409 for an account that holds an intake); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
+      // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
       change_account_owner: {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
         Returns: Json

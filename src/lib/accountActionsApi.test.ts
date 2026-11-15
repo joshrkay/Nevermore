@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { archiveAccount, restoreAccount, deleteAccount, changeAccountOwner } = await import("./accountActionsApi");
+const { archiveAccount, restoreAccount, deleteAccount, changeAccountOwner, accountsCanChange } = await import("./accountActionsApi");
 const { AccountError } = await import("./accountPageApi");
 
 const caught = async (call: () => Promise<unknown>) => {
@@ -39,7 +39,7 @@ describe("accountActionsApi", () => {
 
   // Catches: a refusal whose words are lost, or an intake refusal that is not told apart from a failure (the screen offers Archive instead).
   it.each([
-    ["PT404", "notFound"], ["PT423", "readOnly"], ["42501", "notAllowed"], ["22023", "invalid"], ["PT409", "holdsIntake"], ["XX000", "failed"],
+    ["PT404", "notFound"], ["PT423", "readOnly"], ["42501", "notAllowed"], ["22023", "invalid"], ["PT409", "hasOpportunities"], ["XX000", "failed"],
   ])("reads %s as %s", async (code, kind) => {
     rpc.mockResolvedValue(refused(code, "In words."));
     const e = await caught(() => deleteAccount("f1", "a1"));
@@ -54,5 +54,23 @@ describe("accountActionsApi", () => {
     for (const call of [() => archiveAccount("f1", "a1"), () => restoreAccount("f1", "a1"), () => deleteAccount("f1", "a1"), () => changeAccountOwner("f1", "a1", "u2", false)]) {
       expect(((await caught(call)) as InstanceType<typeof AccountError>).kind).toBe("failed");
     }
+  });
+
+  // Catches: the wrong function, the ids left off, or a question asked for no rows.
+  it("asks which of the given accounts may be changed, and not at all for none", async () => {
+    rpc.mockResolvedValue({ data: ["a1"], error: null });
+    expect(await accountsCanChange("f1", ["a1", "a2"])).toEqual(["a1"]);
+    expect(rpc).toHaveBeenCalledWith("accounts_can_change", { p_firm_id: "f1", p_ids: ["a1", "a2"] });
+    rpc.mockClear();
+    expect(await accountsCanChange("f1", [])).toEqual([]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  // Catches: a refusal or an answer of another shape read as "may change everything".
+  it("fails on a refusal or a wrong answer", async () => {
+    rpc.mockResolvedValue(refused("42501"));
+    expect(await caught(() => accountsCanChange("f1", ["a1"]))).toBeInstanceOf(AccountError);
+    rpc.mockResolvedValue({ data: { no: 1 }, error: null });
+    expect(await caught(() => accountsCanChange("f1", ["a1"]))).toBeInstanceOf(AccountError);
   });
 });

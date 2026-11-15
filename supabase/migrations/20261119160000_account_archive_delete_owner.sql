@@ -10,16 +10,14 @@
 --                     can be added to it (D-222: CRM-A2.2, CRM-A2.3, CRM-E1.5 refuse while archived_at is set). Archiving changes nothing else: not its
 --                     opportunities, not its status. Archiving an archived account changes nothing (changed = false).
 --   restore_account   clears archived_at. Restoring an account that is not archived changes nothing.
---   delete_account    deletes the account with its contacts (and, from CRM-E1.5, its calls, notes and tasks, by their own foreign key), D-204.
---                     DECISION: an account that holds an intake is never deleted, whoever asks: it can only be archived (BUILD D-219 left the question to
---                     this story; PRD open question 6, QP-D4, is counsel's, so the cautious side holds). An account holds an intake when any of its
---                     opportunities does. A quote request and a submission sit on an intake, and an intake sits on an opportunity (CRM-Q1.3's rule), so
---                     refusing here keeps that rule whole: this function never deletes an opportunity that holds an intake. Emails (Epic 6) join the
---                     refusal when they exist. An account with none of these has its opportunities (each holds nothing) deleted with it.
---                     The race: the account's row is held FOR UPDATE, then every opportunity of it FOR UPDATE, and only then is "holds an intake" asked.
---                     A new opportunity (a chain at certification, a hand-made one) needs the account's row FOR KEY SHARE through its foreign key, and
---                     an intake joining an opportunity needs that opportunity's row, so both wait for this transaction and then fail on a row that is
---                     gone: none can land between the question and the delete. A quote request needs an intake that sits on one of these opportunities.
+--   delete_account    deletes the account with its contacts and, from CRM-E1.5, its calls, notes and tasks (their own foreign key cascades), D-204,
+--                     D-233. DECISION (D-219): an account that has any opportunity is never deleted, whoever asks: it can only be archived. An opportunity
+--                     is another person's work (it has its own owner, and may hold an intake, a submission and quote requests), so it is neither
+--                     deleted with the account nor chosen between here. Refusing on any opportunity also keeps CRM-Q1.3's rule (every submission and quote
+--                     request sits on an opportunity) out of this function's way. Emails (Epic 6) join the refusal when they exist.
+--                     The race: the account's row is held FOR UPDATE before the opportunities are looked at. A new opportunity (a chain at certification,
+--                     one made by hand) holds the account's row FOR KEY SHARE through its foreign key until it commits, which conflicts with FOR UPDATE:
+--                     the delete waits for it, then sees it and refuses. Without the lock the delete would look, find none, and meet the foreign key.
 --   change_account_owner  gives the account to another current member of the firm, and, when asked (p_change_open_opportunities), the account's open
 --                     opportunities (stage not won or lost, D-206) too: those the caller may change by the level rule (D-209) change, and the count of
 --                     those it may not is answered, so a person is told what was left. The owner is never cleared here (owners assign unowned records).
@@ -114,7 +112,7 @@ REVOKE ALL ON FUNCTION public.restore_account(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.restore_account(uuid, uuid) TO authenticated;
 
 -- ---------- 3. Delete ----------
--- {deleted: true, name}. Refused with PT409 (in words) when the account holds an intake: archive it instead.
+-- {deleted: true, name}. Refused with PT409 (in words) while the account has an opportunity: archive it instead.
 CREATE FUNCTION public.delete_account(p_account_id uuid, p_firm_id uuid DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -124,18 +122,14 @@ AS $$
 DECLARE
   firm uuid;
   cur public.accounts;
-  holding integer;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
+  -- Held FOR UPDATE, so an opportunity being added (which holds the row FOR KEY SHARE until it commits) is waited for and seen below.
   cur := public.account_to_change(firm, p_account_id, 'update');
-  -- Every opportunity of the account is held before the question is asked (see the header): none can gain an intake, and none can be added, until this ends.
-  PERFORM 1 FROM public.opportunities o WHERE o.account_id = cur.id FOR UPDATE;
-  SELECT count(*) INTO holding FROM public.opportunities o WHERE o.account_id = cur.id AND o.intake_id IS NOT NULL;
-  IF holding > 0 THEN
-    RAISE EXCEPTION 'This account holds an intake, so it can''t be deleted. Archive it instead.' USING ERRCODE = 'PT409';
+  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.account_id = cur.id) THEN
+    RAISE EXCEPTION 'This account has opportunities, so it can''t be deleted. Archive it instead.' USING ERRCODE = 'PT409';
   END IF;
-  DELETE FROM public.opportunities o WHERE o.account_id = cur.id;
   DELETE FROM public.accounts a WHERE a.id = cur.id;
   RETURN jsonb_build_object('deleted', true, 'name', cur.name);
 END;
@@ -197,3 +191,38 @@ $$;
 
 REVOKE ALL ON FUNCTION public.change_account_owner(uuid, uuid, boolean, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.change_account_owner(uuid, uuid, boolean, uuid) TO authenticated;
+
+-- ---------- 5. Which accounts the caller may change ----------
+-- Of the (at most 100) account ids given, those of the firm that the caller may see and change by the level rule (D-209): the Accounts table shows its row
+-- actions only on these, so none is offered that can only be refused (D-24). Nothing for a closing firm and for Nevermore support, whose changes are all
+-- refused (ADR 0023, ADR 0024). A member of the firm the call acts for only (firm_to_act_for: 42501). Asked again at each page; it changes nothing.
+CREATE FUNCTION public.accounts_can_change(p_firm_id uuid, p_ids uuid[])
+RETURNS uuid[]
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  IF p_ids IS NULL THEN
+    RETURN '{}';
+  END IF;
+  IF cardinality(p_ids) > 100 THEN
+    RAISE EXCEPTION 'Ask about 100 accounts at most' USING ERRCODE = '22023';
+  END IF;
+  BEGIN
+    PERFORM public.assert_firm_writable(firm);
+  EXCEPTION WHEN SQLSTATE 'PT423' THEN
+    RETURN '{}';
+  END;
+  RETURN COALESCE((
+    SELECT array_agg(a.id ORDER BY a.id) FROM public.accounts a
+    WHERE a.firm_id = firm AND a.id = ANY (p_ids)
+      AND public.can_see_firm_record(a.firm_id, a.owner_id) AND public.can_change_firm_record(a.firm_id, a.owner_id)), '{}');
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.accounts_can_change(uuid, uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.accounts_can_change(uuid, uuid[]) TO authenticated;

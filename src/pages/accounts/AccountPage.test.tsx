@@ -19,6 +19,8 @@ const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFi
 vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), ...client }));
 const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn() };
 vi.mock("@/lib/accountActionsApi", () => actions);
+const listFirmMembers = vi.fn();
+vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountsApi")), listFirmMembers: (...a: unknown[]) => listFirmMembers(...a) }));
 vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", () => advisor);
@@ -707,7 +709,7 @@ describe("AccountPage: the states", () => {
     renderPage();
     await user.click(await screen.findByRole("button", { name: "More actions for this account" }));
     await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
-    expect(await screen.findByLabelText(/Also change the owner of its open opportunities \(1\)/)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Also change the owner of its 1 open opportunity/)).toBeInTheDocument();
   });
 });
 
@@ -822,6 +824,27 @@ describe("AccountPage: edit in place", () => {
     expect(rows[1]).toContain("States of operationOR, WAORbob@example.com");
     expect(client.updateAccount).toHaveBeenCalledTimes(1);
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // Catches: archiving or an owner change (both change the version) shown to someone saving at that moment by their column names and an id.
+  it("words an archive and an owner change in a conflict as Archived and Owner, with a date and a name", async () => {
+    listFirmMembers.mockResolvedValue([{ value: "u2", label: "Marcus Hale" }]);
+    client.updateAccount.mockResolvedValueOnce({
+      ...conflict,
+      changed: [
+        { field: "archived_at", value: "2026-11-14T10:00:00+00:00", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" },
+        { field: "owner_id", value: "u2", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" },
+      ],
+    });
+    renderPage();
+    const user = await open();
+    await waitFor(() => expect(listFirmMembers).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("alertdialog");
+    const rows = within(dialog).getAllByRole("row").slice(1).map((r) => r.textContent);
+    expect(rows[0]).toContain("ArchivedNothingNov 14, 2026");
+    expect(rows[1]).toContain("OwnerNothingMarcus Hale");
+    expect(dialog.textContent).not.toMatch(/archived_at|owner_id|u2/);
   });
 
   // Catches: Keep mine saving again from the old version (refused again), or Keep theirs leaving the old version behind.
