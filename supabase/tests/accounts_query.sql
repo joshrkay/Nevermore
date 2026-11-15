@@ -165,6 +165,7 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261121090000_leads.sql
 
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

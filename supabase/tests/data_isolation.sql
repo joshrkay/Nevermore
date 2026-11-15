@@ -213,6 +213,7 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261121090000_leads.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -747,6 +748,11 @@ BEGIN
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
     -- CRM-S1.2b: the owner's last opened record.
     INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
+    -- CRM-L1.3a: two leads, one owned by the firm's agent and one with none, a note on the owned one, and a label on it.
+    INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES (fid, agent, 'Fixture lead ' || f, 'added_by_hand');
+    INSERT INTO public.leads (firm_id, name, source) VALUES (fid, 'Fixture unowned lead ' || f, 'added_by_hand');
+    INSERT INTO public.activities (firm_id, lead_id, kind, body) SELECT fid, l.id, 'note', 'Fixture lead note' FROM public.leads l WHERE l.firm_id = fid AND l.owner_id = agent;
+    INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT fid, l.id, b.id FROM public.leads l, public.labels b WHERE l.firm_id = fid AND l.owner_id = agent AND b.firm_id = fid;
   END LOOP;
 END $$;
 
@@ -893,9 +899,9 @@ INSERT INTO matrix VALUES
 
 -- ---- CRM-E1.5: calls, notes and tasks (20261119180000) ----
 -- Read by whoever may see their account (supabase/tests/calls_notes_tasks.sql); written by nobody through the API. Each firm has a note on each account and a
--- task on the owned one: the first firm's members see all three, the second's agent the two on the owned account.
+-- task on the owned one, and a note on the owned lead (CRM-L1.3a): the first firm's members see all four, the second's agent the three on what they own.
 INSERT INTO matrix VALUES
-  ('public.activities',                                 '{"agent_b":2}', '{"A":3,"B":3}');
+  ('public.activities',                                 '{"agent_b":3}', '{"A":4,"B":4}');
 
 -- ---- CRM-S3.7b: labels and bulk changes (20261119210000) ----
 -- Closed to the API: a member reaches them through the bulk functions only (supabase/tests/bulk_changes.sql); each firm has one of each.
@@ -904,6 +910,12 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
+-- ---- CRM-L1.3a: leads (20261121090000) ----
+-- Read by level through can_see_firm_record (supabase/tests/leads.sql), written by nobody through the API. Each firm has two, one owned by its agent and one
+-- with no owner: the first firm's members see both, the second's agent only their own and its owner both. Labels on leads are closed to the API.
+INSERT INTO matrix VALUES
+  ('public.leads',                                      '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('public.lead_labels',                                '{}', NULL);
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
@@ -3146,6 +3158,13 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
    $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.leads', 'firm', 'its own firm_id; read by level, written by no API role',
+   $m$INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}', 'added_by_hand') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.lead_labels', 'firm', 'its own firm_id, a lead and a label of that firm; closed to the API',
+   $m$WITH l AS (INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Lead {tag}') RETURNING id, firm_id) INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT l.firm_id, d.id, l.id FROM l, public.leads d WHERE d.firm_id = {firm} ORDER BY d.created_at, d.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -3177,6 +3196,7 @@ UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_message
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.bulk_change_records';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT d.firm_id, d.id, l.id FROM public.leads d JOIN public.labels l ON l.firm_id = d.firm_id WHERE d.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.lead_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT a.firm_id, a.id, l.id FROM public.accounts a JOIN public.labels l ON l.firm_id = a.firm_id WHERE a.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.account_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
   WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
