@@ -21,7 +21,7 @@
 --                        accounts. It follows the contact (a contact's history goes with it) and its link to the opportunity is dropped; the opportunity itself is
 --                        not touched. A contact that is the main contact of an opportunity there stops being it. Nothing is done in silence: without p_confirm
 --                        the move is refused with PT409 in words saying how many, and with it the answer counts what was done. An opportunity the caller may not
---                        change keeps its main contact, so the move is refused (42501) rather than changing another person's record.
+--                        change keeps its main contact and its links, so the move is refused (42501) rather than changing another person's record.
 --   contact_move_choices The accounts a contact may be moved to by the same rules (seen and changeable, not archived, not where it is), narrowed by what was typed.
 --   add_contact_context  What the Add a contact form needs: the account's name, whether it is archived, and its main contact now (to say, before saving, that
 --                        ticking "Main contact" makes this one the main contact instead).
@@ -178,9 +178,14 @@ BEGIN
     RAISE EXCEPTION 'You can add a contact only for yourself and, as a lead, for people on your teams.' USING ERRCODE = '42501';
   END IF;
   IF COALESCE(p_is_main, false) THEN
-    -- Whoever may see the account may add to it, and so may take the main contact's place on it: the old main contact is unticked, not changed otherwise, and its
-    -- change is in its history. Done before the insert, because the index admits one main contact at every moment.
+    -- The old main contact is unticked, not changed otherwise, and its change is in its history. Done before the insert, because the index admits one main contact
+    -- at every moment.
     SELECT * INTO old_main FROM public.contacts c WHERE c.account_id = a.id AND c.is_main FOR UPDATE;
+    -- Unticking it changes that contact's record, which the level rule governs (D-209) even though adding is open: a person who may not change it can still add
+    -- the contact, unticked.
+    IF old_main.id IS NOT NULL AND NOT public.can_change_firm_record(firm, old_main.owner_id) THEN
+      RAISE EXCEPTION 'Only someone who may change % can make another contact the main one.', public.crm_contact_name(old_main) USING ERRCODE = '42501';
+    END IF;
     IF old_main.id IS NOT NULL THEN
       UPDATE public.contacts SET is_main = false WHERE id = old_main.id;
     END IF;
@@ -235,7 +240,7 @@ GRANT EXECUTE ON FUNCTION public.contact_move_choices(uuid, uuid, text) TO authe
 -- Answers {record, from: {id, name}, to: {id, name}, was_main, activities_moved, opportunity_links_dropped, main_contact_cleared}. Refused, in this order: not a
 -- member (42501), a closing firm or Nevermore support (PT423), a contact or an account the caller may not see or that is not there (PT404), the same account
 -- (22023), the level rule on the contact, then the account it leaves, then the account it joins (42501, each in its own words), an archived account to join
--- (55000), an opportunity the caller may not change that has the contact as its main contact (42501), a person who is already a contact of the account joined
+-- (55000), an opportunity the caller may not change that has the contact as its main contact or a call, note or task of the contact about it (42501), a person who is already a contact of the account joined
 -- (22023), and, unless p_confirm, what moving would take off an opportunity (PT409, in words).
 --
 -- Locks, in an order that cannot make a ring with add_contact (which takes an account and then a contact): the accounts first, FOR SHARE, lowest id first (so
@@ -301,8 +306,12 @@ BEGIN
   END IF;
   nm := public.crm_contact_name(c);
   -- What the contact's leaving does to an opportunity it was on.
-  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.main_contact_id = c.id AND NOT public.can_change_firm_record(o.firm_id, o.owner_id)) THEN
-    RAISE EXCEPTION '% is the main contact of an opportunity you can''t change. Ask its owner, or an owner of the firm, to change that first.', nm USING ERRCODE = '42501';
+  -- Whatever the move would change on an opportunity (its main contact, or the link of a call, note or task to it) is that opportunity's record, so the level
+  -- rule on it decides, the same way for both.
+  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.main_contact_id = c.id AND NOT public.can_change_firm_record(o.firm_id, o.owner_id))
+     OR EXISTS (SELECT 1 FROM public.activities a JOIN public.opportunities o ON o.id = a.opportunity_id
+                WHERE a.contact_id = c.id AND NOT public.can_change_firm_record(o.firm_id, o.owner_id)) THEN
+    RAISE EXCEPTION '% is on an opportunity you can''t change, as its main contact or through a call, note or task about it. Ask its owner, or an owner of the firm, to move them.', nm USING ERRCODE = '42501';
   END IF;
   IF c.prospect_user_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.contacts x WHERE x.account_id = dst.id AND x.prospect_user_id = c.prospect_user_id) THEN
     RAISE EXCEPTION 'That account already has this person as a contact.' USING ERRCODE = '22023';

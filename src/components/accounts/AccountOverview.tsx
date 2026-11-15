@@ -1,6 +1,6 @@
 import type { AccountFields, AccountPage } from "@/lib/accountPageApi";
 import { AccountDetailsPanel } from "./AccountDetails";
-import { AddContactButton } from "./ActivityEntry";
+import { AddContactButton, ContactsEmpty } from "./ActivityEntry";
 import { activityColumns, contactColumns, EMPTY_WORDS, opportunityColumns, quoteColumns, tabAddress } from "./accountColumns";
 import { EmptyLine, ListPanel, Rows, SeeAll } from "./accountLists";
 
@@ -15,7 +15,7 @@ export function AccountOverview({ firmId, page, onSaved }: { firmId: string; pag
       <AccountDetailsPanel key={account.id} firmId={firmId} account={account} canChange={canChange} onSaved={onSaved} />
       <div className="space-y-6 min-w-0">
         <ListPanel id="overview-contacts" heading="Contacts" count={tabs.contacts.count} seeAll={<span className="flex items-center gap-3">{tabs.contacts.count > 0 && <SeeAll to={tabAddress("contacts")} noun="contacts" />}<AddContactButton /></span>}>
-          {tabs.contacts.rows.length === 0 ? <EmptyLine>{EMPTY_WORDS.contacts}</EmptyLine> : <Rows caption="The first contacts" columns={contactColumns} rows={tabs.contacts.rows} rowKey={(r) => r.id} />}
+          {tabs.contacts.rows.length === 0 ? <ContactsEmpty words={EMPTY_WORDS.contacts} /> : <Rows caption="The first contacts" columns={contactColumns} rows={tabs.contacts.rows} rowKey={(r) => r.id} />}
         </ListPanel>
         <ListPanel id="overview-opportunities" heading="Opportunities" count={tabs.opportunities.count} seeAll={tabs.opportunities.count > 0 ? <SeeAll to={tabAddress("opportunities")} noun="opportunities" /> : undefined}>
           {tabs.opportunities.rows.length === 0 ? <EmptyLine>{EMPTY_WORDS.opportunities}</EmptyLine> : <Rows caption="The first opportunities" columns={opportunityColumns} rows={tabs.opportunities.rows} rowKey={(r) => r.id} />}

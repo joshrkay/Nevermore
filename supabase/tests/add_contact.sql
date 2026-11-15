@@ -524,6 +524,25 @@ BEGIN
   RAISE NOTICE 'add_contact: one main contact passed';
 END $$;
 
+-- ---------- taking over as main contact follows the level rule ----------
+-- Adding is open to anyone who may see the account (D-209), but unticking the old main contact changes that contact's record, which the level rule governs.
+-- Break caught: a person who may see an account and not change a colleague's main contact there ticks "Main contact" and unticks it anyway.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('z4', 'zenith', 'zenith_agent', 'Zenith four');
+  PERFORM pg_temp.contact('z4main', 'z4', 'zenith_agent', 'z4main@e.example', NULL, true);
+  PERFORM pg_temp.is(pg_temp.add_refusal('zenith_agent2', 'z4', '{"main": true, "first": "Cy", "last": "Take"}', NULL, 'zenith'),
+    '42501: Only someone who may change First z4main Last z4main can make another contact the main one.', 'a colleague may not take the main place of a contact they may not change');
+  PERFORM pg_temp.is((SELECT is_main FROM public.contacts WHERE id = pg_temp.id('z4main')), true, 'and the main contact is still main');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = pg_temp.id('z4')), 1::bigint, 'and nothing was added');
+  PERFORM pg_temp.is(pg_temp.add_refusal('zenith_agent2', 'z4', '{"first": "Cy", "last": "Plain"}', NULL, 'zenith'), 'ok', 'the same person can still add the contact, unticked');
+  r := pg_temp.add('zenith_agent', 'z4', '{"main": true, "first": "Di", "last": "Own"}', NULL, 'zenith');
+  PERFORM pg_temp.is(r #>> '{previous_main,name}', 'First z4main Last z4main', 'the main contact''s own owner may hand the place over');
+  RAISE NOTICE 'add_contact: taking over main follows the level rule passed';
+END $$;
+
 -- ---------- two people tick "main" at once ----------
 -- Break caught: the account is not held while the old main is unticked, so two sessions that each tick the box both see the old main, both unset it and the
 -- second insert meets the unique index (an error that names no reason). The second is seen WAITING for the first, then wins: one main contact, the later one's.
@@ -707,6 +726,14 @@ BEGIN
   PERFORM pg_temp.opportunity('o3', 'h1', 'acme_agent3', NULL, 'm3');
   PERFORM pg_temp.is(pg_temp.move_refusal('acme_agent1', 'm3', 'h2', true) LIKE '42501: %', true, 'a main contact of an opportunity the mover may not change is refused, even confirmed');
   PERFORM pg_temp.is(pg_temp.acct_of('contacts', 'm3'), pg_temp.id('h1'), 'and not moved');
+  -- The same for a call that names an opportunity the mover may not change: its link would be dropped, which changes that opportunity's record.
+  PERFORM pg_temp.contact('m4', 'h1', 'acme_agent1', 'm4@e.example');
+  PERFORM pg_temp.opportunity('o4', 'h1', 'acme_agent3');
+  PERFORM pg_temp.activity('m4call', 'call', 'h1', 'm4', 'o4');
+  PERFORM pg_temp.is(pg_temp.move_refusal('acme_agent1', 'm4', 'h2', true) LIKE '42501: %', true, 'a call about an opportunity the mover may not change is refused, even confirmed');
+  PERFORM pg_temp.is(pg_temp.acct_of('contacts', 'm4'), pg_temp.id('h1'), 'and nothing moved');
+  PERFORM pg_temp.is((SELECT opportunity_id FROM public.activities WHERE id = pg_temp.id('m4call')), pg_temp.id('o4'), 'nor was its link dropped');
+  PERFORM pg_temp.is(pg_temp.move_refusal('acme_owner', 'm4', 'h2', true), 'ok', 'an owner of the firm may');
   RAISE NOTICE 'add_contact: the opportunity left behind passed';
 END $$;
 
@@ -775,6 +802,58 @@ BEGIN
   PERFORM pg_temp.is(split_part(r, '|', 2) LIKE '{%', true, 'and then goes through: ' || r);
   PERFORM pg_temp.is((SELECT account_id FROM public.activities WHERE body = 'in flight'), pg_temp.id('h2'), 'the call went with the contact');
   RAISE NOTICE 'add_contact: the move race passed';
+END $$;
+
+-- ---------- moving races an archiving ----------
+-- Break caught: move_contact does not hold the accounts, so a move that runs while the account it joins is being archived (not yet committed) reads it as live
+-- and puts the contact on an archived account. The move is seen WAITING for the archiving, then refused in words (55000).
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('rd', 'acme', 'acme_agent1', 'Race destination');
+  PERFORM pg_temp.contact('rdc', 'h1', 'acme_agent1', 'rdc@e.example');
+  PERFORM pg_temp.new_user('acme_mover1'); PERFORM pg_temp.new_user('acme_mover2');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
+    (pg_temp.id('acme'), pg_temp.id('acme_mover1'), 'agent', NULL), (pg_temp.id('acme'), pg_temp.id('acme_mover2'), 'agent', NULL);
+END $$;
+
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(
+    format($q$UPDATE public.accounts SET archived_at = now() WHERE id = %L$q$, pg_temp.id('rd')),
+    'acme_agent1',
+    format($q$SELECT public.move_contact(%L, %L, false, %L)::text$q$, pg_temp.id('rdc'), pg_temp.id('rd'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the move waits for an archiving of the account it joins');
+  PERFORM pg_temp.is(split_part(r, '|', 2), '55000', 'and is then refused');
+  PERFORM pg_temp.is(pg_temp.acct_of('contacts', 'rdc'), pg_temp.id('h1'), 'the contact did not move');
+  RAISE NOTICE 'add_contact: the move/archive race passed';
+END $$;
+
+-- ---------- adding races the removal of the owner chosen ----------
+-- Break caught: add_contact asks "is the chosen person a current member" without holding their membership row (FOR SHARE), so a removal that commits after the
+-- question leaves the contact owned by a former member. A removal not yet committed makes the add wait and then be refused in words (22023); an add not yet
+-- committed makes the removal (an update of the membership's end) wait.
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(
+    format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L$q$, pg_temp.id('acme_mover1')),
+    'acme_owner',
+    format($q$SELECT public.add_contact(%L, 'A', 'Owned', NULL, 'owned@e.example', NULL, NULL, %L, false, false, %L)::text$q$, pg_temp.id('h2'), pg_temp.id('acme_mover1'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the add waits for the removal of the person it names');
+  PERFORM pg_temp.is(split_part(r, '|', 2), '22023', 'and, once it has committed, is refused: not a current member');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE email = 'owned@e.example'), 0::bigint, 'nothing was added');
+  r := pg_temp.race(
+    format($q$SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; DO $d$ BEGIN PERFORM public.add_contact(%L, 'B', 'Owned', NULL, 'owned2@e.example', NULL, NULL, %L, false, false, %L); END $d$ $q$,
+      jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text, pg_temp.id('h2'), pg_temp.id('acme_mover2'), firm),
+    'acme_owner',
+    format($q$SELECT public.remove_member(%L, %L)::text$q$, firm, pg_temp.id('acme_mover2')));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the removal waits for an add that names the person');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.contacts WHERE email = 'owned2@e.example'), pg_temp.id('acme_mover2'), 'and the add stands');
+  RAISE NOTICE 'add_contact: the removal races passed';
 END $$;
 
 -- ---------- where a contact may go, and the form's context ----------

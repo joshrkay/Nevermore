@@ -339,11 +339,13 @@ describe("AccountPage: paging when the list moves under the person", () => {
 
 describe("AccountPage: a contact named in the address that is not in the list", () => {
   // Catches: the loader fetching every page of a long list for a contact that is not on the account.
-  it("stops loading by itself after 500 rows, says so, and leaves Show more", { timeout: 40000 }, async () => {
+  it("stops loading by itself after 500 rows, says so, and leaves Show more", { timeout: 20000 }, async () => {
     const user = userEvent.setup();
+    // As someone who may not change the account: a Move button on each of 500 rows costs about 3 s in jsdom and this test is about the loader, not the buttons.
+    client.getAccountPage.mockResolvedValue(page({ canChange: false }));
     serveTab(Array.from({ length: 700 }, (_, i) => contact(i + 1000)));
     renderPage("/accounts/a1?tab=contacts&contact=nobody");
-    expect(await screen.findByText("That contact isn't in the first 500 here.", undefined, { timeout: 20000 })).toBeInTheDocument();
+    expect(await screen.findByText("That contact isn't in the first 500 here.", undefined, { timeout: 8000 })).toBeInTheDocument();
     expect(client.listAccountTab).toHaveBeenCalledTimes(10);
     expect(screen.getByText("Showing 500 of 700.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show more" }));
@@ -626,14 +628,14 @@ describe("AccountPage: the states", () => {
     expectStatusesOutsideBusy();
   });
 
-  // Catches: an empty list that is blank, or one that points at an action that does not exist yet.
+  // Catches: an empty list that is blank, or one that points at an action that does not exist yet. Add a contact exists since CRM-A2.2 (AccountContacts.test.tsx).
   it("says a new account's lists in one line each, with no action that does not exist yet", async () => {
     client.getAccountPage.mockResolvedValue(page({}, { contacts: tabOf([]), opportunities: tabOf([]), quotes: tabOf([]), files: tabOf([]), activity: tabOf([change(2, { kind: "created", field: null, from: null, to: null })], 1) }));
     renderPage();
     expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
     expect(screen.getByText("No opportunities yet.")).toBeInTheDocument();
     expect(screen.getByText("No quotes yet.")).toBeInTheDocument();
-    for (const gone of [/Add a contact/, /New opportunity/, /New quote/]) {
+    for (const gone of [/New opportunity/, /New quote/]) {
       expect(screen.queryByRole("button", { name: gone })).toBeNull();
       expect(screen.queryByRole("link", { name: gone })).toBeNull();
     }

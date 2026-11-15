@@ -166,3 +166,43 @@ describe("Move a contact from an account's page", () => {
     expect(toast.success).toHaveBeenCalledWith("Elena Marsh moved to Harborview East, with 2 calls, notes and tasks. Harborview Dental Group has no main contact now.");
   });
 });
+
+describe("An account with no contacts", () => {
+  const empty = () => page({ tabs: { contacts: tabOf([]), opportunities: tabOf([]), quotes: tabOf([]), activity: tabOf([]), files: tabOf([]) } });
+
+  // Catches: "No contacts yet." left with nothing to do about it (CRM-A2.1's "No contacts yet. Add a contact" has no action until this story), or an action shown
+  // where the database will refuse (support, an archived account).
+  it("offers Add a contact in the empty line, on the Overview and on the Contacts tab, and it opens the form", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(empty());
+    client.listAccountTab.mockImplementation(async () => tabOf([]));
+    renderPage();
+    const overview = await screen.findByRole("region", { name: /^Contacts/ });
+    expect(within(overview).getByText("No contacts yet.")).toBeInTheDocument();
+    await user.click(within(overview).getByRole("button", { name: "Add a contact" }));
+    expect(await screen.findByRole("dialog", { name: "Add a contact" })).toBeInTheDocument();
+  });
+
+  it("offers it on the Contacts tab too", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(empty());
+    client.listAccountTab.mockImplementation(async () => tabOf([]));
+    renderPage("/accounts/a1?tab=contacts");
+    await user.click(await screen.findByRole("button", { name: "Add a contact" }));
+    expect(await screen.findByRole("dialog", { name: "Add a contact" })).toBeInTheDocument();
+  });
+
+  it("says only 'No contacts yet.' in a support session and on an archived account", async () => {
+    client.getAccountPage.mockResolvedValue(empty());
+    renderPage("/accounts/a1", workspace({ isSupport: true }));
+    expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add a contact" })).toBeNull();
+  });
+
+  it("says only 'No contacts yet.' on an archived account", async () => {
+    client.getAccountPage.mockResolvedValue({ ...empty(), account: { ...account, archivedAt: "2026-11-01T00:00:00+00:00" } });
+    renderPage();
+    expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add a contact" })).toBeNull();
+  });
+});

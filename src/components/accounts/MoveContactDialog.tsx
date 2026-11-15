@@ -61,7 +61,7 @@ export function MoveContactDialog({ firmId, contact, onClose, onMoved }: {
       onMoved(moved);
       onClose();
     } catch (e) {
-      if (e instanceof ContactError && e.kind === "confirm") setQuestion(e.message);
+      if (e instanceof ContactError && e.kind === "confirm") { setQuestion(e.message); setProblem(null); }
       else setProblem(e instanceof ContactError ? e.message : "Couldn't move the contact. Check your connection and try again.");
     } finally {
       inFlight.current = false;
@@ -82,7 +82,8 @@ export function MoveContactDialog({ firmId, contact, onClose, onMoved }: {
         </DialogHeader>
         {question ? (
           <div className="space-y-4">
-            <p role="alert" className="text-sm">{question}</p>
+            <p className="text-sm">{question}</p>
+            {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
             <DialogFooter>
               <Button type="button" variant="outline" disabled={saving} onClick={() => setQuestion(null)}>Don't move</Button>
               <Button type="button" disabled={saving} onClick={() => void go(true)}>{saving ? "Moving…" : "Move anyway"}</Button>

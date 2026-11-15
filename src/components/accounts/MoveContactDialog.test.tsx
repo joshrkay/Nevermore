@@ -139,3 +139,21 @@ describe("Move a contact to another account (D-209)", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Move a contact: when the move fails after the person agreed", () => {
+  // Catches: a failure after "Move anyway" (a refusal, a lost race, no connection) put where the question view does not draw it, so the person sees nothing.
+  it("says why in the question view and keeps the question to answer again", async () => {
+    moveContact.mockRejectedValueOnce(new ContactError("confirm", "Moving Owen Park takes 1 call, note or task off an opportunity on Harborview Dental. Move anyway?", "PT409"));
+    moveContact.mockRejectedValueOnce(new ContactError("invalid", "That contact was moved while you were working. Try again.", "40001"));
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("radio", { name: "Harborview East" }));
+    await user.click(within(dialog).getByRole("button", { name: "Move contact" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Move anyway" }));
+    expect(await within(dialog).findByText("That contact was moved while you were working. Try again.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Move anyway" })).toBeInTheDocument();
+    moveContact.mockRejectedValueOnce(new ContactError("failed", "Couldn't move the contact. Check your connection and try again."));
+    await user.click(within(dialog).getByRole("button", { name: "Move anyway" }));
+    expect(await within(dialog).findByText("Couldn't move the contact. Check your connection and try again.")).toBeInTheDocument();
+    expect(onMoved).not.toHaveBeenCalled();
+  });
+});

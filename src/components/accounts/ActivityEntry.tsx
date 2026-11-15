@@ -93,3 +93,19 @@ export function AddContactButton() {
   if (!actions?.canAdd) return null;
   return <Button type="button" size="sm" onClick={actions.addContact}>Add contact</Button>;
 }
+
+/** The empty Contacts list: "No contacts yet." and, where a contact can be added (not in a Nevermore support session, not on an archived account), "Add a contact". */
+export function ContactsEmpty({ words }: { words: string }) {
+  const actions = useAccountActions();
+  return (
+    <p className="text-sm text-muted-foreground py-2">
+      {words}
+      {actions?.canAdd && (
+        <>
+          {" "}
+          <button type="button" className="min-h-9 text-primary underline underline-offset-2 hover:text-primary/90" onClick={actions.addContact}>Add a contact</button>
+        </>
+      )}
+    </p>
+  );
+}
