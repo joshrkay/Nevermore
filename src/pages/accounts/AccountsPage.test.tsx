@@ -12,7 +12,7 @@ import { allStatuses, expectStatusesOutsideBusy } from "@/test/loading";
 // (supabase/tests/accounts_query.sql); these tests are what a person sees and does through the page: the columns, the views and their counts, the
 // filters (Owner, State, Employees), the page's states, the way into an account, the Columns menu and the Export button.
 const signOut = vi.fn();
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "dana@example.com", app_metadata: { providers: ["email"] } }, signOut }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com", app_metadata: { providers: ["email"] } }, signOut }) }));
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const mfa = { listFactors: vi.fn(), challengeAndVerify: vi.fn() };
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn(), auth: { mfa } } }));
@@ -38,6 +38,8 @@ vi.mock("@/lib/tableSettingsApi", () => ({
   fetchMyColumns: (...a: unknown[]) => fetchMyColumns(...a),
   setMyColumns: (...a: unknown[]) => setMyColumns(...a),
 }));
+const createAccount = vi.fn();
+vi.mock("@/lib/accountCreateApi", () => ({ createAccount: (...a: unknown[]) => createAccount(...a) }));
 const exportRows = vi.fn();
 vi.mock("@/lib/exportApi", async () => ({ ...(await vi.importActual<object>("@/lib/exportApi")), exportRows: (...a: unknown[]) => exportRows(...a) }));
 const downloadBlob = vi.fn();
@@ -86,7 +88,7 @@ const headers = () => within(screen.getByRole("table")).getAllByRole("columnhead
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
-  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
+  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
   countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
@@ -305,11 +307,11 @@ describe("the Accounts page: views and filters", () => {
 
 describe("the Accounts page: states", () => {
   // Catches: the story's "nothing yet" (Accounts are the businesses you quote for) missing, or offering New quote, New account or Import before they exist (D-186).
-  it("says accounts are the businesses you quote for when the firm has none, with no buttons that do nothing", async () => {
+  it("says accounts are the businesses you quote for when the firm has none, with only the buttons that do something (New account)", async () => {
     listAccounts.mockResolvedValue([]);
     renderAt();
     expect(await screen.findByText("Accounts are the businesses you quote for.")).toBeInTheDocument();
-    for (const name of ["New quote", "New account", "Import", "Export"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    for (const name of ["New quote", "Import", "Export"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     for (const name of ["New quote", "New account", "Import"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
   });
 
@@ -514,5 +516,150 @@ describe("the Accounts page: Export", () => {
     expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
     expect(await screen.findByText("Downloads are off during Nevermore support.")).toBeInTheDocument();
     expect(exportRows).not.toHaveBeenCalled();
+  });
+});
+
+// New account (story CRM-A1.2, screen 23): a form over the page, which saves, then opens the new account. The database decides who may make one and for whom, and
+// every field's rule (supabase/tests/create_account.sql); these tests are what a person sees and does: the fields, the words that say what is wrong, what is sent,
+// where the person lands, and what the database refused.
+describe("the Accounts page: New account", () => {
+  const made = { id: "a9", version: 1, name: "Harborview Dental East" };
+  const open = async (ws: Workspace = workspace()) => {
+    const user = userEvent.setup();
+    renderAt("/accounts", ws);
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "New account" }));
+    return { user, dialog: await screen.findByRole("dialog", { name: "New account" }) };
+  };
+  const text = (dialog: HTMLElement, label: string | RegExp) => within(dialog).getByLabelText(label);
+
+  // Catches: no way to start an account, or one offered to Nevermore support, who can only look (D-24: no button that does nothing).
+  it("offers New account to a person of the firm and not to Nevermore support", async () => {
+    renderAt();
+    expect(await screen.findByRole("button", { name: "New account" })).toBeInTheDocument();
+    cleanup();
+    renderAt("/accounts", workspace({ isSupport: true, role: "Nevermore support" }));
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    expect(screen.queryByRole("button", { name: "New account" })).not.toBeInTheDocument();
+  });
+
+  // Catches: a field of screen 23 missing or worded differently, "Save and add a contact" shown before the contact form exists (CRM-A2.2), the renewal date and the
+  // firm's own fields shown before their stories (D-186), or the maker not the owner by default (D-214).
+  it("opens the form with the story's fields, the person as the owner, and no button for what is not built", async () => {
+    const { dialog } = await open();
+    for (const label of ["Account name", "Trade name", "Website", "Phone", "Street", "City", "State", "Postal code", "Industry", "Employees", "States of operation", "Current PEO or payroll provider", "Owner"]) {
+      expect(within(dialog).getByLabelText(label)).toBeInTheDocument();
+    }
+    expect(within(dialog).getByText("Required")).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByLabelText("Owner")).toHaveValue("u1"));
+    expect(within(dialog).getByRole("option", { name: "Dana Reyes" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save account" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Save and add a contact/ })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Renewal date")).not.toBeInTheDocument();
+  });
+
+  // Catches: an account saved with no name, an error that is not in words, or a request sent for a form that is not right.
+  it("will not save without a name, a phone that is not one or a number of employees that is not a number, and says why in words", async () => {
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Phone"), "call me");
+    await user.type(text(dialog, "Employees"), "forty");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await within(dialog).findByText("Enter the account's name.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter a whole number, like 45.")).toBeInTheDocument();
+    expect(createAccount).not.toHaveBeenCalled();
+  });
+
+  // Catches: a state that is not a state accepted, the states of operation not checked, a state kept in lower case.
+  it("takes only states from the list, and the states of operation as codes", async () => {
+    const { user, dialog } = await open();
+    const states = within(text(dialog, "State") as HTMLElement);
+    expect(states.getByRole("option", { name: "OR" })).toBeInTheDocument();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.type(text(dialog, "States of operation"), "or, xx");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await within(dialog).findByText("Use two-letter state codes from the list, like OR, WA.")).toBeInTheDocument();
+    expect(createAccount).not.toHaveBeenCalled();
+  });
+
+  // Catches: what is typed not sent (or sent untrimmed), the owner dropped, and the new account not opening (the story: on save the account opens).
+  it("saves what was typed for the firm, with the owner chosen, and opens the new account", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open(workspace({ role: "Owner", isOwner: true }));
+    await user.type(text(dialog, "Account name"), "  Harborview Dental East ");
+    await user.type(text(dialog, "Website"), "harborviewdental.example");
+    await user.type(text(dialog, "Phone"), "(503) 555-0142 x12");
+    await user.type(text(dialog, "City"), "Gresham");
+    await user.selectOptions(text(dialog, "State"), "OR");
+    await user.type(text(dialog, "Employees"), "12");
+    await user.type(text(dialog, "States of operation"), "or, wa");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    await user.selectOptions(text(dialog, "Owner"), "u2");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await screen.findByText("Account page for a9")).toBeInTheDocument();
+    expect(createAccount).toHaveBeenCalledWith("f1", {
+      name: "Harborview Dental East", tradeName: "", website: "harborviewdental.example", phone: "(503) 555-0142 x12", street: "", city: "Gresham", state: "OR", postalCode: "",
+      industry: "", employees: 12, statesOfOperation: ["OR", "WA"], currentProvider: "", ownerId: "u2",
+    });
+  });
+
+  // Catches: the maker not being the owner when nobody chose, and an agent offered other people (the database refuses them: D-209).
+  it("makes the person the owner by default, and offers an agent only themselves", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open(workspace({ role: "Agent" }));
+    await user.type(text(dialog, "Account name"), "Name only");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    expect(within(dialog).queryByRole("option", { name: "Marcus Hale" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    await waitFor(() => expect(createAccount).toHaveBeenCalled());
+    expect(createAccount.mock.calls[0][1]).toMatchObject({ name: "Name only", ownerId: "u1" });
+  });
+
+  it("offers a firm's owner everyone in the firm", async () => {
+    const { dialog } = await open(workspace({ role: "Owner", isOwner: true }));
+    expect(await within(dialog).findByRole("option", { name: "Marcus Hale" })).toBeInTheDocument();
+  });
+
+  // Catches: a refusal swallowed, the form closed and what was typed lost, or the database's words changed.
+  it("says what the database refused beside Save and keeps what was typed", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    createAccount.mockRejectedValue(new AccountError("readOnly", "Acme Benefits is closing. It can be read but not changed.", "PT423"));
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await within(dialog).findByText("Acme Benefits is closing. It can be read but not changed.")).toBeInTheDocument();
+    expect(text(dialog, "Account name")).toHaveValue("Harborview Dental East");
+    expect(screen.queryByText(/Account page for/)).not.toBeInTheDocument();
+  });
+
+  it("puts a refused owner under Owner", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    createAccount.mockRejectedValue(new AccountError("notAllowed", "You can make an account only for yourself and, as a lead, for people on your teams.", "42501"));
+    const { user, dialog } = await open(workspace({ role: "Lead" }));
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    await user.selectOptions(text(dialog, "Owner"), "u2");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    const message = await within(dialog).findByText("You can make an account only for yourself and, as a lead, for people on your teams.");
+    expect(text(dialog, "Owner")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+  });
+
+  // Catches: typing lost to a stray click on Cancel, and a form that opens again with the last form's words.
+  it("asks before throwing away what was typed, and opens empty the next time", async () => {
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New account" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "New account" }));
+    expect(text(await screen.findByRole("dialog", { name: "New account" }), "Account name")).toHaveValue("");
+  });
+
+  it("is offered on a firm with no accounts too", async () => {
+    listAccounts.mockResolvedValue([]);
+    renderAt();
+    expect(await screen.findByText("Accounts are the businesses you quote for.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "New account" }).length).toBeGreaterThan(0);
   });
 });

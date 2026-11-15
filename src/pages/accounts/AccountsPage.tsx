@@ -1,8 +1,9 @@
-import { useMemo, useRef, type ReactNode } from "react";
+import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Building2, RefreshCw, SearchX } from "lucide-react";
 import { accountsTableWords } from "@/data/accountsPage";
 import { countAccountsViews, exportColumnsFor, fetchAccountsPage, useAccountsTable } from "@/components/accounts/accountsTable";
+import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
@@ -10,11 +11,14 @@ import {
   useSavedViewsControl, useTableAddress, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 import type { Json } from "@/integrations/supabase/types";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { browserTimeZone } from "@/lib/accountsApi";
 
 // The Accounts page (story CRM-A1.1a, screen 16): the businesses a firm quotes for, on the workspace's table frame as the submissions queue is
 // (src/pages/advisor/AdvisorDashboardPage.tsx). The address holds the page, sort, filters, view and search; the database cuts the pages (D-44) and decides
 // which accounts the person may see. A name opens the account's page. Archive, restore, delete and owner change are CRM-A1.1c, and selecting rows CRM-S3.6.
+
+const NEW_ACCOUNT_BUTTON = "inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
 const AccountsPage = () => {
   const navigate = useNavigate();
@@ -35,6 +39,10 @@ const AccountsPage = () => {
   const onScreen = mine.kept ?? (mine.status === "ready" ? columns.map((c) => c.id) : null);
   const savedViews = useSavedViewsControl(table, location, { columns: onScreen, columnsStatus: mine.status, refused: !!data.error && refusedQueryReason(data.error) !== null, rowsSettled });
   const addFilterRef = useRef<HTMLButtonElement>(null);
+  // New account (CRM-A1.2): offered to a person of the firm, never to Nevermore support, who can only look. The form opens over the page; saving opens the account.
+  const workspace = useContext(WorkspaceContext);
+  const [making, setMaking] = useState(false);
+  const canMake = !!firmId && !workspace?.isSupport;
 
   // What the Export button asks for: the filters and search in force, as the table's own call takes them (the database applies the person's visibility itself).
   const asked = queryFor(table, address);
@@ -51,7 +59,10 @@ const AccountsPage = () => {
           <h1 className="font-display text-3xl font-bold">Accounts</h1>
           {slowLine}
         </div>
-        {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={exportFilters} />}
+        <div className="flex flex-wrap items-center gap-3">
+          {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={exportFilters} />}
+          {canMake && <button type="button" onClick={() => setMaking(true)} className={NEW_ACCOUNT_BUTTON}>New account</button>}
+        </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3 mb-3">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Search accounts, contacts, emails" onSearch={(term) => change({ search: term })} />
@@ -76,10 +87,16 @@ const AccountsPage = () => {
   const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} saved={savedViews} />;
 
   // Nothing yet, or nothing matches (CRM-S2.2): a bare address with no rows means the firm has no accounts; a narrowed one is worded to be true either way.
-  // The buttons the story names (New quote, New account, Import) arrive with the stories that build them (CRM-Q2.1, CRM-A1.2, CRM-X4.1): none is shown that does nothing.
+  // The buttons the story names arrive with the stories that build them (New quote CRM-Q2.1, Import CRM-X4.1): none is shown that does nothing. New account is CRM-A1.2's.
   const empty = (a: typeof address, { focusTable }: { focusTable: () => void }) => {
     if (!isNarrowed(a)) {
-      return <NothingYet icon={<Building2 className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />} sentence={accountsTableWords.nothingYet} />;
+      return (
+        <NothingYet
+          icon={<Building2 className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />}
+          sentence={accountsTableWords.nothingYet}
+          primary={canMake ? { label: "New account", onClick: () => setMaking(true) } : undefined}
+        />
+      );
     }
     const by = { search: a.search !== "", filters: a.filters.length > 0, view: a.view !== null };
     return (
@@ -117,6 +134,15 @@ const AccountsPage = () => {
           error={error}
           onOpenRow={(row) => navigate(`/accounts/${row.id}`)}
         />
+        {making && firmId && (
+          <NewAccountDialog
+            firmId={firmId}
+            role={workspace?.role ?? null}
+            person={workspace?.person ?? ""}
+            onClose={() => setMaking(false)}
+            onCreated={(account) => navigate(`/accounts/${account.id}`)}
+          />
+        )}
       </main>
     </div>
   );

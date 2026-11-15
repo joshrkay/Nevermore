@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { z } from "zod";
 import { Input } from "@/components/ui/input";
-import { Field, FormActions, nameRule, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { US_STATE_CODES } from "@/data/chamberValidation";
+import { accountFieldsSchema as schema } from "@/data/accountFields";
 import { addressLines, editOf, formOf, NOT_GIVEN, sourceWords, valueWords, type AccountForm } from "@/data/accountPage";
 import { updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
 
@@ -11,22 +11,6 @@ import { updateAccount, type AccountDetails as Details, type AccountFields } fro
 // started from. Edit is offered only when the database says the person may change the account (`canChange`, the level rule, D-209), and what the database
 // refuses is said in its own words beside Save (a closing firm, Nevermore support, a field it will not take). If someone saved first, the conflict dialog
 // sets what was typed beside what is there now (D-46).
-
-const text = z.string().trim();
-const schema = z.object({
-  name: nameRule("Enter the account's name."),
-  trade_name: text,
-  website: text,
-  phone: text,
-  street: text,
-  city: text,
-  state: text,
-  postal_code: text,
-  industry: text,
-  employees: text.refine((v) => v === "" || /^\d+$/.test(v), "Enter a whole number, like 45."),
-  states_of_operation: text,
-  current_provider: text,
-});
 
 /** How the conflict dialog names each editable field (by the database's column name) and words its value. */
 const CONFLICT_FIELDS = {

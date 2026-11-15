@@ -506,6 +506,22 @@ describe("AccountPage: where focus goes", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /^Edit/ })).toHaveFocus());
   });
 
+  // Catches: the edit form taking a phone, or states of operation, that the database refuses, now that the form that makes an account asks the same rules.
+  it("asks the edit form's phone and states of operation the rules the New account form asks", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    const phone = screen.getByLabelText("Phone");
+    await user.clear(phone);
+    await user.type(phone, "call me");
+    const states = screen.getByLabelText("States of operation");
+    await user.clear(states);
+    await user.type(states, "OR, XX");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(screen.getByText("Use two-letter state codes from the list, like OR, WA.")).toBeInTheDocument();
+  });
+
   // Catches: each arrow key in the tab list adding a history entry, so Back steps through every tab the arrows passed.
   it("replaces the address when a tab is chosen, so Back leaves the page and does not step through tabs", async () => {
     const user = userEvent.setup();

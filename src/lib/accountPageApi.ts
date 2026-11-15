@@ -192,7 +192,7 @@ export class AccountError extends Error {
 }
 
 /** The account's own fields as the database gives them (its column names). */
-type FieldsRow = {
+export type FieldsRow = {
   id: string;
   version: number;
   name: string;
@@ -244,7 +244,7 @@ const fieldsShape = z.object({
   updated_at: z.string().min(1),
 });
 
-const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
+export const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
 
 const detailsSchema = fieldsShape.extend({
   status: z.enum(["prospect", "client"]),
@@ -304,7 +304,7 @@ const pageSchema = z.object({
   }),
 });
 
-const fieldsOf = (f: FieldsRow): AccountFields => ({
+export const fieldsOf = (f: FieldsRow): AccountFields => ({
   id: f.id,
   version: f.version,
   name: f.name,
@@ -352,12 +352,12 @@ const activityOf = (a: z.infer<typeof activitySchema>): ActivityRow => ({
 
 const FALLBACK = "Couldn't load the account. Try again.";
 const LIST_FALLBACK = "Couldn't load the list. Try again.";
-const SAVE_FALLBACK = "Couldn't save the account. Try again.";
+export const SAVE_FALLBACK = "Couldn't save the account. Try again.";
 
-type DbError = { code?: string; message?: string };
+export type DbError = { code?: string; message?: string };
 
 /** An ended session is said in its own words (and signs the person out); the database's refusals keep their plain words; anything else is a failure to try again. */
-function refusal(error: DbError, fallback: string): Error {
+export function refusal(error: DbError, fallback: string): Error {
   const ended = classifyApiError({ message: error.message ?? "", code: error.code }, "");
   if (ended.unauthenticated) return ended;
   switch (error.code) {
