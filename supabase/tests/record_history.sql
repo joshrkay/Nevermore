@@ -172,6 +172,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120140000_merge_records.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 SET client_min_messages = notice;
 
@@ -665,8 +666,8 @@ BEGIN
     'the only tables with the trigger are the ones that keep a history: accounts, contacts, opportunities and referral partners');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND encode(t.tgargs, 'escape') ~ 'chamber_data'), 0::bigint, 'and no list names an intake''s answers');
   -- Nothing else writes the history: the only function that inserts into it is the capture trigger.
-  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,record_history_capture',
-    'and only the capture trigger and the account labels'' trigger (CRM-S3.7b: a label is a row of its own table, not a column, so its change is written as the one field "labels") write a row');
+  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,crm_merge_history,merge_accounts,record_history_capture',
+    'and only the capture trigger, the account labels'' trigger (CRM-S3.7b: a label is a row of its own table, not a column, so its change is written as the one field "labels") and the merge (CRM-S4.3b: it copies the removed record''s history, writes its own "merged" entry, and writes the one "labels" entry of the labels it brings) write a row');
   RAISE NOTICE 'record_history: an intake''s answers passed';
 END $$;
 

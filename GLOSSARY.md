@@ -680,7 +680,16 @@ _Avoid_: duplicate (on its own: it is a question, not a finding)
 
 **Merge**:
 Two accounts, two contacts or two leads made one. For each field that differs the person picks the value to keep; everything attached to the one removed moves to the one kept; the one removed is deleted, its history moves to the kept record marked as from the merged record, its old address leads to the kept record, and the merge is recorded on the kept record. Anyone allowed to change both can merge them. There is no unmerge. Two accounts that each hold an intake can be merged: both intakes stay, each on its own opportunity.
+In the database (code: `merge_accounts`, `merge_contacts`, `merge_preview`; story CRM-S4.3b, D-203, D-210, D-640 to D-649): the person names the record to keep and the one to remove, the version each was at when they chose, and for each field that differs which value to keep (a field they leave out keeps the kept record's value, or takes the removed one's when the kept one is blank). An account's contacts, opportunities (with their intakes and quotes), calls, notes, tasks, labels, placements and renewals move to the kept account; two contacts of the two accounts that are the same prospect become one. Two contacts merge only when they are on the same account. Both must be ones the person may change by the **Level rule**, the kept account must not be archived, a closing firm and a Nevermore support session are refused, and a record changed since the person chose refuses the merge. The kept record's history shows each entry copied from the removed record marked as from it, and one "Merged" entry.
 _Avoid_: combine, dedupe
+
+**Keep separate** (code: `account_keep_separate`; story CRM-S4.3b, D-193):
+Taking the **Possible duplicate** mark off an account: the person has decided the two accounts are different businesses. Nothing is merged and nothing else changes; the account's history shows the mark taken off. Whoever may change the account may.
+_Avoid_: dismiss, ignore
+
+**Merged-into address** (table `merged_records`, code: `resolve_merged_record`; story CRM-S4.3b, D-203):
+What the database keeps of a record that was merged away: which record it became (an account or a contact, by id, with the name it had). The removed record's old address leads to the kept record, also when that one is merged later, for a person who may see the kept record; for anyone else it leads nowhere, as a record that does not exist.
+_Avoid_: redirect, tombstone
 
 **Label**:
 A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records). The same word in other letters is the same label (the first spelling stays); a label is at most 40 characters. It is made the first time a bulk change puts it on an account, and an archived account takes no new one. Putting one on or taking one off is one entry in the account's history ("Labels changed from nothing to VIP"). Renaming or deleting a label is Settings' (Epic 9). The Accounts table shows each account's labels and can be filtered and sorted by them.

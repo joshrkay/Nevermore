@@ -215,6 +215,7 @@
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120140000_merge_records.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 SET client_min_messages = notice;
 
@@ -755,6 +756,8 @@ BEGIN
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
     -- CRM-S1.2b: the owner's last opened record.
     INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
+    -- CRM-S4.3b: a merged-away account's pointer to the owned account.
+    INSERT INTO public.merged_records (firm_id, kind, removed_id, kept_id, removed_name) VALUES (fid, 'account', gen_random_uuid(), acc1, 'Fixture merged account');
   END LOOP;
 END $$;
 
@@ -922,6 +925,10 @@ INSERT INTO matrix VALUES
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
   ('public.recent_records',                             '{"service":0}', NULL);
+-- ---- CRM-S4.3b: merging (20261120140000) ----
+-- Where a merged-away account or contact went. Closed to the API: resolve_merged_record reads it for someone who may see the kept record (supabase/tests/merge_records.sql); each firm has one.
+INSERT INTO matrix VALUES
+  ('public.merged_records',                             '{}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -3197,6 +3204,9 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
    'firm_id = {firm}'),
   ('public.account_labels', 'firm', 'its own firm_id, an account and a label of that firm; closed to the API',
    $m$WITH l AS (INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Own {tag}') RETURNING id, firm_id) INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT l.firm_id, a.id, l.id FROM l, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.merged_records', 'firm', 'its own firm_id; closed to the API, read through a function by whoever may see the record it was merged into',
+   $m$INSERT INTO public.merged_records (firm_id, kind, removed_id, kept_id, removed_name) VALUES ({firm}, 'account', gen_random_uuid(), gen_random_uuid(), 'Probe {tag}') RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
   ('public.bulk_changes', 'firm', 'its own firm_id; closed to the API, undone through a function by whoever made the change',
    $m$INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING ctid::text$m$, false,
