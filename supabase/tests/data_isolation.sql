@@ -736,7 +736,7 @@ BEGIN
     INSERT INTO public.activities (firm_id, account_id, kind, body) VALUES (fid, acc1, 'note', 'Fixture note'), (fid, acc2, 'note', 'Fixture note');
     INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, assignee_id) VALUES (fid, acc1, 'task', 'Fixture task', current_date, agent);
     -- CRM-S1.2b: the owner's last opened record.
-    INSERT INTO public.recent_records (firm_id, user_id, kind, record_id) VALUES (fid, agent, 'account', acc1::text);
+    INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
   END LOOP;
 END $$;
 
@@ -3039,7 +3039,7 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
 -- positive control here.
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.recent_records', 'firm', 'its own firm_id; closed to the API, a member reads their own recent records through a function',
-   $m$INSERT INTO public.recent_records (firm_id, user_id, kind, record_id) VALUES ({firm}, {u}, 'account', gen_random_uuid()::text) RETURNING ctid::text$m$, false,
+   $m$INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) SELECT {firm}, {u}, COALESCE(max(r.slot) + 1, 0), 'account', gen_random_uuid()::text FROM public.recent_records r WHERE r.firm_id = {firm} AND r.user_id = {u} RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
 -- ---- CRM-Q1.1a: accounts, contacts and opportunities (20261119100000) ----
 -- A firm's own records: their own firm_id (a contact and an opportunity are on an account of their firm, by a foreign key on the pair). A member reads
