@@ -880,6 +880,12 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"employees":-1}'), '22023: Employees can''t be a negative number.', 'negative employees');
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"value":-1}'), '22023: The value can''t be a negative number.', 'a negative value');
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"value":1000000000000}'), '22023: Keep the value under a trillion.', 'a value too big for the column');
+  -- Break caught: the check looks at the value as sent, but the column keeps two decimals (numeric(14,2)), so a value just under a trillion rounds up to one
+  -- on the way in and fails as a raw database error instead of these words.
+  PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"value":999999999999.995}'), '22023: Keep the value under a trillion.', 'a value that rounds up to a trillion when stored');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_agent1', 'o1', '{"value":999999999999.99}')), 'ok', 'the largest value the column holds saves');
+  PERFORM pg_temp.is((SELECT value FROM public.opportunities WHERE id = pg_temp.id('o1')), 999999999999.99::numeric, 'and is kept');
+  UPDATE public.opportunities SET value = 12000.50 WHERE id = pg_temp.id('o1');
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', jsonb_build_object('source', repeat('s', 101))), '22023: Keep the source to 100 characters.', 'a long source');
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', jsonb_build_object('next_step', repeat('n', 2001))), '22023: Keep the next step to 2,000 characters.', 'a long next step');
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"main":"c2"}'), '22023: Choose a contact of this account.', 'a contact of another account of the firm is not a main contact');
@@ -1186,6 +1192,99 @@ BEGIN
   PERFORM pg_temp.is((SELECT e ->> 'who' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'closed'), 'acme_agent1@example.test', 'by their name');
 END $$;
 
+-- Break caught: who made a quote event is worked out when the page is read, from the roles and memberships of today, so an event Nevermore's staff made
+-- reads as a member's once their support access ends (or they join the firm) (D-33: it is stamped when the event is written, as the record history and the
+-- stage changes do); and the stamp is the trigger's, whatever an insert says.
+DO $$
+DECLARE j jsonb; q bigint;
+BEGIN
+  PERFORM pg_temp.new_user('staff_q');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('staff_q'), 'admin');
+  PERFORM pg_temp.new_prospect('quill', 'Quill Quote');
+  PERFORM pg_temp.start_intake('i_qst', 'quill', pg_temp.answers('Quote Stamp Co'), 'acme');
+  PERFORM pg_temp.opportunity('o_qst', 'a1', 'acme_agent1', 'i_qst');
+  INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) VALUES (pg_temp.id('i_qst'), 'Gusto', 'sent', '2026-11-10') RETURNING id INTO q;
+  -- The stamp is the trigger's: a row that says otherwise is stamped by the rule.
+  INSERT INTO public.quote_request_events (quote_request_id, session_id, field, old_value, new_value, changed_by, changed_by_email, actor_is_staff)
+  VALUES (q, pg_temp.id('i_qst'), 'status', 'sent', 'declined', pg_temp.id('staff_q'), 'staff_q@example.test', false),
+         (q, pg_temp.id('i_qst'), 'status', 'declined', 'closed', pg_temp.id('acme_agent2'), 'acme_agent2@example.test', true);
+  PERFORM pg_temp.is((SELECT e.actor_is_staff FROM public.quote_request_events e WHERE e.quote_request_id = q AND e.new_value = 'declined'), true, 'a staff actor is stamped staff, whatever the row said');
+  PERFORM pg_temp.is((SELECT e.actor_is_staff FROM public.quote_request_events e WHERE e.quote_request_id = q AND e.new_value = 'closed'), false, 'a member is stamped not staff');
+  -- Their support access ends: they join the firm and lose the admin role. The staff event still reads Nevermore, the member's still a member's.
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('staff_q'), 'agent');
+  DELETE FROM public.user_roles WHERE user_id = pg_temp.id('staff_q');
+  PERFORM pg_temp.is(public.firm_actor_is_staff(pg_temp.id('staff_q'), pg_temp.id('acme')), false, 'today they are no staff of Acme');
+  j := pg_temp.act('acme_agent1', 'o_qst', 'changes')::jsonb;
+  PERFORM pg_temp.is((SELECT e ->> 'who' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'declined'), 'Nevermore', 'the event they made as staff still reads Nevermore');
+  PERFORM pg_temp.is((SELECT e ->> 'who_kind' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'declined'), 'nevermore', 'with the kind nevermore');
+  PERFORM pg_temp.is(j::text !~ 'staff_q', true, 'and no trace of their email');
+  PERFORM pg_temp.is((SELECT e ->> 'who_kind' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'closed'), 'member', 'a member''s event reads member');
+  PERFORM pg_temp.is((SELECT e ->> 'who' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'closed'), 'acme_agent2@example.test', 'by their name');
+END $$;
+
+-- ---------- a long history: the count is exact and a page is the same slice of a full read (D-427) ----------
+-- Break caught: the activity read gives a page that differs from the same slice of a full read of the record history (a different order, an entry dropped or
+-- repeated at a boundary between the history's own pages, a page beyond the first hundred entries wrong), or a count that is not the number of entries there
+-- are: an opportunity with well over a hundred field changes and stage moves (through archived, and from won to archived) is read to the end with
+-- record_history_list and then the activity is asked at several places.
+CREATE FUNCTION pg_temp.full_history(opp text) RETURNS TABLE (n bigint, entry_key uuid, at timestamptz) LANGUAGE plpgsql AS $$
+DECLARE chunk record; c integer; last_at timestamptz; last_key uuid; i bigint := 0;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  LOOP
+    c := 0;
+    FOR chunk IN SELECT * FROM public.record_history_list(pg_temp.firm_of('acme_owner'), 'opportunities', pg_temp.id(opp)::text, 100, last_at, last_key) LOOP
+      c := c + 1; i := i + 1; n := i; entry_key := chunk.entry_key; at := chunk.at; last_at := chunk.at; last_key := chunk.entry_key;
+      RETURN NEXT;
+    END LOOP;
+    EXIT WHEN c < 100;
+  END LOOP;
+  RESET ROLE;
+END $$;
+
+DO $$
+DECLARE
+  sid uuid; i integer; total bigint; got jsonb; off integer; want text; have text;
+  stages text[][] := ARRAY[ARRAY['draft','submitted'], ARRAY['submitted','under_review'], ARRAY['under_review','ready_for_market'], ARRAY['ready_for_market','sent_to_carrier'],
+    ARRAY['sent_to_carrier','quoted'], ARRAY['quoted','won'], ARRAY['won','archived'], ARRAY['archived','archived'], ARRAY['archived','submitted'],
+    ARRAY['submitted','archived'], ARRAY['archived','under_review']];
+BEGIN
+  PERFORM pg_temp.intake('i_big', 'acme');
+  PERFORM pg_temp.opportunity('o_big', 'a1', 'acme_owner', 'i_big');
+  sid := pg_temp.id('i_big');
+  FOR i IN 1 .. 140 LOOP
+    UPDATE public.opportunities SET next_step = 'Step ' || i, employees = i WHERE id = pg_temp.id('o_big');
+  END LOOP;
+  -- the stage moves are made among the field changes, so a page of the merged read takes some of each
+  FOR i IN 1 .. array_length(stages, 1) LOOP
+    INSERT INTO public.submission_status_history (session_id, from_status, to_status, changed_at)
+    VALUES (sid, stages[i][1], stages[i][2], clock_timestamp());
+    FOR off IN 1 .. 12 LOOP
+      UPDATE public.opportunities SET name = 'Big ' || i || '/' || off WHERE id = pg_temp.id('o_big');
+    END LOOP;
+  END LOOP;
+  SELECT count(*) INTO total FROM pg_temp.full_history('o_big');
+  PERFORM pg_temp.is(total > 250, true, 'the opportunity has well over a hundred entries (' || total || ')');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.full_history('o_big') h JOIN public.record_history r ON r.entry_key = h.entry_key), total - 7, 'seven of them are stage changes (not the moves inside a stage, nor won to archived), the rest the capture trigger''s');
+  got := pg_temp.act('acme_owner', 'o_big', 'changes', 100, 0)::jsonb;
+  PERFORM pg_temp.is((got ->> 'count')::bigint, total, 'the count is every entry there is');
+  PERFORM pg_temp.is((pg_temp.act('acme_owner', 'o_big', 'all', 1, 0)::jsonb ->> 'count')::bigint, total, 'in the all filter too');
+  PERFORM pg_temp.is((pg_temp.act('acme_owner', 'o_big', 'changes', 0, 0)::jsonb ->> 'count')::bigint, total, 'and with a page of none');
+  PERFORM pg_temp.is((pg_temp.act('acme_owner', 'o_big', 'changes', 100, 100000)::jsonb ->> 'count')::bigint, total, 'and a page beyond the end');
+  PERFORM pg_temp.is(jsonb_array_length(pg_temp.act('acme_owner', 'o_big', 'changes', 100, 100000)::jsonb -> 'rows'), 0, 'which holds no rows');
+  FOREACH off IN ARRAY ARRAY[0, 1, 37, 99, 100, 101, 150, 199, 200, 240, total::integer - 20, total::integer - 1] LOOP
+    got := pg_temp.act('acme_owner', 'o_big', 'changes', 100, off)::jsonb;
+    SELECT string_agg(h.entry_key::text, ',' ORDER BY h.n) INTO want FROM pg_temp.full_history('o_big') h WHERE h.n > off AND h.n <= off + 100;
+    SELECT string_agg(e ->> 'entry_key', ',' ORDER BY ord) INTO have FROM jsonb_array_elements(got -> 'rows') WITH ORDINALITY AS t (e, ord);
+    PERFORM pg_temp.is(have, want, 'the page at ' || off || ' is that slice of a full read');
+    PERFORM pg_temp.is((got ->> 'count')::bigint, total, 'with the same count at ' || off);
+  END LOOP;
+  got := pg_temp.act('acme_owner', 'o_big', 'changes', 7, 123)::jsonb;
+  SELECT string_agg(h.entry_key::text, ',' ORDER BY h.n) INTO want FROM pg_temp.full_history('o_big') h WHERE h.n > 123 AND h.n <= 130;
+  SELECT string_agg(e ->> 'entry_key', ',' ORDER BY ord) INTO have FROM jsonb_array_elements(got -> 'rows') WITH ORDINALITY AS t (e, ord);
+  PERFORM pg_temp.is(have, want, 'a short page at 123 is its slice too');
+END $$;
+
 -- ---------- the certified version, not the live answers (D-425) ----------
 -- Break caught: the census size counts the answers as they stand now, so a prospect who adds a row after certifying changes "the census in the certified version".
 DO $$
@@ -1328,4 +1427,65 @@ BEGIN
   PERFORM pg_temp.is(got, '55000', 'and refuses once the archive has committed');
   PERFORM pg_temp.is((SELECT next_step FROM public.opportunities WHERE id = pg_temp.id('lk_arch')), NULL::text, 'leaving nothing changed on the archived account');
   RAISE NOTICE 'opportunity_page: lock order passed';
+END $$;
+
+-- ---------- a new owner whose removal commits while the save waits (membership_is_current reads the transaction's start) ----------
+-- Break caught: the save asks whether the new owner is a current member with now(), the time its transaction began, then waits for their membership row
+-- (FOR SHARE). A removal that commits meanwhile sets valid_until to a time after that start, so the old answer still reads "current" and the opportunity is
+-- given to a person who has just been removed. Shown with two sessions: the first holds a removal of the person (valid_until = now()) uncommitted; the
+-- second, whose transaction began earlier, saves with that person as the new owner and waits; the first commits; the save is refused (22023) and the owner
+-- is as it was.
+-- The fixtures, committed first (a DO block is one transaction), so the two other sessions can see them.
+DO $$
+BEGIN
+  PERFORM pg_temp.new_user('rm_victim');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES (pg_temp.id('acme'), pg_temp.id('rm_victim'), 'agent', NULL);
+  PERFORM pg_temp.account('rm_a', 'acme', 'rm_victim');
+  PERFORM pg_temp.opportunity('rm_o', 'rm_a', 'acme_owner');
+END $$;
+DO $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  fid uuid := pg_temp.id('acme');
+  a_pid integer; b_pid integer; tries integer; got text;
+  save_stmt text;
+  open_as text := format('SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; SET LOCAL request.headers = %L',
+    jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text,
+    jsonb_build_object('x-firm-address', 'acme-brokers')::text);
+BEGIN
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  SELECT pid INTO a_pid FROM race.dblink('ra', 'SELECT pg_backend_pid()') AS t(pid integer);
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  save_stmt := format($q$SELECT public.update_opportunity(%L, 'Handed on', NULL, NULL, NULL, NULL, NULL, NULL, NULL, %L, %L, 1)::text$q$,
+    pg_temp.id('rm_o'), pg_temp.id('rm_victim'), fid);
+  -- B begins first, so its now() is before the removal's.
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', open_as);
+  PERFORM pg_sleep(0.1);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  PERFORM race.dblink_exec('ra', format('UPDATE public.firm_memberships SET valid_until = now() WHERE firm_id = %L AND user_id = %L', fid, pg_temp.id('rm_victim')));
+  PERFORM race.dblink_send_query('rb', save_stmt);
+  tries := 0;
+  WHILE tries < 100 AND NOT (a_pid = ANY (pg_blocking_pids(b_pid))) LOOP
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM pg_temp.is(a_pid = ANY (pg_blocking_pids(b_pid)), true, 'the save waits on the membership the removal holds');
+  PERFORM pg_sleep(0.1);
+  PERFORM race.dblink_exec('ra', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
+    got := 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE || ': ' || SQLERRM;
+  END;
+  PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
+  PERFORM race.dblink_exec('rb', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  PERFORM pg_temp.is(got, '22023: Choose one of the firm''s people as the owner.', 'the save is refused once the removal has committed');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('rm_o')), pg_temp.id('acme_owner'), 'and the opportunity is still its owner''s');
+  RAISE NOTICE 'opportunity_page: removal race passed';
 END $$;

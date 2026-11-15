@@ -3838,6 +3838,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('submission_status_history_stamp_staff', 'trigger', 'stamps each new status history row with whether the person who made the move acted as Nevermore staff, decided when the row is written (D-33); no API role can run it or write the table');
 
+-- CRM-O1.1a (20261120120000_opportunity_page.sql; supabase/tests/opportunity_page.sql).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('quote_request_events_stamp_staff', 'trigger', 'stamps each new quote request event with whether the person who made it acted as Nevermore staff, decided when the row is written (D-33); no API role can run it or write the table');
+
 -- CRM-Q1.1a (20261119100000_crm_records.sql; supabase/tests/crm_records.sql): an account's status and an opportunity's stage, worked out.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),

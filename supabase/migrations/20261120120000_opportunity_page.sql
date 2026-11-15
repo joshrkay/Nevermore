@@ -22,7 +22,10 @@
 -- was built (a call's "About"), for a call, a note and a task, under the rules of the account: anyone who may see the account may add; a note's text is its
 -- writer's for a day and is added to after that (D-200); an archived account takes nothing more. This story adds the read of them, and its test pins the rules
 -- for an opportunity. Last activity (D-201) already counts them: account_activity_times reads every activity of the account, whichever record it names.
--- Nothing is restated: record_history_list, log_activity and account_activity_times are used as they stand.
+-- record_history_list, log_activity and account_activity_times are used as they stand. Two small things are added for the activity read (D-33, D-427): who made
+-- a quote request's event is stamped when the event is written (quote_request_events.actor_is_staff, with its trigger, as the status history has it), and the
+-- count of an opportunity's stage changes is worked out once more without reading them (opportunity_stage_change_count, which must agree with
+-- record_history_list, and whose test holds them together), so the activity can give an exact count and read only the history a page needs.
 
 -- ---------- 1. The opportunity's own fields, as the page and a save answer them ----------
 -- The fields a person edits in place, the intake the product attached, and the version to start the next save from. Internal.
@@ -224,7 +227,8 @@ $$;
 REVOKE ALL ON FUNCTION public.crm_person_sees_record(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
 
 -- The first thing wrong with what was sent, in words, or NULL. Plain: the form shows what it can itself and the database says the rest; the columns' own checks
--- say the same (opportunities_*_check), this says it in words. Inputs already trimmed, a blank as NULL. Internal.
+-- say the same (opportunities_*_check), this says it in words. Inputs already trimmed, a blank as NULL. The value is judged as the column keeps it (numeric(14,2),
+-- two decimals): 999999999999.995 is rounded up to a trillion on the way in and would fail as a raw overflow, so it is refused here in words. Internal.
 CREATE FUNCTION public.opportunity_input_error(p_name text, p_employees integer, p_value numeric, p_source text, p_next_step text)
 RETURNS text
 LANGUAGE sql
@@ -236,7 +240,7 @@ AS $$
     WHEN char_length(p_name) > 200 THEN 'Keep the opportunity''s name to 200 characters.'
     WHEN p_employees < 0 THEN 'Employees can''t be a negative number.'
     WHEN p_value < 0 THEN 'The value can''t be a negative number.'
-    WHEN p_value >= 1000000000000 THEN 'Keep the value under a trillion.'
+    WHEN round(p_value, 2) >= 1000000000000 THEN 'Keep the value under a trillion.'
     WHEN char_length(p_source) > 100 THEN 'Keep the source to 100 characters.'
     WHEN char_length(p_next_step) > 2000 THEN 'Keep the next step to 2,000 characters.'
   END
@@ -251,7 +255,7 @@ REVOKE ALL ON FUNCTION public.opportunity_input_error(text, integer, numeric, te
 --   {conflict: true, currentVersion, current: {the fields a person edits}, changed: [{field, value, who, at}]}.
 -- p_owner_id NULL leaves the owner as it is (so an opportunity whose owner has left, or who has none, can be saved without choosing one); the owner is never
 -- cleared here (owners assign unowned records, as change_account_owner has it), and a new one must be a current member of the firm, held to the end of the
--- transaction as change_account_owner holds it, and who the caller could change a record of (update_contact's rule: an agent gives it to no one else, a lead to
+-- transaction as change_account_owner holds it (and, unlike it, checked again against the clock once the row is held: a removal that commits while this waits is seen, see below), and who the caller could change a record of (update_contact's rule: an agent gives it to no one else, a lead to
 -- themselves and their teams, an owner of the firm to anyone) and who sees the account (visibility follows it, D-422). The main contact must be a contact of the opportunity's own account (22023 otherwise).
 -- Refused, in this order and before the version is looked at: not a member of the firm (42501), a closing firm or Nevermore support (PT423), what is wrong
 -- with the fields (22023), no version (22023), an opportunity the caller may not see or that is not there (PT404, one answer for both: whoever sees its account
@@ -259,6 +263,9 @@ REVOKE ALL ON FUNCTION public.opportunity_input_error(text, integer, numeric, te
 -- no owner, a firm owner only), an owner who is not a current member (22023), an owner the caller could not give it to (42501) or who could not see the account (22023), a version the
 -- opportunity never had (22023); then, for a save from the current
 -- version, a main contact that is not the account's (22023). A stale save is answered with the conflict before its main contact is looked at.
+-- A new owner is judged twice: as a current member by the transaction's start (membership_is_current), as change_account_owner does, and, once their membership is
+-- held, against the clock (valid_until not yet reached): a removal commits while this save waits for the row, with a valid_until later than this transaction's
+-- start, and only the second look sees it. change_account_owner (member_to_own, 20261119210000) has the first look only; it is a merged migration and is left as it is.
 -- Locks, in the order every write on an account's records takes them (renewal_to_change, change_account_owner, archive and delete): the ACCOUNT first (FOR NO
 -- KEY UPDATE, which conflicts with the archive's and the owner change's and the delete's), then the opportunity; the level rule is judged on the rows as held,
 -- not on ones an owner change is about to replace, and an archive that commits first is seen. An opportunity that moved to another account while this waited
@@ -282,6 +289,7 @@ DECLARE
   cur public.opportunities;
   changed public.opportunities;
   owner uuid;
+  owner_until timestamptz;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
@@ -321,10 +329,12 @@ BEGIN
   END IF;
   owner := COALESCE(p_owner_id, cur.owner_id);
   IF owner IS DISTINCT FROM cur.owner_id THEN
-    PERFORM 1 FROM public.firm_memberships m
+    SELECT m.valid_until INTO owner_until FROM public.firm_memberships m
     WHERE m.firm_id = cur.firm_id AND m.user_id = owner AND public.membership_is_current(m.valid_from, m.valid_until)
     FOR SHARE;
-    IF NOT FOUND THEN
+    -- membership_is_current reads now(), the start of this transaction, and the row may have been waited for: a removal that committed meanwhile sets
+    -- valid_until to a time after that start, so the answer above is stale. Asked again of the row as it is now, against the clock.
+    IF NOT FOUND OR (owner_until IS NOT NULL AND owner_until <= clock_timestamp()) THEN
       RAISE EXCEPTION 'Choose one of the firm''s people as the owner.' USING ERRCODE = '22023';
     END IF;
     -- update_contact's rule: a new owner the caller could not themselves change a record of (an agent: only themselves; a lead: themselves and their teams).
@@ -373,7 +383,66 @@ $$;
 REVOKE ALL ON FUNCTION public.update_opportunity(uuid, text, date, integer, uuid, date, numeric, text, text, uuid, uuid, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_opportunity(uuid, text, date, integer, uuid, date, numeric, text, text, uuid, uuid, integer) TO authenticated;
 
--- ---------- 5. The opportunity's activity ----------
+-- ---------- 5. Who made a quote request's event: stamped when it is written (D-33) ----------
+-- Whether the person who made a quote request's event acted as Nevermore staff, decided when the event is written and never again, as the record history, the
+-- firm's record and the submission's status history keep it (submission_status_history_stamp_staff, 20261120090000): read later from today's roles and
+-- memberships it would change an old event's author when support access ends, a person joins the firm or someone becomes an admin. Set by a trigger on every
+-- insert, whichever function writes the row, and whatever the insert said. Events written before this are stamped once here from the roles and memberships of
+-- today, the best record there is; the append-only trigger is held off for that one statement only. The firm is the event's intake's.
+ALTER TABLE public.quote_request_events ADD COLUMN actor_is_staff boolean NOT NULL DEFAULT false;
+
+ALTER TABLE public.quote_request_events DISABLE TRIGGER quote_request_events_append_only;
+UPDATE public.quote_request_events e
+SET actor_is_staff = COALESCE(public.firm_actor_is_staff(e.changed_by, (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = e.session_id)), false);
+ALTER TABLE public.quote_request_events ENABLE TRIGGER quote_request_events_append_only;
+
+CREATE FUNCTION public.quote_request_events_stamp_staff()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.actor_is_staff := COALESCE(public.firm_actor_is_staff(NEW.changed_by, (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id)), false);
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.quote_request_events_stamp_staff() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER quote_request_events_stamp_staff BEFORE INSERT ON public.quote_request_events
+  FOR EACH ROW EXECUTE FUNCTION public.quote_request_events_stamp_staff();
+
+-- ---------- 6. How many stage changes an opportunity's history holds ----------
+-- The number of entries of kind 'stage_changed' that record_history_list (20261120090000, section 4) returns for the opportunity whose intake this is: each move
+-- of the intake that changes the stage, not one inside a stage, not the row that starts a submission, not "needs action" (a stage to itself), and archived as
+-- D-216 has it (from won stays Won, from any other stage is Lost, and reopening it moves from where it came from). It exists so opportunity_activity can say how
+-- many entries there are without reading them all. THIS MUST AGREE with the stage-change part of record_history_list: change one and the other changes with it;
+-- supabase/tests/opportunity_page.sql reads the whole history through record_history_list and holds the two counts together, with archived and won to archived
+-- among the moves. Internal.
+CREATE FUNCTION public.opportunity_stage_change_count(p_intake_id uuid)
+RETURNS bigint
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT count(*) FROM (
+    SELECT CASE WHEN h.from_status = 'archived' THEN
+                  CASE WHEN (SELECT x.from_status FROM public.submission_status_history x
+                             WHERE x.session_id = h.session_id AND x.to_status = 'archived' AND x.from_status IS DISTINCT FROM 'archived' AND x.id < h.id
+                             ORDER BY x.id DESC LIMIT 1) = 'won' THEN 'won' ELSE 'lost' END
+                ELSE public.opportunity_stage_of(h.from_status) END AS stage_before,
+           CASE WHEN h.to_status = 'archived' THEN CASE WHEN h.from_status = 'won' THEN 'won' ELSE 'lost' END
+                ELSE public.opportunity_stage_of(h.to_status) END AS stage_after
+    FROM public.submission_status_history h
+    WHERE h.session_id = p_intake_id AND h.from_status IS NOT NULL AND h.from_status IS DISTINCT FROM h.to_status
+  ) s
+  WHERE s.stage_before IS DISTINCT FROM s.stage_after
+$$;
+
+REVOKE ALL ON FUNCTION public.opportunity_stage_change_count(uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+-- ---------- 7. The opportunity's activity ----------
 -- {count, rows}: a page of everything that happened on the opportunity, newest first (when a call took place, when a note or a task was made, when a change or a
 -- quote request's event was recorded; ties by key, so a page is the same each time), at most 100 from a place that is not before the first. p_filter is 'all',
 -- 'calls', 'notes', 'tasks' or 'changes' (22023 otherwise), as D-212 filters an account's. What it holds:
@@ -384,8 +453,13 @@ GRANT EXECUTE ON FUNCTION public.update_opportunity(uuid, text, date, integer, u
 --                         (kind 'stage_changed', field 'stage', D-413); and its quote requests' events (type 'quote': entry_key, at, who, who_kind,
 --                         quote_request_id, peo_name and event, which is sent, quoted, declined or closed), each one a change of the record's quotes, so the
 --                         Changes filter holds them with the rest
--- 'all' is all of it. record_history_list is read page by page until it is empty, never restated (D-413: nothing but the capture trigger writes the history,
--- and nothing here copies it). The one refusal, PT404, is the page's: an opportunity that is not there, is another firm's or whose account the caller may not see.
+-- 'all' is all of it. record_history_list is read, never restated (D-413: nothing but the capture trigger writes the history, and nothing here copies it),
+-- and only as far as the page needs: the merged order is time then key, newest first, so no history entry past the first offset + limit of them can fall on the
+-- page, and the read stops there (a page deep into a long history reads that much of it, a first page one chunk). The count is exact all the same: it adds
+-- what was not read, which is worked out without reading it, from the history's rows for the opportunity (a count of record_history) and its stage changes
+-- (opportunity_stage_change_count, which must agree with record_history_list). The one refusal, PT404, is the page's: an opportunity that is not there, is
+-- another firm's or whose account the caller may not see.
+-- The author of a quote request's event is the one stamped when it was written (quote_request_events.actor_is_staff, D-33), not worked out again today.
 CREATE FUNCTION public.opportunity_activity(p_firm_id uuid, p_opportunity_id uuid, p_filter text DEFAULT 'all', p_limit integer DEFAULT 50, p_offset integer DEFAULT 0)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -401,6 +475,9 @@ DECLARE
   chunk jsonb;
   after_at timestamptz;
   after_key uuid;
+  need bigint := p_offset::bigint + p_limit;
+  hist_total bigint := 0;
+  take integer;
   n bigint;
   r jsonb;
 BEGIN
@@ -419,13 +496,20 @@ BEGIN
   END IF;
   want := CASE p_filter WHEN 'calls' THEN 'call' WHEN 'notes' THEN 'note' WHEN 'tasks' THEN 'task' END;
   IF p_filter IN ('all', 'changes') THEN
-    LOOP
+    -- How many history entries there are, without building them: the capture trigger's rows and the intake's stage changes.
+    SELECT (SELECT count(*) FROM public.record_history h
+            WHERE h.firm_id = o.firm_id AND h.table_name = public.record_history_table_named('opportunities') AND h.record_key = o.id::text)
+           + CASE WHEN o.intake_id IS NULL THEN 0 ELSE public.opportunity_stage_change_count(o.intake_id) END
+    INTO hist_total;
+    -- The newest `need` of them, and no more.
+    WHILE jsonb_array_length(hist) < LEAST(need, hist_total) LOOP
+      take := LEAST(100, need - jsonb_array_length(hist))::integer;
       SELECT COALESCE(jsonb_agg(to_jsonb(l) ORDER BY l.at DESC, l.entry_key DESC), '[]'::jsonb) INTO chunk
-      FROM public.record_history_list(o.firm_id, 'opportunities', o.id::text, 100, after_at, after_key) l;
+      FROM public.record_history_list(o.firm_id, 'opportunities', o.id::text, take, after_at, after_key) l;
+      EXIT WHEN jsonb_array_length(chunk) = 0;
       hist := hist || chunk;
-      EXIT WHEN jsonb_array_length(chunk) < 100;
-      after_at := (chunk -> 99 ->> 'at')::timestamptz;
-      after_key := (chunk -> 99 ->> 'entry_key')::uuid;
+      after_at := (chunk -> (jsonb_array_length(chunk) - 1) ->> 'at')::timestamptz;
+      after_key := (chunk -> (jsonb_array_length(chunk) - 1) ->> 'entry_key')::uuid;
     END LOOP;
   END IF;
   WITH entries AS (
@@ -435,8 +519,8 @@ BEGIN
     UNION ALL
     SELECT 'quote_request_event:' || e.id, e.changed_at,
            jsonb_build_object('type', 'quote', 'entry_key', 'quote_request_event:' || e.id, 'at', e.changed_at, 'quote_request_id', e.quote_request_id,
-                              'peo_name', q.peo_name, 'event', e.new_value, 'who', public.record_history_who(e.changed_by, public.firm_actor_is_staff(e.changed_by, o.firm_id)),
-                              'who_kind', CASE WHEN public.firm_actor_is_staff(e.changed_by, o.firm_id) THEN 'nevermore' WHEN e.changed_by IS NULL THEN 'system' ELSE 'member' END)
+                              'peo_name', q.peo_name, 'event', e.new_value, 'who', public.record_history_who(e.changed_by, e.actor_is_staff),
+                              'who_kind', CASE WHEN e.actor_is_staff THEN 'nevermore' WHEN e.changed_by IS NULL THEN 'system' ELSE 'member' END)
     FROM public.quote_request_events e JOIN public.quote_requests q ON q.id = e.quote_request_id
     WHERE p_filter IN ('all', 'changes') AND o.intake_id IS NOT NULL AND e.session_id = o.intake_id AND e.field = 'status'
       AND e.new_value IN ('sent', 'quoted', 'declined', 'closed')
@@ -446,7 +530,7 @@ BEGIN
     FROM public.activities t
     WHERE p_filter IN ('all', 'calls', 'notes', 'tasks') AND t.opportunity_id = o.id AND t.account_id = o.account_id AND (want IS NULL OR t.kind = want)
   )
-  SELECT (SELECT count(*) FROM entries),
+  SELECT (SELECT count(*) FROM entries) + (hist_total - jsonb_array_length(hist)),
          COALESCE((SELECT jsonb_agg(x.j ORDER BY x.o) FROM (
            SELECT row_number() OVER (ORDER BY e.at DESC, e.entry_key DESC) AS o,
                   COALESCE(e.j, (SELECT public.crm_activity_row(t) FROM public.activities t WHERE t.id = e.entry_key::uuid)) AS j
