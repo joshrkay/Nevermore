@@ -632,8 +632,16 @@ Two accounts, two contacts or two leads made one. For each field that differs th
 _Avoid_: combine, dedupe
 
 **Label**:
-A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records).
+A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records). The same word in other letters is the same label (the first spelling stays); a label is at most 40 characters. It is made the first time a bulk change puts it on an account, and an archived account takes no new one. Putting one on or taking one off is one entry in the account's history ("Labels changed from nothing to VIP"). Renaming or deleting a label is Settings' (Epic 9). The Accounts table shows each account's labels and can be filtered and sorted by them.
 _Avoid_: tag, category
+
+**Bulk change** (code: `bulk_accounts_change`; story CRM-S3.7b, D-202, D-209):
+One action done to many accounts in one step, from the table's **Selection** (at most 1,000, counted again by the database, which refuses more in words): change the owner (and, when asked, the open opportunities' owners), set one optional field (never the name, a required field or one the product works out), add or remove a **Label**, or archive. Export is the table's own export of the selection. The **Level rule** is asked for each account: those the person may not change are **skipped**, counted and named with the reason, and never stop the rest; an account already as asked is counted as unchanged and writes nothing. All or none: if anything fails nothing changes. Each changed record gets one entry in its history. A preview says what will happen before anything changes.
+_Avoid_: mass edit, batch update
+
+**Undo** (of a bulk change; D-202):
+For ten minutes after a **Bulk change**, and once, the person who made it can put it back. It restores every record nobody has changed since, and skips and names the rest (a record whose owner, archived state, field or label was changed again, an owner who has since left the firm, a label that would go back on an archived account, a record that is gone). It does not ask the **Level rule** again: an agent who gave accounts away can no longer change them, and the undo is theirs because they made the change. It writes its own history entries.
+_Avoid_: revert, rollback
 
 **Call**, **Note**, **Task**:
 What an agent logs on an account or a contact (later on a lead or an opportunity). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.

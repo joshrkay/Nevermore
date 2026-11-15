@@ -209,6 +209,7 @@
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -735,6 +736,12 @@ BEGIN
     -- CRM-E1.5: a note on each account and a task on the owned one.
     INSERT INTO public.activities (firm_id, account_id, kind, body) VALUES (fid, acc1, 'note', 'Fixture note'), (fid, acc2, 'note', 'Fixture note');
     INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, assignee_id) VALUES (fid, acc1, 'task', 'Fixture task', current_date, agent);
+    -- CRM-S3.7b: a label on the owned account, and a bulk change with its record.
+    INSERT INTO public.labels (firm_id, name) VALUES (fid, 'Fixture label');
+    INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT fid, acc1, l.id FROM public.labels l WHERE l.firm_id = fid;
+    INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES (fid, 'archive', now() + interval '10 minutes');
+    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after)
+    SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
   END LOOP;
 END $$;
 
@@ -884,6 +891,14 @@ INSERT INTO matrix VALUES
 -- task on the owned one: the first firm's members see all three, the second's agent the two on the owned account.
 INSERT INTO matrix VALUES
   ('public.activities',                                 '{"agent_b":2}', '{"A":3,"B":3}');
+
+-- ---- CRM-S3.7b: labels and bulk changes (20261119210000) ----
+-- Closed to the API: a member reaches them through the bulk functions only (supabase/tests/bulk_changes.sql); each firm has one of each.
+INSERT INTO matrix VALUES
+  ('public.labels',                                     '{}', NULL),
+  ('public.account_labels',                             '{}', NULL),
+  ('public.bulk_changes',                               '{}', NULL),
+  ('public.bulk_change_records',                        '{}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -1367,7 +1382,16 @@ INSERT INTO callable VALUES
   ('change_account_owner(p_account_id uuid, p_owner_id uuid, p_change_open_opportunities boolean, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for gives an account to another current member, and when asked its open opportunities the caller may change, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('accounts_can_change(p_firm_id uuid, p_ids uuid[])', 'own', NULL,
-   'a current member of the firm the call acts for is told which of up to 100 account ids they may see and change by the level rule, for the table''s row actions; nothing for a closing firm and a support session; 42501 for anyone who is no member of that firm');
+   'a current member of the firm the call acts for is told which of up to 100 account ids they may see and change by the level rule, for the table''s row actions; nothing for a closing firm and a support session; 42501 for anyone who is no member of that firm'),
+  -- CRM-S3.7b (20261119210000_bulk_changes.sql; supabase/tests/bulk_changes.sql): bulk changes to accounts, their undo and the firm's labels.
+  ('bulk_accounts_preview(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for is told what a bulk change would do to the accounts they name or the table''s filters select: how many change, how many already are as asked, and the accounts that are skipped, named, with the reason; it changes nothing; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session; another firm''s account is just not available'),
+  ('bulk_accounts_change(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for changes the owner, a field, a label or the archiving of up to 1,000 accounts, those the level rule gives them, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT413 for more than 1,000; another firm''s account is just not available'),
+  ('bulk_accounts_undo(p_change_id uuid, p_firm_id uuid)', 'own', NULL,
+   'the member who made a bulk change undoes it within ten minutes, once, putting back every record nobody has changed since; PT404 for anyone else and for a change of another firm, as for one that is not there; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
+  ('firm_labels(p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm');
 -- CRM-E1.5 (20261119180000_calls_notes_tasks.sql; supabase/tests/calls_notes_tasks.sql): calls, notes and tasks on an account.
 INSERT INTO callable VALUES
   ('log_activity(p_kind text, p_account_id uuid, p_contact_id uuid, p_opportunity_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
@@ -1949,7 +1973,14 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
   ('change_account_owner', 'advisor', 'by_id', $$SELECT public.change_account_owner({acct}, auth.uid(), true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"opportunities_changed"'),
-  ('accounts_can_change', 'advisor', 'by_id', $$SELECT public.accounts_can_change({firm}, ARRAY[{acct}]::uuid[])::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:');
+  ('accounts_can_change', 'advisor', 'by_id', $$SELECT public.accounts_can_change({firm}, ARRAY[{acct}]::uuid[])::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:'),
+  ('bulk_accounts_preview', 'advisor', 'by_id',
+   $$SELECT NULLIF(public.bulk_accounts_preview({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'will_change', '0')$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:1$'),
+  ('bulk_accounts_change', 'advisor', 'by_id',
+   $$SELECT NULLIF(public.bulk_accounts_change({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'changed', '0')$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:1$'),
+  ('bulk_accounts_undo', 'advisor', 'by_id',
+   $$SELECT public.bulk_accounts_undo((public.bulk_accounts_change({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'change_id')::uuid, {firm}) ->> 'restored'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$'),
+  ('firm_labels', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.firm_labels({firm}))::text WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$');
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('account_owner_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.account_owner_choices({firm})$$);
 
@@ -3055,6 +3086,18 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
    'firm_id = {firm}'),
   ('public.activities', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account, written by no API role',
    $m$INSERT INTO public.activities (firm_id, account_id, kind, body) SELECT a.firm_id, a.id, 'note', 'Probe {tag}' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.labels', 'firm', 'its own firm_id; closed to the API, written only by the bulk change',
+   $m$INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Probe {tag}') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.account_labels', 'firm', 'its own firm_id, an account and a label of that firm; closed to the API',
+   $m$WITH l AS (INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Own {tag}') RETURNING id, firm_id) INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT l.firm_id, a.id, l.id FROM l, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.bulk_changes', 'firm', 'its own firm_id; closed to the API, undone through a function by whoever made the change',
+   $m$INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
+   $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
@@ -3086,6 +3129,8 @@ UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_message
   VALUES ('x-{tag}', {qr}, {intake}, 'received', 'probe@example.test')$m$ WHERE src = 'public.quote_request_messages';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.bulk_change_records';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT a.firm_id, a.id, l.id FROM public.accounts a JOIN public.labels l ON l.firm_id = a.firm_id WHERE a.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.account_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
   WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
 INSERT INTO registry (src, scope, why, names_intakes) VALUES
@@ -3718,6 +3763,16 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('change_account_owner', 'firm_scoped', 'the same for giving an account, and when asked its open opportunities the caller may change, to another current member (4e)'),
   ('accounts_can_change', 'firm_scoped', 'a current member of the firm the call acts for is told which of the given accounts they may change, by the level rule; another firm''s account is never named (4e)'),
   ('contact_leave_error', 'service_only', 'the first two of move_contact''s three yeses, in words: the contact''s own level and the account it is on; asked by move_contact and contact_move_choices, no API role can call it'),
+  ('bulk_accounts_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what a bulk change would do to the accounts of that firm they may see; another firm''s account is just not available (4e)'),
+  ('bulk_accounts_change', 'firm_scoped', 'the same for doing it, to the accounts the level rule gives the caller, all or none; another firm''s account is just not available (4e)'),
+  ('bulk_accounts_undo', 'firm_scoped', 'the member who made a bulk change of their firm puts it back within ten minutes; as not there for anyone else''s and another firm''s (4e)'),
+  ('firm_labels', 'firm_scoped', 'a current member of the firm the call acts for reads the firm''s own labels (4e)'),
+  ('bulk_accounts_resolve', 'service_only', 'the accounts a bulk change is for, from ids or from the table''s filters, at most 1,000, as the caller may see them; no API role can call it'),
+  ('bulk_account_outcome', 'service_only', 'what a bulk change does to one account (change, already as asked, skipped with its reason): the preview and the change ask it, so they can not disagree; no API role can call it'),
+  ('account_set_field', 'service_only', 'writes one optional standard field of an account for a bulk change or its undo, after the checks; no API role can call it'),
+  ('member_to_own', 'service_only', 'the chosen new owner must be a current member of the firm, held to the end of the transaction (FOR SHARE); a single and a bulk owner change both ask it; no API role can call it'),
+  ('give_open_opportunities', 'service_only', 'gives an account''s open opportunities the caller may change by the level rule to a new owner, counting the rest; a single and a bulk owner change both call it; no API role can call it'),
+  ('account_labels_history', 'trigger', 'writes one history entry for an account when a label is put on or taken off, inside the write that did it; not executable through the API'),
   ('account_to_change', 'service_only', 'the one start of those four: the firm''s account, held, after the may-see and level-rule questions; no API role can call it'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
 

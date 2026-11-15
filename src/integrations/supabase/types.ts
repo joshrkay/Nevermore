@@ -1006,6 +1006,19 @@ export type Database = {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
         Returns: Json
       }
+      // Bulk changes to accounts (20261119210000): the preview and the change answer {action, selected, limit, too_many, unavailable, will_change, unchanged,
+      // skipped, owner?, label?, opportunities?} (the change adds changed, change_id, undo_until); the undo {restored, skipped, opportunities}.
+      // src/lib/bulkChangeApi.ts reads them. Exactly one of p_filters (the table's filters, search and time zone) and p_ids.
+      bulk_accounts_preview: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_accounts_change: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_accounts_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
+      firm_labels: { Args: { p_firm_id?: string | null }; Returns: Json }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {
