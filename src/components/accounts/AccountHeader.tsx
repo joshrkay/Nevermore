@@ -1,15 +1,18 @@
 import type { AccountDetails } from "@/lib/accountPageApi";
+import { useAccountActions } from "./useAccountActions";
 import { employeesWords, initialsOf, locationOf, STATUS_LABELS } from "@/data/accountPage";
+import { Button } from "@/components/ui/button";
 import { Pill } from "./accountLists";
 import { PlaceholderLine } from "@/components/workspace/states";
 import { TAB_IDS, TAB_LABELS } from "./accountColumns";
 
 /**
  * The top of an account's page (screen 17): its name and status, then one line of industry, location, employees, website and owner, whichever of them it has.
- * Email and New opportunity are not shown (D-186), and Log a call and Add a task come with CRM-E1.5: `data-account-actions` is the place they go, empty
- * until then, so nothing here is a button that does nothing (D-24).
+ * Email and New opportunity are not shown (D-186). Log a call and Add a task (CRM-E1.5) are offered only where there are actions to take: not in a Nevermore
+ * support session (ADR 0024) and not on an archived account, so nothing here is a button that does nothing (D-24).
  */
 export function AccountHeader({ account }: { account: AccountDetails }) {
+  const actions = useAccountActions();
   const facts = [
     account.industry,
     locationOf(account),
@@ -31,7 +34,12 @@ export function AccountHeader({ account }: { account: AccountDetails }) {
           <p className="mt-1 text-sm text-muted-foreground break-words">{facts.join(" · ")}</p>
         </div>
       </div>
-      <div data-account-actions className="mt-4 flex flex-wrap gap-2 empty:hidden" />
+      {actions?.canAdd && (
+        <div data-account-actions className="mt-4 flex flex-wrap gap-2">
+          <Button type="button" onClick={() => actions.log("call")}>Log a call</Button>
+          <Button type="button" variant="outline" onClick={() => actions.log("task")}>Add a task</Button>
+        </div>
+      )}
     </header>
   );
 }

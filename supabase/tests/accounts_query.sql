@@ -143,11 +143,21 @@
 \i supabase/migrations/20261118150000_queue_sort_collation.sql
 \i supabase/migrations/20261118160000_record_version.sql
 \i supabase/migrations/20261118160500_record_version_fixes.sql
+\i supabase/migrations/20261118170000_export.sql
+\i supabase/migrations/20261118170500_export_fixes.sql
+\i supabase/migrations/20261118171000_export_fixes_again.sql
+\i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
 \i supabase/migrations/20261119090000_export.sql
+\i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
+\i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
 
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1143,6 +1153,37 @@ BEGIN
   RAISE NOTICE 'accounts_query: the quotes of the shown opportunity passed';
 END $$;
 
+-- ---------- last activity takes calls, notes and tasks in (CRM-E1.5, D-201) ----------
+-- Break caught: a call, a note or a task on the account, on one of its contacts or on one of its opportunities does not move last activity; a task's
+-- completion or an addition to a note does not; an edit of a call or a task (or of a note's text) does; an older call hides a newer moment; or the
+-- function loses a branch it had (the quote status change, the account's making).
+DO $$
+DECLARE alpha uuid := pg_temp.id('alpha'); acme uuid := pg_temp.id('acme'); t uuid; n uuid; r jsonb;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-20 00:00+00', 'before: the quote status change is the newest');
+  INSERT INTO public.activities (firm_id, account_id, kind, contact_id, at, outcome) VALUES (acme, alpha, 'call', pg_temp.id('alpha_main'), timestamptz '2026-10-25 09:00+00', 'spoke');
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-25 09:00+00', 'a call on a contact of the account');
+  INSERT INTO public.activities (firm_id, account_id, kind, opportunity_id, at, outcome) VALUES (acme, alpha, 'call', pg_temp.id('opp_alpha_sooner'), timestamptz '2026-10-01 09:00+00', 'no_answer');
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-25 09:00+00', 'an older call hides nothing');
+  INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, at, created_at) VALUES (acme, alpha, 'task', 'Send it', date '2026-11-01', timestamptz '2026-10-26 09:00+00', timestamptz '2026-10-26 09:00+00') RETURNING id INTO t;
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-26 09:00+00', 'a task made');
+  UPDATE public.activities SET done_at = timestamptz '2026-10-27 09:00+00' WHERE id = t;
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-27 09:00+00', 'and done');
+  INSERT INTO public.activities (firm_id, account_id, kind, body, at, created_at, additions) VALUES (acme, alpha, 'note', 'A note', timestamptz '2026-10-20 09:00+00', timestamptz '2026-10-20 09:00+00',
+    '[{"at": "2026-10-28T09:00:00+00:00", "by": null, "text": "More"}]') RETURNING id INTO n;
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-28 09:00+00', 'an addition to a note');
+  UPDATE public.activities SET title = 'Send it today', updated_at = timestamptz '2026-12-01 00:00+00' WHERE id = t;
+  PERFORM pg_temp.is((SELECT max(x.at) FROM public.account_activity_times(acme, alpha) x), timestamptz '2026-10-28 09:00+00', 'editing a task is not activity');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.account_activity_times(acme, pg_temp.id('beta')) x), 1::bigint, 'another account''s are not read: beta has only its making');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.account_activity_times(pg_temp.id('zenith'), alpha) x), 0::bigint, 'nor under another firm');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := pg_temp.row_of('alpha');
+  PERFORM pg_temp.is((r ->> 'last_activity_at')::timestamptz, timestamptz '2026-10-28 09:00+00', 'the accounts list shows it');
+  RESET ROLE;
+  RAISE NOTICE 'accounts_query: last activity with calls, notes and tasks passed';
+END $$;
+
 -- ---------- a small firm's list reads a few rows, not every firm's ----------
 -- Break caught: the query joins whole tables (a planner override that forces hash joins, or a join of a built set), so listing 6 accounts reads every
 -- firm's quote requests, main contacts and status events: 13 ms for a firm of 10 accounts beside one of 5,000, against 7. Asked by what the listing reads:
@@ -1162,12 +1203,13 @@ BEGIN
   SELECT 'import', big, 'Big ' || lpad(n::text, 3, '0'), timestamptz '2026-01-01 00:00+00' + (n || ' minutes')::interval FROM generate_series(1, 400) n;
   INSERT INTO public.contacts (firm_id, account_id, last_name, email, is_main) SELECT big, a.id, 'Big contact', 'big-' || a.id || '@example.test', true FROM public.accounts a WHERE a.firm_id = big;
   INSERT INTO public.opportunities (firm_id, account_id, name, target_start) SELECT big, a.id, 'Big search', date '2027-01-01' FROM public.accounts a WHERE a.firm_id = big;
+  INSERT INTO public.activities (firm_id, account_id, kind, body) SELECT big, a.id, 'note', 'Big note' FROM public.accounts a WHERE a.firm_id = big;
   i := pg_temp.intake('big_intake', 'big');
   UPDATE public.opportunities SET intake_id = i WHERE id = (SELECT o.id FROM public.opportunities o WHERE o.firm_id = big ORDER BY o.account_id LIMIT 1);
   INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) SELECT i, 'Big PEO ' || n, 'sent', date '2026-10-01' FROM generate_series(1, 400) n;
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_events WHERE session_id = i AND field = 'status'), 400::bigint, 'the big firm''s quote requests have their events');
 END $$;
-ANALYZE public.accounts, public.contacts, public.opportunities, public.quote_requests, public.quote_request_events, public.submission_workflow;
+ANALYZE public.accounts, public.contacts, public.opportunities, public.activities, public.quote_requests, public.quote_request_events, public.submission_workflow;
 
 DO $$
 DECLARE t text; before bigint; used bigint; j jsonb;
@@ -1177,7 +1219,7 @@ BEGIN
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
   PERFORM pg_temp.al('acme');
   PERFORM pg_temp.al('acme', '[]', NULL, 'asc', 1, 'zebra');
-  FOREACH t IN ARRAY ARRAY['contacts', 'opportunities', 'quote_requests', 'quote_request_events'] LOOP
+  FOREACH t IN ARRAY ARRAY['contacts', 'opportunities', 'quote_requests', 'quote_request_events', 'activities'] LOOP
     before := pg_temp.rows_read(t);
     j := pg_temp.al('acme');
     used := pg_temp.rows_read(t) - before;
@@ -1200,6 +1242,49 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.rows_read('contacts') - before >= 400, true, 'a scan of the big firm''s contacts is seen by the count');
   RAISE NOTICE 'accounts_query: few rows read passed';
 END $$;
+
+-- ---------- last activity reads a handful of rows however much an account holds (CRM-E1.5) ----------
+-- Break caught: last activity scans each account's calls, notes and tasks (and expands every addition) for every account the list sorts, so 5,000 notes with
+-- additions on one account are read to show the first page: the function takes the newest of the maintained moment by the (account, moment) index.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); alpha uuid := pg_temp.id('alpha');
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO public.activities (firm_id, account_id, kind, body, at, created_at, additions)
+  SELECT acme, alpha, 'note', 'Heavy ' || n, timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval, timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval,
+         jsonb_build_array(jsonb_build_object('at', (timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval + interval '1 hour')::text, 'by', NULL, 'text', 'More'),
+                           jsonb_build_object('at', (timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval + interval '2 hours')::text, 'by', NULL, 'text', 'Again'))
+  FROM generate_series(1, 5000) n;
+END $$;
+ANALYZE public.activities;
+DO $$
+DECLARE before bigint; used bigint; j jsonb;
+BEGIN
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.al('acme');
+  before := pg_temp.rows_read('activities');
+  j := pg_temp.al('acme');
+  used := pg_temp.rows_read('activities') - before;
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), 6, 'the list is whole');
+  PERFORM pg_temp.is(used < 30, true, 'listing 6 accounts, one with 5,000 notes, read ' || used || ' rows of activities, not its history');
+  RESET ROLE;
+END $$;
+-- And the time of that first page, with the planner as it is (a second call, so planning is not counted).
+DO $$
+DECLARE t0 timestamptz; ms numeric; j jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.al('acme');
+  t0 := clock_timestamp();
+  j := pg_temp.al('acme');
+  ms := extract(epoch FROM clock_timestamp() - t0) * 1000;
+  RAISE NOTICE 'accounts_query: the first page with 5000 notes (10000 additions) on one account took % ms', round(ms);
+  PERFORM pg_temp.is(ms < 500, true, 'the first page took ' || round(ms) || ' ms');
+  RESET ROLE;
+END $$;
+
 
 -- ---------- how it is run ----------
 -- Break caught: the functions the browser calls are open to a signed-out caller, or a helper is.

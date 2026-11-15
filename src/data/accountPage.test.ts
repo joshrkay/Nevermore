@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ActivityRow } from "@/lib/accountPageApi";
-import { activityIsOfKind, activityWords, addressLines, editOf, employeesWords, formatBytes, formatDay, formOf, initialsOf, locationOf, sourceWords, statesOf, valueWords } from "./accountPage";
+import type { ChangeRow } from "@/lib/accountPageApi";
+import { ACTIVITY_FILTERS_SHOWN, activityWords, addressLines, editOf, employeesWords, formatBytes, formatDay, formOf, initialsOf, locationOf, sourceWords, statesOf, valueWords } from "./accountPage";
 
-const entry = (over: Partial<ActivityRow> = {}): ActivityRow => ({
+const entry = (over: Partial<ChangeRow> = {}): ChangeRow => ({
   type: "change", entryKey: "e1", at: "2026-11-01T10:00:00+00:00", changeId: "c1", kind: "changed", who: "dana@example.com", whoKind: "member", field: "employees", from: 40, to: 45,
   recordTable: "accounts", recordId: "a1", recordName: "Harborview", ...over,
 });
@@ -19,9 +19,8 @@ describe("the words of an account's page", () => {
     expect(valueWords([])).toBe("nothing");
   });
 
-  it("offers the kinds there are: every entry is a change today", () => {
-    expect(activityIsOfKind(entry(), "all")).toBe(true);
-    expect(activityIsOfKind(entry(), "change")).toBe(true);
+  it("offers the story's filters in its order", () => {
+    expect(ACTIVITY_FILTERS_SHOWN.map((f) => f.label)).toEqual(["All", "Calls", "Notes", "Tasks", "Changes"]);
   });
 
   it("reads a location, an address, employees, a source and initials", () => {

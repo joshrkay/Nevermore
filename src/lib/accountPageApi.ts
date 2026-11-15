@@ -2,6 +2,7 @@ import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { classifyApiError } from "@/lib/advisorApi";
+import { activityItemOf, activityItemSchema, type ActivityItem } from "@/lib/activityApi";
 import { readSaveAnswer, type ChangedField, type RecordConflict, type Saved } from "@/lib/recordVersion";
 
 // What an account's page asks the database (story CRM-A2.1a; 20261119140000_account_page.sql). Four calls: the page (the account and each tab's count and
@@ -89,8 +90,8 @@ export interface QuoteRow {
   quoteExpiresOn: string | null;
 }
 
-/** One entry of the Activity tab. Every row is a change for now (`type`); calls, notes and tasks arrive with CRM-E1.5 under their own type. */
-export interface ActivityRow {
+/** One entry of the record history on the Activity tab (`type` "change"): a creation or a change of a field of the account or one of its contacts. */
+export interface ChangeRow {
   type: "change";
   entryKey: string;
   at: string;
@@ -107,6 +108,9 @@ export interface ActivityRow {
   recordId: string;
   recordName: string | null;
 }
+
+/** One entry of the Activity tab (D-212): a change in the record's history, or a call, a note or a task (CRM-E1.5), newest first. `type` tells which. */
+export type ActivityRow = ChangeRow | ActivityItem;
 
 export interface AccountFile {
   id: string;
@@ -280,11 +284,12 @@ const quoteSchema = z.object({
   id: z.number().int(), submission_id: z.string().min(1), opportunity_id: z.string().min(1), opportunity_name: z.string(), peo_name: z.string(), status: z.string(),
   sent_on: nullableText, quote_received_on: nullableText, quote_expires_on: nullableText,
 });
-const activitySchema = z.object({
+const changeSchema = z.object({
   type: z.literal("change"), entry_key: z.string().min(1), at: z.string().min(1), change_id: z.string().min(1), kind: z.enum(["created", "changed"]), who: z.string(),
   who_kind: z.enum(["member", "nevermore", "system"]), field: nullableText, from_value: jsonValue, to_value: jsonValue,
   record_table: z.enum(["accounts", "contacts"]), record_id: z.string().min(1), record_name: nullableText,
 });
+const activitySchema = z.union([changeSchema, activityItemSchema]);
 const fileSchema = z.object({
   id: z.string().min(1), file_name: z.string(), mime_type: nullableText, size_bytes: nullableNumber, category: z.string(), created_at: z.string().min(1),
   submission_id: z.string().min(1), storage_path: z.string().min(1),
@@ -345,7 +350,8 @@ const quoteOf = (q: z.infer<typeof quoteSchema>): QuoteRow => ({
   id: q.id, submissionId: q.submission_id, opportunityId: q.opportunity_id, opportunityName: q.opportunity_name, peoName: q.peo_name, status: q.status,
   sentOn: q.sent_on, quoteReceivedOn: q.quote_received_on, quoteExpiresOn: q.quote_expires_on,
 });
-const activityOf = (a: z.infer<typeof activitySchema>): ActivityRow => ({
+const activityOf = (a: z.infer<typeof activitySchema>): ActivityRow => (a.type === "change" ? changeOf(a) : activityItemOf(a));
+const changeOf = (a: z.infer<typeof changeSchema>): ChangeRow => ({
   type: a.type, entryKey: a.entry_key, at: a.at, changeId: a.change_id, kind: a.kind, who: a.who, whoKind: a.who_kind, field: a.field,
   from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name,
 });
@@ -430,6 +436,10 @@ export interface AccountTabRows {
 }
 export type AccountListTab = keyof AccountTabRows;
 
+/** What the Activity tab is narrowed to: everything, or only calls, notes, tasks or the record's changes. The database narrows it, so counts and pages are of what is shown. */
+export const ACTIVITY_FILTERS = ["all", "calls", "notes", "tasks", "changes"] as const;
+export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number];
+
 const tabShapes = {
   contacts: [tab(contactSchema), contactOf],
   opportunities: [tab(opportunitySchema), opportunityOf],
@@ -445,12 +455,12 @@ export async function listAccountTab<T extends AccountListTab>(
   firmId: string,
   accountId: string,
   which: T,
-  options: { limit?: number; offset?: number } = {},
+  options: { limit?: number; offset?: number; filter?: ActivityFilter } = {},
 ): Promise<TabRows<AccountTabRows[T]> | null> {
   const { data, error } = await supabase.rpc("account_tab", {
     p_firm_id: firmId,
     p_account_id: accountId,
-    p_tab: which,
+    p_tab: which === "activity" && options.filter && options.filter !== "all" ? `activity_${options.filter}` : which,
     p_limit: options.limit ?? ACCOUNT_TAB_PAGE_SIZE,
     p_offset: options.offset ?? 0,
   });
