@@ -3815,6 +3815,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('renewal_update', 'firm_scoped', 'a current member who may change the renewal''s account saves it from a version; another firm''s renewal is as not there (4e)'),
   ('renewal_delete', 'firm_scoped', 'a current member who may change the renewal''s account deletes it; another firm''s renewal is as not there (4e)'),
   ('renewal_link_opportunity', 'firm_scoped', 'a current member who may see the renewal''s account names the opportunity working it; another firm''s renewal is as not there (4e)'),
+  ('renewal_hold_stage', 'service_only', 'holds the pipeline row of the opportunity that works a renewal, before the renewal is changed, in the order the status moves take it; no API role can call it'),
   ('renewal_to_change', 'service_only', 'the firm''s renewal, held and checked (seen, not archived, and for an edit the level rule) for the renewal functions that call it; no API role can call it');
 -- CRM-Q1.1a (20261119100000_crm_records.sql; supabase/tests/crm_records.sql): an account's status and an opportunity's stage, worked out.
 INSERT INTO fn_class (fn, class, why) VALUES
