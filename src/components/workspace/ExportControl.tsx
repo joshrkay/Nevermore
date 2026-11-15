@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import type { Json } from "@/integrations/supabase/types";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { StepUpDialog } from "@/components/workspace/StepUpDialog";
-import { exportedWords } from "@/data/exportTables";
+import { exportedWords, skippedWords } from "@/data/exportTables";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadBlob } from "@/lib/downloadFile";
 import { exportRows, ExportError, type ExportTable } from "@/lib/exportApi";
@@ -14,7 +14,7 @@ import { stepUpWay, type StepUp } from "@/lib/stepUp";
 type Outcome =
   | { kind: "none" }
   | { kind: "busy" }
-  | { kind: "done"; table: ExportTable; count: number }
+  | { kind: "done"; table: ExportTable; count: number; skipped: number }
   /** The last sign-in is too old for a whole table: the person proves who they are again, in place, and the export goes on. */
   | { kind: "step_up"; way: StepUp }
   | { kind: "refused"; message: string };
@@ -68,7 +68,7 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
       const result = await exportRows({ firmId, table, filters: asking.filters, ...(asking.ids ? { ids: asking.ids } : {}) });
       const { blob, name } = exportFile(result, columns);
       downloadBlob(blob, name);
-      next = { kind: "done", table: result.table, count: result.count };
+      next = { kind: "done", table: result.table, count: result.count, skipped: result.skipped };
     } catch (error) {
       if (error instanceof ExportError && error.kind === "signInAgain") {
         try {
@@ -105,6 +105,7 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
       {outcome.kind === "done" && (
         <p role="status" className="text-sm text-muted-foreground">
           {outcome.count === 0 ? "Nothing matched, so the file holds only the headings." : `${exportedWords(outcome.table, outcome.count)}.`}
+          {outcome.skipped > 0 && ` ${skippedWords(outcome.table, outcome.skipped)}`}
         </p>
       )}
       {outcome.kind === "refused" && <p role="alert" className="text-sm text-destructive">{outcome.message}</p>}

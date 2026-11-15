@@ -42,6 +42,8 @@ interface Props<K extends TableFields, Row, Context> {
    * out, the table has no checkboxes and is exactly as it was (the queue).
    */
   selection?: RowSelection<Row>;
+  /** The rows on screen answer an earlier question while the next arrives: their checkboxes do nothing, so no row that was not asked for is selected. */
+  selectionPaused?: boolean;
   renderHeader?: (column: ColumnDefinition<Row, keyof K & string, Context>, sort: TableSort<keyof K & string> | null) => ReactNode;
 }
 
@@ -59,7 +61,7 @@ const PINNED_CELL = "bg-card group-hover:bg-[image:linear-gradient(hsl(var(--mut
 const EDGE = "shadow-[2px_0_4px_-2px_hsl(var(--foreground)/0.25)]";
 
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
-export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader, selection }: Props<K, Row, Context>) {
+export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader, selection, selectionPaused }: Props<K, Row, Context>) {
   // Whether the table has been scrolled sideways: only then does the pinned column need an edge.
   const [scrolled, setScrolled] = useState(false);
   // With a checkbox column the name is pinned after it (the checkbox column is one 2.75rem cell).
@@ -93,9 +95,9 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                       if (el) el.indeterminate = selection.pageState === "some";
                     }}
                     // With no rows there is nothing to select (D-143): still in the tab order, saying why, and doing nothing.
-                    aria-disabled={rows.length === 0 || undefined}
+                    aria-disabled={rows.length === 0 || selectionPaused || undefined}
                     aria-describedby={rows.length === 0 ? "select-page-unavailable" : undefined}
-                    onChange={rows.length === 0 ? undefined : selection.togglePage}
+                    onChange={rows.length === 0 || selectionPaused ? () => {} : selection.togglePage}
                     className="h-4 w-4"
                   />
                 </label>
@@ -153,7 +155,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
               {selection && (
                 <td className={cn("sticky left-0 z-10 w-11 min-w-11 p-0 align-top", PINNED_CELL)}>
                   <label className="flex h-11 w-11 cursor-pointer items-center justify-center">
-                    <input type="checkbox" aria-label={`Select ${selection.rowLabel(row)}`} checked={selection.isSelected(row)} onChange={() => selection.toggle(row)} className="h-4 w-4" />
+                    <input type="checkbox" aria-label={`Select ${selection.rowLabel(row)}`} checked={selection.isSelected(row)} aria-disabled={selectionPaused || undefined} onChange={selectionPaused ? () => {} : () => selection.toggle(row)} className="h-4 w-4" />
                   </label>
                 </td>
               )}

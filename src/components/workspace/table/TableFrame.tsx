@@ -149,7 +149,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       ) : (
         <>
           {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
-          {selection && !placeholdering && !isEmpty && <SelectAllLine selection={selection} noun={table.noun} />}
+          {selection && !placeholdering && !isEmpty && !data.isPlaceholder && <SelectAllLine selection={selection} noun={table.noun} />}
           <OrderLine table={table} view={view} sort={address.sort} onReset={resetSort} />
           <DataTable
             table={table}
@@ -174,6 +174,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             onOpenRow={onOpenRow}
             renderHeader={renderHeader}
             selection={selection}
+            selectionPaused={data.isPlaceholder}
           />
           {!placeholdering && !isEmpty && <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />}
         </>

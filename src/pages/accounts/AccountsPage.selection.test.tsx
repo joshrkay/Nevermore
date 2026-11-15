@@ -295,4 +295,42 @@ describe("selecting rows on the Accounts page", () => {
     expect(within(bar()!).queryByRole("button", { name: "Export" })).toBeNull();
     expect(within(bar()!).getByRole("button", { name: "Clear" })).toBeInTheDocument();
   });
+
+  // Catches: a dimmed row of the previous question being ticked while the new answer is on its way, so an account that never matched is exported by its id.
+  it("does not let a row left from the previous filter be selected until the new answer arrives", async () => {
+    const user = userEvent.setup();
+    renderAt("/accounts?filter=status:any_of:client");
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    let answer!: (r: unknown) => void;
+    listAccounts.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    await user.click(screen.getByRole("link", { name: "Other filter" }));
+    await waitFor(() => expect(where()).toContain("prospect"));
+    // The old rows are still on screen, dimmed: ticking one selects nothing.
+    expect(check("Select Kestrel Software")).toHaveAttribute("aria-disabled", "true");
+    await user.click(check("Select Kestrel Software"));
+    expect(bar()).toBeNull();
+    expect(check("Select Kestrel Software")).not.toBeChecked();
+    await user.click(pageBox());
+    expect(bar()).toBeNull();
+    // The answer arrives: its rows can be selected, and an export holds only them.
+    exportRows.mockResolvedValue({ table: "accounts", label: "Accounts", columns: [{ id: "name", label: "name" }], rows: [], count: 0, skipped: 0, exportedAt: "2026-11-19T10:00:00+00:00" });
+    await act(async () => { answer({ rows: [third], total: 1, page: 1, pageSize: 50 }); });
+    await user.click(await screen.findByRole("checkbox", { name: "Select Northline Logistics" }));
+    await user.click(within(bar()!).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(exportRows).toHaveBeenCalledTimes(1));
+    expect(exportRows.mock.lastCall![0]).toMatchObject({ ids: ["a3"] });
+  });
+
+  // Catches: the file holding fewer accounts than the bar said, with no reason given (an id deleted or no longer visible comes back as skipped).
+  it("says how many selected accounts the export left out", async () => {
+    const user = userEvent.setup();
+    const ids = ["name", "main_contact", "main_contact_email", "main_contact_phone", "opportunity", "opportunity_stage", "target_start", "quote_requests_sent", "quotes_received", "earliest_quote_expires_on", "employees", "owner", "last_activity_at", "city", "state"];
+    const made = (name: string) => Object.fromEntries(ids.map((id) => [id, id === "name" ? name : null]));
+    exportRows.mockResolvedValue({ table: "accounts", label: "Accounts", columns: ids.map((id) => ({ id, label: id })), rows: [made("A"), made("B"), made("C")], count: 3, skipped: 1, exportedAt: "2026-11-19T10:00:00+00:00" });
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(pageBox());
+    await user.click(within(bar()!).getByRole("button", { name: "Export" }));
+    expect(await screen.findByText("Exported 3 accounts. 1 selected account is no longer available.")).toBeInTheDocument();
+  });
 });
