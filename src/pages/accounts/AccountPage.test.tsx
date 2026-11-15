@@ -250,16 +250,16 @@ describe("AccountPage: every name opens its record", () => {
     expect(within(screen.getByRole("region", { name: /Quotes/ })).getByRole("link", { name: "PEO 1" })).toHaveAttribute("href", "/advisor/submissions/i1");
   });
 
-  // Catches: a contact's name that opens nothing, or the Contacts tab with the contact somewhere out of view (a contact's own page is CRM-C1.1's).
-  it("opens the Contacts tab with that contact in view, until a contact has a page of its own", async () => {
+  // Catches: a contact's name that opens nothing, or still opens the Contacts tab instead of the contact's own page (CRM-C1.1).
+  it("opens the contact's own page from a contact's name, on the Overview and on the Contacts tab", async () => {
     const user = userEvent.setup();
     client.listAccountTab.mockResolvedValue(tabOf([contact(1), contact(2)], 2));
     const router = renderPage();
     await user.click(await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" }));
-    expect(router.state.location.search).toBe("?tab=contacts&contact=c2");
-    const row = (await screen.findByRole("cell", { name: "Person2 Abel" })).closest("tr") as HTMLElement;
-    expect(row).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("link", { name: /Elena Marsh/ }).closest("tr")).not.toHaveAttribute("aria-current");
+    expect(router.state.location.pathname).toBe("/contacts/c2");
+    await act(async () => { await router.navigate("/accounts/a1?tab=contacts"); });
+    await user.click(await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" }));
+    expect(router.state.location.pathname).toBe("/contacts/c2");
   });
 
   // Catches: a contact further down than the first fifty never coming into view, or one past row 100 never coming (a page asked for from row 0 with a longer
@@ -463,19 +463,6 @@ describe("AccountPage: the tabs' own lists", () => {
 });
 
 describe("AccountPage: where focus goes", () => {
-  // Catches: Enter on a link that opens another view leaving focus on the page's body.
-  it("puts focus on the contact's name when a contact's name opens the Contacts tab", async () => {
-    const user = userEvent.setup();
-    serveTab([contact(1), contact(2)]);
-    renderPage();
-    const link = await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" });
-    link.focus();
-    await user.keyboard("{Enter}");
-    const named = await screen.findByRole("link", { name: "Person2 Abel" });
-    await waitFor(() => expect(named.closest("tr")).toHaveAttribute("aria-current", "true"));
-    await waitFor(() => expect(screen.getByRole("link", { name: "Person2 Abel" })).toHaveFocus());
-  });
-
   it("does not take focus back from Show more when more rows of the same contact's list load", async () => {
     const user = userEvent.setup();
     serveTab(Array.from({ length: 80 }, (_, i) => contact(i === 0 ? 2 : i + 1000)));

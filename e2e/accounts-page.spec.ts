@@ -191,6 +191,32 @@ test("Accounts opens from the menu, narrows by employees across a reload, and an
     expect(moved.rows).toEqual([{ name: "Harborview Dental Group" }]);
   });
 
+  await test.step("A contact's name opens its page: details, Do not email kept, an edit saved in place, and the way back to the account", async () => {
+    await page.goto(`${firmUrl(FIRM)}/accounts`);
+    await page.getByRole("link", { name: "Harborview Dental East" }).click();
+    await page.getByRole("tab", { name: /^Contacts/ }).click();
+    await page.getByRole("table", { name: "The account's contacts" }).getByRole("link", { name: "Priya Nair" }).click();
+    await expect(page).toHaveURL(/\/contacts\/[0-9a-f-]{36}$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Priya Nair" })).toBeVisible();
+    await expect(page.getByText("Main contact", { exact: true }).first()).toBeVisible();
+    const details = page.getByRole("region", { name: "Details" });
+    await details.getByRole("button", { name: /^Edit/ }).click();
+    await details.getByLabel("Title").fill("Practice Manager");
+    await details.getByRole("checkbox", { name: "Do not email" }).check();
+    await details.getByRole("button", { name: "Save" }).click();
+    await expect(details.getByText("Practice Manager")).toBeVisible();
+    await expect(page.getByText("Do not email", { exact: true }).first()).toBeVisible();
+    const saved = await withDb((client) => client.query("SELECT title, do_not_email, version FROM public.contacts WHERE first_name = 'Priya' AND last_name = 'Nair'"));
+    expect(saved.rows[0]).toMatchObject({ title: "Practice Manager", do_not_email: true });
+    await expect(page.getByText("Not on an opportunity yet")).toBeVisible();
+    await page.getByRole("button", { name: /^Add a note/ }).first().click();
+    await page.getByRole("dialog").getByLabel("Note", { exact: true }).fill("Prefers mornings");
+    await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("table", { name: "The contact's calls, notes and tasks" }).getByText("Prefers mornings")).toBeVisible();
+    await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Harborview Dental East" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Harborview Dental East" })).toBeVisible();
+  });
+
   await test.step("Save and add a contact on New account opens the new account with the contact form open", async () => {
     await page.goto(`${firmUrl(FIRM)}/accounts`);
     await page.getByRole("button", { name: "New account" }).click();

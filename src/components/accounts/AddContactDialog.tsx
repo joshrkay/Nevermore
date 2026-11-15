@@ -4,9 +4,9 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FormControl, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CheckField } from "@/components/accounts/CheckField";
 import { Field, FormActions, SaveRefused, SelectInput, useAlternateFlag, useAlternateSave, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { contactFieldsSchema } from "@/data/contactFields";
 import { useAuth } from "@/hooks/useAuth";
@@ -182,22 +182,5 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
         <p role="status" className="text-sm text-muted-foreground">{context.mainContact?.name} is the main contact now. Saving makes this contact the main contact instead.</p>
       )}
     </WorkspaceForm>
-  );
-}
-
-function CheckField({ name, label, api }: { name: string; label: string; api: ReturnType<typeof useWorkspaceForm> }) {
-  return (
-    <FormField
-      control={api.form.control}
-      name={name}
-      render={({ field }) => (
-        <FormItem className="flex items-center gap-2 space-y-0">
-          <FormControl>
-            <input type="checkbox" className="h-4 w-4 rounded border-input accent-primary" checked={field.value === true} onChange={(e) => field.onChange(e.target.checked)} onBlur={field.onBlur} ref={field.ref} name={field.name} />
-          </FormControl>
-          <FormLabel className="font-normal">{label}</FormLabel>
-        </FormItem>
-      )}
-    />
   );
 }

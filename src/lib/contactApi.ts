@@ -18,7 +18,7 @@ export class ContactError extends Error {
 type DbError = { code?: string; message?: string };
 
 /** An ended session is said in its own words (and signs the person out); the database's refusals keep their plain words; anything else is a failure to try again. */
-function refusal(error: DbError, fallback: string): Error {
+export function refusal(error: DbError, fallback: string): Error {
   const ended = classifyApiError({ message: error.message ?? "", code: error.code }, "");
   if (ended.unauthenticated) return ended;
   switch (error.code) {

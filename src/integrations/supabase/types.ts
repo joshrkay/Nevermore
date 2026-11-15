@@ -876,6 +876,34 @@ export type Database = {
         Args: { p_firm_id: string; p_account_id: string; p_tab: string; p_limit?: number; p_offset?: number }
         Returns: Json
       }
+      // A contact's page (20261119240000): the contact, its account, whether the person may change or move it, and the opportunities it is the main contact of; null for anyone who may not see its account.
+      contact_page: {
+        Args: { p_firm_id: string; p_contact_id: string }
+        Returns: Json
+      }
+      // A page of the contact's calls, notes and tasks, newest first, narrowed to all, calls, notes or tasks: {count, rows}; null for anyone who may not see its account.
+      contact_activity: {
+        Args: { p_firm_id: string; p_contact_id: string; p_filter?: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // The save of a contact's own fields from a version: {conflict: false, record, previous_main} or the conflict answer.
+      update_contact: {
+        Args: {
+          p_contact_id: string
+          p_first_name: string | null
+          p_last_name: string
+          p_title: string | null
+          p_email: string | null
+          p_phone: string | null
+          p_mobile: string | null
+          p_owner_id?: string | null
+          p_is_main?: boolean
+          p_do_not_email?: boolean
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
       // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
       // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
       log_activity: {

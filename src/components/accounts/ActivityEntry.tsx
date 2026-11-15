@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { activityWords, contactName, formatDay, formatWhen, KIND_LABELS, today } from "@/data/accountPage";
 import { OUTCOME_LABELS, type ActivityItem } from "@/lib/activityApi";
 import type { ActivityRow, ContactRow } from "@/lib/accountPageApi";
+import { contactPath } from "./accountColumns";
 import { Pill } from "./accountLists";
 import { useAccountActions } from "./useAccountActions";
 
@@ -15,7 +16,7 @@ const linkClass = "text-primary underline underline-offset-2 hover:text-primary/
 /** What happened, in words: a change as a sentence; a call, a note or a task with what it holds. */
 export function ActivityWhat({ row }: { row: ActivityRow }) {
   if (row.type === "change") return <>{activityWords(row)}</>;
-  const withContact = row.contact ? <>{" "}with <Link to={`?tab=contacts&contact=${encodeURIComponent(row.contact.id)}`} className={linkClass}>{row.contact.name ?? contactName({ firstName: null, lastName: "A contact" })}</Link></> : null;
+  const withContact = row.contact ? <>{" "}with <Link to={contactPath(row.contact.id)} className={linkClass}>{row.contact.name ?? contactName({ firstName: null, lastName: "A contact" })}</Link></> : null;
   const about = row.opportunity ? <>{" "}about {row.opportunity.name}</> : null;
   if (row.type === "call") {
     return (
@@ -72,7 +73,7 @@ export function ActivityActions({ row }: { row: ActivityRow }) {
   );
 }
 
-/** Log a call or a note on one contact, from the Contacts tab: a contact's own page is CRM-C1.1's. Nothing without actions (a Nevermore support session, an archived account). */
+/** Log a call or a note on one contact, from the Contacts tab (the contact's page does the same, CRM-C1.1). Nothing without actions (a Nevermore support session, an archived account). */
 export function ContactActions({ contact }: { contact: ContactRow }) {
   const actions = useAccountActions();
   if (!actions?.canAdd) return null;

@@ -5,13 +5,13 @@ import { ActivityActions, ActivityWhat, ContactActions } from "./ActivityEntry";
 import { Pill, type Column } from "./accountLists";
 
 // What each of an account's lists shows and where each name goes (story CRM-A2.1b), drawn once for the Overview's first five and for each tab's whole list.
-// Every name opens its record (D-187): an opportunity and a quote open their submission's page until the opportunity has a page of its own; a contact's
-// own page is CRM-C1.1's, so a contact's name opens the Contacts tab with that contact in view until then.
+// Every name opens its record (D-187): an opportunity and a quote open their submission's page until the opportunity has a page of its own; a contact's name
+// opens the contact's page (CRM-C1.1, `/contacts/:id`).
 
 export const submissionPath = (submissionId: string) => `/advisor/submissions/${submissionId}`;
 
-/** Where the Contacts tab is, with one contact in view when given. */
-export const contactsAddress = (contactId?: string) => `?tab=contacts${contactId ? `&contact=${encodeURIComponent(contactId)}` : ""}`;
+/** A contact's own page (CRM-C1.1). */
+export const contactPath = (contactId: string) => `/contacts/${encodeURIComponent(contactId)}`;
 
 export const TAB_IDS = ["overview", "contacts", "opportunities", "quotes", "activity", "files"] as const;
 export type TabId = (typeof TAB_IDS)[number];
@@ -28,7 +28,7 @@ export const contactColumns: Column<ContactRow>[] = [
     header: "Name",
     cell: (c) => (
       <span className="flex flex-wrap items-center gap-2">
-        <Link to={contactsAddress(c.id)} className={linkClass}>{contactName(c)}</Link>
+        <Link to={contactPath(c.id)} className={linkClass}>{contactName(c)}</Link>
         {c.isMain && <Pill>Main</Pill>}
       </span>
     ),
