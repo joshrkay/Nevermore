@@ -160,7 +160,7 @@
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
-i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
 \i supabase/migrations/20261119230000_search_everywhere.sql
 
 
@@ -618,6 +618,10 @@ BEGIN
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
   PERFORM pg_temp.is(pg_temp.attempt('SELECT * FROM public.recent_records'), '42501', 'the table is not read through the API');
   PERFORM pg_temp.is(pg_temp.attempt('INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) SELECT firm_id, user_id, slot, kind, record_id FROM public.recent_records'), '42501', 'nor written');
+  -- Break caught: the table is readable by the service role (which bypasses row security), though it is closed to the API roles.
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT * FROM public.recent_records'), '42501', 'nor by the service role');
+  PERFORM pg_temp.is(pg_temp.attempt('DELETE FROM public.recent_records'), '42501', 'nor changed by it');
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.my_recent_records(NULL, 5)$q$), '42501', 'a visitor has none');
   PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.note_recent_record('account', 'x', NULL)$q$), '42501', 'and notes none');
@@ -797,6 +801,218 @@ BEGIN
   RAISE NOTICE 'search_everywhere: the race passed';
 END $$;
 
+-- Break caught: with all 20 places taken, two sessions both choose the same oldest place; the second one's update waits for the first and then overwrites
+-- the first one's record, so one of the two never shows. The replacement is made only if the place still holds what was read (compare and set), else chosen again.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); r text;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.stored('acme_owner', 'acme'), 20::bigint, 'a full list to start from');
+  r := pg_temp.race_notes(
+    'acme_owner', format($q$SELECT public.note_recent_record('account', %L, %L)::text$q$, pg_temp.id('cap22'), acme),
+    'acme_owner', format($q$SELECT public.note_recent_record('account', %L, %L)::text$q$, pg_temp.id('cap23'), acme));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the second note of a full list is seen waiting for the first');
+  PERFORM pg_temp.is(split_part(r, '|', 2) || split_part(r, '|', 3), 'truetrue', 'both are noted');
+  PERFORM pg_temp.is(pg_temp.stored('acme_owner', 'acme'), 20::bigint, 'and 20 are kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.recent_records x WHERE x.user_id = pg_temp.id('acme_owner') AND x.firm_id = acme
+                        AND x.record_id IN (pg_temp.id('cap22')::text, pg_temp.id('cap23')::text)), 2::bigint, 'with both new records among them, neither overwritten');
+  RAISE NOTICE 'search_everywhere: the full-list race passed';
+END $$;
+
+-- ---------- every kind finds what row security shows, by the walk and by the candidates ----------
+-- Break caught: a walk (the path of a word most records hold) forgets to ask visibility of a kind, or shows unowned accounts to a member who may not see
+-- them, so a member's five are other people's records (or rows with nothing in them) and "more" says there are more than the member may see. A firm of 400
+-- accounts, two contacts, an opportunity each, and 310 quote requests on 31 of them; owners at every level (an owner, a lead of a team with a team under
+-- it, agents in the team, on the lower team and outside it, a member whose membership ended), unowned and archived accounts, and Nevermore support. For each
+-- person and word, each kind's rows are exactly as many (up to five) as row security shows of the records that hold the word, none empty, each one of those,
+-- and "more" is whether there are more of them.
+CREATE FUNCTION pg_temp.visible_ids(u text, addr text) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user(u, addr);
+  SELECT jsonb_build_object(
+    'account', COALESCE((SELECT jsonb_agg(a.id::text) FROM public.accounts a), '[]'),
+    'contact', COALESCE((SELECT jsonb_agg(c.id::text) FROM public.contacts c), '[]'),
+    'opportunity', COALESCE((SELECT jsonb_agg(o.id::text) FROM public.opportunities o), '[]'),
+    'quote', COALESCE((SELECT jsonb_agg(q.id::text) FROM public.quote_requests q WHERE EXISTS (SELECT 1 FROM public.opportunities o WHERE o.intake_id = q.session_id)), '[]'))
+  INTO r;
+  RESET ROLE;
+  RETURN r;
+END $$;
+
+-- The ids of one kind, among the visible ones, whose records hold every word (as the search reads them), by the same text the search compares.
+CREATE FUNCTION pg_temp.holding(kind text, vis jsonb, firm uuid, w text) RETURNS text[] LANGUAGE plpgsql AS $$
+DECLARE pats text[]; doms text[]; digs text[]; res text[];
+BEGIN
+  SELECT array_agg(t.pat ORDER BY t.n), array_agg(t.dom ORDER BY t.n), array_agg(t.dig ORDER BY t.n) INTO pats, doms, digs FROM public.crm_search_terms(w) t;
+  IF kind = 'account' THEN
+    SELECT array_agg(a.id::text) INTO res FROM public.accounts a
+    WHERE a.firm_id = firm AND vis -> 'account' ? a.id::text AND public.crm_terms_found(public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs);
+  ELSIF kind = 'contact' THEN
+    SELECT array_agg(c.id::text) INTO res FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id
+    WHERE c.firm_id = firm AND vis -> 'contact' ? c.id::text
+      AND public.crm_terms_found(public.contact_search_text(c.first_name, c.last_name, c.email, c.phone, c.mobile) || E'\n' || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs);
+  ELSIF kind = 'opportunity' THEN
+    SELECT array_agg(o.id::text) INTO res FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id
+    WHERE o.firm_id = firm AND vis -> 'opportunity' ? o.id::text
+      AND public.crm_terms_found(lower(o.name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = o.intake_id), '') || E'\n'
+                                 || COALESCE((SELECT lower(string_agg(p.peo_name, E'\n')) FROM public.quote_requests p WHERE p.session_id = o.intake_id), '') || E'\n'
+                                 || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs);
+  ELSE
+    SELECT array_agg(q.id::text) INTO res FROM public.quote_requests q JOIN public.opportunities o ON o.intake_id = q.session_id AND o.firm_id = firm
+      JOIN public.accounts a ON a.id = o.account_id
+    WHERE vis -> 'quote' ? q.id::text
+      AND public.crm_terms_found(lower(q.peo_name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = q.session_id), '') || E'\n' || lower(o.name) || E'\n'
+                                 || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs);
+  END IF;
+  RETURN COALESCE(res, '{}');
+END $$;
+
+-- Whether what a person is shown for one word is what row security shows of the records that hold it. Returns the problems, '' when there are none.
+CREATE FUNCTION pg_temp.equivalent(u text, addr text, firm text, w text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE vis jsonb; j jsonb; k text; grp text; got text[]; want text[]; bad text := ''; plural text;
+BEGIN
+  vis := pg_temp.visible_ids(u, addr);
+  j := pg_temp.sr(u, addr, w, firm);
+  RESET ROLE;
+  FOREACH k IN ARRAY ARRAY['account', 'contact', 'opportunity', 'quote'] LOOP
+    plural := CASE k WHEN 'opportunity' THEN 'opportunities' ELSE k || 's' END;
+    SELECT COALESCE(array_agg(r ->> 'id' ORDER BY n), '{}') INTO got FROM jsonb_array_elements(j -> plural -> 'rows') WITH ORDINALITY AS t (r, n);
+    want := pg_temp.holding(k, vis, pg_temp.id(firm), w);
+    IF cardinality(got) <> least(5, cardinality(want)) THEN
+      bad := bad || format(' [%s of "%s" as %s: %s rows, %s expected]', k, w, u, cardinality(got), least(5, cardinality(want)));
+    ELSIF EXISTS (SELECT 1 FROM unnest(got) g WHERE g IS NULL OR g <> ALL (want)) THEN
+      bad := bad || format(' [%s of "%s" as %s: a row the person may not see, or an empty one]', k, w, u);
+    ELSIF (j -> plural ->> 'more')::boolean IS DISTINCT FROM (cardinality(want) > 5) THEN
+      bad := bad || format(' [%s of "%s" as %s: more is %s]', k, w, u, j -> plural ->> 'more');
+    END IF;
+  END LOOP;
+  RETURN bad;
+END $$;
+
+DO $$
+DECLARE walk uuid; owner_ uuid; i uuid; n integer; t1 uuid; t1a uuid;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Walk Co', 'walk-co', now()) RETURNING id INTO walk;
+  INSERT INTO fx VALUES ('walkco', walk);
+  PERFORM pg_temp.new_user('w_owner'); PERFORM pg_temp.new_user('w_lead'); PERFORM pg_temp.new_user('w_in'); PERFORM pg_temp.new_user('w_low');
+  PERFORM pg_temp.new_user('w_out'); PERFORM pg_temp.new_user('w_former');
+  INSERT INTO public.firm_teams (firm_id, name) VALUES (walk, 'T1') RETURNING id INTO t1;
+  INSERT INTO public.firm_teams (firm_id, name, parent_team_id) VALUES (walk, 'T1a', t1) RETURNING id INTO t1a;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
+    (walk, pg_temp.id('w_owner'), 'owner', NULL), (walk, pg_temp.id('w_lead'), 'lead', t1), (walk, pg_temp.id('w_in'), 'agent', t1),
+    (walk, pg_temp.id('w_low'), 'agent', t1a), (walk, pg_temp.id('w_out'), 'agent', NULL);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES (walk, pg_temp.id('w_former'), 'agent', now() - interval '3 days', now() - interval '1 day');
+  -- 400 accounts: owners in turn (the last of seven is nobody's), every 11th archived; a rare word on three.
+  INSERT INTO public.accounts (source, firm_id, owner_id, name, website, phone, archived_at)
+  SELECT 'added_by_hand', walk,
+         (ARRAY[pg_temp.id('w_owner'), pg_temp.id('w_lead'), pg_temp.id('w_in'), pg_temp.id('w_low'), pg_temp.id('w_out'), pg_temp.id('w_former'), NULL])[1 + g % 7],
+         'Walk Account ' || lpad(g::text, 3, '0') || CASE WHEN g IN (14, 15, 16) THEN ' Zorkblat' ELSE '' END,
+         'https://www.example-' || g || '.com/walk', '(503) 555-' || lpad(g::text, 4, '0'), CASE WHEN g % 11 = 0 THEN now() END
+  FROM generate_series(1, 400) g;
+  INSERT INTO public.contacts (firm_id, account_id, first_name, last_name, email)
+  SELECT walk, a.id, 'Wanda' || m, 'Walker ' || substr(a.name, 14, 3) || m, 'wanda' || m || '-' || substr(a.name, 14, 3) || '@walk.example' FROM public.accounts a, generate_series(1, 2) m WHERE a.firm_id = walk;
+  INSERT INTO public.opportunities (firm_id, account_id, name, created_at) SELECT walk, a.id, 'Walk search ' || substr(a.name, 14, 3), now() - (substr(a.name, 14, 3)::int || ' minutes')::interval FROM public.accounts a WHERE a.firm_id = walk;
+  FOR n IN 1..31 LOOP
+    i := pg_temp.intake('walk_intake' || n, 'walkco');
+    UPDATE public.opportunities SET intake_id = i WHERE id = (SELECT o.id FROM public.opportunities o WHERE o.firm_id = walk AND o.intake_id IS NULL ORDER BY o.name LIMIT 1 OFFSET n * 3);
+    INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on)
+    SELECT i, 'Walk PEO ' || n || '-' || m || CASE WHEN n = 5 AND m = 5 THEN ' Quartzite' ELSE '' END, 'sent', date '2026-10-01' FROM generate_series(1, 10) m;
+  END LOOP;
+  ANALYZE public.accounts; ANALYZE public.contacts; ANALYZE public.opportunities; ANALYZE public.quote_requests;
+END $$;
+
+DO $$
+DECLARE walk uuid := pg_temp.id('walkco'); u text; w text; bad text := ''; one text; n integer := 0;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at)
+  VALUES (walk, pg_temp.id('platform_admin'), 'platform_admin@example.test', 'Looking at a stuck quote', now(), now() + interval '1 hour');
+  -- Words most records hold (the walk), and words few hold (the candidates).
+  FOREACH w IN ARRAY ARRAY['walk', '(503)', 'www.example', 'example.com', 'peo', 'wanda', 'walk account', 'zorkblat', 'quartzite', '555-0014'] LOOP
+    FOREACH u IN ARRAY ARRAY['w_owner', 'w_lead', 'w_in', 'w_low', 'w_out', 'platform_admin'] LOOP
+      one := pg_temp.equivalent(u, 'walk-co', 'walkco', w);
+      bad := bad || one;
+      n := n + 1;
+    END LOOP;
+  END LOOP;
+  PERFORM pg_temp.is(bad, '', 'what each person is shown is what row security shows of the records that hold the word: ' || bad);
+  -- The control: the words are held by many records and the people see different numbers of them.
+  PERFORM pg_temp.is(cardinality(pg_temp.holding('account', pg_temp.visible_ids('w_owner', 'walk-co'), walk, 'walk')), 400, 'an owner sees all 400 accounts that hold "walk"');
+  PERFORM pg_temp.is(cardinality(pg_temp.holding('account', pg_temp.visible_ids('w_in', 'walk-co'), walk, 'walk')) BETWEEN 40 AND 100, true, 'an agent sees their own');
+  PERFORM pg_temp.is(cardinality(pg_temp.holding('quote', pg_temp.visible_ids('w_owner', 'walk-co'), walk, 'peo')), 310, 'an owner sees all 310 quote requests that hold "peo"');
+  PERFORM pg_temp.is(cardinality(pg_temp.holding('quote', pg_temp.visible_ids('w_out', 'walk-co'), walk, 'peo')) BETWEEN 5 AND 150, true, 'an agent sees those of their own accounts');
+  PERFORM pg_temp.as_user('platform_admin');
+  RESET ROLE;
+  DELETE FROM public.support_sessions WHERE firm_id = walk;
+  RAISE NOTICE 'search_everywhere: every kind finds what row security shows passed (% searches)', n;
+END $$;
+
+-- ---------- one account with thousands of children; another firm's quotes ----------
+-- Break caught: (1) a rare account (one hit) with 3,000 contacts and 500 opportunities is counted as one rare hit, so every child is built and ordered before
+-- the first six are kept: the estimate counts the children (up to 300), and a word that finds that many is answered by the walk. (2) Another firm's 300 quote
+-- requests that hold a word push this firm, which has none, onto the walk (every opportunity of the firm read): quote requests are counted through the firm's
+-- own opportunities.
+CREATE FUNCTION pg_temp.rows_read(t text) RETURNS bigint LANGUAGE sql AS $$
+  SELECT s.seq_tup_read + COALESCE(s.idx_tup_fetch, 0) FROM pg_stat_xact_user_tables s WHERE s.relid = ('public.' || t)::regclass
+$$;
+DO $$
+DECLARE mega uuid; acct uuid; zi uuid;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Mega Co', 'mega-co', now()) RETURNING id INTO mega;
+  INSERT INTO fx VALUES ('megaco', mega);
+  PERFORM pg_temp.new_user('mega_owner');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (mega, pg_temp.id('mega_owner'), 'owner');
+  INSERT INTO public.accounts (source, firm_id, owner_id, name) VALUES ('added_by_hand', mega, pg_temp.id('mega_owner'), 'Megacorp Holdings') RETURNING id INTO acct;
+  INSERT INTO public.accounts (source, firm_id, owner_id, name) SELECT 'added_by_hand', mega, pg_temp.id('mega_owner'), 'Mega Other ' || g FROM generate_series(1, 100) g;
+  INSERT INTO public.contacts (firm_id, account_id, first_name, last_name, email) SELECT mega, acct, 'Kid', 'Mc' || lpad(g::text, 4, '0'), 'kid' || g || '@mega.example' FROM generate_series(1, 3000) g;
+  INSERT INTO public.opportunities (firm_id, account_id, name, created_at) SELECT mega, acct, 'Mega search ' || g, now() - (g || ' minutes')::interval FROM generate_series(1, 500) g;
+  -- Another firm's 300 quote requests that hold a word Mega Co has none of.
+  zi := pg_temp.intake('zen_xylo', 'zenith');
+  INSERT INTO public.opportunities (firm_id, account_id, name, intake_id) SELECT pg_temp.id('zenith'), pg_temp.id('zen_twin'), 'Zenith xylo search', zi;
+  INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) SELECT zi, 'Xylophone PEO ' || g, 'sent', date '2026-10-01' FROM generate_series(1, 300) g;
+  ANALYZE public.accounts; ANALYZE public.contacts; ANALYZE public.opportunities; ANALYZE public.quote_requests;
+END $$;
+
+DO $$
+DECLARE before bigint; used bigint; j jsonb; started timestamptz; ms numeric; t text;
+BEGIN
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM pg_temp.as_user('mega_owner', 'mega-co');
+  PERFORM public.search_records(NULL, 'megacorp');
+  FOREACH t IN ARRAY ARRAY['contacts', 'opportunities'] LOOP
+    before := pg_temp.rows_read(t);
+    j := public.search_records(NULL, 'megacorp');
+    used := pg_temp.rows_read(t) - before;
+    PERFORM pg_temp.is(used < CASE t WHEN 'contacts' THEN 450 ELSE 1000 END, true, 'a search for the one account with 3,000 contacts and 500 opportunities read ' || used || ' rows of ' || t);
+  END LOOP;
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'contacts' -> 'rows'), 5, 'and finds five contacts');
+  PERFORM pg_temp.is((j -> 'contacts' ->> 'more')::boolean, true, 'with more');
+  PERFORM pg_temp.is((SELECT bool_and(r ->> 'account_name' = 'Megacorp Holdings') FROM jsonb_array_elements(j -> 'contacts' -> 'rows') r), true, 'all of that account');
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'opportunities' -> 'rows'), 5, 'and five opportunities');
+  PERFORM set_config('enable_seqscan', 'on', true);
+  PERFORM set_config('plan_cache_mode', 'auto', true);
+  started := clock_timestamp();
+  j := public.search_records(NULL, 'megacorp');
+  ms := extract(epoch FROM clock_timestamp() - started) * 1000;
+  RAISE NOTICE 'search_everywhere: the account with 3,000 contacts took % ms', round(ms);
+  PERFORM pg_temp.is(ms < 150, true, 'the search for the account with 3,000 contacts took ' || round(ms) || ' ms');
+  -- Another firm's quote requests.
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM public.search_records(NULL, 'xylophone');
+  before := pg_temp.rows_read('opportunities');
+  j := public.search_records(NULL, 'xylophone');
+  used := pg_temp.rows_read('opportunities') - before;
+  PERFORM pg_temp.is(pg_temp.none(j), true, 'Mega Co finds none of another firm''s quote requests');
+  PERFORM pg_temp.is(used < 60, true, 'another firm''s 300 quote requests that hold a word made Mega Co read ' || used || ' of its opportunities');
+  RESET ROLE;
+  RAISE NOTICE 'search_everywhere: children and other firms passed';
+END $$;
+
 -- ---------- a firm of thousands answers fast, and a small firm reads a few rows, not every firm's ----------
 -- Break caught: the search scans a kind (an index dropped or not led by the firm, a planner override, a join of whole tables), so it reads every record of the
 -- firm (or of every firm) instead of the few that hold the word. Asked by what each table gives up, for two firms: a second firm holds 3,000 accounts, each
@@ -804,9 +1020,6 @@ END $$;
 -- rows, not the big firm's 3,000. (2) The big firm's owner searches for a word one of ITS OWN records holds, of each kind: each table gives up under 100 rows,
 -- not its 3,000 (or 400); dropping a trigram index turns this red. (3) A word every record holds is read through the firm's ordered indexes and stops at the
 -- first five of each kind and one more, as an agent who sees five records sees them; the timing is under half a second for 3,000 accounts.
-CREATE FUNCTION pg_temp.rows_read(t text) RETURNS bigint LANGUAGE sql AS $$
-  SELECT s.seq_tup_read + COALESCE(s.idx_tup_fetch, 0) FROM pg_stat_xact_user_tables s WHERE s.relid = ('public.' || t)::regclass
-$$;
 DO $$
 DECLARE big uuid; i uuid; nn integer; t text; q text; before bigint; used bigint; j jsonb; started timestamptz; ms numeric; limit_ms numeric;
 BEGIN

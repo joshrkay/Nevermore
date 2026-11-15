@@ -879,7 +879,7 @@ export type Database = {
       // Search in the database (20261119230000): the accounts, contacts, opportunities and quotes of one firm that the caller may see, five of each kind
       // ({query, accounts|contacts|opportunities|quotes: {rows, more}}), and each person's last opened records.
       search_records: {
-        Args: { p_firm_id?: string | null; p_query?: string | null }
+        Args: { p_firm_id: string | null; p_query?: string | null }
         Returns: Json
       }
       note_recent_record: {

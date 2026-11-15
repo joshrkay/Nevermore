@@ -51,9 +51,15 @@ export class SearchError extends Error {
   constructor(
     message: string,
     readonly code?: string,
+    /** The session has ended: the page signs the person out rather than retrying. */
+    readonly unauthenticated = false,
   ) {
     super(message);
     this.name = "SearchError";
+  }
+  /** The database refused: the person is no member of that firm. */
+  get forbidden() {
+    return this.code === "42501";
   }
 }
 
@@ -62,7 +68,8 @@ const FALLBACK = "Couldn't search just now. Try again.";
 const refusal = (error: { message: string; code?: string }): SearchError => {
   if (error.code === "42501") return new SearchError("You don't have access to this firm's records.", error.code);
   if (error.code === "PT423") return new SearchError("This firm can only be looked at, not changed.", error.code);
-  return new SearchError(classifyApiError(error, FALLBACK).message, error.code);
+  const classified = classifyApiError(error, FALLBACK);
+  return new SearchError(classified.message, error.code, classified.unauthenticated);
 };
 
 const text = z.string().nullable();

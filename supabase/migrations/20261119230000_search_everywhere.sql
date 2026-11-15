@@ -114,7 +114,8 @@ CREATE INDEX quote_requests_peo_search_idx ON public.quote_requests
 -- The orders the records are shown in, within the firm, so that a word every record holds is answered by walking the first of them.
 CREATE INDEX accounts_walk_idx ON public.accounts (firm_id, ((archived_at IS NOT NULL)), (lower(name) COLLATE "und-x-icu"), id);
 CREATE INDEX contacts_walk_idx ON public.contacts (firm_id, (lower(last_name) COLLATE "und-x-icu"), (lower(COALESCE(first_name, '')) COLLATE "und-x-icu"), id);
-CREATE INDEX opportunities_walk_idx ON public.opportunities (firm_id, created_at DESC, id);
+CREATE INDEX opportunities_walk_idx ON public.opportunities (firm_id, created_at DESC, id DESC);
+CREATE INDEX opportunities_quote_walk_idx ON public.opportunities (firm_id, created_at DESC, id DESC) WHERE intake_id IS NOT NULL;
 CREATE INDEX chamber_sessions_file_id_search_idx ON public.chamber_sessions
   USING gin (firm_id, (public.search_lower(file_id)) extensions.gin_trgm_ops) WHERE file_id IS NOT NULL;
 
@@ -279,26 +280,62 @@ $$;
 REVOKE ALL ON FUNCTION public.crm_opportunity_hits(uuid, text[]) FROM PUBLIC, anon, authenticated, service_role;
 
 -- The quote requests whose PEO a word is found on, with the opportunity each sits on (a quote request has no firm of its own: it sits on its intake, and the
--- opportunity holds the intake, D-231). Found through the trigram index on the PEO, then each is placed on its opportunity of this firm by the intake's key,
--- so a firm reads the few quote requests that hold the word, whoever else shares the table. Internal.
+-- opportunity holds the intake, D-231), and how many there are (up to 300). A PEO few quote requests hold, in any firm, is found through the trigram index on
+-- the PEO and each is placed on this firm's opportunity by the intake's key; a PEO that many hold is found through the firm's own opportunities, so this firm
+-- reads its own however many other firms hold. Internal.
 CREATE FUNCTION public.crm_quote_hits(p_firm_id uuid, p_pats text[])
 RETURNS TABLE (quote_id bigint, opportunity_id uuid)
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SET search_path = public, pg_temp
 AS $$
-  SELECT r.id, o.id
-  FROM (SELECT q.id, q.session_id FROM public.quote_requests q WHERE public.search_lower(q.peo_name) LIKE ANY (p_pats) OFFSET 0) r
-  CROSS JOIN LATERAL (SELECT x.id FROM public.opportunities x WHERE x.intake_id = r.session_id AND x.firm_id = p_firm_id OFFSET 0) o
+BEGIN
+  IF (SELECT count(*) FROM (SELECT 1 FROM public.quote_requests q WHERE public.search_lower(q.peo_name) LIKE ANY (p_pats) LIMIT 300) z) < 300 THEN
+    RETURN QUERY
+      SELECT r.id, o.id
+      FROM (SELECT q.id, q.session_id FROM public.quote_requests q WHERE public.search_lower(q.peo_name) LIKE ANY (p_pats) OFFSET 0) r
+      CROSS JOIN LATERAL (SELECT x.id FROM public.opportunities x WHERE x.intake_id = r.session_id AND x.firm_id = p_firm_id OFFSET 0) o;
+  ELSE
+    RETURN QUERY
+      SELECT q.id, o.id
+      FROM public.opportunities o
+      CROSS JOIN LATERAL (SELECT z.id FROM public.quote_requests z WHERE z.session_id = o.intake_id AND public.search_lower(z.peo_name) LIKE ANY (p_pats) OFFSET 0) q
+      WHERE o.firm_id = p_firm_id AND o.intake_id IS NOT NULL;
+  END IF;
+END;
+$$;
+
+CREATE FUNCTION public.crm_quote_count(p_firm_id uuid, p_pats text[])
+RETURNS integer
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF (SELECT count(*) FROM (SELECT 1 FROM public.quote_requests q WHERE public.search_lower(q.peo_name) LIKE ANY (p_pats) LIMIT 300) z) < 300 THEN
+    RETURN (SELECT count(*)::integer FROM (
+      SELECT 1
+      FROM (SELECT q.id, q.session_id FROM public.quote_requests q WHERE public.search_lower(q.peo_name) LIKE ANY (p_pats) OFFSET 0) r
+      CROSS JOIN LATERAL (SELECT x.id FROM public.opportunities x WHERE x.intake_id = r.session_id AND x.firm_id = p_firm_id OFFSET 0) o
+      LIMIT 300) z);
+  END IF;
+  RETURN (SELECT count(*)::integer FROM (
+    SELECT 1
+    FROM public.opportunities o
+    CROSS JOIN LATERAL (SELECT z.id FROM public.quote_requests z WHERE z.session_id = o.intake_id AND public.search_lower(z.peo_name) LIKE ANY (p_pats) OFFSET 0) q
+    WHERE o.firm_id = p_firm_id AND o.intake_id IS NOT NULL
+    LIMIT 300) z);
+END;
 $$;
 
 REVOKE ALL ON FUNCTION public.crm_quote_hits(uuid, text[]) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.crm_quote_count(uuid, text[]) FROM PUBLIC, anon, authenticated, service_role;
 
 -- ---------- 6. Search ----------
 -- {query, accounts, contacts, opportunities, quotes}, each of the last four {rows: [at most five, each as crm_search_row shows it], more: whether
 -- a sixth was found}. Nothing typed, or less than two characters, is four empty groups.
 -- Order, in each kind: live accounts' records before archived accounts', then accounts and contacts by name, opportunities newest first, and quotes by their
--- opportunity (newest first) and then newest first.
+-- opportunity (newest first) and then newest first (ties by id, newest first).
 -- Two ways to find each kind, by how many records hold the rarest word typed (counted up to 300 in each place the kind is found through):
 --   few    the records that hold the rarest word are found through the trigram indexes (which lead with the firm), each is looked up by its key, and every
 --          word and the visibility are asked of it; the first six in order are kept;
@@ -328,11 +365,22 @@ DECLARE
   bo integer;
   cnt_a integer[] := '{}';
   cnt_c integer[] := '{}';
+  cnt_ac integer[] := '{}';
+  cnt_ao integer[] := '{}';
   cnt_o integer[] := '{}';
   cnt_p integer[] := '{}';
   plain boolean;
   arch boolean;
   rec record;
+  qr record;
+  own record;
+  t text;
+  batch integer;
+  k_arch boolean;
+  k_name text;
+  k_name2 text;
+  k_id uuid;
+  k_at timestamptz;
   owners uuid[];
   unowned boolean;
   acc text[] := '{}';
@@ -360,7 +408,16 @@ BEGIN
       cnt_c[k] := (SELECT count(*) FROM (SELECT 1 FROM public.contacts c WHERE c.firm_id = firm
                                         AND public.contact_search_text(c.first_name, c.last_name, c.email, c.phone, c.mobile) LIKE ANY (grp) LIMIT 300) z);
       cnt_o[k] := (SELECT count(*) FROM (SELECT 1 FROM public.opportunities o WHERE o.firm_id = firm AND public.search_lower(o.name) LIKE ANY (grp) LIMIT 300) z);
-      cnt_p[k] := (SELECT count(*) FROM (SELECT 1 FROM public.quote_requests r WHERE public.search_lower(r.peo_name) LIKE ANY (grp) LIMIT 300) z)
+      -- The children of the accounts that hold the word, counted as the contacts and opportunities that would be found through them (up to 300).
+      cnt_ac[k] := (SELECT count(*) FROM (
+                      SELECT 1 FROM (SELECT a.id FROM public.accounts a WHERE a.firm_id = firm
+                                       AND public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone) LIKE ANY (grp) LIMIT 300) a
+                      CROSS JOIN LATERAL (SELECT 1 FROM public.contacts c WHERE c.firm_id = firm AND c.account_id = a.id LIMIT 300) c LIMIT 300) z);
+      cnt_ao[k] := (SELECT count(*) FROM (
+                      SELECT 1 FROM (SELECT a.id FROM public.accounts a WHERE a.firm_id = firm
+                                       AND public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone) LIKE ANY (grp) LIMIT 300) a
+                      CROSS JOIN LATERAL (SELECT 1 FROM public.opportunities o WHERE o.firm_id = firm AND o.account_id = a.id LIMIT 300) o LIMIT 300) z);
+      cnt_p[k] := public.crm_quote_count(firm, grp)
              + (SELECT count(*) FROM (SELECT 1 FROM public.chamber_sessions s WHERE s.firm_id = firm AND s.file_id IS NOT NULL
                                         AND public.search_lower(s.file_id) LIKE ANY (grp) LIMIT 300) z);
     END LOOP;
@@ -369,8 +426,8 @@ BEGIN
     -- fields; a contact by its own and its account's; an opportunity and a quote by their own, their intake's and their account's.
     FOR k IN 1..cardinality(pats) LOOP
       IF ba IS NULL OR cnt_a[k] < cnt_a[ba] THEN ba := k; END IF;
-      IF bc IS NULL OR cnt_c[k] + cnt_a[k] < cnt_c[bc] + cnt_a[bc] THEN bc := k; END IF;
-      IF bo IS NULL OR cnt_o[k] + cnt_a[k] + cnt_p[k] < cnt_o[bo] + cnt_a[bo] + cnt_p[bo] THEN bo := k; END IF;
+      IF bc IS NULL OR cnt_c[k] + cnt_ac[k] < cnt_c[bc] + cnt_ac[bc] THEN bc := k; END IF;
+      IF bo IS NULL OR cnt_o[k] + cnt_ao[k] + cnt_p[k] < cnt_o[bo] + cnt_ao[bo] + cnt_p[bo] THEN bo := k; END IF;
     END LOOP;
     g_acc := ARRAY(SELECT x FROM unnest(ARRAY[COALESCE(doms[ba], pats[ba]), digs[ba]]) AS x WHERE x IS NOT NULL);
     g_con := ARRAY(SELECT x FROM unnest(ARRAY[COALESCE(doms[bc], pats[bc]), digs[bc]]) AS x WHERE x IS NOT NULL);
@@ -388,21 +445,33 @@ BEGIN
         ORDER BY (a.archived_at IS NOT NULL), lower(a.name) COLLATE "und-x-icu", a.id
         LIMIT 6);
     ELSE
-      FOR rec IN
-        SELECT a.id
-        FROM public.accounts a
-        WHERE a.firm_id = firm
-          AND (a.owner_id = ANY (owners) OR (a.owner_id IS NULL AND unowned))
-          AND CASE WHEN plain THEN public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone) LIKE ALL (pats)
-                   ELSE public.crm_terms_found(public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs) END
-        ORDER BY (a.archived_at IS NOT NULL), lower(a.name) COLLATE "und-x-icu", a.id
+      -- Many. Each kind is walked in the order it is shown in, in batches of 100 read by key from a btree that serves the order within the firm (a plan that
+      -- sorts the whole firm is never chosen), asking visibility and every word of each record, until six are found. A person who sees five records of thousands
+      -- walks on until they are found.
+      k_arch := false; k_name := ''; k_id := '00000000-0000-0000-0000-000000000000';
       LOOP
-        acc := acc || rec.id::text;
-        EXIT WHEN cardinality(acc) >= 6;
+        batch := 0;
+        FOR rec IN
+          SELECT a.id, a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived, lower(a.name) COLLATE "und-x-icu" AS nm
+          FROM public.accounts a
+          WHERE a.firm_id = firm AND ((a.archived_at IS NOT NULL), lower(a.name) COLLATE "und-x-icu", a.id) > (k_arch, k_name, k_id)
+          ORDER BY (a.archived_at IS NOT NULL), lower(a.name) COLLATE "und-x-icu", a.id
+          LIMIT 100
+        LOOP
+          batch := batch + 1; k_arch := rec.archived; k_name := rec.nm; k_id := rec.id;
+          IF (rec.owner_id = ANY (owners) OR (rec.owner_id IS NULL AND unowned)) THEN
+            t := public.account_search_text(rec.name, rec.trade_name, rec.web_domain, rec.phone);
+            IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+              acc := acc || rec.id::text;
+              EXIT WHEN cardinality(acc) >= 6;
+            END IF;
+          END IF;
+        END LOOP;
+        EXIT WHEN batch < 100 OR cardinality(acc) >= 6;
       END LOOP;
     END IF;
 
-    IF cnt_c[bc] + cnt_a[bc] < 300 THEN
+    IF cnt_c[bc] + cnt_ac[bc] < 300 THEN
       con := ARRAY(
         WITH hit AS (
           SELECT c.id FROM public.contacts c
@@ -428,27 +497,34 @@ BEGIN
     ELSE
       FOREACH arch IN ARRAY ARRAY[false, true] LOOP
         EXIT WHEN cardinality(con) >= 6;
-        FOR rec IN
-          SELECT c.id
-          FROM public.contacts c
-          CROSS JOIN LATERAL (
-            SELECT true AS ok FROM public.accounts a
-            WHERE a.id = c.account_id AND (a.archived_at IS NOT NULL) = arch AND (a.owner_id = ANY (owners) OR (a.owner_id IS NULL AND unowned))
-              AND CASE WHEN plain THEN (public.contact_search_text(c.first_name, c.last_name, c.email, c.phone, c.mobile) || E'\n'
-                                        || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone)) LIKE ALL (pats)
-                       ELSE public.crm_terms_found(public.contact_search_text(c.first_name, c.last_name, c.email, c.phone, c.mobile) || E'\n'
-                                                   || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs) END
-            OFFSET 0) x
-          WHERE c.firm_id = firm
-          ORDER BY lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id
+        k_name := ''; k_name2 := ''; k_id := '00000000-0000-0000-0000-000000000000';
         LOOP
-          con := con || rec.id::text;
-          EXIT WHEN cardinality(con) >= 6;
+          batch := 0;
+          FOR rec IN
+            SELECT c.id, c.account_id, c.first_name, c.last_name, c.email, c.phone, c.mobile,
+                   lower(c.last_name) COLLATE "und-x-icu" AS ln, lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu" AS fn
+            FROM public.contacts c
+            WHERE c.firm_id = firm AND (lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id) > (k_name, k_name2, k_id)
+            ORDER BY lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id
+            LIMIT 100
+          LOOP
+            batch := batch + 1; k_name := rec.ln; k_name2 := rec.fn; k_id := rec.id;
+            SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
+            IF FOUND AND own.archived = arch AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) THEN
+              t := public.contact_search_text(rec.first_name, rec.last_name, rec.email, rec.phone, rec.mobile) || E'\n'
+                   || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
+              IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+                con := con || rec.id::text;
+                EXIT WHEN cardinality(con) >= 6;
+              END IF;
+            END IF;
+          END LOOP;
+          EXIT WHEN batch < 100 OR cardinality(con) >= 6;
         END LOOP;
       END LOOP;
     END IF;
 
-    IF cnt_o[bo] + cnt_a[bo] + cnt_p[bo] < 300 THEN
+    IF cnt_o[bo] + cnt_ao[bo] + cnt_p[bo] < 300 THEN
       opp := ARRAY(
         WITH hit AS (
           SELECT h.id FROM public.crm_opportunity_hits(firm, g_opp) h
@@ -467,34 +543,39 @@ BEGIN
                      ELSE public.crm_terms_found(lower(o.name) || E'\n' || COALESCE(lower(s.file_id), '') || E'\n' || COALESCE(pq.t, '') || E'\n'
                                                  || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs) END
           OFFSET 0) x
-        ORDER BY x.archived, x.created_at DESC, x.key
+        ORDER BY x.archived, x.created_at DESC, x.key DESC
         LIMIT 6);
     ELSE
       FOREACH arch IN ARRAY ARRAY[false, true] LOOP
         EXIT WHEN cardinality(opp) >= 6;
-        FOR rec IN
-          SELECT o.id
-          FROM public.opportunities o
-          CROSS JOIN LATERAL (
-            SELECT true AS ok FROM public.accounts a
-            WHERE a.id = o.account_id AND (a.archived_at IS NOT NULL) = arch AND (a.owner_id = ANY (owners) OR (a.owner_id IS NULL AND unowned))
-              AND CASE WHEN plain THEN (lower(o.name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = o.intake_id), '') || E'\n'
-                                        || COALESCE((SELECT lower(string_agg(p.peo_name, E'\n')) FROM public.quote_requests p WHERE p.session_id = o.intake_id), '') || E'\n'
-                                        || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone)) LIKE ALL (pats)
-                       ELSE public.crm_terms_found(lower(o.name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = o.intake_id), '') || E'\n'
-                                                   || COALESCE((SELECT lower(string_agg(p.peo_name, E'\n')) FROM public.quote_requests p WHERE p.session_id = o.intake_id), '') || E'\n'
-                                                   || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs) END
-            OFFSET 0) x
-          WHERE o.firm_id = firm
-          ORDER BY o.created_at DESC, o.id
+        k_at := 'infinity'; k_id := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
         LOOP
-          opp := opp || rec.id::text;
-          EXIT WHEN cardinality(opp) >= 6;
+          batch := 0;
+          FOR rec IN
+            SELECT o.id, o.name, o.account_id, o.intake_id, o.created_at
+            FROM public.opportunities o
+            WHERE o.firm_id = firm AND (o.created_at, o.id) < (k_at, k_id)
+            ORDER BY o.created_at DESC, o.id DESC
+            LIMIT 100
+          LOOP
+            batch := batch + 1; k_at := rec.created_at; k_id := rec.id;
+            SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
+            IF FOUND AND own.archived = arch AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) THEN
+              t := lower(rec.name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = rec.intake_id), '') || E'\n'
+                   || COALESCE((SELECT lower(string_agg(p.peo_name, E'\n')) FROM public.quote_requests p WHERE p.session_id = rec.intake_id), '') || E'\n'
+                   || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
+              IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+                opp := opp || rec.id::text;
+                EXIT WHEN cardinality(opp) >= 6;
+              END IF;
+            END IF;
+          END LOOP;
+          EXIT WHEN batch < 100 OR cardinality(opp) >= 6;
         END LOOP;
       END LOOP;
     END IF;
 
-    IF cnt_o[bo] + cnt_a[bo] + cnt_p[bo] < 300 THEN
+    IF cnt_o[bo] + cnt_ao[bo] + cnt_p[bo] < 300 THEN
       qts := ARRAY(
         WITH hit AS (
           SELECT h.quote_id AS id FROM public.crm_quote_hits(firm, g_opp) h
@@ -515,32 +596,39 @@ BEGIN
                      ELSE public.crm_terms_found(lower(r.peo_name) || E'\n' || COALESCE(lower(s.file_id), '') || E'\n' || lower(o.name) || E'\n'
                                                  || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs) END
           OFFSET 0) x
-        ORDER BY x.archived, x.created_at DESC, x.okey, x.key DESC
+        ORDER BY x.archived, x.created_at DESC, x.okey DESC, x.key DESC
         LIMIT 6);
     ELSE
       FOREACH arch IN ARRAY ARRAY[false, true] LOOP
         EXIT WHEN cardinality(qts) >= 6;
-        FOR rec IN
-          SELECT p.id
-          FROM public.opportunities o
-          CROSS JOIN LATERAL (SELECT z.id, z.peo_name FROM public.quote_requests z WHERE z.session_id = o.intake_id OFFSET 0) p
-          CROSS JOIN LATERAL (
-            SELECT true AS ok FROM public.accounts a
-            WHERE a.id = o.account_id AND (a.archived_at IS NOT NULL) = arch AND (a.owner_id = ANY (owners) OR (a.owner_id IS NULL AND unowned))
-              AND CASE WHEN plain THEN (lower(p.peo_name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = o.intake_id), '') || E'\n'
-                                        || lower(o.name) || E'\n' || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone)) LIKE ALL (pats)
-                       ELSE public.crm_terms_found(lower(p.peo_name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = o.intake_id), '') || E'\n'
-                                                   || lower(o.name) || E'\n' || public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone), pats, doms, digs) END
-            OFFSET 0) x
-          WHERE o.firm_id = firm AND o.intake_id IS NOT NULL
-          ORDER BY o.created_at DESC, o.id, p.id DESC
+        k_at := 'infinity'; k_id := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
         LOOP
-          qts := qts || rec.id::text;
-          EXIT WHEN cardinality(qts) >= 6;
+          batch := 0;
+          FOR rec IN
+            SELECT o.id, o.name, o.account_id, o.intake_id, o.created_at
+            FROM public.opportunities o
+            WHERE o.firm_id = firm AND o.intake_id IS NOT NULL AND (o.created_at, o.id) < (k_at, k_id)
+            ORDER BY o.created_at DESC, o.id DESC
+            LIMIT 100
+          LOOP
+            batch := batch + 1; k_at := rec.created_at; k_id := rec.id;
+            SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
+            IF FOUND AND own.archived = arch AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) THEN
+              FOR qr IN SELECT z.id, z.peo_name FROM public.quote_requests z WHERE z.session_id = rec.intake_id ORDER BY z.id DESC LOOP
+                t := lower(qr.peo_name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = rec.intake_id), '') || E'\n'
+                     || lower(rec.name) || E'\n' || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
+                IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+                  qts := qts || qr.id::text;
+                  EXIT WHEN cardinality(qts) >= 6;
+                END IF;
+              END LOOP;
+              EXIT WHEN cardinality(qts) >= 6;
+            END IF;
+          END LOOP;
+          EXIT WHEN batch < 100 OR cardinality(qts) >= 6;
         END LOOP;
       END LOOP;
     END IF;
-
   END IF;
 
   RETURN jsonb_build_object(
@@ -585,7 +673,6 @@ CREATE INDEX recent_records_person_idx ON public.recent_records (firm_id, user_i
 
 ALTER TABLE public.recent_records ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.recent_records FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.recent_records TO service_role;
 
 COMMENT ON TABLE public.recent_records IS 'The last records a person opened in a firm (at most 20 each), for the search box''s "last five opened". Closed to the API roles: note_recent_record writes, my_recent_records reads.';
 
@@ -608,6 +695,10 @@ DECLARE
   bad boolean;
   place integer;
   attempt integer;
+  old_slot smallint;
+  old_kind text;
+  old_id text;
+  old_at timestamptz;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
@@ -624,7 +715,7 @@ BEGIN
   END IF;
   -- Already there: it moves to the top. Else a free place, else the oldest place. A second session that took the same place first makes this one's insert
   -- wait for its commit and then fail (the places are unique): the place is chosen again, and is now taken.
-  FOR attempt IN 1..5 LOOP
+  FOR attempt IN 1..8 LOOP
     BEGIN
       UPDATE public.recent_records r SET opened_at = clock_timestamp()
       WHERE r.firm_id = firm AND r.user_id = me AND r.kind = p_kind AND r.record_id = id;
@@ -632,15 +723,19 @@ BEGIN
       place := (SELECT g.n FROM generate_series(0, 19) AS g (n)
                 WHERE NOT EXISTS (SELECT 1 FROM public.recent_records r WHERE r.firm_id = firm AND r.user_id = me AND r.slot = g.n) ORDER BY g.n LIMIT 1);
       IF place IS NULL THEN
+        -- Every place is taken: replace the oldest, only if it still holds what was read (a second session that replaced it first leaves this one no row to
+        -- change, and the oldest is chosen again).
+        SELECT k.slot, k.kind, k.record_id, k.opened_at INTO old_slot, old_kind, old_id, old_at
+        FROM public.recent_records k WHERE k.firm_id = firm AND k.user_id = me ORDER BY k.opened_at, k.slot LIMIT 1;
         UPDATE public.recent_records r SET kind = p_kind, record_id = id, opened_at = clock_timestamp()
-        WHERE r.firm_id = firm AND r.user_id = me
-          AND r.slot = (SELECT k.slot FROM public.recent_records k WHERE k.firm_id = firm AND k.user_id = me ORDER BY k.opened_at, k.slot LIMIT 1);
+        WHERE r.firm_id = firm AND r.user_id = me AND r.slot = old_slot AND r.kind = old_kind AND r.record_id = old_id AND r.opened_at = old_at;
+        CONTINUE WHEN NOT FOUND;
       ELSE
         INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id, opened_at) VALUES (firm, me, place, p_kind, id, clock_timestamp());
       END IF;
       EXIT;
     EXCEPTION WHEN unique_violation THEN
-      IF attempt = 5 THEN RAISE; END IF;
+      IF attempt = 8 THEN RAISE; END IF;
     END;
   END LOOP;
   RETURN true;

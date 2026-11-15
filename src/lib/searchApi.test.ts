@@ -58,6 +58,32 @@ describe("searchRecords", () => {
   });
 });
 
+describe("refusals", () => {
+  it("keeps an ended session as unauthenticated, so the page signs the person out instead of retrying", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST301", message: "JWT expired" } });
+    const e = await searchRecords("f1", "alpine").catch((x) => x);
+    expect(e).toBeInstanceOf(SearchError);
+    expect(e.unauthenticated).toBe(true);
+    expect(e.forbidden).toBe(false);
+    expect(e.message).toBe("Your session has expired. Sign in again to continue.");
+  });
+
+  it("keeps a refused firm as forbidden, from each of the three calls", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Not a member of that firm" } });
+    for (const call of [() => searchRecords("f2", "alpine"), () => noteRecentRecord("f2", "account", "a1"), () => myRecentRecords("f2")]) {
+      const e = await call().catch((x) => x);
+      expect(e.forbidden).toBe(true);
+      expect(e.unauthenticated).toBe(false);
+    }
+  });
+
+  it("keeps an ended session from the recent records too", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST303", message: "JWT expired" } });
+    expect((await myRecentRecords("f1").catch((x) => x)).unauthenticated).toBe(true);
+    expect((await noteRecentRecord("f1", "account", "a1").catch((x) => x)).unauthenticated).toBe(true);
+  });
+});
+
 describe("recent records", () => {
   it("notes a record and says whether it was noted", async () => {
     rpc.mockResolvedValueOnce({ data: true, error: null }).mockResolvedValueOnce({ data: false, error: null });
