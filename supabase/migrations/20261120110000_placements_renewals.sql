@@ -132,6 +132,78 @@ END $$;
 SELECT public.record_track('public.placements', 'placements', ARRAY['id'], ARRAY['peo_name', 'start_date', 'broker_of_record', 'ended_on']);
 SELECT public.record_track('public.renewals', 'renewals', ARRAY['id'], ARRAY['kind', 'with_whom', 'renews_on', 'not_renewed_on', 'opportunity_id']);
 
+-- ---------- 4b. The history's two questions, taught the new tables ----------
+-- Whether the caller may see THAT record in THAT firm (20261119100000, restated with every branch it had): a renewal and a placement by their account's
+-- visibility, as their rows are. The record must exist in the firm. Internal.
+CREATE OR REPLACE FUNCTION public.record_history_can_see(p_firm_id uuid, p_table public.record_history_table, p_key text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF p_firm_id IS NULL OR p_key IS NULL THEN
+    RETURN false;
+  END IF;
+  IF p_table = 'referral_partners' THEN
+    RETURN public.is_firm_member(p_firm_id)
+      AND EXISTS (SELECT 1 FROM public.referral_partners r WHERE r.firm_id = p_firm_id AND r.code = p_key);
+  ELSIF p_table = 'accounts' THEN
+    RETURN EXISTS (SELECT 1 FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
+  ELSIF p_table = 'contacts' THEN
+    RETURN EXISTS (
+      SELECT 1 FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id
+      WHERE c.firm_id = p_firm_id AND c.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
+  ELSIF p_table = 'opportunities' THEN
+    RETURN EXISTS (
+      SELECT 1 FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id
+      WHERE o.firm_id = p_firm_id AND o.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
+  ELSIF p_table = 'renewals' THEN
+    RETURN EXISTS (
+      SELECT 1 FROM public.renewals r JOIN public.accounts a ON a.id = r.account_id
+      WHERE r.firm_id = p_firm_id AND r.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
+  ELSIF p_table = 'placements' THEN
+    RETURN EXISTS (
+      SELECT 1 FROM public.placements l JOIN public.accounts a ON a.id = l.account_id
+      WHERE l.firm_id = p_firm_id AND l.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
+  END IF;
+  RETURN false;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_history_can_see(uuid, public.record_history_table, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Whether a record still exists, per table (20261119100000, restated with every branch it had). A table nobody has taught this function counts as still
+-- there, so a renewal's deletion could not remove its history until it was taught. Internal.
+CREATE OR REPLACE FUNCTION public.record_history_record_exists(p_firm_id uuid, p_table public.record_history_table, p_key text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF p_table = 'referral_partners' THEN
+    RETURN EXISTS (SELECT 1 FROM public.referral_partners r WHERE r.firm_id = p_firm_id AND r.code = p_key);
+  ELSIF p_table = 'accounts' THEN
+    RETURN EXISTS (SELECT 1 FROM public.accounts a WHERE a.firm_id = p_firm_id AND a.id = public.record_history_key_uuid(p_key));
+  ELSIF p_table = 'contacts' THEN
+    RETURN EXISTS (SELECT 1 FROM public.contacts c WHERE c.firm_id = p_firm_id AND c.id = public.record_history_key_uuid(p_key));
+  ELSIF p_table = 'opportunities' THEN
+    RETURN EXISTS (SELECT 1 FROM public.opportunities o WHERE o.firm_id = p_firm_id AND o.id = public.record_history_key_uuid(p_key));
+  ELSIF p_table = 'renewals' THEN
+    RETURN EXISTS (SELECT 1 FROM public.renewals r WHERE r.firm_id = p_firm_id AND r.id = public.record_history_key_uuid(p_key));
+  ELSIF p_table = 'placements' THEN
+    RETURN EXISTS (SELECT 1 FROM public.placements l WHERE l.firm_id = p_firm_id AND l.id = public.record_history_key_uuid(p_key));
+  END IF;
+  RETURN true;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_history_record_exists(uuid, public.record_history_table, text) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.record_history_record_exists(uuid, public.record_history_table, text) TO record_history_remover;
+
 -- ---------- 5. Done, worked out (D-449) ----------
 -- A renewal is done when the opportunity working it is Won, or when it is marked "Didn't renew" (D-451), and by nothing else. Never stored beyond
 -- not_renewed_on. Internal: a query that has already decided the caller may see the account asks it.
@@ -170,6 +242,22 @@ $$;
 REVOKE ALL ON FUNCTION public.crm_renewal_row(public.renewals, date) FROM PUBLIC, anon, authenticated, service_role;
 
 -- ---------- 6. Adding a renewal by hand ----------
+-- The first thing wrong with a renewal's own fields (already trimmed, blank as null), in words, or NULL. Internal.
+CREATE FUNCTION public.renewal_input_error(p_with_whom text, p_renews_on date)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN p_with_whom IS NULL THEN 'Say who it is with.'
+    WHEN char_length(p_with_whom) > 80 THEN 'Keep who it is with to 80 characters.'
+    WHEN p_renews_on IS NULL THEN 'Give the renewal date.'
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.renewal_input_error(text, date) FROM PUBLIC, anon, authenticated, service_role;
+
 -- Adds a renewal to an account: what renews ('peo_placement' or 'current_plan'), with whom, the date. A PEO placement makes its placement record in the same
 -- step (D-447: one the firm placed before the product): the PEO is the one it is with, the start date is the one given, if known, and there is no opportunity and
 -- no quote; the employer's current plan makes none (a start date for it is refused). Answers {renewal, placement} (placement null for a current plan).
@@ -187,6 +275,7 @@ DECLARE
   firm uuid;
   a public.accounts;
   with_in text := NULLIF(btrim(p_with_whom), '');
+  problem text;
   pl public.placements;
   made public.renewals;
 BEGIN
@@ -202,14 +291,9 @@ BEGIN
   IF p_kind IS NULL OR p_kind NOT IN ('peo_placement', 'current_plan') THEN
     RAISE EXCEPTION 'Choose what renews: a PEO placement or the employer''s current plan.' USING ERRCODE = '22023';
   END IF;
-  IF with_in IS NULL THEN
-    RAISE EXCEPTION 'Say who it is with.' USING ERRCODE = '22023';
-  END IF;
-  IF char_length(with_in) > 80 THEN
-    RAISE EXCEPTION 'Keep who it is with to 80 characters.' USING ERRCODE = '22023';
-  END IF;
-  IF p_renews_on IS NULL THEN
-    RAISE EXCEPTION 'Give the renewal date.' USING ERRCODE = '22023';
+  problem := public.renewal_input_error(with_in, p_renews_on);
+  IF problem IS NOT NULL THEN
+    RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
   END IF;
   IF p_kind = 'current_plan' AND p_placement_start_on IS NOT NULL THEN
     RAISE EXCEPTION 'Only a PEO placement has a start date.' USING ERRCODE = '22023';
@@ -226,3 +310,137 @@ $$;
 
 REVOKE ALL ON FUNCTION public.add_renewal(uuid, text, text, date, date, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.add_renewal(uuid, text, text, date, date, uuid) TO authenticated;
+
+-- ---------- 7. An account's status (D-451) ----------
+-- account_status (20261119100000), redefined in place (CREATE OR REPLACE keeps its privileges: no API role runs it). A CLIENT while it has a placement not
+-- ended, or a submission won with no placement of its own (one won before Epic 4; one archived straight from won counts as won, D-216); a FORMER CLIENT
+-- when it has placements and all of them have ended; otherwise a prospect. NULL for an account that is not there. Worked out each time, never stored.
+CREATE OR REPLACE FUNCTION public.account_status(p_account_id uuid)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN NOT EXISTS (SELECT 1 FROM public.accounts a WHERE a.id = p_account_id) THEN NULL
+    WHEN EXISTS (SELECT 1 FROM public.placements p WHERE p.account_id = p_account_id AND p.ended_on IS NULL) THEN 'client'
+    WHEN EXISTS (
+      SELECT 1 FROM public.opportunities o
+      WHERE o.account_id = p_account_id AND o.intake_id IS NOT NULL AND public.submission_opportunity_stage(o.intake_id) = 'won'
+        AND NOT EXISTS (SELECT 1 FROM public.placements p WHERE p.opportunity_id = o.id)) THEN 'client'
+    WHEN EXISTS (SELECT 1 FROM public.placements p WHERE p.account_id = p_account_id) THEN 'former_client'
+    ELSE 'prospect'
+  END
+$$;
+
+-- ---------- 8. Editing and deleting a renewal ----------
+-- The firm's renewal (the firm already resolved by firm_to_act_for and cleared by assert_firm_writable, which each caller asks first), held for the change,
+-- after the last two questions (may the caller see its account, may they change it: D-452, the level rule D-209 through can_change_firm_record, D-222).
+-- Returns it. Internal.
+CREATE FUNCTION public.renewal_to_change(p_firm_id uuid, p_renewal_id uuid)
+RETURNS public.renewals
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  cur public.renewals;
+  a public.accounts;
+BEGIN
+  SELECT * INTO cur FROM public.renewals x WHERE x.id = p_renewal_id AND x.firm_id = p_firm_id FOR NO KEY UPDATE;
+  IF cur.id IS NOT NULL THEN
+    SELECT * INTO a FROM public.accounts y WHERE y.id = cur.account_id;
+  END IF;
+  IF cur.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
+    RAISE EXCEPTION 'That renewal isn''t available' USING ERRCODE = 'PT404';
+  END IF;
+  IF NOT public.can_change_firm_record(a.firm_id, a.owner_id) THEN
+    RAISE EXCEPTION '%', CASE WHEN a.owner_id IS NULL
+      THEN 'An account with no owner can only have its renewals changed by an owner of the firm.'
+      ELSE 'Only the account''s owner, a lead of the owner''s team or an owner of the firm can change its renewals.' END
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN cur;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.renewal_to_change(uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Saves a renewal's with whom and date (both are sent) from the version the person started from (D-46). What renews is not changed here: delete the renewal
+-- and add the right one. A PEO placement renewal added by hand keeps its placement's PEO the same as the one it is with; one a win made does not (the win's
+-- placement keeps its PEO). Answers {conflict: false, record: <the renewal>} or, when someone saved first and nothing was saved,
+-- {conflict: true, currentVersion, current: {with_whom, renews_on}, changed: [{field, value, who, at}]}.
+-- Refused, in this order and before the version is looked at: not a member of the firm (42501), a closing firm or Nevermore support (PT423), what is wrong with
+-- the fields (22023), no version (22023), a renewal the caller may not see or that is not there (PT404, one answer for both), one whose account the level rule
+-- does not give the caller (42501), a version the renewal never had (22023).
+CREATE FUNCTION public.update_renewal(p_renewal_id uuid, p_with_whom text, p_renews_on date, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+  with_in text := NULLIF(btrim(p_with_whom), '');
+  problem text;
+  cur public.renewals;
+  changed public.renewals;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  problem := public.renewal_input_error(with_in, p_renews_on);
+  IF problem IS NOT NULL THEN
+    RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
+  END IF;
+  IF p_version IS NULL OR p_version < 1 THEN
+    RAISE EXCEPTION 'This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  -- The row is held from here, so a save waiting behind another from the same version reads what that save left (its version, values and author).
+  cur := public.renewal_to_change(firm, p_renewal_id);
+  UPDATE public.renewals SET with_whom = with_in, renews_on = p_renews_on WHERE id = cur.id AND version = p_version RETURNING * INTO changed;
+  IF changed.id IS NOT NULL THEN
+    UPDATE public.placements SET peo_name = with_in WHERE id = changed.placement_id AND opportunity_id IS NULL;
+    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, current_date));
+  END IF;
+  IF p_version > cur.version THEN
+    RAISE EXCEPTION 'This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  RETURN jsonb_build_object(
+    'conflict', true,
+    'currentVersion', cur.version,
+    'current', jsonb_build_object('with_whom', cur.with_whom, 'renews_on', cur.renews_on),
+    'changed', public.record_version_changes(cur.firm_id, 'renewals', cur.id::text, p_version, cur.version));
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer) TO authenticated;
+
+-- Deletes a renewal. Answers {deleted: true, with_whom}. A renewal a win made (its placement has an opportunity) is deleted only by reopening that win
+-- (CRM-O1.3a): PT409, in words. A PEO placement renewal added by hand takes the placement made with it by hand (one with no opportunity and no other renewal),
+-- so deleting a mistake leaves no client behind with nothing that could end it. Refused as update_renewal is, without the fields and the version.
+CREATE FUNCTION public.delete_renewal(p_renewal_id uuid, p_firm_id uuid DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+  cur public.renewals;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  cur := public.renewal_to_change(firm, p_renewal_id);
+  IF EXISTS (SELECT 1 FROM public.placements p WHERE p.id = cur.placement_id AND p.opportunity_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'This renewal was made by a win. Reopen the win to delete it.' USING ERRCODE = 'PT409';
+  END IF;
+  DELETE FROM public.renewals WHERE id = cur.id;
+  DELETE FROM public.placements p
+  WHERE p.id = cur.placement_id AND p.opportunity_id IS NULL AND NOT EXISTS (SELECT 1 FROM public.renewals r WHERE r.placement_id = p.id);
+  RETURN jsonb_build_object('deleted', true, 'with_whom', cur.with_whom);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.delete_renewal(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.delete_renewal(uuid, uuid) TO authenticated;

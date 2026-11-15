@@ -484,3 +484,198 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.add_renewal('acme_agent1', 'arch', 'current_plan', 'X', current_date), '55000: This account is archived. Nothing can be added to it.', 'an archived account takes no renewal');
   PERFORM pg_temp.is((SELECT count(*) FROM public.renewals), n, 'nothing was saved');
 END $$;
+
+
+-- ---------- an account's status (D-451, D-197) ----------
+-- Break caught: a placement not ended does not make a client (D-447: "every PEO placement makes the account a client"); a current plan's renewal does;
+-- all placements ended is not a former client, or one still running is; a won submission with no placement is no longer a client (one won before Epic 4);
+-- a won submission whose placement has ended is still a client; another account's placement counts; the status is stored.
+CREATE FUNCTION pg_temp.placement(n text, p_account text, p_peo text, p_ended date DEFAULT NULL, p_opportunity text DEFAULT NULL) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE r uuid;
+BEGIN
+  INSERT INTO public.placements (firm_id, account_id, opportunity_id, peo_name, ended_on)
+  SELECT a.firm_id, a.id, pg_temp.id(p_opportunity), p_peo, p_ended FROM public.accounts a WHERE a.id = pg_temp.id(p_account) RETURNING id INTO r;
+  INSERT INTO fx VALUES (n, r);
+  RETURN r;
+END $$;
+
+DO $$
+DECLARE won uuid;
+BEGIN
+  PERFORM pg_temp.account('s_none', 'acme', NULL);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_none')), 'prospect', 'an account with nothing on it is a prospect');
+  PERFORM pg_temp.is(public.account_status(gen_random_uuid()), NULL::text, 'an account that is not there has no status');
+  -- a1 has a PEO placement not ended (added above) and a current plan
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('a1')), 'client', 'a placement not ended makes a client');
+  PERFORM pg_temp.account('s_plan', 'acme', NULL);
+  INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) SELECT firm_id, id, 'current_plan', 'Aetna', current_date + 30 FROM public.accounts WHERE id = pg_temp.id('s_plan');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_plan')), 'prospect', 'a renewal of the employer''s current plan makes no client');
+
+  -- a former client: it has placements and every one has ended
+  PERFORM pg_temp.account('s_former', 'acme', NULL);
+  PERFORM pg_temp.placement('sf_p1', 's_former', 'Justworks', current_date - 10);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_former')), 'former_client', 'one placement, ended: a former client');
+  PERFORM pg_temp.placement('sf_p2', 's_former', 'Gusto', current_date - 5);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_former')), 'former_client', 'two, both ended: a former client');
+  PERFORM pg_temp.placement('sf_p3', 's_former', 'TriNet');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_former')), 'client', 'a third still running makes it a client again');
+  UPDATE public.placements SET ended_on = current_date WHERE id = pg_temp.id('sf_p3');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_former')), 'former_client', 'and ended, a former client once more');
+  UPDATE public.placements SET ended_on = NULL WHERE id = pg_temp.id('sf_p3');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_former')), 'client', 'undone, a client (nothing is stored: it is asked each time)');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_none')), 'prospect', 'another account''s placements are not this one''s');
+  PERFORM pg_temp.is((SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name ~ 'status'), 0::bigint, 'no status is stored on the account');
+
+  -- a won submission with no placement is a client (one won before Epic 4); with a placement the placement says
+  PERFORM pg_temp.account('s_won', 'acme', NULL);
+  PERFORM pg_temp.intake('s_won_i', 'acme');
+  PERFORM pg_temp.opportunity('s_won_o', 's_won', NULL, 's_won_i');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_won')), 'prospect', 'an opportunity not won is a prospect');
+  PERFORM pg_temp.move('s_won_i', 'won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_won')), 'client', 'a won submission with no placement is a client');
+  PERFORM pg_temp.placement('s_won_p', 's_won', 'Justworks', current_date - 1, 's_won_o');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_won')), 'former_client', 'its placement ended: a former client, though the submission is still won');
+  UPDATE public.placements SET ended_on = NULL WHERE id = pg_temp.id('s_won_p');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_won')), 'client', 'its placement running: a client');
+
+  -- an ended placement of the account and a won submission with none: the win has no placement, so it is a client
+  PERFORM pg_temp.account('s_mixed', 'acme', NULL);
+  PERFORM pg_temp.intake('s_mixed_i', 'acme');
+  PERFORM pg_temp.opportunity('s_mixed_o', 's_mixed', NULL, 's_mixed_i');
+  PERFORM pg_temp.placement('s_mixed_p', 's_mixed', 'Gusto', current_date - 1);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'former_client', 'an ended placement alone: a former client');
+  PERFORM pg_temp.move('s_mixed_i', 'won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'client', 'a win with no placement of its own makes it a client again');
+  -- a won submission archived stays won (D-216)
+  PERFORM pg_temp.move('s_mixed_i', 'archived');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'client', 'archived from won, still a client');
+
+  -- no API role asks it
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_status(%L)$q$, pg_temp.id('a1'))), 'rows:1', 'the superuser asks');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_status(%L)$q$, pg_temp.id('a1'))), '42501', 'but no API role does');
+  RESET ROLE;
+END $$;
+
+
+-- ---------- editing and deleting a renewal (D-452, D-46, D-209) ----------
+CREATE FUNCTION pg_temp.fid(who text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT pg_temp.id(CASE WHEN who LIKE 'zenith%' THEN 'zenith' ELSE 'acme' END)
+$$;
+CREATE FUNCTION pg_temp.addr(who text) RETURNS text LANGUAGE sql AS $$
+  SELECT CASE WHEN who LIKE 'zenith%' THEN 'zenith-benefits' ELSE 'acme-brokers' END
+$$;
+CREATE FUNCTION pg_temp.upd(who text, p_renewal text, p_with text, p_on date, p_version integer) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.update_renewal(%L, %L, %L, %L, %L)::text',
+    pg_temp.id(p_renewal), p_with, p_on, pg_temp.fid(who), p_version))
+$$;
+CREATE FUNCTION pg_temp.del(who text, p_renewal text) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.delete_renewal(%L, %L)::text', pg_temp.id(p_renewal), pg_temp.fid(who)))
+$$;
+
+-- A renewal a win would make (CRM-O1.3a): its placement has an opportunity. Made as the superuser, since no function makes one yet.
+CREATE FUNCTION pg_temp.win_renewal(n text, p_account text, p_opportunity text, p_on date) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE pl uuid; r uuid;
+BEGIN
+  pl := pg_temp.placement(n || '_p', p_account, 'Justworks', NULL, p_opportunity);
+  INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id)
+  SELECT a.firm_id, a.id, 'peo_placement', 'Justworks', p_on, pl FROM public.accounts a WHERE a.id = pg_temp.id(p_account) RETURNING id INTO r;
+  INSERT INTO fx VALUES (n, r);
+  RETURN r;
+END $$;
+
+-- Break caught: an edit saved without looking at the version (a second person's change lost without a word); saved from a version that never existed; a conflict
+-- that names nothing the other person changed; an edit by someone who may see the account but not change it (D-452: edited by whoever may CHANGE); the
+-- by-hand placement's PEO left behind when the renewal's "with whom" is corrected; one saved for what the add refuses.
+DO $$
+DECLARE r text; j jsonb;
+BEGIN
+  -- r1 is a1's PEO placement renewal (version 1), r2 its current plan's
+  r := pg_temp.upd('acme_agent1', 'r1', 'Justworks PEO', current_date + 50, 1);
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the owner of the account edits its renewal');
+  j := r::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, false, 'no conflict');
+  PERFORM pg_temp.is(j -> 'record' ->> 'with_whom', 'Justworks PEO', 'with whom saved');
+  PERFORM pg_temp.is(j -> 'record' ->> 'renews_on', to_char(current_date + 50, 'YYYY-MM-DD'), 'the date saved');
+  PERFORM pg_temp.is((j -> 'record' ->> 'version')::int, 2, 'a new version');
+  PERFORM pg_temp.is((j -> 'record' ->> 'days_away')::int, 50, 'days away worked out from today');
+  PERFORM pg_temp.is((SELECT p.peo_name FROM public.placements p WHERE p.id = pg_temp.id('p1')), 'Justworks PEO', 'the placement made by hand is with the PEO the renewal now names');
+  PERFORM pg_temp.is((SELECT row (kind, placement_id)::text FROM public.renewals WHERE id = pg_temp.id('r1')), row ('peo_placement', pg_temp.id('p1'))::text, 'what renews does not change');
+
+  -- the version
+  r := pg_temp.upd('acme_agent1', 'r1', 'Gusto', current_date + 60, 1);
+  j := r::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, true, 'a save from an old version is a conflict');
+  PERFORM pg_temp.is((j ->> 'currentVersion')::int, 2, 'naming the version it is at');
+  PERFORM pg_temp.is(j -> 'current' ->> 'with_whom', 'Justworks PEO', 'and what is there now');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'field', ',' ORDER BY c ->> 'field') FROM jsonb_array_elements(j -> 'changed') c), 'renews_on,with_whom', 'and the fields the other save changed');
+  PERFORM pg_temp.is((SELECT with_whom FROM public.renewals WHERE id = pg_temp.id('r1')), 'Justworks PEO', 'nothing was saved');
+  PERFORM pg_temp.is(pg_temp.upd('acme_agent1', 'r1', 'Gusto', current_date + 60, NULL),
+    '22023: This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.', 'no version');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_agent1', 'r1', 'Gusto', current_date + 60, 0)), '22023', 'version 0');
+  PERFORM pg_temp.is(pg_temp.upd('acme_agent1', 'r1', 'Gusto', current_date + 60, 9),
+    '22023: This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.', 'a version it never had');
+
+  -- who
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_agent2', 'r1', 'X', current_date, 2)), 'PT404', 'someone who may not see the account: as if it were not there');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_owner', 'r1', 'Justworks PEO', current_date + 51, 2)), 'ok', 'an owner of the firm edits it');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_lead', 'r1', 'X', current_date, 3)), 'PT404', 'a lead whose team does not reach the account does not see it');
+  -- Zenith (everyone sees everything): zenith_agent2 sees z1's renewal and may not change it; its owner may.
+  r := pg_temp.add_renewal('zenith_agent', 'z1', 'current_plan', 'Cigna', current_date + 20);
+  INSERT INTO fx VALUES ('zr1', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.is(pg_temp.upd('zenith_agent2', 'zr1', 'Cigna Inc', current_date + 21, 1),
+    '42501: Only the account''s owner, a lead of the owner''s team or an owner of the firm can change its renewals.', 'one who sees but may not change it is refused in words');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('zenith_owner', 'zr1', 'Cigna Inc', current_date + 21, 1)), 'ok', 'an owner may');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_owner', 'zr1', 'X', current_date, 1)), 'PT404', 'another firm''s renewal, named at one''s own firm, is not there');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('zenith_owner', 'acme-brokers', format('SELECT public.update_renewal(%L, ''X'', current_date, %L, 1)::text', pg_temp.id('r1'), pg_temp.id('acme')))), '42501', 'a member of another firm is refused at this firm');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_removed', 'r1', 'X', current_date, 3)), '42501', 'a former member');
+  -- an account with no owner: only an owner of the firm changes its renewals
+  r := pg_temp.add_renewal('acme_owner', 'a3', 'current_plan', 'Kaiser', current_date + 70);
+  INSERT INTO fx VALUES ('r3', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.is(pg_temp.upd('acme_owner', 'r3', 'Kaiser Permanente', current_date + 71, 1) LIKE '%"conflict": false%', true, 'an owner edits an unowned account''s renewal');
+
+  -- what the add refuses
+  PERFORM pg_temp.is(pg_temp.upd('acme_agent1', 'r2', '  ', current_date, 1), '22023: Say who it is with.', 'a blank with whom');
+  PERFORM pg_temp.is(pg_temp.upd('acme_agent1', 'r2', repeat('x', 81), current_date, 1), '22023: Keep who it is with to 80 characters.', 'a long one');
+  PERFORM pg_temp.is(pg_temp.upd('acme_agent1', 'r2', 'Aetna', NULL, 1), '22023: Give the renewal date.', 'no date');
+  PERFORM pg_temp.is((SELECT version FROM public.renewals WHERE id = pg_temp.id('r2')), 1, 'a refused edit does not move the version');
+
+  -- a win's renewal: the placement's PEO is not the renewal's to rename
+  PERFORM pg_temp.opportunity('wr_o', 'a1', 'acme_agent1');
+  PERFORM pg_temp.win_renewal('wr', 'a1', 'wr_o', current_date + 365);
+  r := pg_temp.upd('acme_agent1', 'wr', 'Justworks, renamed', current_date + 366, 1);
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a renewal made by a win can be edited');
+  PERFORM pg_temp.is((SELECT peo_name FROM public.placements WHERE id = pg_temp.id('wr_p')), 'Justworks', 'but its placement''s PEO is the win''s');
+END $$;
+
+-- Break caught: a delete that skips the version-less path's checks (a person who may only see the account deletes); a renewal made by a win deleted (it goes
+-- only by reopening the win, D-452); a by-hand PEO placement renewal deleted and its placement left, so the account stays a client and nothing can end it;
+-- a placement of a win deleted along with a renewal.
+DO $$
+DECLARE r text; n bigint;
+BEGIN
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.del('acme_agent2', 'r2')), 'PT404', 'someone who may not see the account deletes nothing');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.del('zenith_agent2', 'zr1')), '42501', 'one who sees but may not change it deletes nothing');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.del('acme_agent1', 'zr1')), 'PT404', 'another firm''s renewal is not there');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE id IN (pg_temp.id('r2'), pg_temp.id('zr1'))), 2::bigint, 'both are still there');
+  PERFORM pg_temp.is(pg_temp.del('acme_agent1', 'wr'),
+    'PT409: This renewal was made by a win. Reopen the win to delete it.', 'a renewal made by a win is deleted only by reopening');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE id = pg_temp.id('wr')), 1::bigint, 'it is still there');
+
+  r := pg_temp.del('acme_agent1', 'r2');
+  PERFORM pg_temp.is(r::jsonb ->> 'deleted', 'true', 'the owner deletes a current plan''s renewal');
+  PERFORM pg_temp.is(r::jsonb ->> 'with_whom', 'Aetna', 'and is told which');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE id = pg_temp.id('r2')), 0::bigint, 'it is gone');
+
+  -- a by-hand PEO placement renewal takes its placement with it: the account is a client no longer
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('a1')), 'client', 'a1 is a client (its placements)');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.add_renewal('acme_agent1', 'a3', 'peo_placement', 'TriNet', current_date + 10)), 'PT404', 'an agent does not see the unowned account (so nothing is made)');
+  r := pg_temp.add_renewal('acme_owner', 'a3', 'peo_placement', 'TriNet', current_date + 10);
+  INSERT INTO fx VALUES ('r4', (r::jsonb -> 'renewal' ->> 'id')::uuid), ('p4', (r::jsonb -> 'placement' ->> 'id')::uuid);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('a3')), 'client', 'a3 is a client with its placement');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.del('acme_owner', 'r4')), 'ok', 'deleting its renewal');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pg_temp.id('p4')), 0::bigint, 'takes the placement made with it by hand');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('a3')), 'prospect', 'and the account is not a client');
+  -- a placement a win made is never deleted by deleting a renewal of it (D-452: the win can only be reopened)
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pg_temp.id('wr_p')), 1::bigint, 'a win''s placement is still there');
+END $$;
