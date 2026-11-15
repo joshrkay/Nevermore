@@ -431,13 +431,25 @@ order.
 | 15 | CRM-S3.6 | Selecting rows on the accounts table: checkboxes, the page, "Select all N that match", the bulk bar | 10 | Sonnet (Q) | none |
 | 16 | CRM-E1.5 | Calls, notes and tasks (screen 27) on an account and a contact: the follow-up task, D-200's note rule, the Activity tab, last activity | 11 | Sonnet (A) | `20261119180000` |
 | 17 | CRM-C1.1 | A contact's page: the header, details, opportunities, calls, notes and tasks; "Do not email" is kept for Epic 6 (D-186) | 14, 16 | Sonnet (A) | `20261119190000` |
-| 18 | CRM-S4.2 | Spotting a duplicate while creating an account or a contact, and the masked match for a record the person may not see | 6, 12, 14 | Sonnet (A) | `20261119200000` |
+| 18 | CRM-S4.2 | Spotting a duplicate while creating an account or a contact, and the masked match for a record the person may not see | 6, 12, 14 | Sonnet (A) | `20261120120000` (D-600) |
 | 19 | CRM-S3.7b | Bulk changes in the database: labels (D-198); change owner, set a field, add or remove a label, archive, export the selection; all or none, at most 1,000, the level rule, skipped rows named, one history entry per record, undo for ten minutes (D-202) | 8, 2 | Sonnet (D), risky | `20261119210000` |
 | 20 | CRM-S3.7a | Bulk edit on screen (screens 35, 36): the bulk bar's actions, the dialog that says exactly what will happen, Undo; the Label column and filter | 15, 19 | Sonnet (Q) | none |
 | 21 | CRM-S4.3b | Merging in the database: two accounts (contacts, opportunities with their intakes and quotes, calls, notes, tasks, labels, history; D-203), two contacts on one account (D-210), and "keep separate", which clears the possible-duplicate mark | 7, 14, 16, 19 | Sonnet (D), risky | `20261119220000` |
 | 22 | CRM-S4.3a | Merging on screen: from the bulk bar (exactly two) and from the possible-duplicate banner, the field-by-field choice, the old address leading to the kept record | 17, 20, 21 | Sonnet (A) | none |
 | 23 | CRM-S1.2b | Search in the database: accounts, contacts, opportunities and quotes by name, business, email, phone, web domain, File ID and PEO, five per kind, by visibility, never an intake's answers; each person's recent records | 7 | Sonnet (D) | `20261119230000` |
 | 24 | CRM-S1.2a | The search box in the menu: grouped results with "see all", the last five opened, "Nothing matches" with New account | 11, 12, 17, 23 | Sonnet (A) | none |
+
+### CRM-S4.2 decisions
+
+Built 2026-11-15 against D-193, D-209, D-219, D-226, D-238 and `20261119110000_chain_at_certification.sql`. Row 18.
+
+| # | Decision |
+|---|---|
+| D-600 | The migration is `20261120120000_spot_a_duplicate.sql`, not row 18's `20261119200000`. Under D-105 a migration must sort after the newest one on main, which was `20261120090000_opportunity_stage.sql`, so a file dated 20261119200000 would load before migrations already applied |
+| D-601 | The duplicate rule is written once. `duplicates_of_account(firm, web domain, name, state, email)` returns every account of the firm that matches by D-193 with the reasons (`website`, `name`, `email`), and the chain's `find_duplicate_account` now asks it for the earliest, with the same answers as before. The forms and the chain cannot disagree about what a duplicate is. Neither function can be called by an API role. A name matches only with a state on both sides, so New account asks only once there is a website, or a name and a state; Add a contact asks only for something shaped like an email address. New account has no contact email, so the email arm is the chain's and the contact form's |
+| D-602 | The masked match. A record the person may not see (an account by its own level rule, a contact by its account's, D-219) is returned as `{kind, visible: false, ask}` and nothing else: no id, name, reason or link. Whom to ask is the account's owner when they are a current member of the firm, else the firm's owners (at most five, by name), the people who see a record with no owner (D-209). Names only, never an email or an id. Masks with the same people to ask are one, so nothing counts the records the person cannot see |
+| D-603 | A warning, never a rule (D-193). `create_account` and `add_contact` are unchanged and a save is never refused or asked to confirm for a likeness. The warning is two reads, `duplicate_account_check` and `duplicate_contact_check`, for a member of the firm the call acts for (42501 otherwise), so a closing firm and a support session may ask as they may ask every other read. A failed check shows nothing and the form saves as it did. At most five records the person may see are named (the earliest first, then "And N more you can see"), an archived one is named and marked, and a contact on the very account the form is open on counts. A link opens the existing record in a new tab so what was typed is kept |
+| D-604 | Merging is not offered (CRM-S4.3: no dead button, D-24). From the warning a person can open the existing record, or carry on and save. The story's "merge" from the warning, and the warning for a lead (Epic 5) and the import review (CRM-X4.1), wait for their stories |
 
 ## Superseded by Epic 3 (founder, 2026-11-14)
 
