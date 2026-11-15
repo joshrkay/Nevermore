@@ -162,6 +162,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119150000_create_account.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -499,6 +500,7 @@ BEGIN
   INSERT INTO writes VALUES
     ('add a referral partner', format($q$SELECT public.advisor_add_referral_partner('new-code', 'New', 'accounting', %L)$q$, fa), support_msg),
     ('change a referral partner', format($q$SELECT public.advisor_update_referral_partner('existing', 'Renamed', 'accounting', %L, 1)$q$, fa), support_msg),
+    ('create an account', format($q$SELECT public.create_account('New account', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, %L)$q$, fa), support_msg),
     ('change an account', format($q$SELECT public.update_account(%L, 'Renamed', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, 1)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('invite a member', format($q$SELECT public.invite_member(%L, 'new@example.test', 'agent', NULL, %L)$q$, fa, pg_temp.hash('x1')), support_msg),
     ('send an invitation again', format($q$SELECT public.resend_invitation(%L, %L)$q$, inv, pg_temp.hash('x2')), support_msg),
@@ -1041,7 +1043,7 @@ DECLARE
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
-    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account'];
+    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1113,7 +1115,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
