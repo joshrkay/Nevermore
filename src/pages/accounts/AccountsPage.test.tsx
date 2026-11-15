@@ -85,7 +85,7 @@ const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
   );
 const where = () => screen.getByTestId("location").textContent;
 const body = () => screen.getByRole("table").querySelector("tbody")!;
-const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim());
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
@@ -433,7 +433,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "website", "source"], source: "person" });
     exportRows.mockResolvedValue(answer([exported()]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).map((h) => h.textContent?.trim())).toEqual(["Account", "Website", "Source"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Website", "Source"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Website,Source\r\nHarborview Dental Group,harborviewdental.example,Employer's intake\r\n");
@@ -458,7 +458,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "quotes"], source: "person" });
     exportRows.mockResolvedValue(answer([exported({ earliest_quote_expires_on: "2020-01-05" })]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).map((h) => h.textContent?.trim())).toEqual(["Account", "Quotes"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Quotes"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Quotes\r\nHarborview Dental Group,\"1 of 3 back, Expired Jan 5, 2020\"\r\n");
@@ -470,7 +470,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "last_activity", "created"], source: "person" });
     exportRows.mockResolvedValue(answer([exported({ last_activity_at: "2026-11-11T00:30:00+00:00", created_at: "2026-10-28T03:00:00+00:00" })]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).map((h) => h.textContent?.trim())).toEqual(["Account", "Last activity", "Created"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Last activity", "Created"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Last activity,Created\r\nHarborview Dental Group,2026-11-10,2026-10-27\r\n");
@@ -543,6 +543,18 @@ describe("the Accounts page: New account", () => {
     renderAt("/accounts", workspace({ isSupport: true, role: "Nevermore support" }));
     await screen.findByRole("link", { name: "Harborview Dental Group" });
     expect(screen.queryByRole("button", { name: "New account" })).not.toBeInTheDocument();
+  });
+
+  // Catches: New account left in the toolbar beside the bulk bar (the story: with any row selected, the bar replaces the toolbar), or not back after Clear.
+  it("hides New account while rows are selected, and shows it again after Clear", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    expect(screen.getByRole("button", { name: "New account" })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("table")).getAllByRole("checkbox")[1]);
+    expect(screen.queryByRole("button", { name: "New account" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(await screen.findByRole("button", { name: "New account" })).toBeInTheDocument();
   });
 
   // Catches: a field of screen 23 missing or worded differently, "Save and add a contact" shown before the contact form exists (CRM-A2.2), the renewal date and the

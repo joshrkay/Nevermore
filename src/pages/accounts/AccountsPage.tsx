@@ -7,7 +7,7 @@ import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
-  ColumnsMenu, FilterRow, hasHeld, inForceInWords, isNarrowed, queryFor, refusedQueryReason, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns, useRefreshTable,
+  ColumnsMenu, FilterRow, SelectionBar, hasHeld, inForceInWords, isNarrowed, queryFor, refusedQueryReason, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns, useRefreshTable, useRowSelection,
   useSavedViewsControl, useTableAddress, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 import type { Json } from "@/integrations/supabase/types";
@@ -16,7 +16,7 @@ import { browserTimeZone } from "@/lib/accountsApi";
 
 // The Accounts page (story CRM-A1.1a, screen 16): the businesses a firm quotes for, on the workspace's table frame as the submissions queue is
 // (src/pages/advisor/AdvisorDashboardPage.tsx). The address holds the page, sort, filters, view and search; the database cuts the pages (D-44) and decides
-// which accounts the person may see. A name opens the account's page. Archive, restore, delete and owner change are CRM-A1.1c, and selecting rows CRM-S3.6.
+// which accounts the person may see. A name opens the account's page. Archive, restore, delete and owner change are CRM-A1.1c, selecting rows (CRM-S3.6) is the checkboxes and the bar over the table.
 
 const NEW_ACCOUNT_BUTTON = "inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
@@ -52,6 +52,12 @@ const AccountsPage = () => {
   // previous question's rows kept while the next loads must not be exported under the new filters.
   const hasRows = rowsSettled && !data.error && !!data.page && data.page.total > 0;
 
+  // Selecting rows (CRM-S3.6). The selection is of the question on screen and ends when the view, a filter or the search changes. The bar offers only what works
+  // today (Export); the database's bulk changes and their screens are CRM-S3.7b and CRM-S3.7a.
+  const selection = useRowSelection(table, address, data.page, (row) => row.name);
+  // Every row that matches goes to a later bulk action as the filters in `exportFilters` (the question), never as a list of ids; a chosen list goes as its ids.
+  const selectedFilters: Record<string, Json> = selection.all ? exportFilters : { time_zone: timeZone };
+
   const toolbar = ({ loading, slowLine }: { loading: boolean; slowLine: ReactNode }) => (
     <>
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
@@ -59,11 +65,17 @@ const AccountsPage = () => {
           <h1 className="font-display text-3xl font-bold">Accounts</h1>
           {slowLine}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={exportFilters} />}
-          {canMake && <button type="button" onClick={() => setMaking(true)} className={NEW_ACCOUNT_BUTTON}>New account</button>}
-        </div>
+        {selection.count === 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            {firmId && hasRows && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={exportFilters} />}
+            {canMake && <button type="button" onClick={() => setMaking(true)} className={NEW_ACCOUNT_BUTTON}>New account</button>}
+          </div>
+        )}
       </div>
+      <SelectionBar selection={selection} noun={table.noun}>
+        {firmId && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={selectedFilters} {...(selection.all ? {} : { ids: selection.ids })} />}
+      </SelectionBar>
+      {selection.count === 0 && (<>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3 mb-3">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Search accounts, contacts, emails" onSearch={(term) => change({ search: term })} />
         <div className="flex items-center gap-3">
@@ -81,6 +93,7 @@ const AccountsPage = () => {
         </div>
       </div>
       <FilterRow table={table} location={location} names={names} addFilterRef={addFilterRef} />
+      </>)}
     </>
   );
 
@@ -132,6 +145,7 @@ const AccountsPage = () => {
           views={views}
           empty={empty}
           error={error}
+          selection={selection}
           onOpenRow={(row) => navigate(`/accounts/${row.id}`)}
         />
         {making && firmId && (

@@ -28,5 +28,11 @@ export const exportedWords = (table: string, count: number): string => {
   return `Exported ${count.toLocaleString("en-US")} ${noun}`;
 };
 
+/** What is said of selected records the export left out (deleted, or no longer the person's to see): "1 selected account is no longer available." */
+export const skippedWords = (table: string, count: number): string => {
+  const noun = known(table) ? (count === 1 ? WORDS[table].one : WORDS[table].many) : "rows";
+  return count === 1 ? `1 selected ${noun} is no longer available.` : `${count.toLocaleString("en-US")} selected ${noun} are no longer available.`;
+};
+
 /** The name of the file an export of `table` is saved as, on the day it was made ("referral-partners-2026-11-19.csv"). */
 export const exportFileName = (table: ExportTable, day: string): string => `${WORDS[table].file}-${day}.csv`;
