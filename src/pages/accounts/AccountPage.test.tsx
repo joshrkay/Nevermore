@@ -17,6 +17,11 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFiles: vi.fn(), updateAccount: vi.fn(), getSubmissionAccount: vi.fn() };
 vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), ...client }));
+const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn() };
+vi.mock("@/lib/accountActionsApi", () => actions);
+const listFirmMembers = vi.fn();
+vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountsApi")), listFirmMembers: (...a: unknown[]) => listFirmMembers(...a) }));
+vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", () => advisor);
 
@@ -91,7 +96,7 @@ const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
-  for (const fn of [...Object.values(client), ...Object.values(advisor), signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getAccountPage.mockResolvedValue(page());
@@ -509,6 +514,55 @@ describe("AccountPage: where focus goes", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /^Edit/ })).toHaveFocus());
   });
 
+  // Catches: the edit form taking a phone, or states of operation, that the database refuses, now that the form that makes an account asks the same rules.
+  it("asks the edit form's phone and states of operation the rules the New account form asks", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    const phone = screen.getByLabelText("Phone");
+    await user.clear(phone);
+    await user.type(phone, "call me");
+    const states = screen.getByLabelText("States of operation");
+    await user.clear(states);
+    await user.type(states, "OR, XX");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(screen.getByText("Use two-letter state codes from the list, like OR, WA.")).toBeInTheDocument();
+  });
+
+  // Catches: the edit form refusing to save another field because the phone it kept is not in the current format (the phone is judged only when it changes).
+  it("saves another field of an account whose phone is in an older format, and still judges a phone that is changed", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(page({ account: { ...account, phone: "call me" } }));
+    client.updateAccount.mockResolvedValue({ conflict: false, account: { ...account, phone: "call me", industry: "Dentistry", version: 2 } });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    const industry = screen.getByLabelText("Industry");
+    await user.clear(industry);
+    await user.type(industry, "Dentistry");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.updateAccount).toHaveBeenCalledTimes(1));
+    expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ phone: "call me", industry: "Dentistry" });
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.type(screen.getByLabelText("Phone"), "!");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(client.updateAccount).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: the database's answer to a number out of range shown as the generic failure, not under Employees.
+  it("puts the database's answer to a number out of range under Employees", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    const user = userEvent.setup();
+    client.updateAccount.mockRejectedValue(new AccountError("invalid", "Enter a number up to 2,147,483,647.", "22003"));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.type(screen.getByLabelText("Industry"), "s");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const message = await screen.findByText("Enter a number up to 2,147,483,647.");
+    expect(screen.getByLabelText("Employees")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+  });
+
   // Catches: each arrow key in the tab list adding a history entry, so Back steps through every tab the arrows passed.
   it("replaces the address when a tab is chosen, so Back leaves the page and does not step through tabs", async () => {
     const user = userEvent.setup();
@@ -661,14 +715,50 @@ describe("AccountPage: the states", () => {
     expect(await screen.findByRole("heading", { name: "This account isn't available." })).toBeInTheDocument();
   });
 
-  // Catches: an archived account that looks like any other, or that offers a Restore that does nothing yet (CRM-A1.1c).
-  it("says an archived account is archived, with nothing to add and no Restore yet", async () => {
+  // Catches: an archived account that looks like any other, or a Restore that does not restore and reload the page (CRM-A1.1c).
+  it("says an archived account is archived, with nothing to add, and Restore brings it back", async () => {
+    const user = userEvent.setup();
     client.getAccountPage.mockResolvedValue(page({ account: { ...account, archivedAt: "2026-11-10T10:00:00+00:00" } }));
+    actions.restoreAccount.mockResolvedValue({ changed: true });
     renderPage();
     const note = await screen.findByRole("note");
     expect(note).toHaveTextContent("This account is archived. Nothing can be added to it.");
-    expect(screen.queryByRole("button", { name: /Restore/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Add/ })).toBeNull();
+    client.getAccountPage.mockResolvedValue(page());
+    await user.click(within(note).getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(actions.restoreAccount).toHaveBeenCalledWith("f1", "a1"));
+    await waitFor(() => expect(screen.queryByRole("note")).toBeNull());
+  });
+
+  // Catches: Restore (and the actions menu) offered to someone the database will refuse (D-209).
+  it("offers neither Restore nor the actions to someone who may not change the account", async () => {
+    client.getAccountPage.mockResolvedValue(page({ canChange: false, account: { ...account, archivedAt: "2026-11-10T10:00:00+00:00" } }));
+    renderPage();
+    await screen.findByRole("note");
+    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /More actions/ })).toBeNull();
+  });
+
+  // Catches: a deleted account's page left on screen, asking the database for an account that is gone.
+  it("leaves for the Accounts list when the account is deleted", async () => {
+    const user = userEvent.setup();
+    actions.deleteAccount.mockResolvedValue({ name: "Harborview Dental Group" });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "More actions for this account" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/accounts"));
+    expect(actions.deleteAccount).toHaveBeenCalledWith("f1", "a1");
+  });
+
+  // Catches: the account's open opportunities counted wrongly for the owner offer (one Lost, one open on the page: one is offered).
+  it("offers the owner change with the open opportunities it holds", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(page({}, { opportunities: tabOf([opportunity(1), opportunity(2, { stage: "lost" })], 2) }));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "More actions for this account" }));
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    expect(await screen.findByLabelText(/Also change the owner of its 1 open opportunity/)).toBeInTheDocument();
   });
 });
 
@@ -783,6 +873,27 @@ describe("AccountPage: edit in place", () => {
     expect(rows[1]).toContain("States of operationOR, WAORbob@example.com");
     expect(client.updateAccount).toHaveBeenCalledTimes(1);
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // Catches: archiving or an owner change (both change the version) shown to someone saving at that moment by their column names and an id.
+  it("words an archive and an owner change in a conflict as Archived and Owner, with a date and a name", async () => {
+    listFirmMembers.mockResolvedValue([{ value: "u2", label: "Marcus Hale" }]);
+    client.updateAccount.mockResolvedValueOnce({
+      ...conflict,
+      changed: [
+        { field: "archived_at", value: "2026-11-14T10:00:00+00:00", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" },
+        { field: "owner_id", value: "u2", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" },
+      ],
+    });
+    renderPage();
+    const user = await open();
+    await waitFor(() => expect(listFirmMembers).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("alertdialog");
+    const rows = within(dialog).getAllByRole("row").slice(1).map((r) => r.textContent);
+    expect(rows[0]).toContain("ArchivedNothingNov 14, 2026");
+    expect(rows[1]).toContain("OwnerNothingMarcus Hale");
+    expect(dialog.textContent).not.toMatch(/archived_at|owner_id|u2/);
   });
 
   // Catches: Keep mine saving again from the old version (refused again), or Keep theirs leaving the old version behind.

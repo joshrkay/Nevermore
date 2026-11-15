@@ -964,6 +964,41 @@ export type Database = {
         }
         Returns: Json
       }
+      // The firm's current people the caller may make an account for, by the level rule (20261119150000), for the New account form's Owner choice.
+      account_owner_choices: {
+        Args: { p_firm_id: string | null }
+        Returns: { user_id: string; name: string }[]
+      }
+      // Makes an account by hand (20261119150000): the made account's own fields (the same shape as a save's `record`). The owner is the caller unless one is named.
+      create_account: {
+        Args: {
+          p_name: string
+          p_trade_name: string | null
+          p_website: string | null
+          p_phone: string | null
+          p_street: string | null
+          p_city: string | null
+          p_state: string | null
+          p_postal_code: string | null
+          p_industry: string | null
+          p_employees: number | null
+          p_states_of_operation: string[]
+          p_current_provider: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
+      // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
+      archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
+      change_account_owner: {
+        Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
+        Returns: Json
+      }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {

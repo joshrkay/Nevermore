@@ -12,7 +12,7 @@ import { allStatuses, expectStatusesOutsideBusy } from "@/test/loading";
 // (supabase/tests/accounts_query.sql); these tests are what a person sees and does through the page: the columns, the views and their counts, the
 // filters (Owner, State, Employees), the page's states, the way into an account, the Columns menu and the Export button.
 const signOut = vi.fn();
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "dana@example.com", app_metadata: { providers: ["email"] } }, signOut }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com", app_metadata: { providers: ["email"] } }, signOut }) }));
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
 const mfa = { listFactors: vi.fn(), challengeAndVerify: vi.fn() };
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn(), auth: { mfa } } }));
@@ -29,6 +29,9 @@ vi.mock("@/lib/accountsApi", async (original) => ({
   countAccountViews: (...a: unknown[]) => countAccountViews(...a),
   listFirmMembers: (...a: unknown[]) => listFirmMembers(...a),
 }));
+const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn(), accountsCanChange: vi.fn() };
+vi.mock("@/lib/accountActionsApi", () => actions);
+vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const fetchMyColumns = vi.fn();
 const setMyColumns = vi.fn();
 const saveView = vi.fn();
@@ -38,6 +41,9 @@ vi.mock("@/lib/tableSettingsApi", () => ({
   fetchMyColumns: (...a: unknown[]) => fetchMyColumns(...a),
   setMyColumns: (...a: unknown[]) => setMyColumns(...a),
 }));
+const createAccount = vi.fn();
+const listAccountOwners = vi.fn();
+vi.mock("@/lib/accountCreateApi", () => ({ createAccount: (...a: unknown[]) => createAccount(...a), listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
 const exportRows = vi.fn();
 vi.mock("@/lib/exportApi", async () => ({ ...(await vi.importActual<object>("@/lib/exportApi")), exportRows: (...a: unknown[]) => exportRows(...a) }));
 const downloadBlob = vi.fn();
@@ -82,17 +88,20 @@ const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
   );
 const where = () => screen.getByTestId("location").textContent;
 const body = () => screen.getByRole("table").querySelector("tbody")!;
-const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim());
+// The columns, not the checkbox column's header nor the row actions' (which only a screen reader reads).
+const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions");
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
-  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
+  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, exportRows, downloadBlob, signOut, ...Object.values(actions), mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
   countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
+  listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   fetchMyColumns.mockResolvedValue({ columns: null, source: "none" });
   setMyColumns.mockResolvedValue(undefined);
   saveView.mockResolvedValue("v1");
+  actions.accountsCanChange.mockResolvedValue(["a1", "a2"]);
 });
 afterEach(() => cleanup());
 
@@ -305,11 +314,11 @@ describe("the Accounts page: views and filters", () => {
 
 describe("the Accounts page: states", () => {
   // Catches: the story's "nothing yet" (Accounts are the businesses you quote for) missing, or offering New quote, New account or Import before they exist (D-186).
-  it("says accounts are the businesses you quote for when the firm has none, with no buttons that do nothing", async () => {
+  it("says accounts are the businesses you quote for when the firm has none, with only the buttons that do something (New account)", async () => {
     listAccounts.mockResolvedValue([]);
     renderAt();
     expect(await screen.findByText("Accounts are the businesses you quote for.")).toBeInTheDocument();
-    for (const name of ["New quote", "New account", "Import", "Export"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    for (const name of ["New quote", "Import", "Export"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     for (const name of ["New quote", "New account", "Import"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
   });
 
@@ -429,7 +438,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "website", "source"], source: "person" });
     exportRows.mockResolvedValue(answer([exported()]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Website", "Source"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions")).toEqual(["Account", "Website", "Source"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Website,Source\r\nHarborview Dental Group,harborviewdental.example,Employer's intake\r\n");
@@ -454,7 +463,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "quotes"], source: "person" });
     exportRows.mockResolvedValue(answer([exported({ earliest_quote_expires_on: "2020-01-05" })]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Quotes"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions")).toEqual(["Account", "Quotes"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Quotes\r\nHarborview Dental Group,\"1 of 3 back, Expired Jan 5, 2020\"\r\n");
@@ -466,7 +475,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "last_activity", "created"], source: "person" });
     exportRows.mockResolvedValue(answer([exported({ last_activity_at: "2026-11-11T00:30:00+00:00", created_at: "2026-10-28T03:00:00+00:00" })]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Last activity", "Created"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions")).toEqual(["Account", "Last activity", "Created"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Last activity,Created\r\nHarborview Dental Group,2026-11-10,2026-10-27\r\n");
@@ -514,5 +523,279 @@ describe("the Accounts page: Export", () => {
     expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
     expect(await screen.findByText("Downloads are off during Nevermore support.")).toBeInTheDocument();
     expect(exportRows).not.toHaveBeenCalled();
+  });
+});
+
+// New account (story CRM-A1.2, screen 23): a form over the page, which saves, then opens the new account. The database decides who may make one and for whom, and
+// every field's rule (supabase/tests/create_account.sql); these tests are what a person sees and does: the fields, the words that say what is wrong, what is sent,
+// where the person lands, and what the database refused.
+describe("the Accounts page: New account", () => {
+  const made = { id: "a9", version: 1, name: "Harborview Dental East" };
+  const open = async (ws: Workspace = workspace()) => {
+    const user = userEvent.setup();
+    renderAt("/accounts", ws);
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "New account" }));
+    return { user, dialog: await screen.findByRole("dialog", { name: "New account" }) };
+  };
+  const text = (dialog: HTMLElement, label: string | RegExp) => within(dialog).getByLabelText(label);
+
+  // Catches: no way to start an account, or one offered to Nevermore support, who can only look (D-24: no button that does nothing).
+  it("offers New account to a person of the firm and not to Nevermore support", async () => {
+    renderAt();
+    expect(await screen.findByRole("button", { name: "New account" })).toBeInTheDocument();
+    cleanup();
+    renderAt("/accounts", workspace({ isSupport: true, role: "Nevermore support" }));
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    expect(screen.queryByRole("button", { name: "New account" })).not.toBeInTheDocument();
+  });
+
+  // Catches: New account left in the toolbar beside the bulk bar (the story: with any row selected, the bar replaces the toolbar), or not back after Clear.
+  it("hides New account while rows are selected, and shows it again after Clear", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    expect(screen.getByRole("button", { name: "New account" })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("table")).getAllByRole("checkbox")[1]);
+    expect(screen.queryByRole("button", { name: "New account" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(await screen.findByRole("button", { name: "New account" })).toBeInTheDocument();
+  });
+
+  // Catches: a field of screen 23 missing or worded differently, "Save and add a contact" shown before the contact form exists (CRM-A2.2), the renewal date and the
+  // firm's own fields shown before their stories (D-186), or the maker not the owner by default (D-214).
+  it("opens the form with the story's fields, the person as the owner, and no button for what is not built", async () => {
+    const { dialog } = await open();
+    for (const label of ["Account name", "Trade name", "Website", "Phone", "Street", "City", "State", "ZIP", "Industry", "Employees", "States of operation", "Current PEO or payroll provider", "Owner"]) {
+      expect(within(dialog).getByLabelText(label)).toBeInTheDocument();
+    }
+    expect(within(dialog).getByText("Required")).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByLabelText("Owner")).toHaveValue("u1"));
+    expect(within(dialog).getByRole("option", { name: "Dana Reyes" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save account" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Save and add a contact/ })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Renewal date")).not.toBeInTheDocument();
+  });
+
+  // Catches: an account saved with no name, an error that is not in words, or a request sent for a form that is not right.
+  it("will not save without a name, a phone that is not one or a number of employees that is not a number, and says why in words", async () => {
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Phone"), "call me");
+    await user.type(text(dialog, "Employees"), "forty");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await within(dialog).findByText("Enter the account's name.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter a whole number, like 45.")).toBeInTheDocument();
+    expect(createAccount).not.toHaveBeenCalled();
+  });
+
+  // Catches: a state that is not a state accepted, the states of operation not checked, a state kept in lower case.
+  it("takes only states from the list, and the states of operation as codes", async () => {
+    const { user, dialog } = await open();
+    const states = within(text(dialog, "State") as HTMLElement);
+    expect(states.getByRole("option", { name: "OR" })).toBeInTheDocument();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.type(text(dialog, "States of operation"), "or, xx");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await within(dialog).findByText("Use two-letter state codes from the list, like OR, WA.")).toBeInTheDocument();
+    expect(createAccount).not.toHaveBeenCalled();
+  });
+
+  // Catches: what is typed not sent (or sent untrimmed), the owner dropped, and the new account not opening (the story: on save the account opens).
+  it("saves what was typed for the firm, with the owner chosen, and opens the new account", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open(workspace({ role: "Owner", isOwner: true }));
+    await user.type(text(dialog, "Account name"), "  Harborview Dental East ");
+    await user.type(text(dialog, "Website"), "harborviewdental.example");
+    await user.type(text(dialog, "Phone"), "(503) 555-0142 x12");
+    await user.type(text(dialog, "City"), "Gresham");
+    await user.selectOptions(text(dialog, "State"), "OR");
+    await user.type(text(dialog, "Employees"), "12");
+    await user.type(text(dialog, "States of operation"), "or, wa");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    await user.selectOptions(text(dialog, "Owner"), "u2");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await screen.findByText("Account page for a9")).toBeInTheDocument();
+    expect(createAccount).toHaveBeenCalledWith("f1", {
+      name: "Harborview Dental East", tradeName: "", website: "harborviewdental.example", phone: "(503) 555-0142 x12", street: "", city: "Gresham", state: "OR", postalCode: "",
+      industry: "", employees: 12, statesOfOperation: ["OR", "WA"], currentProvider: "", ownerId: "u2",
+    });
+  });
+
+  // Catches: the maker not being the owner when nobody chose.
+  it("makes the person the owner by default", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Name only");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    await waitFor(() => expect(createAccount).toHaveBeenCalled());
+    expect(createAccount.mock.calls[0][1]).toMatchObject({ name: "Name only", ownerId: "u1" });
+  });
+
+  // Catches: the Owner choice offering a person the database will refuse (an agent anyone but themselves, a lead anyone outside their teams), as it did when it
+  // listed every member. The choices are the database's own (account_owner_choices), asked for this firm.
+  it("offers as owner only the people the database lists for the person, and nobody else of the firm", async () => {
+    listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
+    const { dialog } = await open(workspace({ role: "Lead" }));
+    await waitFor(() => expect(listAccountOwners).toHaveBeenCalledWith("f1"));
+    expect(await within(dialog).findByRole("option", { name: "Dana Reyes" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("option", { name: "Marcus Hale" })).not.toBeInTheDocument();
+  });
+
+  // Catches: the form being unusable when the choices can't be loaded: the person can still make an account for themselves.
+  it("offers the person themselves when the choices could not be loaded", async () => {
+    listAccountOwners.mockRejectedValue(new Error("Couldn't load the firm's people."));
+    const { dialog } = await open(workspace({ role: "Lead" }));
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    expect(within(dialog).getAllByRole("option", { name: /Dana Reyes/ })).toHaveLength(1);
+    expect(within(dialog).queryByRole("option", { name: "Marcus Hale" })).not.toBeInTheDocument();
+  });
+
+  it("offers a firm's owner everyone the database lists", async () => {
+    const { dialog } = await open(workspace({ role: "Owner", isOwner: true }));
+    expect(await within(dialog).findByRole("option", { name: "Marcus Hale" })).toBeInTheDocument();
+  });
+
+  // Catches: a refusal swallowed, the form closed and what was typed lost, or the database's words changed.
+  it("says what the database refused beside Save and keeps what was typed", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    createAccount.mockRejectedValue(new AccountError("readOnly", "Acme Benefits is closing. It can be read but not changed.", "PT423"));
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await within(dialog).findByText("Acme Benefits is closing. It can be read but not changed.")).toBeInTheDocument();
+    expect(text(dialog, "Account name")).toHaveValue("Harborview Dental East");
+    expect(screen.queryByText(/Account page for/)).not.toBeInTheDocument();
+  });
+
+  it("puts a refused owner under Owner", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    createAccount.mockRejectedValue(new AccountError("notAllowed", "You can make an account only for yourself and, as a lead, for people on your teams.", "42501"));
+    const { user, dialog } = await open(workspace({ role: "Lead" }));
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    await user.selectOptions(text(dialog, "Owner"), "u2");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    const message = await within(dialog).findByText("You can make an account only for yourself and, as a lead, for people on your teams.");
+    expect(text(dialog, "Owner")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+  });
+
+  // Catches: the database's answer to a number out of range shown as the generic failure, not under Employees.
+  it("puts the database's answer to a number out of range under Employees", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    createAccount.mockRejectedValue(new AccountError("invalid", "Enter a number up to 2,147,483,647.", "22003"));
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    const message = await within(dialog).findByText("Enter a number up to 2,147,483,647.");
+    expect(text(dialog, "Employees")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+    expect(within(dialog).queryByText(/Couldn't save the account/)).not.toBeInTheDocument();
+  });
+
+  // Catches: typing lost to a stray click on Cancel, and a form that opens again with the last form's words.
+  it("asks before throwing away what was typed, and opens empty the next time", async () => {
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New account" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "New account" }));
+    expect(text(await screen.findByRole("dialog", { name: "New account" }), "Account name")).toHaveValue("");
+  });
+
+  it("is offered on a firm with no accounts too", async () => {
+    listAccounts.mockResolvedValue([]);
+    renderAt();
+    expect(await screen.findByText("Accounts are the businesses you quote for.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "New account" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("the Accounts page: each row's actions (story CRM-A1.1c)", () => {
+  // Catches: row actions missing, or acting on another row than the one whose menu was opened.
+  it("archives the row whose menu was used, after asking, and asks the table again", async () => {
+    const user = userEvent.setup();
+    actions.archiveAccount.mockResolvedValue({ changed: true });
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("button", { name: "Actions for Kestrel Software" }));
+    await user.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const before = listAccounts.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(actions.archiveAccount).toHaveBeenCalledWith("f1", "a2"));
+    await waitFor(() => expect(listAccounts.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  // Catches: the Archived view listing accounts that can't be brought back, or offering Archive on them.
+  it("offers Restore on an archived account, and restores that row", async () => {
+    const user = userEvent.setup();
+    actions.restoreAccount.mockResolvedValue({ changed: true });
+    listAccounts.mockResolvedValue({ rows: [row({ archived: true, archived_at: "2026-11-10T10:00:00Z" })], total: 1 });
+    renderAt("/accounts?view=archived");
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "Actions for Harborview Dental Group" }));
+    expect(screen.queryByRole("menuitem", { name: "Archive" })).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "Restore" }));
+    await waitFor(() => expect(actions.restoreAccount).toHaveBeenCalledWith("f1", "a1"));
+  });
+
+  // Catches: the owner change offering opportunities for an account the table says has none open (Kestrel has none), or not for one that has.
+  it("offers the open opportunities in the owner change only where the row has some", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("button", { name: "Actions for Kestrel Software" }));
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    await screen.findByLabelText("New owner");
+    expect(screen.queryByLabelText(/Also change the owner/)).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Actions for Harborview Dental Group" }));
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    expect(await screen.findByLabelText(/Also change the owner of its 1 open opportunity/)).toBeInTheDocument();
+  });
+
+  // Catches: an action menu on every row, so a colleague's account (seen, not changeable), a closing firm's and a support session's rows offer what the database refuses (D-24).
+  it("asks which of the page's accounts the person may change, and draws a menu on those only", async () => {
+    actions.accountsCanChange.mockResolvedValue(["a2"]);
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    expect(await screen.findByRole("button", { name: "Actions for Kestrel Software" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions for Harborview Dental Group" })).toBeNull();
+    expect(actions.accountsCanChange).toHaveBeenCalledWith("f1", ["a1", "a2"]);
+  });
+
+  // Catches: a failed question (or no answer yet) offering every row's menu, which could only be refused.
+  it("draws no menu while the question is open or when it failed", async () => {
+    actions.accountsCanChange.mockRejectedValue(new Error("down"));
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await waitFor(() => expect(actions.accountsCanChange).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
+  });
+
+  // Catches: the checkbox column and the actions column getting in each other's way: a selected row losing its menu, or the menu's click changing the selection.
+  it("keeps a row's menu working beside its checkbox", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("checkbox", { name: "Select Kestrel Software" }));
+    const menu = await screen.findByRole("button", { name: "Actions for Kestrel Software" });
+    await user.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("checkbox", { name: "Select Kestrel Software" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Harborview Dental Group" })).not.toBeChecked();
+  });
+
+  // Catches: opening an account when its action menu is clicked.
+  it("does not open the account when a row's menu is used", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("button", { name: "Actions for Kestrel Software" }));
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    expect(screen.queryByText(/Account page for/)).toBeNull();
   });
 });
