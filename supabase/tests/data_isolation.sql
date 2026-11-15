@@ -211,6 +211,7 @@
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
 \i supabase/migrations/20261119240000_contact_page.sql
+\i supabase/migrations/20261119230000_search_everywhere.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -743,6 +744,8 @@ BEGIN
     INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES (fid, 'archive', now() + interval '10 minutes');
     INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after)
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
+    -- CRM-S1.2b: the owner's last opened record.
+    INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
   END LOOP;
 END $$;
 
@@ -900,6 +903,10 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
+-- ---- CRM-S1.2b: search in the database (20261119230000) ----
+-- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
+INSERT INTO matrix VALUES
+  ('public.recent_records',                             '{"service":0}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -937,7 +944,7 @@ BEGIN
         ELSE expect ->> who
       END;
       want := CASE
-        WHEN who = 'service' THEN total  -- the service role bypasses row security
+        WHEN who = 'service' THEN COALESCE((expect ->> 'service')::bigint, total)  -- the service role bypasses row security, unless the table is not granted to it (then the matrix says "service":0)
         WHEN token = 'all' THEN total
         WHEN token IN ('A', 'B') THEN (m.firm_rows ->> token)::bigint
         ELSE COALESCE(token::bigint, 0)
@@ -1201,6 +1208,7 @@ INSERT INTO callable VALUES
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
+  ('search_lower(p_text text)', 'anyone', NULL, 'pure: a text in lower case, for the search''s trigram indexes (an index function runs as the writer of the row); reads nothing'),
   ('record_member_activity(p_kind text, p_record_type text, p_record_id text)', 'own', NULL, 'a browser reporting a file downloaded or built there, or a sign-in, as the caller, about a record of a firm they belong to and only the pairs of kind and record that can happen; refuses anyone else (supabase/tests/firm_activity.sql)'),
   ('open_submission(p_session_id uuid)', 'own', NULL, 'hands a submission to a current member of its firm (the table policy''s own rule) and writes the opening in the firm''s record as the caller; no row and no entry for anyone else (supabase/tests/firm_activity.sql)'),
   ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_before_at timestamp with time zone, p_before_key uuid, p_nevermore boolean)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included; a platform admin''s entry reads as Nevermore with no id or email, and neither the admin''s id nor anything else finds it but the Nevermore filter (supabase/tests/firm_activity.sql)'),
@@ -1413,6 +1421,14 @@ INSERT INTO callable VALUES
    'a current member of the firm who may see the task''s account marks it done or open again; refused as log_activity is'),
   ('account_activity_options(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the contacts and opportunities of an account and the firm''s current members, for the log form, to someone who may see the account; NULL for anyone else');
+-- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
+INSERT INTO callable VALUES
+  ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) finds the accounts, contacts, opportunities and quotes of that firm that they may see, by level, whose own fields hold every word typed, five of each kind; never an intake''s answers; 42501 for anyone who is no member of the firm, a platform admin without a session, a former member and another firm''s member'),
+  ('note_recent_record(p_kind text, p_id text, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for puts a record they may see at the top of their own recent records; false, the same as for a record that is not there, for one they may not see; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
+  ('my_recent_records(p_firm_id uuid, p_limit integer)', 'own', NULL,
+   'a current member of the firm (or a support session at its address, which has none) reads their own last opened records of that firm, those they may still see; 42501 for anyone who is no member of the firm');
 -- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
 INSERT INTO callable VALUES
   ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
@@ -2025,6 +2041,13 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.add_to_note({anote}, 'Probe', {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"text": "Probe"'),
   ('set_task_done', 'advisor', 'by_id',
    $$SELECT public.set_task_done({atask}, true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"type": "task"');
+
+-- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
+-- see is told false, the same as for a record that is not there.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('search_records', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.search_records({firm}, 'probe'))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('note_recent_record', 'advisor', 'by_id', $$SELECT public.note_recent_record('account', {acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002', 'PT423', 'ok:false'], '^ok:true$'),
+  ('my_recent_records', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.my_recent_records({firm}, 5) -> 'rows')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$');
 
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
@@ -3085,6 +3108,13 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.record_history', 'firm', 'its own firm_id; closed to the API, a member reads a record''s history through a function',
    $m$INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind) VALUES ({firm}, 'referral_partners', 'probe-{tag}', gen_random_uuid(), 'created') RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- CRM-S1.2b: each person's recent records (20261119230000) ----
+-- A person's last opened records in a firm: its own firm_id. Closed to the API (a member reads their own through my_recent_records()), so there is no
+-- positive control here.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.recent_records', 'firm', 'its own firm_id; closed to the API, a member reads their own recent records through a function',
+   $m$INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) SELECT {firm}, {u}, COALESCE(max(r.slot) + 1, 0), 'account', gen_random_uuid()::text FROM public.recent_records r WHERE r.firm_id = {firm} AND r.user_id = {u} RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 -- ---- CRM-Q1.1a: accounts, contacts and opportunities (20261119100000) ----
 -- A firm's own records: their own firm_id (a contact and an opportunity are on an account of their firm, by a foreign key on the pair). A member reads
 -- them by level, so one member of the second firm (an agent who owns nothing here, and the member of both firms) legitimately reads none of the probe's
@@ -3796,6 +3826,12 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_to_change', 'service_only', 'the one start of those four: the firm''s account, held, after the may-see and level-rule questions; no API role can call it'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
 
+-- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('search_records', 'firm_scoped', 'a current member of the firm the call acts for finds that firm''s accounts, contacts, opportunities and quotes by level, never an intake''s answers; nothing of another firm (4e)'),
+  ('note_recent_record', 'firm_scoped', 'a current member notes a record of their own firm that they may see as recently opened, for themselves only; false for another firm''s record as for one that is not there (4e)'),
+  ('my_recent_records', 'firm_scoped', 'a current member reads their own last opened records of the firm, those they may still see (4e)');
+
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),
   ('admin_discard_peo_draft', 'platform_wide', 'a PEO''s requirement profile: the same for every firm'),
@@ -3906,7 +3942,7 @@ SELECT unnest(ARRAY[
   'intake_consent_version', 'intake_deletion_max_attempts', 'intake_draft_retention', 'intake_missing_required', 'intake_required_items',
   'is_prospect_visible_status', 'is_reviewable_field', 'is_source_code', 'is_us_state_code', 'is_valid_phone', 'membership_is_current',
   'ops_alert_rules', 'ops_clean_code', 'ops_event_retention', 'ops_redact', 'provenance_entry_status', 'provenance_source_is_valid',
-  'second_factor_rule_met', 'submitted_record_retention'
+  'search_lower', 'second_factor_rule_met', 'submitted_record_retention'
 ]), 'public', 'a constant or a pure check of what it is given; reads no one''s data';
 
 INSERT INTO fn_class (fn, class, why)

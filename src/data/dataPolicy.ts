@@ -463,6 +463,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "By the firm, when the later stories that delete a record ship (an account's record owner or a firm owner may delete one with no opportunity or email, D-204, D-219). Closing a firm (CRM-P1.7) deletes all of them with the firm's other data. A person who is deleted leaves the records they owned with no owner, for a firm owner to assign.",
   },
   {
+    id: "recent_records",
+    label: "The records a person opened last",
+    sensitivity: "internal",
+    examples: "For each person in a firm, which account, contact, opportunity or quote they opened last (the kind of record, its number and when), the last 20, so the search box can show the last five opened. Never a name, a field or anything an intake holds: the box reads the record itself, and only while the person may still see it.",
+    stored: { tables: ["recent_records"], buckets: [], elsewhere: [] },
+    retention: "The last 20 of each person in each firm; opening a record again moves it to the top, and the oldest is dropped. Nevermore support records none.",
+    deletion: "Closing a firm (CRM-P1.7) deletes them with its other data. A person's account deleted at their request removes theirs.",
+  },
+  {
     id: "bulk_changes",
     label: "A bulk change kept for its undo",
     sensitivity: "confidential",
