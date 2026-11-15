@@ -26,7 +26,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  * The actions of one account as a menu: Change owner, Archive or Restore, Delete. `label` names the menu to a screen reader. The dialogs are drawn here, so a
  * row's menu and the page's are the same.
  */
-export function AccountActions({ firmId, account, onDone, label }: { firmId: string; account: ActionAccount; onDone: (what: ActionDone) => void; label?: string }) {
+export function AccountMenu({ firmId, account, onDone, label }: { firmId: string; account: ActionAccount; onDone: (what: ActionDone) => void; label?: string }) {
   const [asking, setAsking] = useState<Asking>(null);
   const close = () => setAsking(null);
   const restore = async () => {

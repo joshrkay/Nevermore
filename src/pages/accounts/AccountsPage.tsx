@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Building2, RefreshCw, SearchX } from "lucide-react";
 import { accountsTableWords } from "@/data/accountsPage";
 import { countAccountsViews, exportColumnsFor, fetchAccountsPage, useAccountsTable } from "@/components/accounts/accountsTable";
-import { AccountActions } from "@/components/accounts/AccountActions";
+import { AccountMenu } from "@/components/accounts/AccountMenu";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
@@ -119,7 +119,7 @@ const AccountsPage = () => {
           error={error}
           onOpenRow={(row) => navigate(`/accounts/${row.id}`)}
           rowActions={firmId ? (row) => (
-            <AccountActions
+            <AccountMenu
               firmId={firmId}
               account={{ id: row.id, name: row.name, archived: row.archived, ownerId: row.owner, openOpportunities: row.open_opportunities }}
               onDone={refresh}

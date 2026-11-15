@@ -2,17 +2,19 @@ import { useCallback } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
-import { AccountActions } from "@/components/accounts/AccountActions";
+import { AccountMenu } from "@/components/accounts/AccountMenu";
 import { restoreWithWords } from "@/components/accounts/restoreWithWords";
 import { Button } from "@/components/ui/button";
 import { AccountHeader, AccountHeaderLoading } from "@/components/accounts/AccountHeader";
 import { AccountOverview } from "@/components/accounts/AccountOverview";
 import { AccountTabPanel } from "@/components/accounts/AccountTabPanel";
 import { TAB_IDS, TAB_LABELS, type TabId } from "@/components/accounts/accountColumns";
+import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { accountKey, useAccountPageQuery } from "@/components/accounts/useAccountQueries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadFailed, NotAvailable, PlaceholderPanel, PlaceholderLines, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { useAuth } from "@/hooks/useAuth";
 import type { AccountFields, AccountPage as Page } from "@/lib/accountPageApi";
 
 const isTab = (v: string | null): v is TabId => (TAB_IDS as readonly string[]).includes(v ?? "");
@@ -24,7 +26,8 @@ const isTab = (v: string | null): v is TabId => (TAB_IDS as readonly string[]).i
  */
 const AccountPage = () => {
   const { id = "" } = useParams();
-  const { firm } = useWorkspace();
+  const { firm, isSupport } = useWorkspace();
+  const { user } = useAuth();
   const firmId = firm?.id ?? null;
   const [params, setParams] = useSearchParams();
   const tab: TabId = isTab(params.get("tab")) ? (params.get("tab") as TabId) : "overview";
@@ -77,8 +80,12 @@ const AccountPage = () => {
   const count: Record<TabId, number | null> = {
     overview: null, contacts: tabs.contacts.count, opportunities: tabs.opportunities.count, quotes: tabs.quotes.count, activity: tabs.activity.count, files: tabs.files.count,
   };
-  return (
-    <Frame>
+  // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024). On an archived account
+  // nothing can be added (D-222: the database refuses a new call, note, task or addition), but an existing call or task can still be changed and a task marked done.
+  const canAct = firmId !== null && !isSupport;
+  const archived = account.archivedAt !== null;
+  const body = (
+    <>
       <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
         <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
         <span aria-hidden="true"> / </span>
@@ -93,7 +100,7 @@ const AccountPage = () => {
           )}
         </div>
       )}
-      <AccountHeader account={account} actions={page.canChange && firmId ? <AccountActions firmId={firmId} account={actionAccount} onDone={done} label="More actions for this account" /> : undefined} />
+      <AccountHeader account={account} menu={page.canChange && firmId ? <AccountMenu firmId={firmId} account={actionAccount} onDone={done} label="More actions for this account" /> : undefined} />
       <Tabs value={tab} onValueChange={go}>
         <TabsList aria-label="The account" className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0">
           {TAB_IDS.map((t) => (
@@ -112,6 +119,11 @@ const AccountPage = () => {
           </TabsContent>
         ))}
       </Tabs>
+    </>
+  );
+  return (
+    <Frame>
+      {canAct ? <AccountActionsProvider firmId={firmId} accountId={id} accountName={account.name} userId={user?.id ?? null} canAdd={!archived}>{body}</AccountActionsProvider> : body}
     </Frame>
   );
 };

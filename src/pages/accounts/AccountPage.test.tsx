@@ -138,7 +138,7 @@ describe("AccountPage: the header and the tabs", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" })).toBeInTheDocument();
     expect(screen.getByText("Prospect")).toBeInTheDocument();
     expect(screen.getByText("Dental practice · Portland, OR · 45 employees · harborviewdental.example · Owner Dana Reyes")).toBeInTheDocument();
-    for (const gone of ["Email", "New opportunity", "Log a call", "Add a task", "Add a contact", "Restore"]) {
+    for (const gone of ["Email", "New opportunity", "Add a contact", "Restore"]) {
       expect(screen.queryByRole("button", { name: gone }), gone).toBeNull();
       expect(screen.queryByRole("link", { name: gone }), gone).toBeNull();
     }
@@ -257,7 +257,7 @@ describe("AccountPage: every name opens its record", () => {
     expect(router.state.location.search).toBe("?tab=contacts&contact=c2");
     const row = (await screen.findByRole("cell", { name: "Person2 Abel" })).closest("tr") as HTMLElement;
     expect(row).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("cell", { name: /Elena Marsh/ }).closest("tr")).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: /Elena Marsh/ }).closest("tr")).not.toHaveAttribute("aria-current");
   });
 
   // Catches: a contact further down than the first fifty never coming into view, or one past row 100 never coming (a page asked for from row 0 with a longer
@@ -438,20 +438,23 @@ describe("AccountPage: the tabs' own lists", () => {
   });
 
   // Catches: a kind filter with more than All and Changes (calls, notes and tasks come with CRM-E1.5), or one that hides the changes.
-  it("filters the Activity tab by kind: today All and Changes", async () => {
+  it("filters the Activity tab by kind: All, Calls, Notes, Tasks and Changes, each asked of the database", async () => {
     const user = userEvent.setup();
     client.listAccountTab.mockResolvedValue(tabOf([change(1), change(2, { kind: "created", field: null, from: null, to: null, recordTable: "contacts", recordName: "Elena Marsh" })], 2));
     renderPage("/accounts/a1?tab=activity");
     expect(await screen.findByText("Employees changed from 40 to 45")).toBeInTheDocument();
     const group = screen.getByRole("group", { name: "Show" });
-    expect(within(group).getAllByRole("button").map((r) => r.textContent)).toEqual(["All", "Changes"]);
+    expect(within(group).getAllByRole("button").map((r) => r.textContent)).toEqual(["All", "Calls", "Notes", "Tasks", "Changes"]);
     expect(within(group).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Elena Marsh added as a contact")).toBeInTheDocument();
     await user.click(within(group).getByRole("button", { name: "Changes" }));
-    expect(within(group).getByRole("button", { name: "Changes" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(group).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByText("Employees changed from 40 to 45")).toBeInTheDocument();
+    // The filter is asked of the database and the list comes back whole (counts and pages are of what is shown).
+    await screen.findByText("Employees changed from 40 to 45");
+    const after = screen.getByRole("group", { name: "Show" });
+    expect(within(after).getByRole("button", { name: "Changes" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(after).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getAllByRole("row")).toHaveLength(3);
+    await waitFor(() => expect(client.listAccountTab).toHaveBeenLastCalledWith("f1", "a1", "activity", { limit: 50, offset: 0, filter: "changes" }));
   });
 });
 

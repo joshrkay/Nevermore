@@ -13,13 +13,13 @@ vi.mock("@/lib/accountActionsApi", () => client);
 const listFirmMembers = vi.fn();
 vi.mock("@/lib/accountsApi", () => ({ listFirmMembers: (...a: unknown[]) => listFirmMembers(...a) }));
 
-const { AccountActions } = await import("./AccountActions");
+const { AccountMenu } = await import("./AccountMenu");
 const { AccountError } = await import("@/lib/accountPageApi");
 
 const base = { id: "a1", name: "Harborview Dental Group", archived: false, ownerId: "u1", openOpportunities: 2 };
 const done = vi.fn();
 const show = (account = base) =>
-  render(<QueryClientProvider client={new QueryClient()}><AccountActions firmId="f1" account={account} onDone={done} /></QueryClientProvider>);
+  render(<QueryClientProvider client={new QueryClient()}><AccountMenu firmId="f1" account={account} onDone={done} /></QueryClientProvider>);
 const openMenu = async (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: "Actions for Harborview Dental Group" }));
 
 beforeEach(() => {
@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("AccountActions: archive and restore", () => {
+describe("AccountMenu: archive and restore", () => {
   // Catches: an account archived without asking, or an Archive that says nothing, or a page not told to reload.
   it("asks before archiving, then archives and says so", async () => {
     const user = userEvent.setup();
@@ -69,7 +69,7 @@ describe("AccountActions: archive and restore", () => {
   });
 });
 
-describe("AccountActions: delete", () => {
+describe("AccountMenu: delete", () => {
   // Catches: a delete without a warning that the contacts go too, or one that does not report to the screen.
   it("warns what goes with the account, then deletes it", async () => {
     const user = userEvent.setup();
@@ -101,7 +101,7 @@ describe("AccountActions: delete", () => {
   });
 });
 
-describe("AccountActions: change owner", () => {
+describe("AccountMenu: change owner", () => {
   // Catches: the offer for the open opportunities missing, or its answer not sent.
   it("offers the open opportunities too, and sends the choice", async () => {
     const user = userEvent.setup();
