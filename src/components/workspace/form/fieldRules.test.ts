@@ -20,6 +20,9 @@ describe("phoneRule", () => {
     expect(message(phoneRule("call me").safeParse("call us"))).toBe(PHONE_WORDS);
     expect(phoneRule("call me").safeParse("555-0142").success).toBe(true);
   });
+  it("takes the kept phone when it differs only by spaces at the ends", () => {
+    expect(phoneRule(" call me ").safeParse("call me").success).toBe(true);
+  });
   it("may be left empty, and trims what is typed", () => {
     expect(phoneRule().parse("")).toBe("");
     expect(phoneRule().parse("   ")).toBe("");
@@ -56,4 +59,12 @@ describe("wholeNumberRule", () => {
     expect(wholeNumberRule().parse("")).toBe("");
   });
   it.each(["-3", "4.5", "forty", "1,000"])("refuses %s in words", (typed) => expect(message(wholeNumberRule().safeParse(typed))).toBe("Enter a whole number, like 45."));
+  // Catches: a count too big for the database's integer passing the form and failing as a connection error.
+  it("takes up to 2,147,483,647 and refuses more in words", () => {
+    expect(wholeNumberRule().parse("2147483647")).toBe("2147483647");
+    expect(wholeNumberRule().parse("0002147483647")).toBe("0002147483647");
+    for (const typed of ["2147483648", "9999999999", "99999999999999999999"]) {
+      expect(message(wholeNumberRule().safeParse(typed))).toBe("Enter a number up to 2,147,483,647.");
+    }
+  });
 });

@@ -545,6 +545,19 @@ describe("AccountPage: where focus goes", () => {
     expect(client.updateAccount).toHaveBeenCalledTimes(1);
   });
 
+  // Catches: the database's answer to a number out of range shown as the generic failure, not under Employees.
+  it("puts the database's answer to a number out of range under Employees", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    const user = userEvent.setup();
+    client.updateAccount.mockRejectedValue(new AccountError("invalid", "Enter a number up to 2,147,483,647.", "22003"));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.type(screen.getByLabelText("Industry"), "s");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const message = await screen.findByText("Enter a number up to 2,147,483,647.");
+    expect(screen.getByLabelText("Employees")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+  });
+
   // Catches: each arrow key in the tab list adding a history entry, so Back steps through every tab the arrows passed.
   it("replaces the address when a tab is chosen, so Back leaves the page and does not step through tabs", async () => {
     const user = userEvent.setup();

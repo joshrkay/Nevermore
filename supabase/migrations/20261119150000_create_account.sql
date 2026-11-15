@@ -31,7 +31,8 @@ BEGIN
   IF NEW.phone IS NULL OR NEW.phone = '' THEN
     RETURN NEW;
   END IF;
-  IF TG_OP = 'UPDATE' AND NEW.phone IS NOT DISTINCT FROM OLD.phone THEN
+  -- update_account trims what it saves, so " call me " kept and "call me" sent back are the same phone.
+  IF TG_OP = 'UPDATE' AND btrim(NEW.phone) IS NOT DISTINCT FROM btrim(OLD.phone) THEN
     RETURN NEW;
   END IF;
   IF NOT public.is_valid_phone(NEW.phone) THEN
@@ -141,9 +142,13 @@ BEGIN
     RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
   END IF;
   -- The owner is the maker unless they choose another (D-214).
+  -- The owner's membership is locked FOR SHARE until the end of this transaction (not KEY SHARE: removing or suspending a person is a non-key UPDATE of this row,
+  -- which does not conflict with KEY SHARE). A removal then either committed first, and the owner is no longer current here, or waits for this making to commit.
+  -- remove_member and suspend_member lock this row FOR UPDATE and then the firm's row (keep_firm_owner); this takes only this one row before it writes, so no
+  -- cycle can form with them.
   owner := COALESCE(p_owner_id, auth.uid());
   IF owner IS NULL OR NOT EXISTS (
-    SELECT 1 FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = owner AND public.membership_is_current(m.valid_from, m.valid_until)) THEN
+    SELECT 1 FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = owner AND public.membership_is_current(m.valid_from, m.valid_until) FOR SHARE) THEN
     RAISE EXCEPTION 'Choose one of the firm''s people as the owner.' USING ERRCODE = '22023';
   END IF;
   IF NOT public.can_change_firm_record(firm, owner) THEN

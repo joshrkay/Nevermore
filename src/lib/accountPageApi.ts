@@ -370,6 +370,8 @@ export function refusal(error: DbError, fallback: string): Error {
     case "PT404": return new AccountError("notFound", "This account isn't available.", error.code);
     case "PT423": return new AccountError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "22023": return new AccountError("invalid", error.message || fallback, error.code);
+    // A count the database's integer can't hold (the form's own rule says it first; this is for any other way in).
+    case "22003": return new AccountError("invalid", "Enter a number up to 2,147,483,647.", error.code);
     case "42501": return new AccountError("notAllowed", error.message || "You can't change this account.", error.code);
     default: return new AccountError("failed", fallback, error.code);
   }

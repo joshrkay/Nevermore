@@ -67,6 +67,13 @@ describe("createAccount", () => {
     expect(e).toMatchObject({ kind: "invalid", message: "Give the account a name." });
   });
 
+  // Catches: a count too big for the database's integer (22003) shown as a connection failure.
+  it("says an out-of-range number in words, as a refusal", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "22003", message: 'value "9999999999" is out of range for type integer' } });
+    const e = await caught(() => createAccount("f1", input));
+    expect(e).toMatchObject({ kind: "invalid", message: "Enter a number up to 2,147,483,647.", code: "22003" });
+  });
+
   it.each([
     ["42501", "notAllowed"],
     ["PT423", "readOnly"],

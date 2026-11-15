@@ -677,6 +677,18 @@ describe("the Accounts page: New account", () => {
     expect(text(dialog, "Owner")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
   });
 
+  // Catches: the database's answer to a number out of range shown as the generic failure, not under Employees.
+  it("puts the database's answer to a number out of range under Employees", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    createAccount.mockRejectedValue(new AccountError("invalid", "Enter a number up to 2,147,483,647.", "22003"));
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    const message = await within(dialog).findByText("Enter a number up to 2,147,483,647.");
+    expect(text(dialog, "Employees")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+    expect(within(dialog).queryByText(/Couldn't save the account/)).not.toBeInTheDocument();
+  });
+
   // Catches: typing lost to a stray click on Cancel, and a form that opens again with the last form's words.
   it("asks before throwing away what was typed, and opens empty the next time", async () => {
     const { user, dialog } = await open();

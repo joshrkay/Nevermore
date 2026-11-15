@@ -5,7 +5,7 @@ import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspac
 import { US_STATE_CODES } from "@/data/chamberValidation";
 import { accountFieldsSchemaFor } from "@/data/accountFields";
 import { addressLines, editOf, formOf, NOT_GIVEN, sourceWords, valueWords, type AccountForm } from "@/data/accountPage";
-import { updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
+import { AccountError, updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
 
 // The account's own fields, down one side of the Overview (story CRM-A2.1b): shown as they are, and edited in place (CRM-S4.1) from the version the person
 // started from. Edit is offered only when the database says the person may change the account (`canChange`, the level rule, D-209), and what the database
@@ -72,6 +72,8 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
       toast.success("Account saved");
       return answer.account;
     },
+    // A number the database's integer can't hold is said under Employees; its other refusals keep the form's usual words.
+    explain: (e) => (e instanceof AccountError && e.code === "22003" ? { message: e.message, field: "employees" } : undefined),
     conflictDialog: { noun: "account", fields: CONFLICT_FIELDS },
     savedValues: (saved) => formOf(saved),
     onSaved: (saved) => {

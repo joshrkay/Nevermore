@@ -33,7 +33,7 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
 }) {
   const { user } = useAuth();
   const me = user?.id ?? "";
-  const members = useQuery({ queryKey: ["new-account", firmId, "owners"], queryFn: () => listAccountOwners(firmId), retry: false, staleTime: 60_000 });
+  const members = useQuery({ queryKey: ["new-account", firmId, me, "owners"], queryFn: () => listAccountOwners(firmId), enabled: me !== "", retry: false, staleTime: 60_000 });
   const yourself = { value: me, label: members.data?.find((m) => m.value === me)?.label ?? person };
   // The people the database lets this person give an account to (the level rule, D-209: an agent themselves, a lead their teams, an owner anyone), the person
   // first. Until they load, or if they can't, the person themselves: that is always allowed.
@@ -61,7 +61,7 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
           ownerId: v.owner || null,
         });
       } catch (e) {
-        if (e instanceof AccountError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? "owner" : undefined);
+        if (e instanceof AccountError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? "owner" : e.code === "22003" ? "employees" : undefined);
         throw e;
       }
     },

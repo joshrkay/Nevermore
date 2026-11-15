@@ -435,6 +435,8 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('name', repeat('x', 201))), '22023: Keep the account''s name to 200 characters.', 'a name too long');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"state": "ZZ"}'), '22023: Choose a state from the list.', 'a state that is not one');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"states": ["OR", "XX"]}'), '22023: Choose the states of operation from the list.', 'a state of operation that is not one');
+  PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"employees": 2147483647}'), 'ok', 'the most employees an integer holds');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.create_account('Big', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2147483648', '{}', NULL, NULL, NULL)$q$), '22003', 'one more is out of range (22003), which the form words under Employees');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"employees": -1}'), '22023: Employees can''t be a negative number.', 'negative employees');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('website', repeat('w', 301))), '22023: Keep the website to 300 characters.', 'a website too long');
   FOREACH p IN ARRAY ARRAY['call me', '555014', '1234567890123456', '503+555+0142', '(503) 555-0142 ext', '503-555-0142 x1234567', '++15035550142'] LOOP
@@ -446,7 +448,7 @@ BEGIN
   -- At most 50 characters, as is_valid_phone says (not 40: the older length check of the save is gone).
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', '503' || repeat(' ', 40) || '5550142')), 'ok', 'a phone of 50 characters');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', '503' || repeat(' ', 41) || '5550142')), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'a phone of 51 characters');
-  PERFORM pg_temp.is(pg_temp.accounts_in('acme'), n + 12, 'only the twelve good phones made accounts');
+  PERFORM pg_temp.is(pg_temp.accounts_in('acme'), n + 13, 'only the twelve good phones and the biggest employee count made accounts');
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (source, firm_id, name, phone) VALUES ('added_by_hand', pg_temp.id('acme'), 'Bad phone', 'call me')$q$), '22023', 'the table refuses a bad phone');
   PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (source, firm_id, name, phone) VALUES ('added_by_hand', pg_temp.id('acme'), 'Good phone', '(503) 555-0142')$q$), 'rows:1', 'and takes a good one');
@@ -467,6 +469,17 @@ BEGIN
   PERFORM pg_temp.is(r #>> '{record,phone}', 'call me', 'keeps the phone as it was');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.update_account(%L, 'Legacy phone', NULL, NULL, 'still not one', NULL, NULL, NULL, NULL, 'Dental practice', NULL, '{}', NULL, %L, 2)$q$,
     '00000000-0000-4000-8000-0000000000e1'::uuid, pg_temp.id('acme'))), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'changing the phone to another bad one is refused');
+  RESET ROLE;
+  -- An old phone stored with spaces round it comes back trimmed from a save (update_account trims): that is the same phone, not a change.
+  ALTER TABLE public.accounts DISABLE TRIGGER accounts_phone_valid;
+  INSERT INTO public.accounts (id, source, firm_id, owner_id, name, phone) VALUES ('00000000-0000-4000-8000-0000000000e2', 'added_by_hand', pg_temp.id('acme'), pg_temp.id('acme_owner'), 'Padded phone', ' call me ');
+  ALTER TABLE public.accounts ENABLE TRIGGER accounts_phone_valid;
+  PERFORM pg_temp.as_user('acme_owner');
+  r := public.update_account('00000000-0000-4000-8000-0000000000e2', 'Padded phone', NULL, NULL, ' call me ', NULL, NULL, NULL, NULL, 'Dental practice', NULL, '{}', NULL, pg_temp.id('acme'), 1);
+  PERFORM pg_temp.is(r ->> 'conflict', 'false', 'saving another field of an account whose old phone has spaces round it');
+  PERFORM pg_temp.is(r #>> '{record,phone}', 'call me', 'the phone comes back trimmed');
+  r := public.update_account('00000000-0000-4000-8000-0000000000e2', 'Padded phone', NULL, NULL, 'call me', NULL, NULL, NULL, NULL, 'Dentistry', NULL, '{}', NULL, pg_temp.id('acme'), 2);
+  PERFORM pg_temp.is(r ->> 'conflict', 'false', 'and again, from the trimmed phone');
   RESET ROLE;
   PERFORM pg_temp.is(pg_temp.attempt($q$UPDATE public.accounts SET industry = 'Raw' WHERE id = '00000000-0000-4000-8000-0000000000e1'$q$), 'rows:1', 'a raw update of another field');
   PERFORM pg_temp.is(pg_temp.attempt($q$UPDATE public.accounts SET phone = 'x' WHERE id = '00000000-0000-4000-8000-0000000000e1'$q$), '22023', 'but not a raw change of the phone to a bad one');
@@ -536,6 +549,66 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.check_account_phone()$q$), '42501', 'the phone check is internal');
   RESET ROLE;
   RAISE NOTICE 'create_account: grants passed';
+END $$;
+
+-- ---------- the owner chosen is still a member when the account is made (two real sessions) ----------
+-- Break caught: create_account checks that the chosen owner is a current member without holding that membership, so a removal that commits between the check and
+-- the insert leaves a new account owned by a former member. The making is seen WAITING on the removal's lock on the membership row, and when the removal has
+-- committed it is refused ("Choose one of the firm's people as the owner."): no account is made. This test removes acme_agent3, so it is the file's last.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+
+CREATE FUNCTION pg_temp.race_making(a_who text, a_stmt text, b_who text, b_stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; ra text; rb text;
+BEGIN
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L',
+    jsonb_build_object('sub', pg_temp.id(a_who), 'role', 'authenticated', 'is_anonymous', false, 'email', a_who || '@example.test')::text));
+  SELECT r INTO ra FROM race.dblink('ra', a_stmt) AS t(r text);
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L',
+    jsonb_build_object('sub', pg_temp.id(b_who), 'role', 'authenticated', 'is_anonymous', false, 'email', b_who || '@example.test')::text));
+  PERFORM race.dblink_send_query('rb', b_stmt);
+  WHILE tries < 80 LOOP
+    IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
+    IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('ra', 'COMMIT');
+  BEGIN
+    SELECT r INTO rb FROM race.dblink_get_result('rb') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN
+    rb := SQLSTATE || ': ' || SQLERRM;
+  END;
+  BEGIN PERFORM * FROM race.dblink_get_result('rb') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_exec('rb', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  RETURN CASE WHEN waited THEN 'waited' ELSE 'did not wait' END || '|' || coalesce(ra, '') || '|' || coalesce(rb, '');
+END $$;
+
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); n bigint := pg_temp.accounts_in('acme'); r text;
+BEGIN
+  r := pg_temp.race_making('acme_owner', format($q$SELECT public.remove_member(%L, %L)::text$q$, acme, pg_temp.id('acme_agent3')),
+                           'acme_owner', format($q$SELECT public.create_account('Race account', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, %L)::text$q$, pg_temp.id('acme_agent3'), acme));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the making for a person being removed is seen waiting for the removal');
+  PERFORM pg_temp.is(split_part(r, '|', 3), '22023: Choose one of the firm''s people as the owner.', 'and is refused once the removal has committed');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.accounts_in('acme'), n, 'so no account is owned by a former member');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE owner_id = pg_temp.id('acme_agent3') AND name = 'Race account'), 0::bigint, 'none at all');
+  RAISE NOTICE 'create_account: the owner race passed';
 END $$;
 
 SELECT 'create_account: all passed' AS result;

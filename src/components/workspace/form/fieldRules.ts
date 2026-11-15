@@ -74,4 +74,11 @@ export const dateRule = () =>
     }, "Enter a date like 2027-01-15.");
 
 /** A count that may be left empty: digits only. */
-export const wholeNumberRule = () => z.string().trim().refine((v) => v === "" || /^\d+$/.test(v), "Enter a whole number, like 45.");
+export const MOST_WHOLE_NUMBER = 2_147_483_647;
+export const wholeNumberRule = () =>
+  z
+    .string()
+    .trim()
+    .refine((v) => v === "" || /^\d+$/.test(v), "Enter a whole number, like 45.")
+    // The database keeps a count as an integer: anything bigger is said here, in words, not met as a failed save.
+    .refine((v) => !/^\d+$/.test(v) || BigInt(v) <= BigInt(MOST_WHOLE_NUMBER), "Enter a number up to 2,147,483,647.");
