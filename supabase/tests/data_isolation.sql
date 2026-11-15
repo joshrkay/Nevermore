@@ -1986,6 +1986,10 @@ BEGIN
   UPDATE public.chamber_certifications SET recorded_at = recorded_at - interval '30 years';
 END $$;
 
+-- CRM-A2.2: the fixture contacts of an owned account are the account owner's, so the member the probes run as may move one (the picker refuses a person who may
+-- not, in words); no other probe reads a contact's owner.
+UPDATE public.contacts c SET owner_id = a.owner_id FROM public.accounts a WHERE a.id = c.account_id AND a.owner_id IS NOT NULL;
+
 DO $$
 DECLARE
   f text;
@@ -3713,6 +3717,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('delete_account', 'firm_scoped', 'the same for deleting an account that has no opportunity, with its contacts, calls, notes and tasks (4e)'),
   ('change_account_owner', 'firm_scoped', 'the same for giving an account, and when asked its open opportunities the caller may change, to another current member (4e)'),
   ('accounts_can_change', 'firm_scoped', 'a current member of the firm the call acts for is told which of the given accounts they may change, by the level rule; another firm''s account is never named (4e)'),
+  ('contact_leave_error', 'service_only', 'the first two of move_contact''s three yeses, in words: the contact''s own level and the account it is on; asked by move_contact and contact_move_choices, no API role can call it'),
   ('account_to_change', 'service_only', 'the one start of those four: the firm''s account, held, after the may-see and level-rule questions; no API role can call it'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
 
