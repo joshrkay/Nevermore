@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { QuoteRequestRow } from "@/lib/advisorApi";
+import { goOffline, goOnline, restoreConnection } from "@/test/connection";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const setStatus = vi.fn();
@@ -52,5 +53,23 @@ describe("StatusPanel: marking a submission won", () => {
     expect(screen.queryByLabelText("Which quote did the employer take?")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Update status" }));
     await waitFor(() => expect(setStatus).toHaveBeenCalledWith("s1", "lost", ""));
+  });
+});
+
+// Without a connection (CRM-S2.4a, D-182): Update status can't be used, and says why.
+describe("StatusPanel: without a connection", () => {
+  afterEach(() => { restoreConnection(); });
+  it("makes Update status aria-disabled with the reason, and sends nothing", () => {
+    setStatus.mockReset();
+    panel([quote(7, "TriNet", "quoted")]);
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "ready_for_market" } });
+    goOffline();
+    const update = screen.getByRole("button", { name: "Update status" });
+    expect(update).toHaveAttribute("aria-disabled", "true");
+    expect(update).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+    fireEvent.click(update);
+    expect(setStatus).not.toHaveBeenCalled();
+    goOnline();
+    expect(screen.getByRole("button", { name: "Update status" })).not.toHaveAttribute("aria-disabled");
   });
 });

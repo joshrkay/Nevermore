@@ -4,8 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
 import type { RecordConflict } from "@/lib/recordVersion";
 import { useOnline } from "../useOnline";
-import { ConflictDialog, type ConflictField } from "./ConflictDialog";
+import { ConflictDialog } from "./ConflictDialog";
+import { conflictRows, type ConflictField } from "./conflictRows";
 import { failureWords } from "./failureWords";
+import { OFFLINE_SAVE_FAILED } from "./offline";
 import { useUnsavedChangesGuard } from "./useUnsavedChangesGuard";
 
 /**
@@ -23,21 +25,18 @@ export class SaveRefused extends Error {
  * Throw it from `save` when the database answers that someone else changed the record while the person was editing it (CRM-S2.4a, D-181). Nothing
  * was saved. The form does not show a failure: it opens the conflict dialog (see `conflictDialog`) with what was typed beside what is there now.
  */
-export class SaveConflict extends Error {
-  constructor(readonly conflict: RecordConflict<unknown>) {
+export class SaveConflict<Current = unknown> extends Error {
+  constructor(readonly conflict: RecordConflict<Current>) {
     super("Someone else changed this record while it was being edited.");
     this.name = "SaveConflict";
   }
 }
 
-/** What a form says when it is asked to save with no connection: nothing was sent. */
-export const OFFLINE_SAVE_FAILED = "You're offline, so this wasn't saved. Try again when you're back online. What you typed is still here.";
-/** Why Save is not usable with no connection (D-143: said where the button is, and tied to it). */
-export const OFFLINE_SAVE_REASON = "You're offline. Saving is back when you are.";
+export { OFFLINE_SAVE_FAILED, OFFLINE_SAVE_REASON } from "./offline";
 
 export interface Explained { message: string; field?: string }
 
-export interface WorkspaceFormOptions<S extends z.ZodTypeAny, R> {
+export interface WorkspaceFormOptions<S extends z.ZodTypeAny, R, Current = unknown> {
   schema: S;
   defaultValues: z.input<S>;
   /**
@@ -53,10 +52,17 @@ export interface WorkspaceFormOptions<S extends z.ZodTypeAny, R> {
   /** The version a successful save left the record at, taken from what `save` returned; the form starts from it afterwards. */
   versionOf?: (result: R) => number | undefined;
   /**
-   * Turns on the conflict dialog for a save that throws `SaveConflict`: what is being edited (`noun`, "partner") and how each field the record holds is
-   * named and shown. Without it a `SaveConflict` is a plain failed save.
+   * Turns on the conflict dialog for a save that throws `SaveConflict`: what is being edited (`noun`, "partner"), and how each of the form's fields is
+   * named and shown (`fields`, by the form's own field names, so a field added to the schema is a type error until it is named here). `toValues` turns
+   * the record's current editable fields, as the database answered them, into the form's values; leave it out when the record's keys ARE the form's field
+   * names (the partner's name and kind), give it when they are not. Each `changed` entry's `field` is read as a form field name, so a record whose
+   * keys differ must also answer its `changed` in the form's names. Without `conflictDialog` a `SaveConflict` is a plain failed save.
    */
-  conflictDialog?: { noun: string; fields: Record<string, ConflictField> };
+  conflictDialog?: {
+    noun: string;
+    fields: Record<keyof z.input<S> & string, ConflictField>;
+    toValues?: (current: Current) => Partial<z.input<S>>;
+  };
   /** Runs after a successful save, with what `save` returned. The form has been cleared (or set to `savedValues`) and asks nothing more about leaving. */
   onSaved?: (result: R, values: z.output<S>) => void;
   /** What the form is set to after a save. Default: back to `defaultValues`, which is what an "add" form wants. */
@@ -111,7 +117,7 @@ let formCount = 0;
  * and on save, focus to the first field in error, a failed save that keeps everything and says why, and the guard against
  * losing unsaved changes. Pair it with `WorkspaceForm`, `Field` and `FormActions`.
  */
-export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: WorkspaceFormOptions<S, R>): WorkspaceFormApi {
+export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown, Current = unknown>(options: WorkspaceFormOptions<S, R, Current>): WorkspaceFormApi {
   const { schema, defaultValues, save, onSaved, savedValues, explain, failureMessage = "Couldn't save. Check your connection and try again.", onCancel, versionOf, conflictDialog } = options;
   // Held with the form, not read from the options again: a list reload under an open form must not change what a save starts from. A ref beside
   // the state, so a save made in the same breath as `startFrom` ("Keep mine") already starts from the new version.
@@ -123,11 +129,16 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
   }, []);
   const online = useOnline();
   const saveButton = useRef<HTMLButtonElement>(null);
-  // A refused save the person has to decide about: what they typed (as it was when they pressed Save) and what the database answered.
-  const [conflict, setConflict] = useState<{ answer: RecordConflict<unknown>; mine: Record<string, unknown> } | null>(null);
-  // Where focus goes when the dialog has closed: the first field (Keep theirs), Save (Keep editing), or nowhere in particular (Keep mine closes the form).
+  // The form's values when this edit began (the defaults, then `begin`'s, then what a save left): what "the person changed this field" is measured from.
+  const baseline = useRef<Record<string, unknown>>(options.defaultValues as Record<string, unknown>);
+  // A refused save the person has to decide about: what they typed (as it was when they pressed Save), what the database answered (already in the form's
+  // values) and the fields the person had changed.
+  const [conflict, setConflict] = useState<{ answer: RecordConflict<Current>; mine: Record<string, unknown>; theirs: Record<string, unknown>; touched: string[] } | null>(null);
+  // Where focus goes when the dialog has closed: the first field (Keep theirs, Keep mine: a save is on its way and Save is busy), or Save (Keep editing).
   const focusAfter = useRef<"first-field" | "save" | null>(null);
-  const firstField = useRef<string | null>(null);
+  // "Keep mine" sends its one save from the version that holds their change, but that version is the form's own only if the save works.
+  const sendFrom = useRef<number | undefined>(undefined);
+  const firstField = () => Object.keys(baseline.current)[0];
   const form = useForm<FieldValues>({
     resolver: zodResolver(schema),
     defaultValues: defaultValues as FieldValues,
@@ -146,19 +157,27 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
       setSaveError(OFFLINE_SAVE_FAILED);
       return;
     }
+    const from = sendFrom.current ?? started.current;
+    const overridden = sendFrom.current !== undefined;
+    sendFrom.current = undefined;
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await save(values as z.output<S>, { version: started.current });
-      const next = versionOf?.(result);
+      const result = await save(values as z.output<S>, { version: from });
+      const next = versionOf?.(result) ?? (overridden ? from : undefined);
       if (next !== undefined) setStartedVersion(next);
       guard.release();
-      form.reset((savedValues ? savedValues(result, values as z.output<S>) : defaultValues) as FieldValues);
+      const after = (savedValues ? savedValues(result, values as z.output<S>) : defaultValues) as FieldValues;
+      baseline.current = after;
+      form.reset(after);
       onSaved?.(result, values as z.output<S>);
     } catch (error) {
       if (error instanceof SaveConflict && conflictDialog) {
-        firstField.current = Object.keys(error.conflict.current as object)[0] ?? null;
-        setConflict({ answer: error.conflict, mine: { ...values } });
+        const answer = error.conflict as RecordConflict<Current>;
+        const mine = { ...values } as Record<string, unknown>;
+        const theirs = (conflictDialog.toValues ? conflictDialog.toValues(answer.current) : answer.current) as Record<string, unknown>;
+        const touched = Object.keys(mine).filter((f) => JSON.stringify(mine[f] ?? null) !== JSON.stringify(baseline.current[f] ?? null));
+        setConflict({ answer, mine, theirs, touched });
         return;
       }
       const said = explain?.(error) ?? wordsOf(error, failureMessage);
@@ -172,6 +191,7 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
   const requestClose = guard.ask;
   const cancel = onCancel
     ? () => guard.ask(() => {
+        baseline.current = defaultValues as Record<string, unknown>;
         form.reset(defaultValues as FieldValues);
         setSaveError(null);
         onCancel();
@@ -187,24 +207,35 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
   };
 
   const begin = useCallback((values: FieldValues, version: number | undefined) => {
+    baseline.current = values;
     form.reset(values);
     setSaveError(null);
     setStartedVersion(version);
   }, [form, setStartedVersion]);
 
-  // The three ways out of the conflict dialog. Each is one deliberate choice, and none runs twice.
+  // The three ways out of the conflict dialog. Each is one deliberate choice, none runs twice, and none is all or nothing: a field only one side changed
+  // keeps that side's change.
   const keepMine = () => {
-    if (!conflict) return;
-    focusAfter.current = null;
+    if (!conflict || !navigator.onLine) return;
+    // What the person left alone takes THEIR value (putting the old one back would undo their change unseen); what the person changed is sent as typed.
+    const alone = Object.keys(conflict.theirs).filter((f) => !conflict.touched.includes(f));
+    for (const f of alone) form.setValue(f, conflict.theirs[f]);
+    baseline.current = { ...baseline.current, ...Object.fromEntries(alone.map((f) => [f, conflict.theirs[f]])) };
+    focusAfter.current = "first-field";
+    sendFrom.current = conflict.answer.currentVersion;
     setConflict(null);
-    setStartedVersion(conflict.answer.currentVersion);
-    void submit(); // what is typed is still in the form: it is saved again over their change, from the version that holds it
+    // The one save starts from the version that holds their change; the form's own version moves only if it works (a failed one leaves the next Save to
+    // find the conflict again). `sendFrom` is dropped if the save was never made (the form's own checks refused it).
+    void submit().finally(() => { sendFrom.current = undefined; });
   };
   const keepTheirs = () => {
     if (!conflict) return;
+    const theirChange = conflict.answer.changed.map((c) => c.field).filter((f) => f in conflict.theirs);
+    // Their values for the fields they changed, and the start moves to their version; whatever else the person typed is typed again over it.
+    begin({ ...baseline.current, ...Object.fromEntries(theirChange.map((f) => [f, conflict.theirs[f]])) }, conflict.answer.currentVersion);
+    for (const f of conflict.touched) if (!theirChange.includes(f)) form.setValue(f, conflict.mine[f], { shouldDirty: true });
     focusAfter.current = "first-field";
     setConflict(null);
-    begin(conflict.answer.current as FieldValues, conflict.answer.currentVersion);
   };
   const keepEditing = () => {
     if (!conflict) return;
@@ -215,16 +246,15 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
     const where = focusAfter.current;
     focusAfter.current = null;
     if (where === "save") saveButton.current?.focus();
-    else if (where === "first-field" && firstField.current) form.setFocus(firstField.current);
+    else if (where === "first-field" && firstField()) form.setFocus(firstField());
     // The dialog took focus when it opened, and what it was on is gone: left to the browser focus would fall to the page, so say we handled it.
     return true;
   };
   const dialog = conflict && conflictDialog ? (
     <ConflictDialog
       noun={conflictDialog.noun}
-      fields={conflictDialog.fields}
-      mine={conflict.mine}
-      changed={conflict.answer.changed}
+      rows={conflictRows(conflictDialog.fields, baseline.current, conflict.mine, conflict.theirs, conflict.answer.changed)}
+      offline={!online}
       onKeepMine={keepMine}
       onKeepTheirs={keepTheirs}
       onKeepEditing={keepEditing}

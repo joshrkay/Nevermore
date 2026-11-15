@@ -51,7 +51,8 @@ export const WorkspaceForm = ({ api, children, actions, className, ...aria }: {
 
 /**
  * Save, Cancel (when the form has one) and, beside them, what failed in plain words. Save is never disabled to point at an
- * error: it is disabled only while a save is in flight, and then it says so ("Saving…").
+ * error. It is `disabled` only while a save is in flight, and then it says so ("Saving…"); with no connection it is `aria-disabled`
+ * (in the tab order, the click ignored) with the reason beside it and as its description (CRM-S2.4a, D-182, D-143).
  */
 export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", cancelLabel = "Cancel", className }: {
   submitLabel?: string;

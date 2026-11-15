@@ -30,9 +30,11 @@ import {
   updateReferralPartner,
   type MemberFirm,
   type ReferralPartner,
+  type ReferralPartnerFields,
 } from "@/lib/advisorApi";
 import { ExportButton, type ExportColumnSpec } from "@/components/workspace/export";
 import { LoadFailed } from "@/components/workspace/states";
+import { isConflict } from "@/lib/recordVersion";
 
 type Counts = Map<string, { started: number; certified: number }>;
 type Load =
@@ -317,7 +319,7 @@ const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: Re
   const [saved, setSaved] = useState<ReferralPartner | null>(null);
   const partner = saved && saved.version >= listed.version ? saved : listed;
   const link = partnerLink(partner.code);
-  const api = useWorkspaceForm({
+  const api = useWorkspaceForm<typeof partnerSchema, SavedPartner, ReferralPartnerFields>({
     schema: partnerSchema,
     defaultValues: { name: partner.name, kind: partner.kind },
     version: partner.version,
@@ -327,11 +329,11 @@ const PartnerRow = ({ partner: listed, counts, links, onChanged }: { partner: Re
       if (started.version === undefined) throw new SaveRefused("Couldn't save the partner. Reload the page and try again.");
       const answer = await updateReferralPartner(partner.firm_id, partner.code, v.name, v.kind, started.version);
       // Nothing was saved: the form opens the conflict dialog (what was typed beside what is there now), and the person chooses.
-      if (!("partner" in answer)) throw new SaveConflict(answer);
+      if (isConflict(answer)) throw new SaveConflict(answer);
       toast.success("Partner saved");
       return answer.partner;
     },
-    conflictDialog: { noun: "partner", fields: CONFLICT_FIELDS },
+    conflictDialog: { noun: "partner", fields: CONFLICT_FIELDS, toValues: (current) => ({ name: current.name, kind: current.kind }) },
     savedValues: (_, v) => v,
     onSaved: (answer) => {
       setSaved(answer);

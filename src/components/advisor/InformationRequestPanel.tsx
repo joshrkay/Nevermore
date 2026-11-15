@@ -12,7 +12,7 @@ import {
 } from "@/data/advisor";
 import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
 import { parseExtraQuestionRefs, type ExtraQuestionRef } from "@/data/extraAnswers";
-import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { requestInformation, type InformationRequestRow } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
@@ -84,6 +84,7 @@ const InformationRequestPanel = ({
   };
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The request wasn't sent. Check your connection and try again. What you typed is still here.");
+  const offlineSave = useOfflineSave();
   const sendButton = useRef<HTMLButtonElement>(null);
   const blocked = informationRequestBlockedReason(status, certifiedOnce, intakeStatus);
   const others = REQUESTABLE_FIELDS.filter((f) => !fields.includes(f));
@@ -198,9 +199,12 @@ const InformationRequestPanel = ({
           )}
 
           <SaveFailed message={failure.message} returnFocusTo={sendButton} />
+
+          {offlineSave.reason}
           <button
             ref={sendButton}
-            onClick={send}
+            onClick={offlineSave.guard(send)}
+            {...offlineSave.buttonProps}
             disabled={saving || message.trim() === ""}
             className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >

@@ -132,7 +132,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       {typeof toolbar === "function" ? toolbar({ loading: loadingNow, slowLine }) : <>{toolbar}{slowLine}</>}
       {views}
       {notice && <p role="status" className="mb-3 text-sm text-muted-foreground">{notice}</p>}
-      {refreshFailed && <RefreshFailed what={`the ${table.noun.plural}`} onRetry={data.retry} retrying={data.isRetrying} />}
+      <RefreshFailed what={`the ${table.noun.plural}`} failed={refreshFailed} onRetry={data.retry} retrying={data.isRetrying} />
       {failure ? (
         refusal ? (
           <div role="alert" className="border border-border rounded-xl p-6 text-center">

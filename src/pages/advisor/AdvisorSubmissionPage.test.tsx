@@ -8,6 +8,7 @@ import type { Supplement } from "@/data/peoSupplement";
 import { workersCompFilename, type WorkersCompApplication } from "@/data/workersCompApplication";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
+import { goOffline, goOnline, restoreConnection } from "@/test/connection";
 import { blobBytes, blobText } from "@/test/blob";
 import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
 import { unzip } from "@/test/zip";
@@ -388,6 +389,69 @@ describe("AdvisorSubmissionPage", () => {
       expect(screen.getByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
       expect(slowLine()).not.toBeInTheDocument();
       expect(screen.queryByText(/Loading submission/)).not.toBeInTheDocument();
+    });
+  });
+
+  // Without a connection (CRM-S2.4a, D-182, D-143): a panel that saves from a button of its own says why the button can't be used, as a form's Save does.
+  describe("without a connection", () => {
+    afterEach(() => { restoreConnection(); });
+    const reasonOf = (b: HTMLElement) => expect(b).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+
+    it("makes Add note and Mark as needing advisor action aria-disabled with the reason, sends nothing, and gives them back when the connection is", async () => {
+      renderPage();
+      const notes = await panelOf("Internal notes");
+      fireEvent.change(within(notes).getByLabelText("New note"), { target: { value: "Called the CFO" } });
+      const needs = await panelOf("Needs advisor action");
+      goOffline();
+      const add = within(notes).getByRole("button", { name: "Add note" });
+      expect(add).toHaveAttribute("aria-disabled", "true");
+      reasonOf(add);
+      fireEvent.click(add);
+      const mark = within(needs).getByRole("button", { name: "Mark as needing advisor action" });
+      expect(mark).toHaveAttribute("aria-disabled", "true");
+      reasonOf(mark);
+      fireEvent.click(mark);
+      expect(api.addNote).not.toHaveBeenCalled();
+      expect(api.setNeedsAction).not.toHaveBeenCalled();
+      expect(within(notes).getByLabelText("New note")).toHaveValue("Called the CFO");
+      goOnline();
+      expect(within(notes).getByRole("button", { name: "Add note" })).not.toHaveAttribute("aria-disabled");
+      expect(within(needs).getByRole("button", { name: "Mark as needing advisor action" })).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("does the same for Send request to the prospect and for the packet's Generate", async () => {
+      renderPage();
+      const panel = await panelOf("Ask the prospect");
+      fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Which payroll vendor?" } });
+      goOffline();
+      const send = within(panel).getByRole("button", { name: "Send request" });
+      expect(send).toHaveAttribute("aria-disabled", "true");
+      reasonOf(send);
+      fireEvent.click(send);
+      expect(api.requestInformation).not.toHaveBeenCalled();
+    });
+
+    it("does the same for the packet's Regenerate and a field's review buttons, and generates nothing", async () => {
+      api.loadSubmission.mockResolvedValue(detail({
+        versions: [{
+          id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
+          certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
+          sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
+        }],
+      }));
+      renderPage();
+      const generate = await screen.findByRole("button", { name: /Regenerate as new version|Generate packet/ });
+      goOffline();
+      expect(generate).toHaveAttribute("aria-disabled", "true");
+      reasonOf(generate);
+      fireEvent.click(generate);
+      expect(api.saveManuscriptVersion).not.toHaveBeenCalled();
+      const review = screen.getAllByRole("group", { name: /^Review / })[0];
+      const verify = within(review).getAllByRole("button")[0];
+      expect(verify).toHaveAttribute("aria-disabled", "true");
+      reasonOf(verify);
+      fireEvent.click(verify);
+      expect(api.reviewField).not.toHaveBeenCalled();
     });
   });
 

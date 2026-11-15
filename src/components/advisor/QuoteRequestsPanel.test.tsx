@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { QuoteRequestAddressRow, QuoteRequestEventRow, QuoteRequestNoteRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
+import { goOffline, goOnline, restoreConnection } from "@/test/connection";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { PeoRecord } from "@/data/peoCatalog";
 import { parsePeoCatalog } from "@/data/peoProfiles";
@@ -141,6 +142,21 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "  Regional HR Co  " } });
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
     await waitFor(() => expect(api.recordQuoteSend).toHaveBeenLastCalledWith("s1", "Regional HR Co", "2026-11-09"));
+  });
+
+  // Without a connection (CRM-S2.4a, D-182): Record send can't be used, and says why.
+  it("makes Record send aria-disabled with the reason when there is no connection, and records nothing", () => {
+    panel({ status: "ready_for_market", requests: [] });
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "Insperity" } });
+    goOffline();
+    const record = screen.getByRole("button", { name: "Record send" });
+    expect(record).toHaveAttribute("aria-disabled", "true");
+    expect(record).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+    fireEvent.click(record);
+    expect(api.recordQuoteSend).not.toHaveBeenCalled();
+    goOnline();
+    expect(screen.getByRole("button", { name: "Record send" })).not.toHaveAttribute("aria-disabled");
+    restoreConnection();
   });
 
   it("offers the PEOs the database lists, alphabetically as given, and only those", () => {

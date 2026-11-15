@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
-import { failureWords, SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { failureWords, SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
 import { hasNewMail } from "@/data/mailThread";
 import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
@@ -65,6 +65,7 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
   const [note, setNote] = useState(request.note ?? "");
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The answer wasn't saved. Check your connection and try again. What you typed is still here.");
+  const offlineSave = useOfflineSave();
   const answerButton = useRef<HTMLButtonElement>(null);
   const quoted = status === "quoted";
 
@@ -112,8 +113,9 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
       <textarea id={`${id}-note`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} rows={2} className={inputClass} />
       <SaveFailed message={failure.message} returnFocusTo={answerButton} className="text-xs" />
+      {offlineSave.reason}
       <div className="flex gap-2">
-        <button ref={answerButton} onClick={save} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
+        <button ref={answerButton} onClick={offlineSave.guard(save)} {...offlineSave.buttonProps} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save answer
         </button>
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
@@ -131,6 +133,7 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The new address wasn't issued. Check your connection and try again.");
+  const offlineSave = useOfflineSave();
   const issueButton = useRef<HTMLButtonElement>(null);
   const copy = async () => {
     try {
@@ -169,13 +172,14 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
           <div role="alert" className="text-xs space-y-1">
             <p>Issue a new address? Mail sent to this one will no longer reach this quote request, so {request.peo_name} has to be given the new one.</p>
             <div className="flex gap-2">
-              <button ref={issueButton} onClick={reissue} disabled={saving} className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50">
+              <button ref={issueButton} onClick={offlineSave.guard(reissue)} {...offlineSave.buttonProps} disabled={saving} className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50">
                 {saving && <Loader2 className="w-3 h-3 animate-spin" />} Issue a new address
               </button>
               <button onClick={() => setConfirming(false)} className="px-2 py-1 rounded-md border border-border">Keep this one</button>
             </div>
           </div>
           <SaveFailed message={failure.message} returnFocusTo={issueButton} className="text-xs" />
+          {offlineSave.reason}
         </>
       ) : (
         <button onClick={() => setConfirming(true)} className="text-xs text-primary underline">Revoke and issue a new address</button>
@@ -195,6 +199,7 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
   const [body, setBody] = useState(note?.body ?? "");
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The note wasn't saved. Check your connection and try again. What you typed is still here.");
+  const offlineSave = useOfflineSave();
   const noteButton = useRef<HTMLButtonElement>(null);
   const save = async () => {
     setSaving(true);
@@ -228,8 +233,9 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
             : "A note leaves the quote request's status as it is."}
       </p>
       <SaveFailed message={failure.message} returnFocusTo={noteButton} className="text-xs" />
+      {offlineSave.reason}
       <div className="flex gap-2">
-        <button ref={noteButton} onClick={save} disabled={saving || body.trim() === "" || !notedOn} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
+        <button ref={noteButton} onClick={offlineSave.guard(save)} {...offlineSave.buttonProps} disabled={saving || body.trim() === "" || !notedOn} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} {note ? "Save correction" : "Save note"}
         </button>
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
@@ -249,6 +255,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   const [sentOn, setSentOn] = useState(localToday);
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The send wasn't recorded. Check your connection and try again.");
+  const offlineSave = useOfflineSave();
   const sendButton = useRef<HTMLButtonElement>(null);
   // The pipeline step offered after a send or a quote, until the advisor takes it or says not now.
   const [offer, setOffer] = useState<PipelineStatus | null>(null);
@@ -455,9 +462,11 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         <label htmlFor="quote-sent-on" className="block text-xs text-muted-foreground">Sent on</label>
         <input id="quote-sent-on" type="date" value={sentOn} onChange={(e) => setSentOn(e.target.value)} className={inputClass} />
         <SaveFailed message={failure.message} returnFocusTo={sendButton} className="text-xs" />
+        {offlineSave.reason}
         <button
           ref={sendButton}
-          onClick={send}
+          onClick={offlineSave.guard(send)}
+          {...offlineSave.buttonProps}
           disabled={saving || !peo || !sentOn}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
         >

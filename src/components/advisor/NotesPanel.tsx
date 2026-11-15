@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { addNote, type AdvisorNote } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
@@ -9,6 +9,7 @@ const NotesPanel = ({ sessionId, notes, onAdded }: { sessionId: string; notes: A
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The note wasn't saved. Check your connection and try again. What you typed is still here.");
+  const offlineSave = useOfflineSave();
   const addButton = useRef<HTMLButtonElement>(null);
 
   const save = async () => {
@@ -41,9 +42,11 @@ const NotesPanel = ({ sessionId, notes, onAdded }: { sessionId: string; notes: A
         className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
       />
       <SaveFailed message={failure.message} returnFocusTo={addButton} />
+      {offlineSave.reason}
       <button
         ref={addButton}
-        onClick={save}
+        onClick={offlineSave.guard(save)}
+        {...offlineSave.buttonProps}
         disabled={saving || !body.trim()}
         className="flex items-center gap-2 border border-border text-sm px-3 py-1.5 rounded-md hover:bg-muted disabled:opacity-50"
       >

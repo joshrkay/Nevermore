@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import {
   isPipelineStatus,
   nextPipelineStatuses,
@@ -42,6 +42,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The status wasn't changed. Check your connection and try again. What you typed is still here.");
+  const offlineSave = useOfflineSave();
   const updateButton = useRef<HTMLButtonElement>(null);
   const [winner, setWinner] = useState("");
   const quoted = quoteRequests.filter((q) => q.status === "quoted");
@@ -136,9 +137,11 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
           className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
         />
         <SaveFailed message={failure.message} returnFocusTo={updateButton} />
+        {offlineSave.reason}
         <button
           ref={updateButton}
-          onClick={save}
+          onClick={offlineSave.guard(save)}
+          {...offlineSave.buttonProps}
           disabled={saving || next === status || needsWinner}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
         >
