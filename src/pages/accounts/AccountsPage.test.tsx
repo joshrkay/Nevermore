@@ -71,7 +71,7 @@ const second = row({
   quote_requests_sent: 0, quotes_received: 0, waiting_on_peo: false, last_activity_at: "2026-11-01T10:00:00Z",
 });
 
-const ShowId = () => <p>Account page for {useParams().id}</p>;
+const ShowId = () => <p>Account page for {useParams().id}{useLocation().search}</p>;
 const LocationProbe = () => <p data-testid="location">{useLocation().search}</p>;
 const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
   render(
@@ -564,7 +564,7 @@ describe("the Accounts page: New account", () => {
 
   // Catches: a field of screen 23 missing or worded differently, "Save and add a contact" shown before the contact form exists (CRM-A2.2), the renewal date and the
   // firm's own fields shown before their stories (D-186), or the maker not the owner by default (D-214).
-  it("opens the form with the story's fields, the person as the owner, and no button for what is not built", async () => {
+  it("opens the form with the story's fields, the person as the owner, and Save and add a contact", async () => {
     const { dialog } = await open();
     for (const label of ["Account name", "Trade name", "Website", "Phone", "Street", "City", "State", "ZIP", "Industry", "Employees", "States of operation", "Current PEO or payroll provider", "Owner"]) {
       expect(within(dialog).getByLabelText(label)).toBeInTheDocument();
@@ -574,7 +574,7 @@ describe("the Accounts page: New account", () => {
     expect(within(dialog).getByRole("option", { name: "Dana Reyes" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Save account" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: /Save and add a contact/ })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save and add a contact" })).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Renewal date")).not.toBeInTheDocument();
   });
 
@@ -632,6 +632,39 @@ describe("the Accounts page: New account", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save account" }));
     await waitFor(() => expect(createAccount).toHaveBeenCalled());
     expect(createAccount.mock.calls[0][1]).toMatchObject({ name: "Name only", ownerId: "u1" });
+  });
+
+  // Catches: "Save and add a contact" (CRM-A1.2) only saving, so the person lands on the account with nothing open; or the contact form opening after a plain Save.
+  it("saves and opens the new account with the contact form asked for, and a plain Save does not ask for it", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    await user.click(within(dialog).getByRole("button", { name: "Save and add a contact" }));
+    expect(await screen.findByText("Account page for a9?addContact=1")).toBeInTheDocument();
+    expect(createAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask for the contact form after a plain Save, even when Save and add a contact was tried first and failed to validate", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("button", { name: "Save and add a contact" }));
+    expect(await within(dialog).findByText("Enter the account's name.")).toBeInTheDocument();
+    expect(createAccount).not.toHaveBeenCalled();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East");
+    await user.click(within(dialog).getByRole("button", { name: "Save account" }));
+    expect(await screen.findByText("Account page for a9")).toBeInTheDocument();
+  });
+
+  // Catches: "Save and add a contact" pressed on a form that fails its checks leaving the second action armed, so Enter after the correction opens the contact form
+  // when the person meant Save account.
+  it("does not keep Save and add a contact armed after a failed check: Enter then saves and only opens the account", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("button", { name: "Save and add a contact" }));
+    expect(await within(dialog).findByText("Enter the account's name.")).toBeInTheDocument();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East{enter}");
+    expect(await screen.findByText("Account page for a9")).toBeInTheDocument();
   });
 
   // Catches: the Owner choice offering a person the database will refuse (an agent anyone but themselves, a lead anyone outside their teams), as it did when it

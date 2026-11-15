@@ -5,3 +5,4 @@ export { choiceRule, dateRule, emailRule, nameRule, optionalEmailRule, phoneRule
 export { DID_NOT_GO_THROUGH, failureWords, useSaveFailure } from "./failureWords";
 export { SaveFailed } from "./SaveFailed";
 export { ConflictDialog, type ConflictDialogProps, type ConflictField } from "./ConflictDialog";
+export { useAlternateFlag, useAlternateSave } from "./alternateSave";
