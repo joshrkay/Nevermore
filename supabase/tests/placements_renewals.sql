@@ -968,3 +968,148 @@ BEGIN
   -- an account with none
   PERFORM pg_temp.is(pg_temp.renewals_of('acme_agent1', 'rd_empty')::jsonb, jsonb_build_object('count', 0, 'rows', '[]'::jsonb, 'can_change', true), 'an account with no renewal: none, to add one');
 END $$;
+
+
+-- ---------- the accounts table: the Renewal column, the "Renewing in 120 days" view and Former client (D-450, D-451) ----------
+-- The page's calls, as acme's owner (who sees every account of the firm) unless a person is named.
+CREATE FUNCTION pg_temp.list_rows(who text, p_filters jsonb, p_sort text DEFAULT NULL, p_dir text DEFAULT 'asc') RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  r := pg_temp.as_call(who, pg_temp.addr(who), format('SELECT (public.accounts_list(%L, %L, %L, %L, 1, NULL, ''UTC'') -> ''rows'')::text', pg_temp.fid(who), p_filters, p_sort, p_dir));
+  IF pg_temp.code(r) <> 'ok' THEN RAISE EXCEPTION 'the list was refused: %', r; END IF;
+  RETURN r::jsonb;
+END $$;
+-- One row of a list by the account's name.
+CREATE FUNCTION pg_temp.row_named(j jsonb, n text) RETURNS jsonb LANGUAGE sql AS $$ SELECT e.value FROM jsonb_array_elements(j) e WHERE e.value ->> 'name' = n $$;
+CREATE FUNCTION pg_temp.names_of(j jsonb) RETURNS text LANGUAGE sql AS $$ SELECT COALESCE(string_agg(e.value ->> 'name', ',' ORDER BY e.value ->> 'name'), '') FROM jsonb_array_elements(j) e $$;
+CREATE FUNCTION pg_temp.dates_of(j jsonb) RETURNS text LANGUAGE sql AS $$
+  SELECT COALESCE(string_agg(COALESCE(e.value ->> 'renewal_date', '-'), ',' ORDER BY e.ord), '') FROM jsonb_array_elements(j) WITH ORDINALITY e(value, ord)
+$$;
+
+-- Break caught: the Renewal column is the farthest, not the nearest, renewal; counts a renewal that is done (marked not renewed, or renewed by a win); has no
+-- day for an account with none; a status the page does not know ("former_client") is answered as nothing.
+DO $$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.account('rv_in30', 'acme', 'acme_agent1');   PERFORM pg_temp.add_renewal('acme_agent1', 'rv_in30', 'current_plan', 'Aetna', current_date + 30);
+  PERFORM pg_temp.account('rv_120', 'acme', 'acme_agent1');    PERFORM pg_temp.add_renewal('acme_agent1', 'rv_120', 'current_plan', 'Aetna', current_date + 120);
+  PERFORM pg_temp.account('rv_121', 'acme', 'acme_agent1');    PERFORM pg_temp.add_renewal('acme_agent1', 'rv_121', 'current_plan', 'Aetna', current_date + 121);
+  PERFORM pg_temp.account('rv_over', 'acme', 'acme_agent1');   PERFORM pg_temp.add_renewal('acme_agent1', 'rv_over', 'current_plan', 'Aetna', current_date - 5);
+  PERFORM pg_temp.account('rv_nr', 'acme', 'acme_agent1');     r := pg_temp.add_renewal('acme_agent1', 'rv_nr', 'peo_placement', 'Gusto', current_date + 10);
+  INSERT INTO fx VALUES ('rv_nr1', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.didnt('acme_agent1', 'rv_nr1', current_date + 10, 1);
+  PERFORM pg_temp.account('rv_two', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'rv_two', 'current_plan', 'Aetna', current_date + 30);  INSERT INTO fx VALUES ('rv_two1', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.add_renewal('acme_agent1', 'rv_two', 'current_plan', 'Cigna', current_date + 90);
+  PERFORM pg_temp.didnt('acme_agent1', 'rv_two1', current_date + 30, 1);
+  PERFORM pg_temp.account('rv_won', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'rv_won', 'current_plan', 'Aetna', current_date + 20);  INSERT INTO fx VALUES ('rv_won1', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.intake('rv_won_i', 'acme'); PERFORM pg_temp.opportunity('rv_won_o', 'rv_won', 'acme_agent1', 'rv_won_i'); PERFORM pg_temp.move('rv_won_i', 'won');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('rv_won_o') WHERE id = pg_temp.id('rv_won1');
+  PERFORM pg_temp.account('rv_arch', 'acme', 'acme_agent1');   PERFORM pg_temp.add_renewal('acme_agent1', 'rv_arch', 'current_plan', 'Aetna', current_date + 10);
+  UPDATE public.accounts SET archived_at = now() WHERE id = pg_temp.id('rv_arch');
+  PERFORM pg_temp.account('rv_none', 'acme', 'acme_agent1');
+END $$;
+
+DO $$
+DECLARE j jsonb := pg_temp.list_rows('acme_owner', '[]');
+BEGIN
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_in30') ->> 'renewal_date', to_char(current_date + 30, 'YYYY-MM-DD'), 'an account''s Renewal is its renewal''s date');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_two') ->> 'renewal_date', to_char(current_date + 90, 'YYYY-MM-DD'), 'the nearest renewal NOT DONE: the one marked "Didn''t renew" is passed over');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_nr') ->> 'renewal_date', NULL::text, 'an account whose only renewal was marked "Didn''t renew" has none');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_won') ->> 'renewal_date', NULL::text, 'nor one renewed by a win (its opportunity is Won)');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_none') ->> 'renewal_date', NULL::text, 'an account with none has none');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rd') ->> 'renewal_date', to_char(current_date - 12, 'YYYY-MM-DD'), 'an overdue renewal not done is the nearest (it is the earliest)');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_nr') ->> 'status', 'former_client', 'the row carries the status a former client has');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_in30') ->> 'status', 'prospect', 'a current plan''s renewal is no client');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rd') ->> 'status', 'client', 'a running placement is a client');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(j) e WHERE e.value ->> 'status' IS DISTINCT FROM public.account_status((e.value ->> 'id')::uuid)), 0::bigint, 'every row''s status is account_status''s');
+END $$;
+
+-- Break caught: the view is not "within 120 days": 121 days is in or 120 is out; leaves out the overdue; has the done ones (a renewal not done is the rule,
+-- D-450); has an archived account (an archived account leaves every view but Archived); is not sorted by that date, soonest first; is another firm's.
+DO $$
+DECLARE
+  view_filters jsonb := '[{"field":"renewing_in_120_days","op":"is","value":true}]';
+  j jsonb := pg_temp.list_rows('acme_owner', view_filters, 'renewal_date', 'asc');
+  expected_names text; expected_dates text;
+BEGIN
+  SELECT string_agg(a.name, ',' ORDER BY a.name), string_agg(m.d::text, ',' ORDER BY m.d) INTO expected_names, expected_dates
+  FROM public.accounts a
+  JOIN LATERAL (
+    SELECT min(r.renews_on) AS d FROM public.renewals r
+    WHERE r.account_id = a.id AND r.not_renewed_on IS NULL AND (r.opportunity_id IS NULL OR public.opportunity_stage(r.opportunity_id) <> 'won')) m ON true
+  WHERE a.firm_id = pg_temp.id('acme') AND a.archived_at IS NULL AND m.d <= current_date + 120;
+  PERFORM pg_temp.is(pg_temp.names_of(j), expected_names, 'the view is the accounts with a renewal not done within the next 120 days');
+  PERFORM pg_temp.is(pg_temp.dates_of(j), expected_dates, 'soonest first, the overdue first of all');
+  PERFORM pg_temp.is(pg_temp.dates_of(j) LIKE to_char(current_date - 12, 'YYYY-MM-DD') || ',%', true, 'an overdue renewal is in, first');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_120') IS NOT NULL, true, 'exactly 120 days away is in');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_121') IS NOT NULL, false, '121 is not');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_over') IS NOT NULL, true, 'overdue by 5 days is in');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_nr') IS NOT NULL, false, 'one marked "Didn''t renew" has left it');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_won') IS NOT NULL, false, 'and one renewed by a win');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_arch') IS NOT NULL, false, 'an archived account is in no view');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_two') IS NOT NULL, true, 'an account whose first renewal is done and second is 90 days away is in');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'z1') IS NOT NULL, false, 'another firm''s accounts never');
+  PERFORM pg_temp.is(pg_temp.dates_of(pg_temp.list_rows('acme_owner', view_filters, 'renewal_date', 'desc')),
+    (SELECT string_agg(d, ',' ORDER BY d DESC) FROM unnest(string_to_array(expected_dates, ',')) d), 'and the same rows latest first');
+  -- the undo brings it back to the column and the view; marking takes it out (D-451)
+  PERFORM pg_temp.undo('acme_agent1', 'rv_nr1', pg_temp.ver('rv_nr1'));
+  j := pg_temp.list_rows('acme_owner', view_filters, 'renewal_date', 'asc');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_nr') ->> 'renewal_date', to_char(current_date + 10, 'YYYY-MM-DD'), 'undoing "Didn''t renew" brings the renewal back to the column');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_nr') IS NOT NULL, true, 'and to the view');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rv_nr') ->> 'status', 'client', 'and the account to a client');
+  PERFORM pg_temp.didnt('acme_agent1', 'rv_nr1', current_date + 10, pg_temp.ver('rv_nr1'));
+  PERFORM pg_temp.is(pg_temp.row_named(pg_temp.list_rows('acme_owner', view_filters, 'renewal_date', 'asc'), 'rv_nr') IS NOT NULL, false, 'and marking it again takes it out');
+END $$;
+
+-- Break caught: the view's count (its tab) disagrees with its list; sorting by the Renewal puts accounts with none first; the Renewal can't be filtered as a
+-- date; "Former client" can't be filtered or chosen; the view is shown to a person who may not see the account (an agent sees the view of their own accounts).
+DO $$
+DECLARE
+  view_filters jsonb := '[{"field":"renewing_in_120_days","op":"is","value":true}]';
+  n bigint; j jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  n := (SELECT total FROM public.accounts_view_counts(pg_temp.id('acme'), jsonb_build_array(jsonb_build_object('name', 'Renewing', 'filters', view_filters))));
+  RESET ROLE;
+  PERFORM pg_temp.is(n, jsonb_array_length(pg_temp.list_rows('acme_owner', view_filters))::bigint, 'the view''s count is its list''s length');
+  -- sorted by the Renewal: those with none last, in both directions
+  j := pg_temp.list_rows('acme_owner', '[]', 'renewal_date', 'asc');
+  PERFORM pg_temp.is(pg_temp.dates_of(j) ~ '^[0-9-]+(,[0-9-]+)*$', true, 'sorted by the Renewal');
+  PERFORM pg_temp.is(pg_temp.dates_of(j) ~ ',-(,-)*$', true, 'ascending, accounts with no renewal come last');
+  PERFORM pg_temp.is(pg_temp.dates_of(pg_temp.list_rows('acme_owner', '[]', 'renewal_date', 'desc')) ~ ',-(,-)*$', true, 'and descending too');
+  PERFORM pg_temp.is((string_to_array(pg_temp.dates_of(j), ','))[1], to_char(current_date - 12, 'YYYY-MM-DD'), 'the earliest first');
+  -- the Renewal is a date field: filtered like any other
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_owner', '[{"field":"renewal_date","op":"in_next_days","value":35}]')),
+    (SELECT string_agg(a.name, ',' ORDER BY a.name) FROM public.accounts a
+     JOIN LATERAL (SELECT min(r.renews_on) AS d FROM public.renewals r WHERE r.account_id = a.id AND r.not_renewed_on IS NULL
+                   AND (r.opportunity_id IS NULL OR public.opportunity_stage(r.opportunity_id) <> 'won')) m ON true
+     WHERE a.firm_id = pg_temp.id('acme') AND a.archived_at IS NULL AND m.d BETWEEN current_date AND current_date + 35),
+    'a filter on the Renewal date keeps the accounts whose nearest renewal not done falls in it');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_owner', 'acme-brokers', format('SELECT public.accounts_list(%L, %L)::text', pg_temp.id('acme'), '[{"field":"renewal_date","op":"is_empty"}]'))), '22023',
+    'a date has no is_empty filter, as no other date does');
+END $$;
+
+-- Break caught: a former client can't be filtered or told apart in the Status choices; the view lists accounts the caller may not see; the export writes no
+-- words for the new status.
+DO $$
+DECLARE
+  view_filters jsonb := '[{"field":"renewing_in_120_days","op":"is","value":true}]';
+BEGIN
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_owner', '[{"field":"status","op":"any_of","value":["former_client"]}]')),
+    (SELECT COALESCE(string_agg(a.name, ',' ORDER BY a.name), '') FROM public.accounts a WHERE a.firm_id = pg_temp.id('acme') AND a.archived_at IS NULL AND public.account_status(a.id) = 'former_client'),
+    'the Status filter takes "former_client"');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_owner', '[{"field":"status","op":"any_of","value":["former_client"]}]')) LIKE '%rv_nr%', true, 'and finds the account whose placement ended');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_owner', '[{"field":"status","op":"any_of","value":["client"]}]')) LIKE '%rv_nr%', false, 'which is no longer among the clients');
+  -- an agent sees the view of the accounts they may see: their own
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_agent2', view_filters)), '', 'an agent whose accounts have no renewal due sees an empty view');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_agent1', view_filters)),
+    pg_temp.names_of((SELECT jsonb_agg(e.value) FROM jsonb_array_elements(pg_temp.list_rows('acme_owner', view_filters)) e
+                      WHERE (SELECT a.owner_id FROM public.accounts a WHERE a.id = (e.value ->> 'id')::uuid) = pg_temp.id('acme_agent1'))),
+    'and an agent their own accounts'' renewals');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_agent1', view_filters)) LIKE '%rv_in30%', true, 'including this one');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('zenith_owner', view_filters)), 'Zenith client', 'another firm''s view is its own accounts'' (Zenith''s one account with renewals due)');
+  PERFORM pg_temp.is(public.accounts_words('status', 'former_client'), 'Former client', 'the export says Former client');
+  PERFORM pg_temp.is(public.accounts_words('status', 'client'), 'Client', 'and still says Client');
+END $$;
