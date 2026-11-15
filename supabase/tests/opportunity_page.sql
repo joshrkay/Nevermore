@@ -597,6 +597,9 @@ BEGIN
   PERFORM pg_temp.is(fid IS NOT NULL, true, 'the database assigned the intake a File ID');
   PERFORM pg_temp.is(j ->> 'submission_id', pg_temp.id('i_harbor')::text, 'the intake''s submission');
   PERFORM pg_temp.is(j ->> 'file_id', fid, 'its File ID');
+  -- D-426: "Intake under way" has something to say only while the draft is live; a certified intake has neither answers-so-far nor someone filling it in
+  PERFORM pg_temp.is(j -> 'answered', 'null'::jsonb, 'a certified intake has no answers-so-far');
+  PERFORM pg_temp.is(j -> 'prospect_name', 'null'::jsonb, 'and nobody filling it in');
   PERFORM pg_temp.is(j ->> 'pipeline_status', 'quoted', 'its pipeline stage');
   PERFORM pg_temp.is(j ->> 'certified_by', 'Jo Q Doe', 'certified by the prospect');
   PERFORM pg_temp.is((j ->> 'certified_at')::timestamptz, (SELECT c.recorded_at FROM public.chamber_certifications c WHERE c.session_id = pg_temp.id('i_harbor')), 'and when');
@@ -636,6 +639,17 @@ BEGIN
   PERFORM pg_temp.is(j -> 'file_id', 'null'::jsonb, 'and no File ID');
   PERFORM pg_temp.is(j -> 'census_size', 'null'::jsonb, 'and no certified census');
   PERFORM pg_temp.is((j -> 'open_items' ->> 'count')::int >= 0, true, 'its open items are counted as the queue counts a draft');
+  -- D-426: how many answers the live draft holds (the thirteen the test's answers() gives, each one non-empty, as the queue's own test of an answer counts them)
+  -- and the name of the person filling it in: their profile's contact name, never their email or their id (D-33)
+  PERFORM pg_temp.is((j ->> 'answered')::int, 13, 'a draft holds its answers, counted');
+  PERFORM pg_temp.is(j ->> 'prospect_name', 'Dee Draft', 'and says who is filling it in');
+  PERFORM pg_temp.is(j::text !~ 'example\.test', true, 'with no email in the summary');
+  PERFORM pg_temp.is(j::text !~ (SELECT user_id::text FROM public.chamber_sessions WHERE id = pg_temp.id('i_draft')), true, 'and no id of the person');
+  -- empty answers do not count (null, blank text, an empty list), a stated "no" does
+  PERFORM pg_temp.new_prospect('bo', 'Bo Blank');
+  PERFORM pg_temp.start_intake('i_blanks', 'bo', jsonb_build_object('company_name', 'Blanks Co', 'industry', '   ', 'states', '[]'::jsonb, 'fein', NULL, 'in_peo', false), 'acme');
+  PERFORM pg_temp.opportunity('o_blanks', 'a1', 'acme_agent1', 'i_blanks');
+  PERFORM pg_temp.is((pg_temp.page('acme_agent1', 'o_blanks')::jsonb -> 'intake' ->> 'answered')::int, 2, 'an empty answer is not an answer, a stated no is');
   PERFORM pg_temp.is(pg_temp.page('acme_agent1', 'o1')::jsonb -> 'intake', 'null'::jsonb, 'an opportunity with no intake has no summary');
 END $$;
 
@@ -675,6 +689,31 @@ BEGIN
   FOREACH n IN ARRAY ARRAY['harbor', 'two', 'draft', 'sparse', 'conf'] LOOP
     PERFORM pg_temp.is(pg_temp.page_open('o_' || CASE n WHEN 'harbor' THEN 'h' ELSE n END), pg_temp.queue_open('i_' || n), 'the page and the queue count ' || n || ' alike');
   END LOOP;
+END $$;
+
+-- D-425: the page can always name an open item. Break caught: open items exist but none is a missing required answer, and the page has nothing to name
+-- (first_label is the queue's, null here): first_field is the first open item's field key, the required one first, and first_label stays the queue's.
+DO $$
+DECLARE j jsonb;
+BEGIN
+  -- only a non-required open item: every required answer given, one other field inferred
+  PERFORM pg_temp.new_prospect('ned', 'Ned Nonrequired');
+  PERFORM pg_temp.start_intake('i_nonreq', 'ned', pg_temp.answers('Nonrequired Co'), 'acme');
+  UPDATE public.chamber_sessions SET field_provenance = jsonb_build_object('industry', jsonb_build_object('status', 'inferred')) WHERE id = pg_temp.id('i_nonreq');
+  PERFORM pg_temp.opportunity('o_nonreq', 'a1', 'acme_agent1', 'i_nonreq');
+  j := pg_temp.page('acme_owner', 'o_nonreq')::jsonb -> 'intake' -> 'open_items';
+  PERFORM pg_temp.is((j ->> 'count')::int, 1, 'one open item, and it is not a required answer');
+  PERFORM pg_temp.is(j -> 'first_label', 'null'::jsonb, 'so the queue''s first label is none');
+  PERFORM pg_temp.is(j ->> 'first_field', 'industry', 'but the page can name the field');
+  PERFORM pg_temp.is(pg_temp.page_open('o_nonreq'), pg_temp.queue_open('i_nonreq'), 'and the count still agrees with the queue');
+  -- two non-required items: the first by field key
+  UPDATE public.chamber_sessions SET field_provenance = jsonb_build_object('website', jsonb_build_object('status', 'unknown'), 'industry', jsonb_build_object('status', 'inferred'))
+  WHERE id = pg_temp.id('i_nonreq');
+  PERFORM pg_temp.is(pg_temp.page('acme_owner', 'o_nonreq')::jsonb -> 'intake' -> 'open_items' ->> 'first_field', 'industry', 'the first of several, by field key');
+  -- a missing required answer comes first, with its label as the queue has it
+  j := pg_temp.page('acme_owner', 'o_sparse')::jsonb -> 'intake' -> 'open_items';
+  PERFORM pg_temp.is(j ->> 'first_field', 'states', 'the first required answer missing is the field named');
+  PERFORM pg_temp.is(j ->> 'first_label', 'States of operation', 'with its label');
 END $$;
 
 -- ---------- contacts on this search (D-429) ----------
@@ -854,18 +893,38 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.save('acme_owner', 'o1', '{"owner":"zenith_agent"}'), '22023: Choose one of the firm''s people as the owner.', 'nor is another firm''s');
   PERFORM pg_temp.is(pg_temp.save('acme_owner', 'o1', '{"owner":"nobody"}'), '22023: Choose one of the firm''s people as the owner.', 'nor a stranger');
   PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_agent1'), 'and the owner is as it was');
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_owner', 'o1', '{"owner":"acme_agent3"}')), 'ok', 'a current member is');
-  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_agent3'), 'the owner is changed');
+  -- who it may be given to: update_contact's rule (the caller could change a record of that person's), and someone who can see the account, or its owner
+  -- could not open it (visibility follows the account, D-422)
+  PERFORM pg_temp.is(pg_temp.save('acme_owner', 'o1', '{"owner":"acme_agent3"}'), '22023: Choose someone who can see this account.', 'a current member who could not see its account is refused, even by an owner of the firm');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_agent1'), 'and the owner is as it was');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_owner', 'o1', '{"owner":"acme_owner"}')), 'ok', 'an owner of the firm may give it to anyone current who sees the account (here, themselves)');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_owner'), 'the owner is changed');
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"next_step":"x"}') ~ '^42501', true, 'whose former owner can then change it no more');
   PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_owner', 'o1', '{"next_step":"kept"}')), 'ok', 'sending no owner leaves it with the one it has');
-  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_agent3'), 'the owner is never cleared here');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_owner'), 'the owner is never cleared here');
   PERFORM pg_temp.is((SELECT h.new_value #>> '{}' FROM public.record_history h WHERE h.table_name = 'opportunities' AND h.record_key = pg_temp.id('o1')::text
-                      AND h.field = 'owner_id' ORDER BY h.id DESC LIMIT 1), pg_temp.id('acme_agent3')::text, 'the owner change is in the history');
+                      AND h.field = 'owner_id' ORDER BY h.id DESC LIMIT 1), pg_temp.id('acme_owner')::text, 'the owner change is in the history');
   PERFORM pg_temp.save('acme_owner', 'o1', '{"owner":"acme_agent1"}');
   PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_agent1'), 'given back');
-  -- an owner who is a lead may give it to a person of any team, as the account's owner change allows
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_lead', 'o3', '{"owner":"acme_agent1"}')), 'ok', 'a lead gives their team''s to any current member (change_account_owner''s rule)');
+  -- an agent may give it to no one else, though the other can see the account (a visible account is no reason to change someone else's record)
+  PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"owner":"acme_agent2"}'), '42501: You can give an opportunity only to yourself and, as a lead, to people on your teams.', 'an agent cannot give theirs to another agent');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o1')), pg_temp.id('acme_agent1'), 'and it stays theirs');
+  -- a lead: not to someone off their teams; to someone on them only if that person can see the account
+  PERFORM pg_temp.is(pg_temp.save('acme_lead', 'o3', '{"owner":"acme_agent1"}'), '42501: You can give an opportunity only to yourself and, as a lead, to people on your teams.', 'a lead cannot give their team''s to a person off their teams');
+  PERFORM pg_temp.is(pg_temp.save('acme_lead', 'o3', '{"owner":"acme_west"}'), '22023: Choose someone who can see this account.', 'nor to a team member who could not see its account');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_lead', 'o3', '{"owner":"acme_lead"}')), 'ok', 'but to themselves');
   PERFORM pg_temp.save('acme_owner', 'o3', '{"owner":"acme_agent2"}');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('o3')), pg_temp.id('acme_agent2'), 'an owner of the firm gives it back');
+  -- where everyone sees everything: a lead gives to a member of their team, not to one off it; an owner to anyone current
+  PERFORM pg_temp.new_user('zenith_team1'); PERFORM pg_temp.new_user('zenith_team2');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id)
+  SELECT pg_temp.id('zenith'), pg_temp.id(u), 'agent', t.id FROM (VALUES ('zenith_team1'), ('zenith_team2')) v (u), public.firm_teams t WHERE t.firm_id = pg_temp.id('zenith') AND t.name = 'Zenith Sales';
+  PERFORM pg_temp.account('z2', 'zenith', 'zenith_team1');
+  PERFORM pg_temp.opportunity('oz2', 'z2', 'zenith_team1');
+  PERFORM pg_temp.is(pg_temp.save('zenith_lead', 'oz2', '{"owner":"zenith_agent"}'), '42501: You can give an opportunity only to yourself and, as a lead, to people on your teams.', 'a lead of Zenith Sales cannot give their team''s to a person off it');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('zenith_lead', 'oz2', '{"owner":"zenith_team2"}')), 'ok', 'but to a member of their team who sees the account');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.opportunities WHERE id = pg_temp.id('oz2')), pg_temp.id('zenith_team2'), 'it is theirs now');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('zenith_owner', 'oz2', '{"owner":"zenith_agent2"}')), 'ok', 'an owner of the firm gives it to anyone current who sees the account');
 END $$;
 
 -- ---------- the version and the conflict (D-46, D-183) ----------
@@ -897,6 +956,16 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"source":"first"}', v)::jsonb ->> 'conflict', 'false', 'the first save from a version wins');
   PERFORM pg_temp.is(pg_temp.save('acme_owner', 'o1', '{"source":"second"}', v)::jsonb ->> 'conflict', 'true', 'the second from the same version does not');
   PERFORM pg_temp.is((SELECT source FROM public.opportunities WHERE id = pg_temp.id('o1')), 'first', 'and the first one''s is what is there');
+  -- a stale save names a main contact that has since been moved off the account: the answer is the conflict, not "Choose a contact of this account"
+  PERFORM pg_temp.contact('c_mv', 'a1', 'acme_agent1', 'mv@example.test');
+  v := pg_temp.ver('o1');
+  PERFORM pg_temp.save('acme_owner', 'o1', '{"next_step":"Moved on"}');
+  UPDATE public.contacts SET account_id = pg_temp.id('a2') WHERE id = pg_temp.id('c_mv');
+  r := pg_temp.save('acme_agent1', 'o1', '{"main":"c_mv"}', v);
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a stale save whose main contact has since moved is not refused as a bad contact');
+  PERFORM pg_temp.is(r::jsonb ->> 'conflict', 'true', 'it is the conflict');
+  -- from the current version the same contact is refused, in words
+  PERFORM pg_temp.is(pg_temp.save('acme_agent1', 'o1', '{"main":"c_mv"}'), '22023: Choose a contact of this account.', 'and a current save naming it is refused');
 END $$;
 
 -- ---------- calls, notes and tasks on an opportunity (D-427; CRM-E1.5's rules) ----------
@@ -1093,6 +1162,28 @@ BEGIN
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.opportunity_activity(%L, %L)', pg_temp.id('acme'), pg_temp.id('o1'))), 5), '42501', 'a signed-out caller may not call it');
   PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- who made a quote event (D-33) ----------
+-- Break caught: a quote request's event made by Nevermore's own staff (a platform admin who is not a member of the firm) shows their email and reads as a member;
+-- the actor is judged by a rule of the activity's own and not the firm's record of who did what (firm_actor_is_staff).
+DO $$
+DECLARE j jsonb; q bigint;
+BEGIN
+  PERFORM pg_temp.new_prospect('quin', 'Quin Quote');
+  PERFORM pg_temp.start_intake('i_qev', 'quin', pg_temp.answers('Quote Event Co'), 'acme');
+  PERFORM pg_temp.opportunity('o_qev', 'a1', 'acme_agent1', 'i_qev');
+  INSERT INTO public.quote_requests (session_id, peo_name, status, sent_on) VALUES (pg_temp.id('i_qev'), 'Paychex', 'sent', '2026-11-10') RETURNING id INTO q;
+  -- the events are append-only: one by a platform admin who is no member of Acme (declined), one by a member (closed); the send itself, made here, has no actor
+  INSERT INTO public.quote_request_events (quote_request_id, session_id, field, old_value, new_value, changed_by, changed_by_email)
+  VALUES (q, pg_temp.id('i_qev'), 'status', 'sent', 'declined', pg_temp.id('platform_admin'), 'platform_admin@example.test'),
+         (q, pg_temp.id('i_qev'), 'status', 'declined', 'closed', pg_temp.id('acme_agent1'), 'acme_agent1@example.test');
+  j := pg_temp.act('acme_agent1', 'o_qev', 'changes')::jsonb;
+  PERFORM pg_temp.is((SELECT e ->> 'who' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'declined'), 'Nevermore', 'staff reads as Nevermore');
+  PERFORM pg_temp.is((SELECT e ->> 'who_kind' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'declined'), 'nevermore', 'with the kind nevermore');
+  PERFORM pg_temp.is(j::text !~ 'platform_admin', true, 'and no trace of their email');
+  PERFORM pg_temp.is((SELECT e ->> 'who_kind' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'closed'), 'member', 'a member of the firm is still a member');
+  PERFORM pg_temp.is((SELECT e ->> 'who' FROM jsonb_array_elements(j -> 'rows') e WHERE e ->> 'type' = 'quote' AND e ->> 'event' = 'closed'), 'acme_agent1@example.test', 'by their name');
 END $$;
 
 -- ---------- the certified version, not the live answers (D-425) ----------
