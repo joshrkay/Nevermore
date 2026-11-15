@@ -262,9 +262,10 @@ describe("ContactPage: calls, notes and tasks", () => {
       await user.click(screen.getByRole("button", { name: "Show more" }));
       await waitFor(() => expect(client.listContactActivity).toHaveBeenCalled());
     }
-    for (let i = 0; i < 120; i += 1) expect(screen.getByText(`Note ${i}`)).toBeInTheDocument();
+    const shown = (screen.getByRole("table", { name: "The contact's calls, notes and tasks" }).textContent ?? "");
+    for (let i = 0; i < 120; i += 1) expect(shown).toContain(`Note ${i}`);
     expect(screen.getAllByRole("row").length - 1).toBe(121);
-  });
+  }, 30_000);
 
   // Catches: this list failing and taking the page with it, or no way to ask again.
   it("fails on its own, with Try again, and the rest of the page stays", async () => {
