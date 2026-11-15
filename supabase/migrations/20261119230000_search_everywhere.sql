@@ -688,7 +688,7 @@ REVOKE ALL ON FUNCTION public.my_recent_records(uuid, integer) FROM PUBLIC, anon
 GRANT EXECUTE ON FUNCTION public.my_recent_records(uuid, integer) TO authenticated;
 
 -- ---------- 8. Closing a firm deletes them ----------
--- The closing's one list (20261119100000, restated in 20261119180000), restated with every line it had and the recent records before the records they name.
+-- The closing's one list (20261119100000, restated in 20261119180000 and 20261119210000), restated with every line it had and the recent records before the records they name.
 CREATE OR REPLACE FUNCTION public.firm_closing_plan()
 RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
 LANGUAGE sql
@@ -704,11 +704,15 @@ AS $$
     (50, 'public.saved_views', 'delete', 'firm_id', 'saved views'),
     (55, 'public.record_history', 'delete', 'firm_id', 'the history of each record: who created it and every change to its fields; it goes with the record'),
     (56, 'public.recent_records', 'delete', 'firm_id', 'each person''s last opened records, for the search box'),
+    (56, 'public.bulk_change_records', 'delete', 'firm_id', 'what each bulk change did to each record, kept for ten minutes'' undo'),
+    (57, 'public.bulk_changes', 'delete', 'firm_id', 'bulk changes, kept for ten minutes'' undo'),
     (60, 'public.referral_partners', 'delete', 'firm_id', 'referral partners'),
     (58, 'public.activities', 'delete', 'firm_id', 'calls, notes and tasks on the firm''s accounts and contacts; before the opportunities, contacts and accounts they stand on'),
+    (59, 'public.account_labels', 'delete', 'firm_id', 'the labels on the firm''s accounts; before the accounts they stand on'),
     (61, 'public.opportunities', 'delete', 'firm_id', 'opportunities (each is one search for one account); before the contacts and accounts they stand on'),
     (62, 'public.contacts', 'delete', 'firm_id', 'contacts, the people at the firm''s accounts'),
     (63, 'public.accounts', 'delete', 'firm_id', 'accounts, the businesses the firm quotes for; the intakes on their opportunities stay with their employers (below)'),
+    (64, 'public.labels', 'delete', 'firm_id', 'the firm''s own list of labels; after the accounts that carried them'),
     (70, 'public.firm_teams', 'delete', 'firm_id', 'teams (the memberships that named one are cleared first)'),
     -- Kept, and why.
     (900, 'public.firms', 'keep', NULL, 'the row stays: its address stays taken for twelve months and its record must still exist'),

@@ -160,6 +160,7 @@
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
+i supabase/migrations/20261119210000_bulk_changes.sql
 \i supabase/migrations/20261119230000_search_everywhere.sql
 
 
@@ -720,7 +721,7 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.recent_records WHERE firm_id = c), 0::bigint, 'closing the firm deleted its recent records');
   PERFORM pg_temp.is((SELECT count(*) FROM public.recent_records WHERE firm_id = pg_temp.id('acme')) > 0, true, 'and no other firm''s');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan()), 47::bigint, 'the closing''s list has every line it had, and this one');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan()), 51::bigint, 'the closing''s list has every line it had, and this one');
   PERFORM pg_temp.is((SELECT action FROM public.firm_closing_plan() WHERE src = 'public.recent_records'), 'delete', 'recent records are deleted');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src IN ('public.activities', 'public.accounts', 'public.contacts', 'public.opportunities', 'public.record_history', 'public.referral_partners') AND action = 'delete'), 6::bigint, 'with the others still deleted');
   RAISE NOTICE 'search_everywhere: closing passed';
