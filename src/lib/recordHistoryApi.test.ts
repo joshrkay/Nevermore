@@ -11,7 +11,7 @@ beforeEach(() => rpc.mockReset());
 
 const entry = {
   entry_key: "k1", at: "2026-11-20T10:00:00+00:00", change_id: "k1", kind: "stage_changed", who: "dana@acme.test", who_kind: "member",
-  field: "stage", from_value: "ready_to_send", to_value: "in_market", cause: "quote_send", cause_peo: "PEO B",
+  field: "stage", from_value: "ready_to_send", to_value: "in_market", cause: "quote_send", cause_peo: "PEO B", merged_from: null,
 };
 
 describe("listRecordHistory", () => {
@@ -22,7 +22,7 @@ describe("listRecordHistory", () => {
     expect(page.entries).toEqual([
       {
         entryKey: "k1", at: "2026-11-20T10:00:00+00:00", changeId: "k1", kind: "stage_changed", who: "dana@acme.test", whoKind: "member",
-        field: "stage", from: "ready_to_send", to: "in_market", cause: "quote_send", causePeo: "PEO B",
+        field: "stage", from: "ready_to_send", to: "in_market", cause: "quote_send", causePeo: "PEO B", mergedFrom: null,
       },
     ]);
   });
@@ -32,6 +32,19 @@ describe("listRecordHistory", () => {
     rpc.mockResolvedValue({ data: [{ ...entry, kind: "changed", field: "next_step", from_value: null, to_value: "Call", cause: null, cause_peo: null }], error: null });
     const page = await listRecordHistory("f1", "opportunities", "o1");
     expect(page.entries[0]).toMatchObject({ kind: "changed", cause: null, causePeo: null });
+  });
+
+  // Break caught: an entry a merge copied from the merged-away record shown as the kept record's own (D-203: "marked as from the merged record"), or the "merged" entry dropped.
+  it("carries which merged-away record an entry came from", async () => {
+    rpc.mockResolvedValue({
+      data: [
+        { ...entry, entry_key: "m1", kind: "merged", field: null, from_value: null, to_value: null, cause: null, cause_peo: null, merged_from: "Harborview Marine LLC" },
+        { ...entry, entry_key: "m2", kind: "changed", field: "phone", from_value: null, to_value: "(503) 555-0100", cause: null, cause_peo: null, merged_from: "Harborview Marine LLC" },
+      ],
+      error: null,
+    });
+    const page = await listRecordHistory("f1", "accounts", "a1");
+    expect(page.entries.map((e) => [e.kind, e.mergedFrom])).toEqual([["merged", "Harborview Marine LLC"], ["changed", "Harborview Marine LLC"]]);
   });
 
   // Break caught: the cursor of the next page is not the last entry's time and key, so a page repeats or skips entries that share a time.

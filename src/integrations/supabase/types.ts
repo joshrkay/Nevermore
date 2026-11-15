@@ -1032,6 +1032,19 @@ export type Database = {
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      // Merging (20261121100000). The preview answers {kind, problem, differs, kept, removed, moves}; a merge {record, removed: {id, name}, moved}; keep separate
+      // {record, was_duplicate_of}; the old address {kind, id, name} (a contact adds account_id), or null. src/lib/mergeApi.ts reads them.
+      merge_preview: { Args: { p_firm_id: string | null; p_kind: string; p_kept_id: string; p_removed_id: string }; Returns: Json }
+      merge_accounts: {
+        Args: { p_kept_id: string; p_removed_id: string; p_choices?: Json; p_kept_version?: number | null; p_removed_version?: number | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      merge_contacts: {
+        Args: { p_kept_id: string; p_removed_id: string; p_choices?: Json; p_kept_version?: number | null; p_removed_version?: number | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      account_keep_separate: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      resolve_merged_record: { Args: { p_firm_id: string | null; p_kind: string; p_id: string }; Returns: Json | null }
       accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
       change_account_owner: {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
@@ -1493,8 +1506,10 @@ export type Database = {
           field: string | null
           // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
           from_value: Json | null
-          // 'created' (no field, no values), 'changed' (one field) or 'stage_changed' (an opportunity's stage, field 'stage').
+          // 'created' (no field, no values), 'changed' (one field), 'stage_changed' (an opportunity's stage, field 'stage') or 'merged' (the record absorbed another, 20261120140000).
           kind: string
+          // The name of the merged-away record an entry came from (copied in by a merge, or the 'merged' entry itself); null for every other entry.
+          merged_from: string | null
           to_value: Json | null
           who: string
           // 'member', 'nevermore' or 'system'.
