@@ -490,7 +490,8 @@ describe("ContactPage: edit in place", () => {
     renderPage();
     const user = await open();
     await user.click(screen.getByRole("checkbox", { name: "Main contact for this account" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Saving makes this contact the account's main contact");
+    // Several status regions can be on the page (each list's "List refresh" region is always present, CRM-S2.4a fixes), so find this one by its words.
+    expect(screen.getAllByRole("status").find((el) => el.textContent?.includes("Saving makes this contact the account's main contact"))).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Contact saved. Sam Park isn't the main contact any more."));
     expect(client.updateContact.mock.calls[0][2]).toMatchObject({ isMain: true });
@@ -554,8 +555,8 @@ describe("ContactPage: edit in place", () => {
       const rows = within(dialog).getAllByRole("row").slice(1).map((r) => r.textContent);
       expect(rows[0]).toContain("Title");
       expect(rows[0]).toContain("Director");
-      expect(rows[1]).toContain("OwnerDana ReyesMarcus Hale");
-      expect(rows[2]).toContain("Do not emailNoYes");
+      expect(rows[1]).toContain("OwnerYou didn't change thisMarcus Hale");
+      expect(rows[2]).toContain("Do not emailYou didn't change thisYes");
       expect(dialog.textContent).not.toMatch(/owner_id|do_not_email|u2/);
       expect(toast.success).not.toHaveBeenCalled();
     });

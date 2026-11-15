@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { failureWords, SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { failureWords, SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import AnswersJsonDownload from "@/components/AnswersJsonDownload";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
@@ -49,6 +49,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
   const failure = useSaveFailure("The packet wasn't generated. Check your connection and try again.");
+  const offlineSave = useOfflineSave();
   const generateButton = useRef<HTMLButtonElement>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const latestEventId = detail.reviewEvents[0]?.id ?? 0;
@@ -188,9 +189,11 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
             Include full dates of birth
           </label>
           <SaveFailed message={failure.message} returnFocusTo={generateButton} className="text-xs" />
+          {offlineSave.reason}
           <button
             ref={generateButton}
-            onClick={generate}
+            onClick={offlineSave.guard(generate)}
+            {...offlineSave.buttonProps}
             disabled={generating || !catalogReady}
             className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
           >

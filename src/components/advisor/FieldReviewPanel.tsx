@@ -4,7 +4,7 @@ import { isRowListField } from "@/data/rowColumns";
 import { formatAnswer } from "@/data/answerFormat";
 import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Loader2, PencilLine, UserCheck } from "lucide-react";
-import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import type { ChamberData } from "@/data/chamberTypes";
 import {
   AUDIT_BADGE_LABELS,
@@ -178,6 +178,7 @@ const FieldRow = ({
   const prov = provenance[field];
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The review wasn't saved. Check your connection and try again. What you typed is still here.");
+  const offlineSave = useOfflineSave();
   // The button the person pressed, so focus can come back to it: it was disabled while the save ran, and a browser drops the focus of a disabled button.
   const pressed = useRef<HTMLElement | null>(null);
   const [editing, setEditing] = useState(false);
@@ -300,8 +301,9 @@ const FieldRow = ({
             </label>
             <div className="flex gap-2">
               <button
-                onClick={(e) => { pressed.current = e.currentTarget; submitCorrection(); }}
+                onClick={offlineSave.guard((e: { currentTarget: HTMLButtonElement }) => { pressed.current = e.currentTarget; submitCorrection(); })}
                 disabled={saving}
+                {...offlineSave.buttonProps}
                 className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded-md disabled:opacity-50"
               >
                 Save correction
@@ -311,6 +313,7 @@ const FieldRow = ({
           </div>
         )}
         <SaveFailed message={failure.message} returnFocusTo={pressed as RefObject<HTMLElement>} className="text-xs mt-2" />
+        {offlineSave.reason}
       </div>
 
       <div className="flex flex-wrap md:flex-col gap-1.5 md:items-end">
@@ -322,7 +325,8 @@ const FieldRow = ({
                 key={state}
                 aria-pressed={active}
                 disabled={saving}
-                onClick={(e) => { pressed.current = e.currentTarget; void save(active ? null : state, { kind: "keep" }); }}
+                onClick={offlineSave.guard((e: { currentTarget: HTMLButtonElement }) => { pressed.current = e.currentTarget; void save(active ? null : state, { kind: "keep" }); })}
+                {...offlineSave.buttonProps}
                 className={`text-xs px-2 py-1 rounded-md border transition-colors disabled:opacity-50 ${
                   active ? REVIEW_CLASS[state] : "border-border text-muted-foreground hover:text-foreground"
                 }`}

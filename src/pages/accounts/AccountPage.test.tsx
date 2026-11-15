@@ -859,7 +859,8 @@ describe("AccountPage: edit in place", () => {
     expect(within(dialog).getByText("Someone else changed this account")).toBeInTheDocument();
     const rows = within(dialog).getAllByRole("row").slice(1).map((r) => r.textContent);
     expect(rows[0]).toContain("Employees5260bob@example.com");
-    expect(rows[1]).toContain("States of operationOR, WAORbob@example.com");
+    // The person never touched this field, so the dialog says so rather than showing the form's value as theirs (CRM-S2.4a fixes, D-183).
+    expect(rows[1]).toContain("States of operationYou didn't change thisORbob@example.com");
     expect(client.updateAccount).toHaveBeenCalledTimes(1);
     expect(toast.success).not.toHaveBeenCalled();
   });
@@ -880,8 +881,8 @@ describe("AccountPage: edit in place", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("alertdialog");
     const rows = within(dialog).getAllByRole("row").slice(1).map((r) => r.textContent);
-    expect(rows[0]).toContain("ArchivedNothingNov 14, 2026");
-    expect(rows[1]).toContain("OwnerNothingMarcus Hale");
+    expect(rows[0]).toContain("ArchivedYou didn't change thisNov 14, 2026");
+    expect(rows[1]).toContain("OwnerYou didn't change thisMarcus Hale");
     expect(dialog.textContent).not.toMatch(/archived_at|owner_id|u2/);
   });
 

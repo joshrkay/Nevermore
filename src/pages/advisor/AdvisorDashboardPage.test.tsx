@@ -198,8 +198,8 @@ describe("AdvisorDashboardPage", () => {
       expect(spoken()).toHaveLength(1);
       expect(spoken()[0]).toHaveTextContent("Loading submissions");
       expect(spoken()[0]).toHaveAttribute("aria-live", "polite");
-      // The slow-load line's status is already on the page, empty, ready to be filled; neither is inside a busy element.
-      expect(allStatuses()).toHaveLength(2);
+      // The slow-load line's status and the refresh note's are already on the page, empty, ready to be filled; none is inside a busy element.
+      expect(allStatuses()).toHaveLength(3);
       expectStatusesOutsideBusy();
       expect(tableBody()).toHaveAttribute("aria-busy", "true");
       expect(screen.queryByRole("link", { name: "Next" })).not.toBeInTheDocument();
@@ -230,9 +230,9 @@ describe("AdvisorDashboardPage", () => {
       expect(placeholderRows(container)).toHaveLength(2);
       expect(container.querySelector("tbody[aria-hidden=true]")).toBeNull();
       expect(box).not.toHaveAttribute("aria-busy");
-      // The only status left is the pager's range.
+      // The only status that says anything is the pager's range (the refresh note's region is there, empty).
       expect(spoken().map((e) => e.textContent)).toEqual(["1 to 2 of 2 submissions"]);
-      expect(allStatuses()).toHaveLength(1);
+      expect(allStatuses()).toHaveLength(2);
     });
 
     // Catches: a column's grey bar not following its alignment, so the headcount's bars sit on the left under a right-aligned header.
@@ -1569,7 +1569,8 @@ describe("AdvisorDashboardPage", () => {
     // The minute's ask is made at the end of the advance, and its answer arrives after: let it.
     const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(1); });
     const fake = () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
-    const note = () => (screen.queryByText(/We couldn't refresh the submissions/)?.closest("[role=status]") ?? null) as HTMLElement | null;
+    // The words and the button, not the live region round them (which is on the page all the time, empty).
+    const note = () => (screen.queryByText(/We couldn't refresh the submissions/)?.parentElement ?? null) as HTMLElement | null;
 
     // Catches (D-49): the minute's refresh being a redraw: the table rebuilt (scroll lost), the focused control dropped, or half-typed words cleared.
     it("brings new rows in place on the minute and on focus: same table, scroll, focus and typing stay", async () => {
@@ -1614,6 +1615,20 @@ describe("AdvisorDashboardPage", () => {
       expect(note()).toHaveTextContent("We couldn't refresh the submissions. What's below may be out of date.");
       expect(note()).not.toHaveTextContent(/statement timeout|57014/);
       expect(within(note()!).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
+
+    // Catches (D-162, D-182): the region inserted already holding its words, which is announced unreliably.
+    it("is a live region on the page, empty, from the table's first draw, and only its words come and go", async () => {
+      fake();
+      listQueue.mockResolvedValueOnce(pageOf(1, 20));
+      renderAt();
+      await tick(0);
+      const region = screen.getByRole("status", { name: "List refresh" });
+      expect(region).toBeEmptyDOMElement();
+      listQueue.mockRejectedValue(new Error("down"));
+      await tick(60_000);
+      expect(note()!.parentElement).toBe(region);
+      expect(region).toHaveTextContent("We couldn't refresh the submissions.");
     });
 
     // Catches: the note being taken away and put back by each failed minute (it would be read again every time, and a focused "Try again" would be lost).

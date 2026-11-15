@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { goOffline, goOnline, restoreConnection } from "@/test/connection";
 
 const auth = {
   user: { id: "u1", email: "sam@example.com", user_metadata: {} as Record<string, unknown> },
@@ -237,10 +238,8 @@ describe("the menu at phone width", () => {
 
 // The no-connection banner (CRM-S2.4a, D-182): said once when the connection goes, gone when it is back, on every page of the workspace.
 describe("the no-connection banner", () => {
-  const goOffline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false); window.dispatchEvent(new Event("offline")); });
-  const goOnline = () => act(() => { vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true); window.dispatchEvent(new Event("online")); });
   const offlineStatus = () => screen.queryAllByRole("status").find((s) => /offline/i.test(s.textContent ?? "")) ?? null;
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { restoreConnection(); });
 
   // Catches: nothing telling a person their screen has stopped updating, or a banner that is there all the time.
   it("says so when the connection goes, over the page that is already loaded, and takes the words away when it is back", async () => {
@@ -272,7 +271,7 @@ describe("the no-connection banner", () => {
 
   // Catches: a person who opens the workspace with no connection being told nothing.
   it("shows at once when the workspace opens without a connection", async () => {
-    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    await goOffline();
     await renderAt("/advisor");
     expect(offlineStatus()).toHaveTextContent("You're offline.");
   });
