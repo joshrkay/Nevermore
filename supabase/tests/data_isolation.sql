@@ -215,6 +215,7 @@
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -745,6 +746,9 @@ BEGIN
     -- CRM-A2.4a: a placement and its renewal, and a plan's renewal to delete, on the owned account; a plan's renewal on the unowned one.
     INSERT INTO public.placements (firm_id, account_id, peo_name) VALUES (fid, acc1, 'Fixture PEO') RETURNING id INTO placement;
     INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (fid, acc1, 'peo_placement', 'Fixture PEO', current_date + 60, placement);
+    -- CRM-O1.3a: the owned account's search belongs to the account's owner (so its owner may reopen it), and the placement has one payment of commission received.
+    UPDATE public.opportunities SET owner_id = agent WHERE firm_id = fid AND account_id = acc1;
+    INSERT INTO public.commission_payments (firm_id, account_id, placement_id, received_on, amount) VALUES (fid, acc1, placement, current_date, 100);
     INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (fid, acc1, 'current_plan', 'Fixture carrier', current_date + 90), (fid, acc2, 'current_plan', 'Fixture carrier', current_date + 90);
     -- CRM-S3.7b: a label on the owned account, and a bulk change with its record.
     INSERT INTO public.labels (firm_id, name) VALUES (fid, 'Fixture label');
@@ -910,6 +914,11 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.placements',                                 '{"agent_b":1}', '{"A":1,"B":1}'),
   ('public.renewals',                                   '{"agent_b":2}', '{"A":3,"B":3}');
+-- ---- CRM-O1.3a: commission payments (20261120121000) ----
+-- Seen only by the firm: read by whoever may see their account (supabase/tests/won_lost_commission.sql); written by nobody through the API. Each firm has one on the
+-- owned account's placement: the first firm's members see it, the second's agent (who owns that account) and its owner too.
+INSERT INTO matrix VALUES
+  ('public.commission_payments',                        '{"agent_b":1}', '{"A":1,"B":1}');
 -- ---- CRM-S3.7b: labels and bulk changes (20261119210000) ----
 -- Closed to the API: a member reaches them through the bulk functions only (supabase/tests/bulk_changes.sql); each firm has one of each.
 INSERT INTO matrix VALUES
@@ -1449,6 +1458,20 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for clears "Didn''t renew" and reopens the placement, by the level rule and from a version; refused as update_renewal is'),
   ('account_renewals(p_firm_id uuid, p_account_id uuid, p_time_zone text)', 'own', NULL,
    'a current member of the firm who may see the account reads its renewals, with days away and whether each is done; NULL for anyone else, as for an account that is not there');
+-- CRM-O1.3a (20261120121000_won_lost_commission.sql; supabase/tests/won_lost_commission.sql): won, lost and reopen, and the commission received.
+INSERT INTO callable VALUES
+  ('opportunity_mark_won(p_opportunity_id uuid, p_quote_request_id bigint, p_start_date date, p_renewal_date date, p_broker_of_record text, p_firm_id uuid, p_version integer, p_commission_basis text, p_commission_rate numeric, p_commission_expected_yearly numeric, p_time_zone text)', 'own', NULL,
+   'a current member of the firm the call acts for marks an opportunity won on the quote the employer took, when the level rule gives them it, from a version: the submission won, the other open quotes closed, the placement and its renewal made, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity the caller may not see, the same as for one that is not there'),
+  ('opportunity_mark_lost(p_opportunity_id uuid, p_reason text, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm marks an opportunity lost for a reason from the list, when the level rule gives them it, from a version; refused as opportunity_mark_won is'),
+  ('opportunity_reopen(p_opportunity_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'the record owner of an opportunity or an owner of the firm reopens it, won or lost, from a version; refused as opportunity_mark_won is, and 42501 in words for one who may see it but is neither'),
+  ('record_commission_payment(p_placement_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm records commission received against a placement, when the level rule gives them its opportunity (its account, for a placement made by hand); refused as opportunity_mark_won is'),
+  ('update_commission_payment(p_payment_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'the same for saving a payment from a version; refused as record_commission_payment is'),
+  ('delete_commission_payment(p_payment_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'the same for deleting a payment from a version; refused as record_commission_payment is');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2084,6 +2107,19 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('undo_renewal_not_renewed', 'advisor', 'by_id',
    $$SELECT public.undo_renewal_not_renewed({rnw}, {firm}, (SELECT version FROM public.renewals WHERE id = {rnw}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
   ('delete_renewal', 'advisor', 'by_id', $$SELECT public.delete_renewal({rdel}, {firm}, (SELECT version FROM public.renewals WHERE id = {rdel}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true');
+
+-- CRM-O1.3a: won, lost and reopen ({opp} is the opportunity of the firm's owned account, owned by the account's owner; {plc} the account's placement and {pay} the
+-- payment on it). The opportunity's three functions are asked for a version it never had, which the member meets after every other question (22023), so nothing
+-- is won, lost or reopened and each outsider is refused first; the payments are the real calls, rolled back.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('opportunity_mark_won', 'advisor', 'by_id', $$SELECT public.opportunity_mark_won({opp}, 0, NULL, NULL, 'Probe', {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('opportunity_mark_lost', 'advisor', 'by_id', $$SELECT public.opportunity_mark_lost({opp}, 'price', NULL, {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('opportunity_reopen', 'advisor', 'by_id', $$SELECT public.opportunity_reopen({opp}, {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('record_commission_payment', 'advisor', 'by_id', $$SELECT public.record_commission_payment({plc}, current_date, 5, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"received_to_date"'),
+  ('update_commission_payment', 'advisor', 'by_id',
+   $$SELECT public.update_commission_payment({pay}, current_date, 5, NULL, {firm}, (SELECT version FROM public.commission_payments WHERE id = {pay}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
+  ('delete_commission_payment', 'advisor', 'by_id',
+   $$SELECT public.delete_commission_payment({pay}, {firm}, (SELECT version FROM public.commission_payments WHERE id = {pay}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"deleted": true');
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -2128,7 +2164,10 @@ BEGIN
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'rnw', (SELECT x.id::text FROM public.renewals x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'peo_placement' ORDER BY x.created_at, x.id LIMIT 1)),
-      (f, 'rdel', (SELECT x.id::text FROM public.renewals x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'current_plan' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1));
+      (f, 'rdel', (SELECT x.id::text FROM public.renewals x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'current_plan' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
+      (f, 'opp', (SELECT o.id::text FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id WHERE o.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1)),
+      (f, 'plc', (SELECT x.id::text FROM public.placements x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
+      (f, 'pay', (SELECT x.id::text FROM public.commission_payments x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY x.created_at, x.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2332,7 +2371,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|rnw|rdel)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|rnw|rdel|opp|plc|pay)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3183,6 +3222,9 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.renewals', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account, written by no API role',
    $m$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) SELECT a.firm_id, a.id, 'current_plan', 'Probe {tag}', current_date FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
+  ('public.commission_payments', 'firm', 'its own firm_id, an account of that firm and a placement of that account; read by whoever may see the account, written by no API role',
+   $m$INSERT INTO public.commission_payments (firm_id, account_id, placement_id, received_on, amount) SELECT p.firm_id, p.account_id, p.id, current_date, 1 FROM public.placements p JOIN public.accounts a ON a.id = p.account_id WHERE p.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY p.created_at, p.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
   ('public.labels', 'firm', 'its own firm_id; closed to the API, written only by the bulk change',
    $m$INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Probe {tag}') RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
@@ -3871,6 +3913,12 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('delete_renewal', 'firm_scoped', 'the same for deleting a renewal, except one a win made (4e)'),
   ('mark_renewal_not_renewed', 'firm_scoped', 'the same for "Didn''t renew": the renewal done and its placement ended, from a version (4e)'),
   ('undo_renewal_not_renewed', 'firm_scoped', 'the same for its undo: the renewal back and its placement reopened (4e)'),
+  ('opportunity_mark_won', 'firm_scoped', 'a current member of the firm the call acts for marks an opportunity won, when the level rule gives them it, from a version: the quote chosen, the rest closed, the placement and renewal made, all or none; as not there for another firm''s (4e)'),
+  ('opportunity_mark_lost', 'firm_scoped', 'the same for marking it lost for a reason (4e)'),
+  ('opportunity_reopen', 'firm_scoped', 'the same for reopening a won or lost opportunity, for its record owner or an owner of the firm (4e)'),
+  ('record_commission_payment', 'firm_scoped', 'a current member of the firm the call acts for records commission received against a placement of the firm, by the level rule; as not there for another firm''s (4e)'),
+  ('update_commission_payment', 'firm_scoped', 'the same for saving a payment from a version (4e)'),
+  ('delete_commission_payment', 'firm_scoped', 'the same for deleting a payment from a version (4e)'),
   ('contact_leave_error', 'service_only', 'the first two of move_contact''s three yeses, in words: the contact''s own level and the account it is on; asked by move_contact and contact_move_choices, no API role can call it'),
   ('bulk_accounts_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what a bulk change would do to the accounts of that firm they may see; another firm''s account is just not available (4e)'),
   ('bulk_accounts_change', 'firm_scoped', 'the same for doing it, to the accounts the level rule gives the caller, all or none; another firm''s account is just not available (4e)'),
