@@ -84,6 +84,8 @@ CREATE TABLE public.renewals (
     ON DELETE SET NULL (opportunity_id)
 );
 
+-- A placement is renewed by at most one renewal: "the renewal it came from" (D-451, D-456) names one, so "Didn't renew" and a win each end it once.
+CREATE UNIQUE INDEX renewals_one_per_placement ON public.renewals (placement_id) WHERE placement_id IS NOT NULL;
 CREATE UNIQUE INDEX renewals_one_per_opportunity ON public.renewals (opportunity_id) WHERE opportunity_id IS NOT NULL;
 CREATE INDEX renewals_firm_account_idx ON public.renewals (firm_id, account_id, renews_on);
 CREATE INDEX renewals_placement_idx ON public.renewals (placement_id) WHERE placement_id IS NOT NULL;
@@ -92,6 +94,30 @@ COMMENT ON TABLE public.renewals IS 'A date an account''s cover comes up (glossa
 
 CREATE TRIGGER placements_updated_at BEFORE UPDATE ON public.placements FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER renewals_updated_at BEFORE UPDATE ON public.renewals FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- The quote request a placement takes is one of its opportunity's own intake (quote_requests.session_id = opportunities.intake_id; the intake is the opportunity's
+-- in its own firm, opportunities_intake_fkey, so this also keeps it in the placement's firm). A trigger and not a composite key: a key would need the intake copied
+-- onto the placement, and an opportunity's intake can be unlinked (ON DELETE SET NULL, opportunities_keep_intake_unlink), which a copy could not follow. A
+-- placement with no opportunity (made by hand, D-447) has no quote. Checked when the placement's quote or opportunity is written; refuses with 23514.
+CREATE FUNCTION public.placements_quote_is_its_own()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.quote_request_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.quote_requests q JOIN public.opportunities o ON o.intake_id = q.session_id
+    WHERE q.id = NEW.quote_request_id AND o.id = NEW.opportunity_id AND o.account_id = NEW.account_id AND o.firm_id = NEW.firm_id) THEN
+    RAISE EXCEPTION 'A placement''s quote request must be one of its opportunity''s own.' USING ERRCODE = '23514', CONSTRAINT = 'placements_quote_is_its_own';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.placements_quote_is_its_own() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER placements_quote_is_its_own BEFORE INSERT OR UPDATE OF quote_request_id, opportunity_id, account_id, firm_id ON public.placements
+  FOR EACH ROW EXECUTE FUNCTION public.placements_quote_is_its_own();
 
 -- ---------- 3. Row security ----------
 ALTER TABLE public.placements ENABLE ROW LEVEL SECURITY;
@@ -282,7 +308,9 @@ DECLARE
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
-  SELECT * INTO a FROM public.accounts x WHERE x.id = p_account_id AND x.firm_id = firm;
+  -- Held FOR NO KEY UPDATE before anything else, as an archive, an owner change and a delete hold it (they conflict), so what is asked below (may the caller see
+  -- it, is it archived) is read from the account as it stands once any of them has committed, and an archive can't land between the read and the insert.
+  SELECT * INTO a FROM public.accounts x WHERE x.id = p_account_id AND x.firm_id = firm FOR NO KEY UPDATE;
   IF a.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
     RAISE EXCEPTION 'That account isn''t available' USING ERRCODE = 'PT404';
   END IF;
@@ -584,7 +612,8 @@ BEGIN
   tz := public.workspace_time_zone(p_time_zone);
   checked := public.accounts_filters_checked(firm, p_filters, (now() AT TIME ZONE tz)::date);
   IF p_sort IS NOT NULL THEN
-    IF public.accounts_field_kind(p_sort) IS NULL THEN
+    -- renewing_in_120_days is a filter only (it is a yes or no with no order of its own; the view sorts by renewal_date): refused as a field that is not there.
+    IF public.accounts_field_kind(p_sort) IS NULL OR p_sort = 'renewing_in_120_days' THEN
       RAISE EXCEPTION 'The accounts table has no field "%" to sort by', left(p_sort, 64) USING ERRCODE = '22023';
     END IF;
     choices := public.accounts_field_choices(p_sort);
@@ -692,6 +721,10 @@ $$;
 -- The firm's renewal (the firm already resolved by firm_to_act_for and cleared by assert_firm_writable, which each caller asks first), held for the change,
 -- after the last two questions (may the caller see its account, may they change it: D-452, the level rule D-209 through can_change_firm_record, D-222).
 -- Returns it. Internal.
+-- Lock order: the ACCOUNT first, then the renewal (and, in the callers that touch it, its placement): the order archive_account, change_account_owner and
+-- delete_account use (20261119160000), so a renewal write never holds a renewal while waiting for an account those hold, and the level rule is asked of the
+-- account row as it stands once held, not of one an owner change is about to replace. The account is held FOR NO KEY UPDATE, which conflicts with the lock
+-- an archive and an owner change take (the same) and with the FOR UPDATE a delete takes; the renewal's account never changes, so it is found first without a lock.
 CREATE FUNCTION public.renewal_to_change(p_firm_id uuid, p_renewal_id uuid)
 RETURNS public.renewals
 LANGUAGE plpgsql
@@ -700,12 +733,13 @@ AS $$
 DECLARE
   cur public.renewals;
   a public.accounts;
+  acct uuid;
 BEGIN
-  SELECT * INTO cur FROM public.renewals x WHERE x.id = p_renewal_id AND x.firm_id = p_firm_id FOR NO KEY UPDATE;
-  IF cur.id IS NOT NULL THEN
-    SELECT * INTO a FROM public.accounts y WHERE y.id = cur.account_id;
+  SELECT x.account_id INTO acct FROM public.renewals x WHERE x.id = p_renewal_id AND x.firm_id = p_firm_id;
+  IF acct IS NOT NULL THEN
+    SELECT * INTO a FROM public.accounts y WHERE y.id = acct FOR NO KEY UPDATE;
   END IF;
-  IF cur.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
+  IF a.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
     RAISE EXCEPTION 'That renewal isn''t available' USING ERRCODE = 'PT404';
   END IF;
   IF NOT public.can_change_firm_record(a.firm_id, a.owner_id) THEN
@@ -713,6 +747,11 @@ BEGIN
       THEN 'An account with no owner can only have its renewals changed by an owner of the firm.'
       ELSE 'Only the account''s owner, a lead of the owner''s team or an owner of the firm can change its renewals.' END
       USING ERRCODE = '42501';
+  END IF;
+  -- Then the renewal, which another session may have deleted while this one waited for the account.
+  SELECT * INTO cur FROM public.renewals x WHERE x.id = p_renewal_id AND x.firm_id = p_firm_id FOR NO KEY UPDATE;
+  IF cur.id IS NULL THEN
+    RAISE EXCEPTION 'That renewal isn''t available' USING ERRCODE = 'PT404';
   END IF;
   RETURN cur;
 END;
@@ -771,10 +810,13 @@ $$;
 REVOKE ALL ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer, text) TO authenticated;
 
--- Deletes a renewal. Answers {deleted: true, with_whom}. A renewal a win made (its placement has an opportunity) is deleted only by reopening that win
--- (CRM-O1.3a): PT409, in words. A PEO placement renewal added by hand takes the placement made with it by hand (one with no opportunity and no other renewal),
--- so deleting a mistake leaves no client behind with nothing that could end it. Refused as update_renewal is, without the fields and the version.
-CREATE FUNCTION public.delete_renewal(p_renewal_id uuid, p_firm_id uuid DEFAULT NULL)
+-- Deletes a renewal from the version the person started from (D-46, as update_renewal). Answers {deleted: true, with_whom} or, when someone saved first and
+-- nothing was deleted, update_renewal's {conflict: true, currentVersion, current: {with_whom, renews_on}, changed}. A renewal a win made (its placement has an
+-- opportunity) is deleted only by reopening that win (CRM-O1.3a): PT409, in words. A PEO placement renewal added by hand takes the placement made with it by
+-- hand (one with no opportunity and no other renewal), so deleting a mistake leaves no client behind with nothing that could end it. Refused, in this order,
+-- as update_renewal is (without the fields): not a member of the firm (42501), a closing firm or Nevermore support (PT423), no version (22023), a renewal the
+-- caller may not see or that is not there (PT404), one the level rule does not give them (42501), one a win made (PT409), a version it never had (22023).
+CREATE FUNCTION public.delete_renewal(p_renewal_id uuid, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -786,9 +828,22 @@ DECLARE
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
+  IF p_version IS NULL OR p_version < 1 THEN
+    RAISE EXCEPTION 'This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
   cur := public.renewal_to_change(firm, p_renewal_id);
   IF EXISTS (SELECT 1 FROM public.placements p WHERE p.id = cur.placement_id AND p.opportunity_id IS NOT NULL) THEN
     RAISE EXCEPTION 'This renewal was made by a win. Reopen the win to delete it.' USING ERRCODE = 'PT409';
+  END IF;
+  IF p_version > cur.version THEN
+    RAISE EXCEPTION 'This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  IF p_version < cur.version THEN
+    RETURN jsonb_build_object(
+      'conflict', true,
+      'currentVersion', cur.version,
+      'current', jsonb_build_object('with_whom', cur.with_whom, 'renews_on', cur.renews_on),
+      'changed', public.record_version_changes(cur.firm_id, 'renewals', cur.id::text, p_version, cur.version));
   END IF;
   DELETE FROM public.renewals WHERE id = cur.id;
   DELETE FROM public.placements p
@@ -797,8 +852,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.delete_renewal(uuid, uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.delete_renewal(uuid, uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.delete_renewal(uuid, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.delete_renewal(uuid, uuid, integer) TO authenticated;
 
 -- ---------- 8b. "Didn't renew", and its undo (D-451) ----------
 -- The one change both functions below make: set (p_mark) or clear the day a renewal did not renew, and end or reopen the placement it came from on that

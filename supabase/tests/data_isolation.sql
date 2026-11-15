@@ -1439,8 +1439,8 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for, who may see the account, adds a renewal to it (a PEO placement makes its placement in the same step); refuses a support session and a closing firm first (PT423), then an account the caller may not see (PT404); 42501 for anyone who is no member of that firm at this address'),
   ('update_renewal(p_renewal_id uuid, p_with_whom text, p_renews_on date, p_firm_id uuid, p_version integer, p_time_zone text)', 'own', NULL,
    'a current member of the firm the call acts for saves a renewal''s with whom and date from a version, when the level rule gives them its account; refused as add_renewal is, and 42501 in words for one who sees the account but may not change it'),
-  ('delete_renewal(p_renewal_id uuid, p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for deletes a renewal by the level rule, except one a win made (PT409); refused as update_renewal is'),
+  ('delete_renewal(p_renewal_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for deletes a renewal from a version, by the level rule, except one a win made (PT409); refused as update_renewal is'),
   ('mark_renewal_not_renewed(p_renewal_id uuid, p_not_renewed_on date, p_firm_id uuid, p_version integer, p_time_zone text)', 'own', NULL,
    'a current member of the firm the call acts for marks a renewal "Didn''t renew" on a day, ending the placement it came from, by the level rule and from a version; refused as update_renewal is'),
   ('undo_renewal_not_renewed(p_renewal_id uuid, p_firm_id uuid, p_version integer, p_time_zone text)', 'own', NULL,
@@ -2081,7 +2081,7 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.mark_renewal_not_renewed({rnw}, current_date, {firm}, (SELECT version FROM public.renewals WHERE id = {rnw}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"outcome": "not_renewed"'),
   ('undo_renewal_not_renewed', 'advisor', 'by_id',
    $$SELECT public.undo_renewal_not_renewed({rnw}, {firm}, (SELECT version FROM public.renewals WHERE id = {rnw}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
-  ('delete_renewal', 'advisor', 'by_id', $$SELECT public.delete_renewal({rdel}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true');
+  ('delete_renewal', 'advisor', 'by_id', $$SELECT public.delete_renewal({rdel}, {firm}, (SELECT version FROM public.renewals WHERE id = {rdel}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true');
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES

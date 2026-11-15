@@ -424,6 +424,20 @@ describe("the Accounts page: the Label column and filter (D-198)", () => {
   });
 });
 
+describe("the Accounts page: nothing a later story ships appears early", () => {
+  // Catches (D-402, review of #181): the renewal's fields offered by "Add filter" before the screens that show renewals exist (CRM-A2.4b), so a person could
+  // filter by a column the table does not have.
+  it("does not offer the renewal's fields in Add filter", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "Add filter" }));
+    expect(await screen.findByRole("button", { name: "Label" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Renewal date" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Renewing in 120 days" })).not.toBeInTheDocument();
+  });
+});
+
 describe("the Accounts page: Export", () => {
   const COLUMNS = [
     "name", "trade_name", "website", "city", "state", "employees", "industry", "states_of_operation", "current_provider", "source", "status", "owner", "main_contact",

@@ -574,8 +574,13 @@ CREATE FUNCTION pg_temp.upd(who text, p_renewal text, p_with text, p_on date, p_
   SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.update_renewal(%L, %L, %L, %L, %L)::text',
     pg_temp.id(p_renewal), p_with, p_on, pg_temp.fid(who), p_version))
 $$;
+-- A delete from an explicit version (NULL: none sent).
+CREATE FUNCTION pg_temp.delv(who text, p_renewal text, p_version integer) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.delete_renewal(%L, %L, %L)::text', pg_temp.id(p_renewal), pg_temp.fid(who), p_version))
+$$;
+-- A delete from the renewal's current version, as read by the superuser.
 CREATE FUNCTION pg_temp.del(who text, p_renewal text) RETURNS text LANGUAGE sql AS $$
-  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.delete_renewal(%L, %L)::text', pg_temp.id(p_renewal), pg_temp.fid(who)))
+  SELECT pg_temp.delv(who, p_renewal, (SELECT version FROM public.renewals WHERE id = pg_temp.id(p_renewal)))
 $$;
 
 -- A renewal a win would make (CRM-O1.3a): its placement has an opportunity. Made as the superuser, since no function makes one yet.
@@ -685,6 +690,33 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pg_temp.id('wr_p')), 1::bigint, 'a win''s placement is still there');
 END $$;
 
+
+-- Break caught: a delete that takes no version, so a person deletes a renewal (and the by-hand placement made with it) another member edited since they
+-- loaded it, without a word (D-46); a conflict answered in another shape than the other writes'.
+DO $$
+DECLARE r text; j jsonb; rid uuid; pid uuid;
+BEGIN
+  r := pg_temp.add_renewal('acme_agent1', 'a1', 'peo_placement', 'Paychex', current_date + 200);
+  rid := (r::jsonb -> 'renewal' ->> 'id')::uuid; pid := (r::jsonb -> 'placement' ->> 'id')::uuid;
+  INSERT INTO fx VALUES ('rv', rid), ('pv', pid);
+  PERFORM pg_temp.is(pg_temp.delv('acme_agent1', 'rv', NULL),
+    '22023: This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.', 'a delete with no version is refused');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.delv('acme_agent1', 'rv', 0)), '22023', 'version 0');
+  -- another member's edit moves it to version 2
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.upd('acme_owner', 'rv', 'Paychex Flex', current_date + 201, 1)), 'ok', 'the owner of the firm edits it');
+  r := pg_temp.delv('acme_agent1', 'rv', 1);
+  j := r::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, true, 'a delete from the older version is a conflict');
+  PERFORM pg_temp.is((j ->> 'currentVersion')::int, 2, 'naming the version it is at');
+  PERFORM pg_temp.is(j -> 'current' ->> 'with_whom', 'Paychex Flex', 'and what is there now');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'field', ',' ORDER BY c ->> 'field') FROM jsonb_array_elements(j -> 'changed') c), 'renews_on,with_whom', 'and the fields the other save changed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE id = rid), 1::bigint, 'the renewal is still there');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pid), 1::bigint, 'and its by-hand placement');
+  PERFORM pg_temp.is(pg_temp.delv('acme_agent1', 'rv', 9),
+    '22023: This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.', 'a version it never had');
+  PERFORM pg_temp.is(pg_temp.delv('acme_agent1', 'rv', 2)::jsonb ->> 'deleted', 'true', 'from the current version it deletes');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pid), 0::bigint, 'and takes its by-hand placement');
+END $$;
 
 -- ---------- history and version (D-453) ----------
 -- Break caught: a renewal's or placement's changes are not written (a person can't see who moved a date); its history is read by someone who may not see the
@@ -1129,6 +1161,7 @@ DO $$
 DECLARE
   acct uuid := pg_temp.id('a1'); firm uuid := pg_temp.id('acme'); other uuid := pg_temp.id('a2');
 BEGIN
+  PERFORM pg_temp.placement('k_unrenewed', 'a1', 'Gusto');
   PERFORM pg_temp.opportunity('k_o1', 'a1', 'acme_agent1');
   PERFORM pg_temp.opportunity('k_o2', 'a1', 'acme_agent1');
   PERFORM pg_temp.opportunity('k_other', 'a2', 'acme_agent2');
@@ -1136,7 +1169,7 @@ BEGIN
     '23514', 'a PEO placement renewal needs its placement');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'current_plan', 'X', current_date, %L)$q$, firm, acct, pg_temp.id('p1'))),
     '23514', 'a current plan''s renewal has none');
-  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'peo_placement', 'X', current_date, %L)$q$, firm, other, pg_temp.id('p1'))),
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'peo_placement', 'X', current_date, %L)$q$, firm, other, pg_temp.id('k_unrenewed'))),
     '23503', 'a renewal can''t come from another account''s placement');
   PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, opportunity_id) VALUES (%L, %L, 'current_plan', 'X', current_date, %L)$q$, firm, acct, pg_temp.id('k_other'))),
     '23503', 'nor be worked by another account''s opportunity');
@@ -1182,6 +1215,54 @@ BEGIN
     'deleting an account deletes its placements and renewals');
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name IN ('renewals', 'placements') AND NOT public.record_history_record_exists(h.firm_id, h.table_name, h.record_key)), 0::bigint,
     'and their history with them');
+END $$;
+
+-- Break caught (review of #181): "Renewing in 120 days" is a filter only, but sorting by it is accepted and silently leaves the table unsorted (it has no sort
+-- key). The query refuses a field it cannot sort as it refuses one it does not have.
+DO $$
+BEGIN
+  PERFORM pg_temp.is(pg_temp.as_call('acme_owner', 'acme-brokers', format('SELECT public.accounts_list(%L, ''[]'', ''renewing_in_120_days'', ''asc'', 1, NULL, ''UTC'')::text', pg_temp.id('acme'))),
+    '22023: The accounts table has no field "renewing_in_120_days" to sort by', 'the renewal view is a filter, never a sort');
+END $$;
+
+-- Break caught (review of #181): a placement names a quote request of another opportunity of its firm, or of another firm, so a win's quote (and the
+-- commission that follows it, CRM-O1.3a) belongs to somebody else's search. The quote must be one of the placement's opportunity's own intake; a placement
+-- with no opportunity (made by hand) has no quote.
+DO $$
+DECLARE
+  a uuid; o1 uuid; o2 uuid; q1 bigint; q2 bigint; qz bigint; z uuid; pl uuid;
+BEGIN
+  PERFORM pg_temp.account('q_a', 'acme', 'acme_agent1');
+  PERFORM pg_temp.intake('q_i1', 'acme'); PERFORM pg_temp.intake('q_i2', 'acme'); PERFORM pg_temp.intake('q_iz', 'zenith');
+  PERFORM pg_temp.opportunity('q_o1', 'q_a', 'acme_agent1', 'q_i1');
+  PERFORM pg_temp.opportunity('q_o2', 'q_a', 'acme_agent1', 'q_i2');
+  PERFORM pg_temp.account('q_z', 'zenith', 'zenith_agent');
+  PERFORM pg_temp.opportunity('q_oz', 'q_z', 'zenith_agent', 'q_iz');
+  INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (pg_temp.id('q_i1'), 'Justworks', 'sent') RETURNING id INTO q1;
+  INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (pg_temp.id('q_i2'), 'Justworks', 'sent') RETURNING id INTO q2;
+  INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (pg_temp.id('q_iz'), 'Justworks', 'sent') RETURNING id INTO qz;
+  a := pg_temp.id('q_a'); o1 := pg_temp.id('q_o1'); o2 := pg_temp.id('q_o2');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, opportunity_id, quote_request_id, peo_name) VALUES (%L, %L, %L, %s, 'Justworks')$q$, pg_temp.id('acme'), a, o1, q2)),
+    '23514', 'a quote request of another opportunity of the same firm is refused');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, opportunity_id, quote_request_id, peo_name) VALUES (%L, %L, %L, %s, 'Justworks')$q$, pg_temp.id('acme'), a, o1, qz)),
+    '23514', 'one of another firm is refused');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, quote_request_id, peo_name) VALUES (%L, %L, %s, 'Justworks')$q$, pg_temp.id('acme'), a, q1)),
+    '23514', 'a placement with no opportunity has no quote');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, opportunity_id, quote_request_id, peo_name) VALUES (%L, %L, %L, %s, 'Justworks')$q$, pg_temp.id('acme'), a, o1, q1)),
+    'rows:1', 'the opportunity''s own quote request is taken');
+  INSERT INTO public.placements (firm_id, account_id, opportunity_id, peo_name) VALUES (pg_temp.id('acme'), a, o1, 'Justworks') RETURNING id INTO pl;
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.placements SET quote_request_id = %s WHERE id = %L$q$, q2, pl)), '23514', 'nor is another''s set on a placement later');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.placements SET quote_request_id = %s WHERE id = %L$q$, q1, pl)), 'rows:1', 'but its own is');
+END $$;
+
+-- Break caught (review of #181): a placement renewed twice, so "the renewal it came from" names two and a win or "Didn't renew" ends it for one of them only.
+DO $$
+DECLARE
+  pl uuid := pg_temp.id('p1');
+BEGIN
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE placement_id = pl), 1::bigint, 'p1 has its one renewal');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'peo_placement', 'X', current_date, %L)$q$,
+    pg_temp.id('acme'), pg_temp.id('a1'), pl)), '23505', 'a second renewal on the same placement is refused');
 END $$;
 
 -- Break caught: the stamp (updated_at) stays as it was when a renewal is saved.
@@ -1302,4 +1383,102 @@ BEGIN
           'public.opportunities', 'public.placements', 'public.recent_records', 'public.renewals'], 'the closing plan deletes the five tables Epic 3 added beside the three records and these two');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'and keeps every table it kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() p WHERE p.action = 'delete' AND p.src IN ('public.renewals', 'public.placements')), 2::bigint, 'each line once');
+END $$;
+
+-- ---------- lock order: the account first, then the renewal (review of #181; as archive, delete and owner change take them) ----------
+-- Break caught: a renewal write that locks the renewal (and its placement) and only then reads the account, or never locks the account, so (1) it can hold a
+-- renewal while an owner change or archive holds the account and wait on it in a ring with a writer that takes them the other way round, and (2) it asks the
+-- level rule of an account row another session is changing (a stale owner), and an archive that commits between its read and its insert lets a renewal land on
+-- an archived account. Shown with two sessions: while the second holds the account's row as an owner change or an archive does (FOR NO KEY UPDATE), each write
+-- waits on the account before it takes the renewal, so the second can still take the renewal within two seconds; and an add that waited behind an archive
+-- refuses once the archive commits.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- The fixtures, committed first (a DO block is one transaction), so the two other sessions below can see them.
+DO $$
+DECLARE n text; r text;
+BEGIN
+  PERFORM pg_temp.account('lk_a', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('lk_b', 'acme', 'acme_agent1');
+  FOREACH n IN ARRAY ARRAY['lk_upd', 'lk_del', 'lk_mark', 'lk_undo'] LOOP
+    r := pg_temp.add_renewal('acme_owner', 'lk_a', 'current_plan', n, current_date + 40);
+    INSERT INTO fx VALUES (n, (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  END LOOP;
+END $$;
+DO $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  fid uuid := pg_temp.id('acme'); acct uuid := pg_temp.id('lk_a'); arch uuid := pg_temp.id('lk_b');
+  a_pid integer; b_pid integer; tries integer; got text; waited boolean; stmt text; who text; rid uuid;
+  calls text[][] := ARRAY[
+    ['lk_upd',  format($q$SELECT public.update_renewal(%L, 'Held', current_date + 41, %L, 1)::text$q$, pg_temp.id('lk_upd'), fid)],
+    ['lk_del',  format($q$SELECT public.delete_renewal(%L, %L, 1)::text$q$, pg_temp.id('lk_del'), fid)],
+    ['lk_mark', format($q$SELECT public.mark_renewal_not_renewed(%L, current_date, %L, 1)::text$q$, pg_temp.id('lk_mark'), fid)],
+    ['lk_undo', format($q$SELECT public.undo_renewal_not_renewed(%L, %L, 1)::text$q$, pg_temp.id('lk_undo'), fid)],
+    [NULL,      format($q$SELECT public.add_renewal(%L, 'current_plan', 'Held', current_date + 42, NULL, %L)::text$q$, acct, fid)]];
+  i integer;
+  open_as text := format('SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; SET LOCAL request.headers = %L',
+    jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text,
+    jsonb_build_object('x-firm-address', 'acme-brokers')::text);
+BEGIN
+  PERFORM race.dblink_connect('qa', dsn);
+  PERFORM race.dblink_connect('qb', dsn);
+  SELECT pid INTO a_pid FROM race.dblink('qa', 'SELECT pg_backend_pid()') AS t(pid integer);
+  SELECT pid INTO b_pid FROM race.dblink('qb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  FOR i IN 1 .. array_length(calls, 1) LOOP
+    who := calls[i][1]; stmt := calls[i][2]; tries := 0;
+    -- The second holds the account row as an owner change does.
+    PERFORM race.dblink_exec('qb', 'BEGIN');
+    PERFORM race.dblink_exec('qb', format('DO $do$ BEGIN PERFORM 1 FROM public.accounts WHERE id = %L FOR NO KEY UPDATE; END $do$', acct));
+    PERFORM race.dblink_exec('qa', 'BEGIN');
+    PERFORM race.dblink_exec('qa', open_as);
+    PERFORM race.dblink_send_query('qa', stmt);
+    WHILE tries < 100 AND NOT (b_pid = ANY (pg_blocking_pids(a_pid))) LOOP
+      tries := tries + 1;
+      PERFORM pg_sleep(0.05);
+    END LOOP;
+    PERFORM pg_temp.is(b_pid = ANY (pg_blocking_pids(a_pid)), true, coalesce(who, 'add_renewal') || ' waits on the account row');
+    IF who IS NOT NULL THEN
+      -- While it waits, the renewal is still free: the write has not taken it first.
+      BEGIN
+        PERFORM race.dblink_exec('qb', format('SET LOCAL lock_timeout = %L; DO $do$ BEGIN PERFORM 1 FROM public.renewals WHERE id = %L FOR NO KEY UPDATE; END $do$', '2s', pg_temp.id(who)));
+        got := 'ok';
+      EXCEPTION WHEN OTHERS THEN
+        got := SQLSTATE;
+      END;
+      PERFORM pg_temp.is(got, 'ok', who || ': the renewal was free while the write waited (account first)');
+    END IF;
+    PERFORM race.dblink_exec('qb', 'ROLLBACK');
+    PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+    PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+    PERFORM race.dblink_exec('qa', 'ROLLBACK');
+  END LOOP;
+
+  -- An archive commits while an add waits behind it: the add then sees the account archived and refuses (55000), not a renewal on an archived account.
+  tries := 0;
+  PERFORM race.dblink_exec('qb', 'BEGIN');
+  PERFORM race.dblink_exec('qb', format('UPDATE public.accounts SET archived_at = now() WHERE id = %L', arch));
+  PERFORM race.dblink_exec('qa', 'BEGIN');
+  PERFORM race.dblink_exec('qa', open_as);
+  PERFORM race.dblink_send_query('qa', format($q$SELECT public.add_renewal(%L, 'current_plan', 'Late', current_date + 9, NULL, %L)::text$q$, arch, fid));
+  WHILE tries < 100 AND NOT (b_pid = ANY (pg_blocking_pids(a_pid))) LOOP
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM pg_temp.is(b_pid = ANY (pg_blocking_pids(a_pid)), true, 'an add waits behind an archive');
+  PERFORM race.dblink_exec('qb', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+    got := 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+  PERFORM race.dblink_exec('qa', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('qa');
+  PERFORM race.dblink_disconnect('qb');
+  PERFORM pg_temp.is(got, '55000', 'and refuses once the archive has committed');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE account_id = arch), 0::bigint, 'leaving no renewal on the archived account');
+  RAISE NOTICE 'placements_renewals: lock order passed';
 END $$;

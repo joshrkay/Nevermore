@@ -21,11 +21,18 @@ import type { ViewCount } from "@/lib/tableQuery";
 // (src/components/workspace/table/) does the rest, as it does for the queue (src/components/advisor/queueTable.tsx). The database cuts the pages and runs
 // the filters (D-44; supabase/migrations/20261119130000_accounts_table_query.sql).
 
-type Fields = typeof ACCOUNT_FIELDS;
+/**
+ * The database knows the renewal's two fields (CRM-A2.4a: `ACCOUNT_FIELDS` is the server's list, compared with the migration), but nothing a later story ships
+ * appears early (D-402): the screen's fields, labels and filters leave them out until the Renewal column and its view arrive (CRM-A2.4b).
+ */
+const LATER_FIELDS = ["renewal_date", "renewing_in_120_days"] as const;
+type ScreenField = Exclude<AccountField, (typeof LATER_FIELDS)[number]>;
+type Fields = Pick<typeof ACCOUNT_FIELDS, ScreenField>;
+const SCREEN_FIELDS = (Object.keys(ACCOUNT_FIELDS) as AccountField[]).filter((f): f is ScreenField => !(LATER_FIELDS as readonly string[]).includes(f));
 
 const dash = <span className="text-muted-foreground">—</span>;
 
-const FIELD_LABELS: Record<AccountField, string> = {
+const FIELD_LABELS: Record<ScreenField, string> = {
   name: "Account name",
   trade_name: "Trade name",
   website: "Website",
@@ -49,8 +56,6 @@ const FIELD_LABELS: Record<AccountField, string> = {
   labels: "Label",
   archived: "Archived",
   waiting_on_peo: "Waiting on a PEO",
-  renewal_date: "Renewal date",
-  renewing_in_120_days: "Renewing in 120 days",
   owner: "Owner",
 };
 
@@ -71,7 +76,7 @@ const FIRST_DIRECTIONS: Partial<Record<AccountField, "asc" | "desc">> = { quote_
 
 const fieldsWith = (owners: readonly FieldChoice[] | undefined, labels?: readonly FieldChoice[]) =>
   Object.fromEntries(
-    (Object.keys(ACCOUNT_FIELDS) as AccountField[]).map((id) => [id, {
+    SCREEN_FIELDS.map((id) => [id, {
       label: FIELD_LABELS[id],
       kind: ACCOUNT_FIELDS[id],
       // The firm's own labels are the Label filter's choices, never an enforced list: a word the firm no longer has still matches (nothing), as the database takes it.
