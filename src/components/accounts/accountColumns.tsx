@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { ActivityRow, ContactRow, OpportunityRow, QuoteRow } from "@/lib/accountPageApi";
-import { activityWords, contactName, formatDay, NOT_GIVEN, quoteStatusLabel, STAGE_LABELS } from "@/data/accountPage";
+import { contactName, formatDay, formatWhen, KIND_LABELS, NOT_GIVEN, quoteStatusLabel, STAGE_LABELS } from "@/data/accountPage";
+import { ActivityActions, ActivityWhat, ContactActions } from "./ActivityEntry";
 import { Pill, type Column } from "./accountLists";
 
 // What each of an account's lists shows and where each name goes (story CRM-A2.1b), drawn once for the Overview's first five and for each tab's whole list.
@@ -35,6 +36,7 @@ export const contactColumns: Column<ContactRow>[] = [
   { header: "Title", cell: (c) => c.title ?? muted(NOT_GIVEN) },
   { header: "Email", cell: (c) => (c.email ? <span className="break-all">{c.email}</span> : muted(NOT_GIVEN)) },
   { header: "Phone", cell: (c) => c.phone ?? c.mobile ?? muted(NOT_GIVEN), className: "whitespace-nowrap" },
+  { header: "Actions", cell: (c) => <ContactActions contact={c} /> },
 ];
 
 export const opportunityColumns: Column<OpportunityRow>[] = [
@@ -58,10 +60,11 @@ export const quoteColumns: Column<QuoteRow>[] = [
 ];
 
 export const activityColumns: Column<ActivityRow>[] = [
-  { header: "When", cell: (a) => formatDay(a.at), className: "whitespace-nowrap text-muted-foreground" },
-  { header: "Kind", cell: () => <span className="font-medium">Change</span> },
-  { header: "What happened", cell: (a) => activityWords(a) },
-  { header: "By", cell: (a) => <span className="break-all">{a.who}</span> },
+  { header: "When", cell: (a) => (a.type === "change" ? formatDay(a.at) : formatWhen(a.at)), className: "whitespace-nowrap text-muted-foreground" },
+  { header: "Kind", cell: (a) => <span className="font-medium">{KIND_LABELS[a.type]}</span> },
+  { header: "What happened", cell: (a) => <ActivityWhat row={a} /> },
+  { header: "By", cell: (a) => <span className="break-all">{a.who ?? "Someone who has left"}</span> },
+  { header: "Actions", cell: (a) => <ActivityActions row={a} /> },
 ];
 
 

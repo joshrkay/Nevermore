@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { getAccountPage, listAccountFiles, listAccountTab, type AccountFile, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
+import { getAccountPage, listAccountFiles, listAccountTab, type AccountFile, type ActivityFilter, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
 
 /** An account's page and its lists are asked again this often, and when the window gets focus (D-49). */
 export const ACCOUNT_REFRESH_MS = 60_000;
@@ -44,13 +44,13 @@ type TabAnswer<T extends AccountListTab | "files"> = TabRows<T extends AccountLi
  * again with a longer limit, which the database refuses past a hundred rows). Asked only while the tab is open. `rows` is every row loaded so far and `count` how
  * many the tab holds in all; `null` rows say the account is not there or not theirs. A refresh asks the loaded pages again, and the rows stay while it does.
  */
-export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: string | null, accountId: string, tab: T) {
+export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: string | null, accountId: string, tab: T, filter: ActivityFilter = "all") {
   const query = useInfiniteQuery({
-    queryKey: [...accountKey(firmId, accountId), "tab", tab],
+    queryKey: [...accountKey(firmId, accountId), "tab", tab, filter],
     initialPageParam: 0,
     queryFn: async ({ pageParam }): Promise<TabAnswer<T>> => (tab === "files"
       ? await listAccountFiles(firmId as string, accountId, { limit: TAB_STEP, offset: pageParam })
-      : await listAccountTab(firmId as string, accountId, tab as AccountListTab, { limit: TAB_STEP, offset: pageParam })) as TabAnswer<T>,
+      : await listAccountTab(firmId as string, accountId, tab as AccountListTab, { limit: TAB_STEP, offset: pageParam, ...(tab === "activity" ? { filter } : {}) })) as TabAnswer<T>,
     getNextPageParam: (last, all) => {
       if (last === null) return undefined;
       const loaded = all.reduce((n, page) => n + (page?.rows.length ?? 0), 0);
