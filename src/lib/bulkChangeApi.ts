@@ -11,6 +11,9 @@ import { classifyApiError } from "@/lib/advisorApi";
 /** The most accounts one bulk change takes; the database counts and refuses above it (the dialog says so and asks for a narrower selection). */
 export const BULK_LIMIT = 1000;
 
+/** How long a bulk change can be undone (the database's ten minutes). The page counts it from the answer with its own timer, never from its clock against the server's. */
+export const UNDO_WINDOW_MS = 10 * 60 * 1000;
+
 /** The table's own filters in force, with the search and the person's time zone: what "Select all N that match" sends, and no ids (CRM-S3.6). */
 export interface BulkFilters {
   filters: unknown[];
