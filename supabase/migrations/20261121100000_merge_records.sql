@@ -1,5 +1,5 @@
 -- Merging in the database (story CRM-S4.3b; docs/BROKER_CRM_BUILD.md D-24, D-28, D-45, D-46, D-105, D-193, D-194, D-203, D-209, D-210, D-222, D-226, D-233, D-238,
--- D-446 to D-454, D-640 to D-649; docs/BROKER_CRM_STORIES.md CRM-S4.3; GLOSSARY.md "Merging"; ADR 0023, ADR 0024, ADR 0025; 20261119100000_crm_records.sql,
+-- D-446 to D-454, D-640 to D-652; docs/BROKER_CRM_STORIES.md CRM-S4.3; GLOSSARY.md "Merging"; ADR 0023, ADR 0024, ADR 0025; 20261119100000_crm_records.sql,
 -- 20261119110000_chain_at_certification.sql, 20261119170000_add_contact.sql, 20261119180000_calls_notes_tasks.sql, 20261119210000_bulk_changes.sql,
 -- 20261119230000_search_everywhere.sql, 20261120110000_placements_renewals.sql).
 --
@@ -511,8 +511,8 @@ GRANT EXECUTE ON FUNCTION public.merge_preview(uuid, text, uuid, uuid) TO authen
 -- that make no sense or a value no account may hold (22023, in words), a version either account is no longer at (40001).
 --
 -- Locks, in the order every writer of these records takes them (an account FOR SHARE or KEY SHARE first, then its contacts, then their activities): both accounts FOR UPDATE,
--- lowest id first (so a merge of A into B and one of B into A order themselves, and add_contact, move_contact and a certification's chain on either account are
--- waited for and seen), then the contacts, opportunities, calls/notes/tasks, placements and renewals of the two, each in id order.
+-- lowest id first (so a merge of A into B and one of B into A order themselves, and add_contact and move_contact on either account are waited for and seen; a
+-- certification's chain that matched either account waits too, through the lock the chain step takes on the account it matches, section 12), then the contacts, opportunities, calls/notes/tasks, placements and renewals of the two, each in id order.
 CREATE FUNCTION public.merge_accounts(
   p_kept_id uuid, p_removed_id uuid, p_choices jsonb DEFAULT '{}'::jsonb, p_kept_version integer DEFAULT NULL, p_removed_version integer DEFAULT NULL, p_firm_id uuid DEFAULT NULL)
 RETURNS jsonb
@@ -884,3 +884,154 @@ $$;
 
 REVOKE ALL ON FUNCTION public.resolve_merged_record(uuid, text, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.resolve_merged_record(uuid, text, uuid) TO authenticated;
+
+-- ---------- 12. The chain at certification waits for a merge ----------
+-- The chain step (20261119110000, restated by 20261119120000) as it stands, with one change: after it matches an existing account (D-193) it holds that account FOR KEY
+-- SHARE and looks again, following a merge to the account it became (D-644). Everything else is as it was; `v_hop` is the only new variable.
+CREATE OR REPLACE FUNCTION public.make_intake_chain(p_intake_id uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE
+  i public.chamber_sessions;
+  v_hop integer;
+  cert record;
+  cert_data jsonb;
+  cert_signer text;
+  prof record;
+  existing public.opportunities;
+  d jsonb;
+  v_name text;
+  v_name_certified boolean;
+  v_website text;
+  v_domain text;
+  v_state text;
+  v_street text;
+  v_industry text;
+  v_employees integer;
+  v_states text[];
+  v_provider text;
+  v_start text;
+  v_email text;
+  v_phone text;
+  v_names text[];
+  v_dup uuid;
+  v_account uuid;
+  v_contact uuid;
+  v_opportunity uuid;
+BEGIN
+  SELECT * INTO i FROM public.chamber_sessions WHERE id = p_intake_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'The intake does not exist' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- The chain that is there (a cheap look first: every update of a certified intake asks).
+  SELECT * INTO existing FROM public.opportunities WHERE intake_id = p_intake_id;
+  IF FOUND THEN
+    RETURN jsonb_build_object('made', false, 'account_id', existing.account_id, 'opportunity_id', existing.id);
+  END IF;
+
+  SELECT c.chamber_data, c.signer_name INTO cert
+  FROM public.chamber_certifications c WHERE c.session_id = p_intake_id ORDER BY c.version DESC, c.id DESC LIMIT 1;
+  IF FOUND THEN
+    cert_data := cert.chamber_data;
+    cert_signer := cert.signer_name;
+  ELSIF public.intake_ever_certified(p_intake_id) THEN
+    -- Submitted before certifications were recorded (CRM-Q1.3): there is no snapshot, so the values are the intake's own answers as they are now, and there
+    -- is no signer's name to fall back on.
+    cert_data := i.chamber_data;
+  ELSE
+    RAISE EXCEPTION 'The intake has never been certified, so it has no account, contact or opportunity' USING ERRCODE = '55000';
+  END IF;
+  d := cert_data;
+
+  -- The prospect: the person who certified. Their profile's name and phone, their email (a signer's name when the profile has none).
+  SELECT u.email::text AS email, p.contact_name, p.company_name, p.phone INTO prof
+  FROM (SELECT 1) one LEFT JOIN auth.users u ON u.id = i.user_id LEFT JOIN public.profiles p ON p.user_id = i.user_id;
+
+  -- The account's values, each as its column takes it. What a column would refuse is left out, never allowed to fail the certification.
+  v_name := public.crm_answer_text(d, 'company_name', 200);
+  v_name_certified := v_name IS NOT NULL;
+  v_name := COALESCE(v_name, left(NULLIF(btrim(prof.company_name), ''), 200), 'Unnamed business');
+  v_website := public.crm_answer_text(d, 'website', 300);
+  v_domain := public.web_domain_of(v_website);
+  v_state := CASE WHEN public.is_us_state_code(public.crm_answer_text(d, 'hq_state', 2)) THEN public.crm_answer_text(d, 'hq_state', 2) END;
+  v_street := public.crm_answer_text(d, 'street_address', 200);
+  v_industry := public.crm_answer_text(d, 'industry', 200);
+  v_employees := CASE WHEN jsonb_typeof(d -> 'employee_count') = 'number' AND (d ->> 'employee_count') ~ '^[0-9]{1,9}$' THEN (d ->> 'employee_count')::integer END;
+  v_states := CASE WHEN jsonb_typeof(d -> 'states') = 'array' THEN
+    COALESCE((SELECT array_agg(s.state ORDER BY s.first_at)
+              FROM (SELECT x.state, min(x.at) AS first_at
+                    FROM (SELECT e.value #>> '{}' AS state, e.at FROM jsonb_array_elements(d -> 'states') WITH ORDINALITY AS e (value, at)
+                          WHERE jsonb_typeof(e.value) = 'string') x
+                    WHERE public.is_us_state_code(x.state) GROUP BY x.state) s), '{}') ELSE '{}' END;
+  v_provider := CASE WHEN COALESCE((d ->> 'in_peo') <> 'false', true) THEN public.crm_answer_text(d, 'current_peo', 200) END;
+  v_start := public.crm_answer_text(d, 'start_month', 100);
+
+  -- The contact's values.
+  v_email := CASE WHEN length(prof.email) <= 254 AND prof.email ~ '^[^@[:space:]]+@[^@[:space:]]+$' THEN prof.email END;
+  v_phone := left(NULLIF(btrim(prof.phone), ''), 40);
+  v_names := public.crm_split_person_name(COALESCE(NULLIF(btrim(prof.contact_name), ''), cert_signer));
+
+  -- A closed firm holds no CRM records: closing deleted them and kept the intake, so a certification again must not bring the chain back. The firm's row is
+  -- held FOR KEY SHARE first, which conflicts only with the closing's FOR UPDATE of that row (close_firm_now, D-122): a closing that is running is waited for,
+  -- and the question is then asked of what it committed, so a chain is never written after the closing's delete pass. The employer's certification is not
+  -- refused; it just has no chain. A firm that is closing and not yet closed still gets its chain, which its closing deletes with the rest. (This lock is
+  -- taken before the firm's advisory lock below; the closing takes the row and no advisory lock, so the two cannot wait on each other.)
+  PERFORM 1 FROM public.firms f WHERE f.id = i.firm_id FOR KEY SHARE;
+  IF public.firm_is_closed(i.firm_id) THEN
+    RETURN jsonb_build_object('made', false, 'closed', true);
+  END IF;
+
+  -- One chain at a time within a firm (see above), then the look again: another step may have made it while this one waited.
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_chain:' || i.firm_id::text, 0));
+  SELECT * INTO existing FROM public.opportunities WHERE intake_id = p_intake_id;
+  IF FOUND THEN
+    RETURN jsonb_build_object('made', false, 'account_id', existing.account_id, 'opportunity_id', existing.id);
+  END IF;
+
+  v_dup := public.find_duplicate_account(i.firm_id,
+    v_domain,
+    CASE WHEN v_name_certified THEN v_name END,
+    v_state,
+    v_email);
+
+  -- The matched account is held FOR KEY SHARE before the new account names it (CRM-S4.3b). A merge holds both its accounts FOR UPDATE and then deletes the removed one: a
+  -- chain that matched that one and went straight to its insert would find the account gone at the key check (23503) and fail the employer's certification. Holding
+  -- it makes the chain wait for the merge, and then look again: an account merged away is followed through merged_records to the account it became (its own match,
+  -- held the same way), and one that is simply gone is no match at all. The look again repeats if what it became was merged in turn.
+  IF v_dup IS NOT NULL THEN
+    FOR v_hop IN 1..50 LOOP
+      PERFORM 1 FROM public.accounts x WHERE x.id = v_dup AND x.firm_id = i.firm_id FOR KEY SHARE;
+      EXIT WHEN FOUND;
+      SELECT m.kept_id INTO v_dup FROM public.merged_records m WHERE m.firm_id = i.firm_id AND m.kind = 'account' AND m.removed_id = v_dup;
+      EXIT WHEN v_dup IS NULL;
+    END LOOP;
+  END IF;
+
+  INSERT INTO public.accounts (firm_id, owner_id, name, website, street, state, industry, employees, states_of_operation, current_provider, source, possible_duplicate_of)
+  VALUES (i.firm_id, NULL, v_name, v_website, v_street, v_state, v_industry, v_employees, v_states, v_provider, 'employer_intake', v_dup)
+  RETURNING id INTO v_account;
+
+  IF v_names IS NOT NULL AND (v_email IS NOT NULL OR v_phone IS NOT NULL) THEN
+    INSERT INTO public.contacts (firm_id, account_id, owner_id, first_name, last_name, email, phone, is_main, prospect_user_id)
+    VALUES (i.firm_id, v_account, NULL, v_names[1], v_names[2], v_email, v_phone, true, i.user_id)
+    RETURNING id INTO v_contact;
+  END IF;
+
+  INSERT INTO public.opportunities (firm_id, account_id, owner_id, intake_id, name, main_contact_id)
+  VALUES (i.firm_id, v_account, NULL, p_intake_id, CASE WHEN v_start IS NULL THEN 'PEO search' ELSE v_start || ' PEO search' END, v_contact)
+  ON CONFLICT (intake_id) DO NOTHING
+  RETURNING id INTO v_opportunity;
+  IF v_opportunity IS NULL THEN
+    RAISE EXCEPTION 'Another step made this intake''s opportunity first' USING ERRCODE = '40001';
+  END IF;
+
+  RETURN jsonb_build_object('made', true, 'account_id', v_account, 'contact_id', v_contact, 'opportunity_id', v_opportunity, 'possible_duplicate_of', v_dup);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.make_intake_chain(uuid) FROM PUBLIC, anon, authenticated, service_role;
+

@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh merge_records
--- Merging in the database (story CRM-S4.3b; docs/BROKER_CRM_BUILD.md D-203, D-209, D-210, D-193, D-640 to D-649; 20261121100000_merge_records.sql).
+-- Merging in the database (story CRM-S4.3b; docs/BROKER_CRM_BUILD.md D-203, D-209, D-210, D-193, D-640 to D-652; 20261121100000_merge_records.sql).
 -- Two accounts (their contacts, opportunities with their intakes and quotes, calls, notes, tasks, labels, placements, renewals, history), two contacts of one account,
 -- "keep separate", the level rule, the kept record's old address, the recent records, and the refusals. Two firms are used throughout.
 -- Every migration is loaded, in filename order (D-105), this story's last.
@@ -845,6 +845,152 @@ BEGIN
   r := pg_temp.merge_a('acme_owner', 'ow_k2', 'ow_r2', '{"owner": "removed"}');
   PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a current member can: ' || r);
   PERFORM pg_temp.is((SELECT owner_id FROM public.accounts WHERE id = pg_temp.id('ow_k2')), pg_temp.id('acme_agent1'), 'and becomes the owner');
+END $$;
+
+-- ---------- 13. A certification that matches an account being merged away waits for the merge ----------
+-- Two real connections (dblink): the first merges and holds the removed account FOR UPDATE without committing, the second certifies an intake of the same business and is
+-- seen waiting, the first commits. Break caught: the chain's new account naming the matched account at its insert, after the merge deleted it: 23503
+-- accounts_possible_duplicate_of_fkey out of a trigger on the intake, so the employer's certification fails. Its helpers are chain_at_certification.sql's.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+
+CREATE FUNCTION pg_temp.new_prospect(n text, p_contact_name text DEFAULT NULL, p_phone text DEFAULT NULL, p_email text DEFAULT NULL) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE uid uuid := gen_random_uuid();
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO auth.users (id, aud, role, email, email_confirmed_at, is_anonymous, created_at, updated_at)
+  VALUES (uid, 'authenticated', 'authenticated', COALESCE(p_email, n || '@example.test'), now(), false, now(), now());
+  INSERT INTO fx VALUES (n, uid);
+  UPDATE public.profiles SET contact_name = p_contact_name, phone = p_phone WHERE user_id = uid;
+  PERFORM pg_temp.as_user(n);
+  PERFORM public.record_intake_consent(public.intake_consent_version(), 'I agree to how my information is used.');
+  RESET ROLE;
+  RETURN uid;
+END $$;
+
+CREATE FUNCTION pg_temp.answers(p_company text, p_state text DEFAULT 'TX', p_extra jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE sql AS $$
+  SELECT jsonb_build_object(
+    'company_name', p_company, 'hq_state', p_state, 'states', jsonb_build_array(p_state, 'CA'), 'employee_count', 12, 'pay_frequency', 'bi-weekly',
+    'industry', 'Dental practice', 'street_address', '500 Harbor Street, Suite 300, Austin, TX 78701', 'website', 'https://www.Harborview.example/about',
+    'start_month', 'March 2027', 'in_peo', true, 'current_peo', 'Paychex PEO', 'fein', '123456789',
+    'census', jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'first_name', 'Zelda', 'last_name', 'Censusperson', 'dob', '1988-03-15')))
+  || p_extra
+$$;
+
+CREATE FUNCTION pg_temp.start_intake(n text, p_prospect text, p_data jsonb, p_firm text DEFAULT NULL) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE sid uuid;
+BEGIN
+  PERFORM pg_temp.as_user(p_prospect);
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pg_temp.id(p_prospect), p_data) RETURNING id INTO sid;
+  PERFORM pg_temp.as_owner();
+  IF p_firm IS NOT NULL THEN UPDATE public.chamber_sessions SET firm_id = pg_temp.id(p_firm) WHERE id = sid; END IF;
+  INSERT INTO fx VALUES (n, sid);
+  RETURN sid;
+END $$;
+
+CREATE FUNCTION pg_temp.as_command(stmt text) RETURNS text LANGUAGE sql AS $$
+  SELECT CASE WHEN stmt ~* '^SELECT ' THEN format('DO $do$ BEGIN PERFORM %s; END $do$', substr(stmt, 8)) ELSE stmt END
+$$;
+
+CREATE FUNCTION pg_temp.race_pair(a_who text, a_stmts text[], b_who text, b_stmt text, a_late text DEFAULT NULL, a_slow text DEFAULT NULL, b_delay numeric DEFAULT 0.4) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; res text; late text := ''; s text; i integer; a_async boolean := false;
+BEGIN
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  IF a_who IS NOT NULL THEN
+    PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
+    PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L',
+      jsonb_build_object('sub', pg_temp.id(a_who), 'role', 'authenticated', 'is_anonymous', false, 'email', a_who || '@example.test')::text));
+  END IF;
+  FOR i IN 1..cardinality(a_stmts) LOOP
+    IF a_slow IS NOT NULL AND i = cardinality(a_stmts) THEN
+      -- The last statement runs in the background and is slowed inside (a trigger sleeps `a_slow` seconds when it updates a request), so
+      -- the second starts while the first is part-way through, not after it has finished.
+      PERFORM race.dblink_exec('ra', format('SET LOCAL zz.slow = %L', a_slow));
+      PERFORM race.dblink_send_query('ra', a_stmts[i]);
+      a_async := true;
+      PERFORM pg_sleep(b_delay);
+    ELSE
+      PERFORM race.dblink_exec('ra', pg_temp.as_command(a_stmts[i]));
+    END IF;
+  END LOOP;
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  IF b_who IS NOT NULL THEN
+    PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+    PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L',
+      jsonb_build_object('sub', pg_temp.id(b_who), 'role', 'authenticated', 'is_anonymous', false, 'email', b_who || '@example.test')::text));
+  END IF;
+  PERFORM race.dblink_send_query('rb', b_stmt);
+  WHILE tries < 80 LOOP
+    IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
+    IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  IF a_async THEN
+    BEGIN PERFORM * FROM race.dblink_get_result('ra') AS t(r text); EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE; late := late || ' first:' || s; END;
+    BEGIN PERFORM * FROM race.dblink_get_result('ra') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  END IF;
+  IF a_late IS NOT NULL THEN
+    BEGIN
+      PERFORM race.dblink_exec('ra', pg_temp.as_command(a_late));
+      late := ' late:ok';
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+      late := ' late:' || s;
+    END;
+  END IF;
+  BEGIN PERFORM race.dblink_exec('ra', 'COMMIT'); EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
+    res := 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    res := s;
+  END;
+  BEGIN PERFORM * FROM race.dblink_get_result('rb') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN PERFORM race.dblink_exec('rb', 'COMMIT'); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  RETURN CASE WHEN waited THEN 'waited:' ELSE 'did not wait:' END || res || late;
+END $$;
+
+CREATE FUNCTION pg_temp.certify_stmt(n text, p_signer text DEFAULT 'Jo Doe') RETURNS text LANGUAGE sql AS $$
+  SELECT format($q$UPDATE public.chamber_sessions SET status = 'submitted', submission = jsonb_build_object('signer_name', %L, 'signer_title', 'CEO',
+    'signed_at', '2026-11-01T12:00:00Z', 'consent_version', '2026-10-draft-1', 'consent_text', '["I certify."]'::jsonb, 'chamber_data', chamber_data) WHERE id = %L$q$,
+    p_signer, pg_temp.id(n))
+$$;
+
+
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('rc_k', 'acme', 'acme_owner', 'Race Keep', 'https://keepsite.example');
+  PERFORM pg_temp.account('rc_r', 'acme', 'acme_owner', 'Race Merge Target', 'https://www.racemerge.example');
+  PERFORM pg_temp.new_prospect('rc_p');
+  PERFORM pg_temp.start_intake('i_rc', 'rc_p', pg_temp.answers('Race Merge Inc', 'TX', '{"website":"https://racemerge.example/about"}'), 'acme');
+END $$;
+
+DO $$
+DECLARE r text; made public.accounts;
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race_pair('acme_owner',
+    ARRAY[format($q$SELECT public.merge_accounts(%L, %L, '{}'::jsonb, %s, %s, %L)$q$, pg_temp.id('rc_k'), pg_temp.id('rc_r'), pg_temp.ver('accounts', 'rc_k'), pg_temp.ver('accounts', 'rc_r'), pg_temp.id('acme'))],
+    NULL, pg_temp.certify_stmt('i_rc'));
+  PERFORM pg_temp.is(r, 'waited:ok', 'the certification waits for the merge and then succeeds: ' || r);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('rc_r')), 0::bigint, 'the merge went through');
+  PERFORM pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp.id('i_rc')), 'submitted', 'the intake is certified');
+  SELECT a.* INTO made FROM public.accounts a JOIN public.opportunities o ON o.account_id = a.id WHERE o.intake_id = pg_temp.id('i_rc');
+  PERFORM pg_temp.is(made.id IS NOT NULL, true, 'and has its account');
+  PERFORM pg_temp.is(made.possible_duplicate_of, pg_temp.id('rc_k'), 'which is marked a possible duplicate of the account the matched one became');
 END $$;
 
 SELECT 'All merge_records checks passed' AS result;
