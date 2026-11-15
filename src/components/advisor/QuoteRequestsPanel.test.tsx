@@ -184,18 +184,15 @@ describe("QuoteRequestsPanel", () => {
     expect(screen.queryByRole("button", { name: "Record send" })).not.toBeInTheDocument();
   });
 
-  it("after a send at Ready for market, offers the one step to Sent to PEOs, and declining changes nothing", async () => {
+  it("after a send at Ready for market, offers no step of its own: the database moves it to Sent to PEOs with the send (ADR 0026)", async () => {
     const onChanged = panel({ status: "ready_for_market", requests: [] });
     fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    expect(screen.queryByRole("button", { name: "Move to Sent to PEOs" })).not.toBeInTheDocument();
+    await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "TriNet", expect.any(String)));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Move the submission on?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
     expect(api.setStatus).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Record send" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Sent to PEOs" }));
-    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "sent_to_carrier", ""));
-    expect(onChanged).toHaveBeenCalledTimes(3);
   });
 
   it("offers no move after a send once the submission is already past Ready for market", async () => {
@@ -206,7 +203,7 @@ describe("QuoteRequestsPanel", () => {
     expect(screen.queryByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
   });
 
-  it("records a PEO's quote, then offers the step to Quoted", async () => {
+  it("records a PEO's quote and offers no step of its own: the database moves the submission to Quoted (ADR 0026)", async () => {
     const onChanged = panel({ status: "sent_to_carrier" });
     const row = screen.getByTestId("quote-request-7");
     fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
@@ -223,8 +220,8 @@ describe("QuoteRequestsPanel", () => {
       }),
     );
     expect(onChanged).toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Quoted" }));
-    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "quoted", ""));
+    expect(screen.queryByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
+    expect(api.setStatus).not.toHaveBeenCalled();
   });
 
   it("records a decline with only a note: a decline has no dates or fee", async () => {

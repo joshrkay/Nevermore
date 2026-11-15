@@ -107,17 +107,6 @@ export function olderVersionNote(
   return `Sent v${r.sent_version}, current v${currentVersion}`;
 }
 
-/**
- * The one pipeline step to offer after recording something: the first send moves Ready for market on to Sent to
- * PEOs, and the first quote moves Sent to PEOs on to Quoted. Null when the submission is anywhere
- * else, or the allow-list doesn't permit the move. The advisor still decides: the offer can be declined.
- */
-export function stageToOffer(recorded: "send" | "quote", stage: PipelineStatus): PipelineStatus | null {
-  const [from, to]: [PipelineStatus, PipelineStatus] =
-    recorded === "send" ? ["ready_for_market", "sent_to_carrier"] : ["sent_to_carrier", "quoted"];
-  return stage === from && PIPELINE_TRANSITIONS[from].includes(to) ? to : null;
-}
-
 const FIELD_NAMES: Record<string, string> = {
   status: "Status",
   peo_name: "PEO",
