@@ -2,6 +2,7 @@ import { useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { SortDirection, TableFields, TableSort } from "@/lib/tableQuery";
 import { cn } from "@/lib/utils";
+import type { RowSelection } from "./useRowSelection";
 import { firstSortDirection, type ColumnDefinition, type TableDefinition } from "./columns";
 
 interface Props<K extends TableFields, Row, Context> {
@@ -36,6 +37,13 @@ interface Props<K extends TableFields, Row, Context> {
    * What a column header holds, in place of the default (its words, and the sort button when `onSort` is given). CRM-S3.3a puts nothing
    * here (its filters are a row of their own); CRM-S3.1a's columns menu is beside the table, not in it.
    */
+  /**
+   * Row selection (CRM-S3.6): a checkbox before the first column of each row, named by the row's own words, and one in the header for the page. Left
+   * out, the table has no checkboxes and is exactly as it was (the queue).
+   */
+  selection?: RowSelection<Row>;
+  /** The rows on screen answer an earlier question while the next arrives: their checkboxes do nothing, so no row that was not asked for is selected. */
+  selectionPaused?: boolean;
   renderHeader?: (column: ColumnDefinition<Row, keyof K & string, Context>, sort: TableSort<keyof K & string> | null) => ReactNode;
 }
 
@@ -53,9 +61,11 @@ const PINNED_CELL = "bg-card group-hover:bg-[image:linear-gradient(hsl(var(--mut
 const EDGE = "shadow-[2px_0_4px_-2px_hsl(var(--foreground)/0.25)]";
 
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
-export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader, selection, selectionPaused }: Props<K, Row, Context>) {
   // Whether the table has been scrolled sideways: only then does the pinned column need an edge.
   const [scrolled, setScrolled] = useState(false);
+  // With a checkbox column the name is pinned after it (the checkbox column is one 2.75rem cell).
+  const pinned = selection ? "sticky left-11" : PINNED;
   const openRow = (e: MouseEvent, row: Row) => {
     if (!onOpenRow || (e.target as HTMLElement).closest("a, button, input, select, label")) return;
     onOpenRow(row);
@@ -73,6 +83,27 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
         <caption className="sr-only">{caption}</caption>
         <thead className="border-b border-border bg-muted/60">
           <tr>
+            {selection && (
+              <th scope="col" className={cn("sticky left-0 z-20 h-11 w-11 min-w-11 p-0", PINNED_HEAD)}>
+                <label className="flex h-11 w-11 cursor-pointer items-center justify-center">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select all ${table.noun.plural} on this page`}
+                    checked={selection.pageState === "all"}
+                    ref={(el) => {
+                      selection.pageBox.current = el;
+                      if (el) el.indeterminate = selection.pageState === "some";
+                    }}
+                    // With no rows there is nothing to select (D-143): still in the tab order, saying why, and doing nothing.
+                    aria-disabled={rows.length === 0 || selectionPaused || undefined}
+                    aria-describedby={rows.length === 0 ? "select-page-unavailable" : undefined}
+                    onChange={rows.length === 0 || selectionPaused ? () => {} : selection.togglePage}
+                    className="h-4 w-4"
+                  />
+                </label>
+                {rows.length === 0 && <span id="select-page-unavailable" className="sr-only">Available when the list has rows</span>}
+              </th>
+            )}
             {columns.map((column, index) => {
               const field = column.sortField;
               const sorted = sort && field !== undefined && field === sort.field ? sort.direction : null;
@@ -87,7 +118,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                   scope="col"
                   // Every sortable column says where it stands ("none" on the unsorted ones); a column with no sort says nothing.
                   aria-sort={field === undefined ? undefined : sorted ? word(sorted) : "none"}
-                  className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", index === 0 && cn(PINNED, "z-20", PINNED_HEAD, scrolled && EDGE), !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right")}
+                  className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", index === 0 && cn(pinned, "z-20", PINNED_HEAD, scrolled && EDGE), !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right")}
                 >
                   {!renderHeader && onSort && field !== undefined ? (
                     // The name is the header's words and nothing else; `aria-sort` on the cell says the state, and the title says what a click does
@@ -121,13 +152,19 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
               onClick={onOpenRow ? (e) => openRow(e, row) : undefined}
               className={cn("group border-b border-border last:border-0 hover:bg-muted/50", onOpenRow && "cursor-pointer")}
             >
-              {/* CRM-S3.6 (D-47): the row's checkbox goes here, before the first column. Nothing selects rows yet. */}
+              {selection && (
+                <td className={cn("sticky left-0 z-10 w-11 min-w-11 p-0 align-top", PINNED_CELL)}>
+                  <label className="flex h-11 w-11 cursor-pointer items-center justify-center">
+                    <input type="checkbox" aria-label={`Select ${selection.rowLabel(row)}`} checked={selection.isSelected(row)} aria-disabled={selectionPaused || undefined} onChange={selectionPaused ? () => {} : () => selection.toggle(row)} className="h-4 w-4" />
+                  </label>
+                </td>
+              )}
               {columns.map((column, i) => {
                 const cell = column.cell(row, context);
                 const className = cn("px-4 py-3 align-top", column.align === "right" && "text-right");
                 // The first column names the row, so a screen reader reading a cell can say whose it is.
                 return i === 0 ? (
-                  <th key={column.id} scope="row" className={cn(className, "text-left font-normal", PINNED, "z-10", PINNED_CELL, scrolled && EDGE)}>{cell}</th>
+                  <th key={column.id} scope="row" className={cn(className, "text-left font-normal", pinned, "z-10", PINNED_CELL, scrolled && EDGE)}>{cell}</th>
                 ) : (
                   <td key={column.id} className={className}>{cell}</td>
                 );
