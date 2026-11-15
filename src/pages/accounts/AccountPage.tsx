@@ -14,6 +14,7 @@ import { accountKey, useAccountPageQuery } from "@/components/accounts/useAccoun
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadFailed, NotAvailable, PlaceholderPanel, PlaceholderLines, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useAuth } from "@/hooks/useAuth";
 import type { AccountFields, AccountPage as Page } from "@/lib/accountPageApi";
 
@@ -39,6 +40,8 @@ const AccountPage = () => {
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
+  // The account is now among the menu search's recent records (CRM-S1.2a): noted once its page has loaded.
+  useNoteOpened(firmId, "account", id, query.data?.account.id === id);
 
   // The saved fields go on the page at once (the reload that follows confirms them); every list of the account is asked again, since a save adds to its history.
   const saved = useCallback((fields: AccountFields) => {

@@ -12,6 +12,7 @@ import { firmHostname } from "@/lib/firmHost";
 import ClosingBanner from "./ClosingBanner";
 import ConnectionBanner from "./ConnectionBanner";
 import MailboxNotice from "./MailboxNotice";
+import MenuSearch from "./MenuSearch";
 import SupportBanner, { SupportEnded } from "./SupportBanner";
 import { useSupportOver } from "./useSupportOver";
 import { badgeText, MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
@@ -67,6 +68,7 @@ const MenuBody = () => {
           </span>
         </Link>
       </SidebarHeader>
+      <MenuSearch />
       <SidebarContent>
         <SidebarGroup className="flex-1">
           <nav aria-label="Workspace" className="flex h-full flex-col">
