@@ -979,7 +979,7 @@ BEGIN
   r := pg_temp.race_two(format($q$WITH x AS (UPDATE public.opportunities SET owner_id = %L WHERE id = %L RETURNING 1) SELECT count(*)::text FROM x$q$, pg_temp.id('acme_other'), pg_temp.id('ko4')),
     'SELECT 1', u, NULL);
   PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the undo waits for a change to an opportunity it would put back');
-  PERFORM pg_temp.is(split_part(r, '|', 3) LIKE '%"opportunities": {"skipped": 1, "restored": 0}%', true, 'and leaves it, counted');
+  PERFORM pg_temp.is(split_part(r, '|', 3) LIKE '%"skipped": 1%' AND split_part(r, '|', 3) LIKE '%"restored": 0%', true, 'and leaves it, counted');
   PERFORM pg_temp.is(pg_temp.owner_of('opportunities', 'ko4'), 'acme_other', 'the later change to the opportunity stands');
   RAISE NOTICE 'bulk_changes: undo locks passed';
 END $$;
@@ -1046,4 +1046,93 @@ BEGIN
   DELETE FROM public.opportunities WHERE id = pg_temp.id('ho7');
   PERFORM pg_temp.is((SELECT count(*) FROM public.bulk_change_records WHERE opportunity_id = pg_temp.id('ho7')), 0::bigint, 'and deleting the opportunity takes its row');
   RAISE NOTICE 'bulk_changes: review fixes passed';
+END $$;
+
+
+-- ---------- bot findings ----------
+-- Break caught: a label deleted by an undo between a change's lookup and its rows (23503); an account deleted while the locks are taken counted nowhere; a phone the
+-- preview accepts and the change refuses; an undo that fails whole for one old phone; a record deleted since that the undo does not report.
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('r1x', 'acme', 'acme_agent1'); PERFORM pg_temp.account('r2x', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('r3x', 'acme', 'acme_agent1'); PERFORM pg_temp.account('r4x', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('d1', 'acme', 'acme_agent1'); PERFORM pg_temp.account('d2', 'acme', 'acme_agent1');
+END $$;
+DO $$
+BEGIN
+  RESET ROLE;
+  CREATE TEMP TABLE bf (n text PRIMARY KEY, id text);
+  INSERT INTO bf VALUES
+    ('x1', pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Racey1"}', ARRAY['r1x'])::jsonb ->> 'change_id'),
+    ('x2', pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Racey2"}', ARRAY['r2x'])::jsonb ->> 'change_id');
+END $$;
+CREATE TEMP TABLE bf2 AS SELECT * FROM bf;
+
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  -- An undo deleting the label (not yet committed) against a change adding the same word.
+  r := pg_temp.race_two(format($q$SELECT public.bulk_accounts_undo(%L, %L)::text$q$, (SELECT id FROM bf2 WHERE n = 'x1'), firm), 'SELECT 1',
+    format($q$SELECT public.bulk_accounts_change(%L, 'label_add', '{"name":"racey1"}', NULL, %L)::text$q$, firm, pg_temp.arr(ARRAY['r3x'])::text));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the change waits for the undo that is deleting the label it names');
+  PERFORM pg_temp.is(left(split_part(r, '|', 3), 1), '{', 'and then makes the label again, with no foreign key error');
+  PERFORM pg_temp.is(pg_temp.labels_of('r3x') || '/' || (SELECT count(*) FROM public.labels WHERE firm_id = firm AND lower(name) = 'racey1'), 'racey1/1', 'one label, on the account');
+  -- A change adding the word (not yet committed) against the undo that would delete it.
+  r := pg_temp.race_two(format($q$SELECT public.bulk_accounts_change(%L, 'label_add', '{"name":"Racey2"}', NULL, %L)::text$q$, firm, pg_temp.arr(ARRAY['r4x'])::text), 'SELECT 1',
+    format($q$SELECT public.bulk_accounts_undo(%L, %L)::text$q$, (SELECT id FROM bf2 WHERE n = 'x2'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the undo waits for a change that is putting the label on an account');
+  PERFORM pg_temp.is(pg_temp.labels_of('r4x') || '/' || (SELECT count(*) FROM public.labels WHERE firm_id = firm AND name = 'Racey2'), 'Racey2/1', 'and the label is not taken from under it');
+  RAISE NOTICE 'bulk_changes: label against undo passed';
+END $$;
+
+-- An account deleted while the locks are taken.
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme'); j jsonb;
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race_two(format($q$WITH x AS (DELETE FROM public.accounts WHERE id = %L RETURNING 1) SELECT count(*)::text FROM x$q$, pg_temp.id('d2')), 'SELECT 1',
+    format($q$SELECT public.bulk_accounts_change(%L, 'field', '{"field":"city","value":"Nome"}', NULL, %L)::text$q$, firm, pg_temp.arr(ARRAY['d1', 'd2'])::text), NULL);
+  j := split_part(r, '|', 3)::jsonb;
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the change waits for the delete of one of its accounts');
+  PERFORM pg_temp.is((j ->> 'selected')::int || '/' || (j ->> 'changed') || '/' || (j ->> 'unavailable'), '2/1/1', 'and counts the deleted account unavailable: the counts add up to what was selected');
+  RAISE NOTICE 'bulk_changes: delete while locking passed';
+END $$;
+
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  RESET ROLE;
+  -- The phone rule: the preview refuses what the change would.
+  PERFORM pg_temp.is(pg_temp.bulk('preview', 'acme_owner', 'field', '{"field":"phone","value":"not a phone"}', ARRAY['b1']),
+    '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'the preview refuses a phone that is not one');
+  PERFORM pg_temp.is(pg_temp.bulk('change', 'acme_owner', 'field', '{"field":"phone","value":"not a phone"}', ARRAY['b1']),
+    '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'and so does the change, in the same words');
+  PERFORM pg_temp.is((pg_temp.bulk('preview', 'acme_owner', 'field', '{"field":"phone","value":"503-555-0142"}', ARRAY['b1'])::jsonb ->> 'will_change')::int, 1, 'a phone that is one is previewed');
+  PERFORM pg_temp.is((pg_temp.bulk('preview', 'acme_owner', 'field', '{"field":"phone","value":""}', ARRAY['b1'])::jsonb ->> 'unchanged')::int, 1, 'and a blank one clears (it is already blank)');
+  -- An old phone that fails the rule today: the undo names it and puts the rest back.
+  PERFORM pg_temp.account('f1', 'acme', 'acme_agent1'); PERFORM pg_temp.account('f2', 'acme', 'acme_agent1');
+  ALTER TABLE public.accounts DISABLE TRIGGER accounts_phone_valid;
+  UPDATE public.accounts SET phone = 'old bad phone' WHERE id = pg_temp.id('f1');
+  ALTER TABLE public.accounts ENABLE TRIGGER accounts_phone_valid;
+  UPDATE public.accounts SET phone = '503-555-0100' WHERE id = pg_temp.id('f2');
+  r := pg_temp.bulk('change', 'acme_owner', 'field', '{"field":"phone","value":"503-555-0142"}', ARRAY['f1', 'f2'])::jsonb;
+  PERFORM pg_temp.is((r ->> 'changed')::int, 2, 'set-up: both phones replaced');
+  u := pg_temp.undo('acme_owner', r ->> 'change_id')::jsonb;
+  PERFORM pg_temp.is((u ->> 'restored')::int || '/' || pg_temp.names_of(u -> 'skipped'), '1/f1', 'the undo restores the other and names the one whose old phone fails the rule');
+  PERFORM pg_temp.is(u #>> '{skipped,0,reason}', 'Its earlier phone number no longer passes the phone rule.', 'in words');
+  PERFORM pg_temp.is((SELECT phone FROM public.accounts WHERE id = pg_temp.id('f2')), '503-555-0100', 'the valid one is back');
+  PERFORM pg_temp.is((SELECT phone FROM public.accounts WHERE id = pg_temp.id('f1')), '503-555-0142', 'the other keeps the new phone');
+  -- A record deleted since is reported as a count.
+  PERFORM pg_temp.account('g1', 'acme', 'acme_agent1'); PERFORM pg_temp.account('g2', 'acme', 'acme_agent1');
+  PERFORM pg_temp.opportunity('go2', 'g2', 'acme_agent1');
+  r := pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3', true), ARRAY['g1', 'g2'])::jsonb;
+  DELETE FROM public.opportunities WHERE id = pg_temp.id('go2');
+  DELETE FROM public.accounts WHERE id = pg_temp.id('g2');
+  u := pg_temp.undo('acme_owner', r ->> 'change_id')::jsonb;
+  PERFORM pg_temp.is((u ->> 'restored')::int || '/' || (u ->> 'gone') || '/' || pg_temp.names_of(u -> 'skipped'), '1/1/', 'an account deleted since is counted gone, and named nowhere');
+  PERFORM pg_temp.is((u #>> '{opportunities,gone}')::int, 1, 'and so is an opportunity');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.bulk_change_records WHERE record_name = 'g2'), 0::bigint, 'none of its data is kept');
+  RAISE NOTICE 'bulk_changes: bot findings passed';
 END $$;

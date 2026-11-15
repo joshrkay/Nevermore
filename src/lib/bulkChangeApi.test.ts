@@ -87,10 +87,10 @@ describe("bulkChangeApi", () => {
   });
 
   it("undoes by the change's id and names what it left", async () => {
-    rpc.mockResolvedValue({ data: { restored: 2, skipped: [{ id: "a3", name: "Acme", code: "changed_since", reason: "Its owner has changed since." }], opportunities: { restored: 1, skipped: 0 } }, error: null });
+    rpc.mockResolvedValue({ data: { restored: 2, skipped: [{ id: "a3", name: "Acme", code: "changed_since", reason: "Its owner has changed since." }], gone: 2, opportunities: { restored: 1, skipped: 0, gone: 1 } }, error: null });
     const u = await undoBulkChange("f1", "c1");
     expect(rpc).toHaveBeenCalledWith("bulk_accounts_undo", { p_change_id: "c1", p_firm_id: "f1" });
-    expect([u.restored, u.skipped[0].code, u.opportunities.restored]).toEqual([2, "changed_since", 1]);
+    expect([u.restored, u.skipped[0].code, u.opportunities.restored, u.gone, u.opportunities.gone]).toEqual([2, "changed_since", 1, 2, 1]);
   });
 
   it("lists the firm's labels", async () => {

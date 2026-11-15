@@ -82,13 +82,14 @@ const previewSchema = z.object({
 const undoSchema = z.object({
   restored: z.number().int().min(0),
   skipped: z.array(skippedSchema),
-  opportunities: z.object({ restored: z.number().int().min(0), skipped: z.number().int().min(0) }),
+  gone: z.number().int().min(0),
+  opportunities: z.object({ restored: z.number().int().min(0), skipped: z.number().int().min(0), gone: z.number().int().min(0) }),
 });
 
 export interface SkippedAccount {
   id: string;
   name: string | null;
-  /** `level` (the person may not change it), `archived` (nothing is added to an archived account), or for an undo `changed_since`, `owner_left`, `archived`, `gone`. */
+  /** `level` (the person may not change it), `archived` (nothing is added to an archived account), or for an undo `changed_since`, `owner_left`, `archived`, `phone_rule`. */
   code: string;
   /** In words, for the dialog. */
   reason: string;
@@ -120,7 +121,9 @@ export interface UndoOutcome {
   restored: number;
   /** Records changed since, a previous owner who has left, an archived account that can't take its label back, or one that is gone: named with the reason. */
   skipped: SkippedAccount[];
-  opportunities: { restored: number; skipped: number };
+  /** Accounts the change changed that have been deleted since: a count, never a name (none of a deleted record's data is kept). "N accounts were deleted since." */
+  gone: number;
+  opportunities: { restored: number; skipped: number; gone: number };
 }
 
 function params(change: BulkAction): Json {

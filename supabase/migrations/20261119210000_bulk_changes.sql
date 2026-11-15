@@ -34,7 +34,8 @@
 --   1. accounts, FOR NO KEY UPDATE, in ONE statement ordered by id (the sort is under the row locks, so they are taken in id order)
 --   2. the chosen owner's membership, FOR SHARE (member_to_own); for an undo, the previous owners' memberships ordered by their membership id
 --   3. opportunities, FOR NO KEY UPDATE, ordered by id (give_open_opportunities)
---   4. labels (an insert of a new name: waits on a second bulk making the same label, who holds only accounts already taken in the same order)
+--   4. the label, resolved again once the accounts are held (made when it is gone) and kept FOR KEY SHARE through the writes, so an undo that deletes a label
+--      it made (FOR UPDATE, after ITS accounts) waits for this change or is waited for, and the label can't go between the lookup and the rows that name it
 -- change_account_owner already took account, membership, opportunities, and a removal takes the membership and never an account (CRM-A1.1c's note),
 -- so no two can wait on each other in a ring. Two bulk changes over overlapping accounts take the shared accounts in the same order: the second waits at its
 -- first shared account for the whole of the first. supabase/tests/bulk_changes.sql proves it with two sessions over rows in opposite halves of each other.
@@ -54,7 +55,9 @@
 -- removed label a row for that label there again). The level rule is NOT asked again by an undo: an agent who gave accounts away can no longer see or change
 -- them, and the undo is theirs to make because they made the change and nobody has touched those records since. An owner is put back only while the
 -- previous owner is still a current member (else the record is skipped, named, with that reason); a label is put back on an account only while it is not
--- archived (D-222). A closing firm and a support session undo nothing (assert_firm_writable).
+-- archived (D-222), and a phone is put back only while it still passes the phone rule (else the record is skipped, named). A record deleted since takes its
+-- rows with it (they stand on it by a foreign key, so none of its data is kept); the change keeps how many records it changed, and the undo says how many of
+-- them are gone, as a count, never by name. A closing firm and a support session undo nothing (assert_firm_writable).
 --
 -- What is NOT here (D-24). Bulk restore, delete and merge (merge is CRM-S4.3b); the Label column and filter on the table are this migration's last section
 -- (the accounts query has to know the word); renaming or deleting a label is Settings (Epic 9, D-198).
@@ -105,7 +108,10 @@ CREATE TABLE public.bulk_changes (
   made_at timestamptz NOT NULL DEFAULT now(),
   undo_until timestamptz NOT NULL,
   undone_at timestamptz,
+  -- How many accounts and opportunities it changed: a record deleted since takes its row (and every name and value kept for the undo) with it, and the undo
+  -- reports the difference as gone, as a count.
   record_count integer NOT NULL DEFAULT 0 CONSTRAINT bulk_changes_record_count_check CHECK (record_count >= 0),
+  opportunity_count integer NOT NULL DEFAULT 0 CONSTRAINT bulk_changes_opportunity_count_check CHECK (opportunity_count >= 0),
   CONSTRAINT bulk_changes_firm_id_id_key UNIQUE (firm_id, id)
 );
 
@@ -522,6 +528,10 @@ BEGIN
     IF field = 'state' THEN s := upper(s); END IF;
     t_trade := CASE WHEN field = 'trade_name' THEN s END;
     t_website := CASE WHEN field = 'website' THEN s END;
+    IF field = 'phone' AND s IS NOT NULL AND NOT public.is_valid_phone(s) THEN
+      -- The phone's own rule (check_account_phone), so the preview refuses what the change would.
+      RAISE EXCEPTION 'Enter a phone number like (503) 555-0142. An extension can follow, like x12.' USING ERRCODE = '22023';
+    END IF;
     t_phone := CASE WHEN field = 'phone' THEN s END;
     t_street := CASE WHEN field = 'street' THEN s END;
     t_city := CASE WHEN field = 'city' THEN s END;
@@ -692,6 +702,7 @@ DECLARE
   n_change integer := 0;
   n_same integer := 0;
   n_unavailable integer := 0;
+  seen integer := 0;
   skipped jsonb := '[]'::jsonb;
   allowed uuid[] := '{}';
   opp_change integer := 0;
@@ -721,6 +732,7 @@ BEGIN
     RETURN result || jsonb_build_object('unavailable', 0, 'will_change', 0, 'unchanged', 0, 'skipped', '[]'::jsonb);
   END IF;
   FOR a IN SELECT x.* FROM public.accounts x WHERE x.firm_id = firm AND x.id = ANY (sel.account_ids) ORDER BY x.id LOOP
+    seen := seen + 1;
     SELECT * INTO oc FROM public.bulk_account_outcome(a, p_action, params, lbl);
     IF oc.outcome = 'change' THEN
       n_change := n_change + 1;
@@ -734,7 +746,8 @@ BEGIN
       n_unavailable := n_unavailable + 1;
     END IF;
   END LOOP;
-  n_unavailable := n_unavailable + COALESCE(GREATEST(sel.requested - sel.selected, 0), 0);
+  -- Selected but not found now (deleted since) is unavailable too, so the counts add up to what was selected.
+  n_unavailable := n_unavailable + (cardinality(sel.account_ids) - seen) + COALESCE(GREATEST(sel.requested - sel.selected, 0), 0);
   result := result || jsonb_build_object('unavailable', n_unavailable, 'will_change', n_change, 'unchanged', n_same, 'skipped', skipped);
   IF p_action = 'owner' AND (params ->> 'change_open_opportunities')::boolean THEN
     SELECT count(*) FILTER (WHERE public.can_change_firm_record(firm, x.owner_id))::integer, count(*) FILTER (WHERE NOT public.can_change_firm_record(firm, x.owner_id))::integer
@@ -783,6 +796,7 @@ DECLARE
   undo_by timestamptz := now() + interval '10 minutes';
   maker bigint;
   mark bigint;
+  locked uuid[];
   row_before jsonb;
   row_after jsonb;
   al_id uuid;
@@ -797,26 +811,33 @@ BEGIN
   IF sel.too_many THEN
     RAISE EXCEPTION 'That is % accounts. A bulk change takes at most 1,000: narrow the selection and try again.', sel.selected USING ERRCODE = 'PT413';
   END IF;
-  IF p_action IN ('label_add', 'label_remove') THEN
-    SELECT l.id INTO lbl FROM public.labels l WHERE l.firm_id = firm AND lower(l.name) = lower(params ->> 'name');
-    IF p_action = 'label_remove' AND lbl IS NULL THEN
-      RAISE EXCEPTION 'The firm has no label called "%".', params ->> 'name' USING ERRCODE = '22023';
-    END IF;
+  IF p_action = 'label_remove' AND NOT EXISTS (SELECT 1 FROM public.labels l WHERE l.firm_id = firm AND lower(l.name) = lower(params ->> 'name')) THEN
+    RAISE EXCEPTION 'The firm has no label called "%".', params ->> 'name' USING ERRCODE = '22023';
   END IF;
   -- Changes older than a day are cleared (those another person is undoing right now are left, not waited for).
   DELETE FROM public.bulk_changes c WHERE c.id IN (
     SELECT o.id FROM public.bulk_changes o WHERE o.firm_id = firm AND o.made_at < now() - interval '1 day' FOR UPDATE SKIP LOCKED);
 
   -- 1. Every account of the selection, held in one statement in id order (the lock order, above).
-  PERFORM 1 FROM public.accounts x WHERE x.firm_id = firm AND x.id = ANY (sel.account_ids) ORDER BY x.id FOR NO KEY UPDATE;
+  SELECT COALESCE(array_agg(k.id ORDER BY k.id), '{}') INTO locked
+  FROM (SELECT x.id FROM public.accounts x WHERE x.firm_id = firm AND x.id = ANY (sel.account_ids) ORDER BY x.id FOR NO KEY UPDATE) k;
   -- 2. The new owner's membership.
   IF p_action = 'owner' THEN
     new_owner := (params ->> 'owner_id')::uuid;
     PERFORM public.member_to_own(firm, new_owner);
   END IF;
+  -- 4. The label, looked up again now the accounts are held, and kept FOR KEY SHARE to the end: an undo that deletes it (a label its change made, with no account
+  -- left carrying it) waits for this change, or is waited for and the label is made again below; the rows that name it never meet a label that has gone.
+  IF p_action IN ('label_add', 'label_remove') THEN
+    SELECT l.id INTO lbl FROM public.labels l WHERE l.firm_id = firm AND lower(l.name) = lower(params ->> 'name') FOR KEY SHARE;
+    IF p_action = 'label_remove' AND lbl IS NULL THEN
+      RAISE EXCEPTION 'The firm has no label called "%".', params ->> 'name' USING ERRCODE = '22023';
+    END IF;
+  END IF;
 
   -- The accounts, now stable: what each will do, and the doing.
-  FOR a IN SELECT x.* FROM public.accounts x WHERE x.firm_id = firm AND x.id = ANY (sel.account_ids) ORDER BY x.id LOOP
+  -- (An account deleted while the locks were being taken is not in `locked`; it is counted unavailable below.)
+  FOR a IN SELECT x.* FROM public.accounts x WHERE x.firm_id = firm AND x.id = ANY (locked) ORDER BY x.id LOOP
     SELECT * INTO oc FROM public.bulk_account_outcome(a, p_action, params, lbl);
     IF oc.outcome = 'skip' THEN
       skipped := skipped || jsonb_build_object('id', a.id, 'name', a.name, 'code', oc.code, 'reason', oc.reason);
@@ -894,9 +915,10 @@ BEGIN
   END IF;
 
   IF made THEN
-    UPDATE public.bulk_changes SET record_count = n_change WHERE id = chg;
+    UPDATE public.bulk_changes SET record_count = n_change, opportunity_count = opp_change WHERE id = chg;
   END IF;
-  n_unavailable := n_unavailable + COALESCE(GREATEST(sel.requested - sel.selected, 0), 0);
+  -- Selected but deleted while the locks were taken: unavailable, so the counts add up to what was selected.
+  n_unavailable := n_unavailable + (cardinality(sel.account_ids) - cardinality(locked)) + COALESCE(GREATEST(sel.requested - sel.selected, 0), 0);
   result := jsonb_build_object('action', p_action, 'selected', sel.selected, 'requested', sel.requested, 'limit', 1000, 'too_many', false,
     'unavailable', n_unavailable, 'will_change', n_change, 'changed', n_change, 'unchanged', n_same, 'skipped', skipped,
     'change_id', CASE WHEN made THEN chg END, 'undo_until', CASE WHEN made THEN undo_by END);
@@ -941,6 +963,8 @@ DECLARE
   current_value jsonb;
   why text;
   since boolean;
+  gone integer;
+  opp_gone integer;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
@@ -977,7 +1001,6 @@ BEGIN
     SELECT * INTO a FROM public.accounts x WHERE x.id = rec.record_id AND x.firm_id = firm;
     why := NULL;
     IF a.id IS NULL THEN
-      skipped := skipped || jsonb_build_object('id', rec.record_id, 'name', rec.record_name, 'code', 'gone', 'reason', 'It no longer exists.');
       CONTINUE;
     END IF;
     -- Changed since: the record's history has an entry for this field after the change finished with it (a value put back to what it was is a change too,
@@ -1005,6 +1028,10 @@ BEGIN
     ELSIF ch.action = 'field' THEN
       IF public.account_field_json(a, rec.after ->> 'field') IS DISTINCT FROM COALESCE(rec.after -> 'value', 'null'::jsonb) THEN
         why := 'That field has changed since.';
+      ELSIF rec.after ->> 'field' = 'phone' AND NULLIF(rec.before ->> 'value', '') IS NOT NULL AND NOT public.is_valid_phone(rec.before ->> 'value') THEN
+        -- An old phone that fails today's rule may stay until it is changed, but it can't be written back (check_account_phone): this record is named, the rest go.
+        skipped := skipped || jsonb_build_object('id', a.id, 'name', rec.record_name, 'code', 'phone_rule', 'reason', 'Its earlier phone number no longer passes the phone rule.');
+        CONTINUE;
       ELSE
         PERFORM public.account_set_field(a.id, rec.before ->> 'field', COALESCE(rec.before -> 'value', 'null'::jsonb));
       END IF;
@@ -1059,8 +1086,11 @@ BEGIN
     END IF;
   END IF;
   UPDATE public.bulk_changes SET undone_at = now() WHERE id = ch.id;
-  RETURN jsonb_build_object('action', ch.action, 'restored', restored, 'skipped', skipped,
-    'opportunities', jsonb_build_object('restored', opp_restored, 'skipped', opp_skipped));
+  -- Records the change changed that are no longer there (an account or an opportunity deleted since took its row with it): a count, never a name.
+  gone := GREATEST(ch.record_count - (SELECT count(*) FROM public.bulk_change_records r WHERE r.change_id = ch.id AND r.record_type = 'account'), 0);
+  opp_gone := GREATEST(ch.opportunity_count - (SELECT count(*) FROM public.bulk_change_records r WHERE r.change_id = ch.id AND r.record_type = 'opportunity'), 0);
+  RETURN jsonb_build_object('action', ch.action, 'restored', restored, 'skipped', skipped, 'gone', gone,
+    'opportunities', jsonb_build_object('restored', opp_restored, 'skipped', opp_skipped, 'gone', opp_gone));
 END;
 $$;
 
