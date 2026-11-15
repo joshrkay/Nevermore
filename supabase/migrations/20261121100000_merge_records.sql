@@ -296,7 +296,8 @@ $$;
 REVOKE ALL ON FUNCTION public.crm_merge_choices_error(jsonb, text[]) FROM PUBLIC, anon, authenticated, service_role;
 
 -- Copies a removed record's history to the kept one, each entry marked as from the removed record (an entry already copied by an earlier merge keeps its first mark),
--- at its own time and by its own actor; then the kept record's own "merged" entry, now. Called before the removed record is deleted (the deletion clears its history).
+-- at its own time and by its own actor, and with NO version: a version is the kept record's own count of saves, and `record_version_changes` (the conflict dialog's "what
+-- changed") picks entries by version, so a copy that kept the removed record's number would be reported as a change the kept record never had (D-643); then the kept record's own "merged" entry, now. Called before the removed record is deleted (the deletion clears its history).
 CREATE FUNCTION public.crm_merge_history(p_firm_id uuid, p_table text, p_kept_key text, p_removed_key text, p_removed_name text, p_kept_version integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -308,13 +309,13 @@ DECLARE
   who uuid := auth.uid();
 BEGIN
   INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind, field, old_value, new_value, at, actor_id, actor_is_staff, version, merged_from_key, merged_from_name)
-  SELECT h.firm_id, h.table_name, p_kept_key, h.change_id, h.kind, h.field, h.old_value, h.new_value, h.at, h.actor_id, h.actor_is_staff, h.version,
+  SELECT h.firm_id, h.table_name, p_kept_key, h.change_id, h.kind, h.field, h.old_value, h.new_value, h.at, h.actor_id, h.actor_is_staff, NULL,
          COALESCE(h.merged_from_key, p_removed_key), COALESCE(h.merged_from_name, p_removed_name)
   FROM public.record_history h
   WHERE h.firm_id = p_firm_id AND h.table_name = t AND h.record_key = p_removed_key AND h.kind <> 'merged';
   -- The removed record's own "merged" entries (it had absorbed others) stay with what it absorbed, as copies marked with those names: copied with their own marks.
   INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind, field, old_value, new_value, at, actor_id, actor_is_staff, version, merged_from_key, merged_from_name)
-  SELECT h.firm_id, h.table_name, p_kept_key, h.change_id, h.kind, h.field, h.old_value, h.new_value, h.at, h.actor_id, h.actor_is_staff, h.version, h.merged_from_key, h.merged_from_name
+  SELECT h.firm_id, h.table_name, p_kept_key, h.change_id, h.kind, h.field, h.old_value, h.new_value, h.at, h.actor_id, h.actor_is_staff, NULL, h.merged_from_key, h.merged_from_name
   FROM public.record_history h
   WHERE h.firm_id = p_firm_id AND h.table_name = t AND h.record_key = p_removed_key AND h.kind = 'merged';
   INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind, actor_id, actor_is_staff, version, merged_from_key, merged_from_name)
@@ -594,6 +595,17 @@ BEGIN
   IF said IS NOT NULL THEN
     RAISE EXCEPTION '%', said USING ERRCODE = '22023';
   END IF;
+  -- A different owner is chosen as change_account_owner chooses one (20261119160000): someone, and a current member of the firm, whose membership is held FOR SHARE to
+  -- the end of this transaction so that a removal either committed first or waits.
+  IF v_owner IS DISTINCT FROM k.owner_id THEN
+    IF v_owner IS NULL THEN
+      RAISE EXCEPTION 'Choose who will own this account.' USING ERRCODE = '22023';
+    END IF;
+    PERFORM 1 FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = v_owner AND public.membership_is_current(m.valid_from, m.valid_until) FOR SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Choose a current member of the firm.' USING ERRCODE = '22023';
+    END IF;
+  END IF;
   v_dup := CASE WHEN k.possible_duplicate_of = r.id THEN NULL
                 WHEN k.possible_duplicate_of IS NULL AND r.possible_duplicate_of IS DISTINCT FROM k.id THEN r.possible_duplicate_of
                 ELSE k.possible_duplicate_of END;
@@ -764,6 +776,13 @@ BEGIN
   said := public.contact_input_error(NULLIF(btrim(v_first), ''), NULLIF(btrim(v_last), ''), NULLIF(btrim(v_title), ''), NULLIF(btrim(v_email), ''), NULLIF(btrim(v_phone), ''), NULLIF(btrim(v_mobile), ''));
   IF said IS NOT NULL THEN
     RAISE EXCEPTION '%', said USING ERRCODE = '22023';
+  END IF;
+  -- As update_contact (20261119240000): a different owner is a current member of the firm, whose membership is held FOR SHARE until the end of the transaction.
+  IF v_owner IS DISTINCT FROM k.owner_id THEN
+    IF v_owner IS NULL OR NOT EXISTS (
+      SELECT 1 FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = v_owner AND public.membership_is_current(m.valid_from, m.valid_until) FOR SHARE) THEN
+      RAISE EXCEPTION 'Choose one of the firm''s people as the owner.' USING ERRCODE = '22023';
+    END IF;
   END IF;
 
   -- The removed contact goes first (it may be the account's main contact, and its prospect link is unique per account); the kept one then takes its place in each.
