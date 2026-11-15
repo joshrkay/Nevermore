@@ -196,7 +196,7 @@ export class AccountError extends Error {
 }
 
 /** The account's own fields as the database gives them (its column names). */
-type FieldsRow = {
+export type FieldsRow = {
   id: string;
   version: number;
   name: string;
@@ -248,7 +248,7 @@ const fieldsShape = z.object({
   updated_at: z.string().min(1),
 });
 
-const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
+export const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
 
 const detailsSchema = fieldsShape.extend({
   status: z.enum(["prospect", "client"]),
@@ -309,7 +309,7 @@ const pageSchema = z.object({
   }),
 });
 
-const fieldsOf = (f: FieldsRow): AccountFields => ({
+export const fieldsOf = (f: FieldsRow): AccountFields => ({
   id: f.id,
   version: f.version,
   name: f.name,
@@ -358,18 +358,20 @@ const changeOf = (a: z.infer<typeof changeSchema>): ChangeRow => ({
 
 const FALLBACK = "Couldn't load the account. Try again.";
 const LIST_FALLBACK = "Couldn't load the list. Try again.";
-const SAVE_FALLBACK = "Couldn't save the account. Try again.";
+export const SAVE_FALLBACK = "Couldn't save the account. Try again.";
 
-type DbError = { code?: string; message?: string };
+export type DbError = { code?: string; message?: string };
 
 /** An ended session is said in its own words (and signs the person out); the database's refusals keep their plain words; anything else is a failure to try again. */
-function refusal(error: DbError, fallback: string): Error {
+export function refusal(error: DbError, fallback: string): Error {
   const ended = classifyApiError({ message: error.message ?? "", code: error.code }, "");
   if (ended.unauthenticated) return ended;
   switch (error.code) {
     case "PT404": return new AccountError("notFound", "This account isn't available.", error.code);
     case "PT423": return new AccountError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "22023": return new AccountError("invalid", error.message || fallback, error.code);
+    // A count the database's integer can't hold (the form's own rule says it first; this is for any other way in).
+    case "22003": return new AccountError("invalid", "Enter a number up to 2,147,483,647.", error.code);
     case "42501": return new AccountError("notAllowed", error.message || "You can't change this account.", error.code);
     default: return new AccountError("failed", fallback, error.code);
   }

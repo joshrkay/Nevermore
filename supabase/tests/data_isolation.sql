@@ -205,6 +205,7 @@
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
@@ -1359,6 +1360,10 @@ INSERT INTO callable VALUES
    'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
   ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
    'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
+  ('account_owner_choices(p_firm_id uuid)', 'own', NULL,
+   'the firm''s current people the caller may make an account for, by the level rule (an agent themselves, a lead their teams, an owner everyone), by id and name, to a member of that firm; 42501 for anyone else'),
   ('archive_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for archives an account by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('restore_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
@@ -1953,6 +1958,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('submission_account', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.submission_account({firm}, {sid})) WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('update_account', 'advisor', 'by_id',
    $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$'),
+  ('create_account', 'advisor', 'by_id',
+   $$SELECT public.create_account('Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
   ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
@@ -1965,6 +1972,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('bulk_accounts_undo', 'advisor', 'by_id',
    $$SELECT public.bulk_accounts_undo((public.bulk_accounts_change({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'change_id')::uuid, {firm}) ->> 'restored'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$'),
   ('firm_labels', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.firm_labels({firm}))::text WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$');
+INSERT INTO fprobe (fn, who, shape, call) VALUES
+  ('account_owner_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.account_owner_choices({firm})$$);
 
 -- CRM-E1.5: calls, notes and tasks ({anote} is a note on the firm's account, {atask} a task on it, both written by the superuser as fixtures). The member
 -- is the owner of that account, who may change anything on it.
@@ -3714,6 +3723,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_tab', 'firm_scoped', 'the same for a page of one tab of an account: the rows of its contacts, opportunities, quotes, history or files that passed, for someone who may see the account, and nothing for anyone else (4e)'),
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
+  ('create_account', 'firm_scoped', 'a current member of the firm the call acts for makes an account of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
+  ('account_owner_choices', 'firm_scoped', 'the firm''s current people the caller may make an account for, by the level rule, to a member of that firm (4e)'),
   ('archive_account', 'firm_scoped', 'a current member of the firm the call acts for archives an account by the level rule; refused for another firm''s account as for one that is not there (4e)'),
   ('restore_account', 'firm_scoped', 'the same for restoring an archived account (4e)'),
   ('delete_account', 'firm_scoped', 'the same for deleting an account that has no opportunity, with its contacts, calls, notes and tasks (4e)'),
