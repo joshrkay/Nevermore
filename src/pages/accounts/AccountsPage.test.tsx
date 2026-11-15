@@ -29,6 +29,9 @@ vi.mock("@/lib/accountsApi", async (original) => ({
   countAccountViews: (...a: unknown[]) => countAccountViews(...a),
   listFirmMembers: (...a: unknown[]) => listFirmMembers(...a),
 }));
+const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn(), accountsCanChange: vi.fn() };
+vi.mock("@/lib/accountActionsApi", () => actions);
+vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const fetchMyColumns = vi.fn();
 const setMyColumns = vi.fn();
 const saveView = vi.fn();
@@ -85,11 +88,12 @@ const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
   );
 const where = () => screen.getByTestId("location").textContent;
 const body = () => screen.getByRole("table").querySelector("tbody")!;
-const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim());
+// The columns, not the checkbox column's header nor the row actions' (which only a screen reader reads).
+const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions");
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
-  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
+  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, exportRows, downloadBlob, signOut, ...Object.values(actions), mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
   countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
@@ -97,6 +101,7 @@ beforeEach(() => {
   fetchMyColumns.mockResolvedValue({ columns: null, source: "none" });
   setMyColumns.mockResolvedValue(undefined);
   saveView.mockResolvedValue("v1");
+  actions.accountsCanChange.mockResolvedValue(["a1", "a2"]);
 });
 afterEach(() => cleanup());
 
@@ -433,7 +438,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "website", "source"], source: "person" });
     exportRows.mockResolvedValue(answer([exported()]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Website", "Source"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions")).toEqual(["Account", "Website", "Source"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Website,Source\r\nHarborview Dental Group,harborviewdental.example,Employer's intake\r\n");
@@ -458,7 +463,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "quotes"], source: "person" });
     exportRows.mockResolvedValue(answer([exported({ earliest_quote_expires_on: "2020-01-05" })]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Quotes"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions")).toEqual(["Account", "Quotes"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Quotes\r\nHarborview Dental Group,\"1 of 3 back, Expired Jan 5, 2020\"\r\n");
@@ -470,7 +475,7 @@ describe("the Accounts page: Export", () => {
     fetchMyColumns.mockResolvedValue({ columns: ["account", "last_activity", "created"], source: "person" });
     exportRows.mockResolvedValue(answer([exported({ last_activity_at: "2026-11-11T00:30:00+00:00", created_at: "2026-10-28T03:00:00+00:00" })]));
     renderAt();
-    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim())).toEqual(["Account", "Last activity", "Created"]));
+    await waitFor(async () => expect((await screen.findAllByRole("columnheader")).filter((h) => !h.querySelector('input[type="checkbox"]')).map((h) => h.textContent?.trim()).filter((h) => h !== "Actions")).toEqual(["Account", "Last activity", "Created"]));
     await press(user);
     await screen.findByText("Exported 1 account.");
     expect((await theFile()).text).toBe("Account,Last activity,Created\r\nHarborview Dental Group,2026-11-10,2026-10-27\r\n");
@@ -705,5 +710,92 @@ describe("the Accounts page: New account", () => {
     renderAt();
     expect(await screen.findByText("Accounts are the businesses you quote for.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "New account" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("the Accounts page: each row's actions (story CRM-A1.1c)", () => {
+  // Catches: row actions missing, or acting on another row than the one whose menu was opened.
+  it("archives the row whose menu was used, after asking, and asks the table again", async () => {
+    const user = userEvent.setup();
+    actions.archiveAccount.mockResolvedValue({ changed: true });
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("button", { name: "Actions for Kestrel Software" }));
+    await user.click(screen.getByRole("menuitem", { name: "Archive" }));
+    const before = listAccounts.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(actions.archiveAccount).toHaveBeenCalledWith("f1", "a2"));
+    await waitFor(() => expect(listAccounts.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  // Catches: the Archived view listing accounts that can't be brought back, or offering Archive on them.
+  it("offers Restore on an archived account, and restores that row", async () => {
+    const user = userEvent.setup();
+    actions.restoreAccount.mockResolvedValue({ changed: true });
+    listAccounts.mockResolvedValue({ rows: [row({ archived: true, archived_at: "2026-11-10T10:00:00Z" })], total: 1 });
+    renderAt("/accounts?view=archived");
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "Actions for Harborview Dental Group" }));
+    expect(screen.queryByRole("menuitem", { name: "Archive" })).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "Restore" }));
+    await waitFor(() => expect(actions.restoreAccount).toHaveBeenCalledWith("f1", "a1"));
+  });
+
+  // Catches: the owner change offering opportunities for an account the table says has none open (Kestrel has none), or not for one that has.
+  it("offers the open opportunities in the owner change only where the row has some", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("button", { name: "Actions for Kestrel Software" }));
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    await screen.findByLabelText("New owner");
+    expect(screen.queryByLabelText(/Also change the owner/)).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Actions for Harborview Dental Group" }));
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    expect(await screen.findByLabelText(/Also change the owner of its 1 open opportunity/)).toBeInTheDocument();
+  });
+
+  // Catches: an action menu on every row, so a colleague's account (seen, not changeable), a closing firm's and a support session's rows offer what the database refuses (D-24).
+  it("asks which of the page's accounts the person may change, and draws a menu on those only", async () => {
+    actions.accountsCanChange.mockResolvedValue(["a2"]);
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    expect(await screen.findByRole("button", { name: "Actions for Kestrel Software" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions for Harborview Dental Group" })).toBeNull();
+    expect(actions.accountsCanChange).toHaveBeenCalledWith("f1", ["a1", "a2"]);
+  });
+
+  // Catches: a failed question (or no answer yet) offering every row's menu, which could only be refused.
+  it("draws no menu while the question is open or when it failed", async () => {
+    actions.accountsCanChange.mockRejectedValue(new Error("down"));
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await waitFor(() => expect(actions.accountsCanChange).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
+  });
+
+  // Catches: the checkbox column and the actions column getting in each other's way: a selected row losing its menu, or the menu's click changing the selection.
+  it("keeps a row's menu working beside its checkbox", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("checkbox", { name: "Select Kestrel Software" }));
+    const menu = await screen.findByRole("button", { name: "Actions for Kestrel Software" });
+    await user.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("checkbox", { name: "Select Kestrel Software" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Harborview Dental Group" })).not.toBeChecked();
+  });
+
+  // Catches: opening an account when its action menu is clicked.
+  it("does not open the account when a row's menu is used", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("button", { name: "Actions for Kestrel Software" }));
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    expect(screen.queryByText(/Account page for/)).toBeNull();
   });
 });

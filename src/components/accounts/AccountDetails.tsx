@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { US_STATE_CODES } from "@/data/chamberValidation";
 import { accountFieldsSchemaFor } from "@/data/accountFields";
 import { addressLines, editOf, formOf, NOT_GIVEN, sourceWords, valueWords, type AccountForm } from "@/data/accountPage";
+import { listFirmMembers } from "@/lib/accountsApi";
 import { AccountError, updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
 
 // The account's own fields, down one side of the Overview (story CRM-A2.1b): shown as they are, and edited in place (CRM-S4.1) from the version the person
@@ -12,8 +14,19 @@ import { AccountError, updateAccount, type AccountDetails as Details, type Accou
 // refuses is said in its own words beside Save (a closing firm, Nevermore support, a field it will not take). If someone saved first, the conflict dialog
 // sets what was typed beside what is there now (D-46).
 
-/** How the conflict dialog names each editable field (by the database's column name) and words its value. */
-const CONFLICT_FIELDS = {
+/** An archive date as a person reads it ("Nov 14, 2026"), the database's text if it is not a date. */
+const archivedWords = (v: unknown): string => {
+  const date = new Date(String(v));
+  return Number.isNaN(date.getTime()) ? String(v) : date.toLocaleDateString("en-US", { dateStyle: "medium" });
+};
+
+/**
+ * How the conflict dialog names each editable field (by the database's column name) and words its value. Archiving and changing the owner change the version
+ * too (CRM-A1.1c), so someone saving at that moment is shown "Archived" and "Owner", not the column names; `ownerName` words an owner by the person's name.
+ */
+const conflictFields = (ownerName: (id: string) => string) => ({
+  archived_at: { label: "Archived", format: archivedWords },
+  owner_id: { label: "Owner", format: (v: unknown) => ownerName(String(v)) },
   name: { label: "Account name" },
   trade_name: { label: "Trade name" },
   website: { label: "Website" },
@@ -26,7 +39,7 @@ const CONFLICT_FIELDS = {
   employees: { label: "Employees" },
   states_of_operation: { label: "States of operation", format: (v: unknown) => (Array.isArray(v) ? valueWords(v as string[]) : String(v)) },
   current_provider: { label: "Current provider" },
-};
+});
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="grid grid-cols-[7.5rem_1fr] gap-3 py-1.5 text-sm">
@@ -44,6 +57,12 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
   onSaved: (fields: AccountFields) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  // The firm's people, so a conflict over the owner names a person (asked once, kept a minute; a failure leaves "Someone in the firm").
+  const people = useQuery({ queryKey: ["account-owner-choices", firmId], queryFn: () => listFirmMembers(firmId), retry: false, staleTime: 60_000 });
+  const conflictDialog = useMemo(() => {
+    const byId = new Map((people.data ?? []).map((p) => [p.value, p.label]));
+    return { noun: "account", fields: conflictFields((id) => byId.get(id) ?? "Someone in the firm") };
+  }, [people.data]);
   // A save closes the form, and the Save button that had focus goes with it: focus goes to Edit, which takes its place.
   const editButton = useRef<HTMLButtonElement>(null);
   const [focusEdit, setFocusEdit] = useState(false);
@@ -74,7 +93,7 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
     },
     // A number the database's integer can't hold is said under Employees; its other refusals keep the form's usual words.
     explain: (e) => (e instanceof AccountError && e.code === "22003" ? { message: e.message, field: "employees" } : undefined),
-    conflictDialog: { noun: "account", fields: CONFLICT_FIELDS },
+    conflictDialog,
     savedValues: (saved) => formOf(saved),
     onSaved: (saved) => {
       setEditing(false);

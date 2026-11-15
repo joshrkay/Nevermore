@@ -108,6 +108,29 @@ test("Accounts opens from the menu, narrows by employees across a reload, and an
     await expect(page.getByText("1 to 3 of 3 accounts")).toBeVisible();
   });
 
+  // Story CRM-A1.1c: archive from a row, find it in Archived, restore it from its page, and delete it from its page.
+  await test.step("a row's Archive takes the account out of the list, Archived holds it, its page restores it", async () => {
+    await page.getByRole("button", { name: "Actions for Cedar and Finch Architects" }).click();
+    await page.getByRole("menuitem", { name: "Archive" }).click();
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await expect(page.getByRole("link", { name: "Cedar and Finch Architects" })).toHaveCount(0);
+    await expect(page.getByText("1 to 2 of 2 accounts")).toBeVisible();
+    await page.getByRole("link", { name: /^Archived/ }).click();
+    await expect(page.getByRole("link", { name: "Cedar and Finch Architects" })).toBeVisible();
+    await page.getByRole("link", { name: "Cedar and Finch Architects" }).click();
+    await expect(page.getByRole("note")).toContainText("This account is archived.");
+    await page.getByRole("note").getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("note")).toHaveCount(0);
+  });
+
+  await test.step("an account with no intake is deleted from its page, and the list no longer has it", async () => {
+    await page.getByRole("button", { name: "More actions for this account" }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(page).toHaveURL(/\/accounts$/);
+    await expect(page.getByRole("link", { name: "Cedar and Finch Architects" })).toHaveCount(0);
+  });
+
   await test.step("New account makes an account owned by its maker, says what is wrong in words, and opens the new account", async () => {
     await page.getByRole("button", { name: "New account" }).click();
     const form = page.getByRole("dialog", { name: "New account" });
