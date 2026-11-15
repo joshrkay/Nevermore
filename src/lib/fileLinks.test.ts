@@ -74,6 +74,7 @@ describe("private file links", () => {
     const linkMakers = /\b(documentUrl|manuscriptUrl|finalManuscriptUrl)\(/;
     const users = APP.filter((file) => !file.endsWith(join("lib", "advisorApi.ts")) && linkMakers.test(read(file)));
     expect(users.sort()).toEqual([
+      join("src", "components", "accounts", "AccountFiles.tsx"),
       join("src", "components", "advisor", "DocumentsPanel.tsx"),
       join("src", "components", "advisor", "ManuscriptPanel.tsx"),
       join("src", "pages", "ManuscriptPage.tsx"),

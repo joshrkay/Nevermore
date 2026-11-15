@@ -28,6 +28,11 @@ export interface FieldDefinition<Kind extends FieldKind = FieldKind> {
    */
   choices?: readonly FieldChoice[];
   /**
+   * Whether the database refuses a value outside `choices` (the queue's `queue_field_choices`, and its state codes). Left out, the list is only what the
+   * screen offers: the database takes any value there, so a saved view that names another still runs and is not turned away.
+   */
+  choicesEnforced?: boolean;
+  /**
    * The direction a first click on a column of this field sorts in (CRM-S3.2a). Left out, it follows the kind: a date starts newest first
    * (what a person expects of "Submitted"), everything else ascending (A to Z, smallest first, and a choice in its own order). A date that
    * reads better soonest first ("Quote expires", "Waiting since": the longest wait is the oldest day) says "asc".
@@ -43,7 +48,7 @@ export type FieldDefinitions<K extends TableFields> = { readonly [F in keyof K &
 
 /** One column of a table. It carries no kind of its own: the field it names has one. */
 export interface ColumnDefinition<Row, Field extends string = string, Context = undefined> {
-  /** Kept in the database for column choices (CRM-S3.1b), so it never changes once shipped. */
+  /** Kept in the database in a person's column choice (CRM-S3.1a, `useMyColumns`), so it never changes once shipped. */
   id: string;
   /** The words in the column's header. */
   header: string;
@@ -61,10 +66,28 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
   align?: "left" | "right";
 }
 
+/** What the person may do with a saved view (the database's own answer, `list_saved_views`); a built-in view has none of it. */
+export interface SavedViewRights {
+  /** Saved by the person asking. */
+  mine: boolean;
+  /** Shared with the firm by an owner. */
+  shared: boolean;
+  /** May rename, change and delete it. */
+  canChange: boolean;
+  /** May share it with the firm (an owner, on a view of their own not yet shared). */
+  canShare: boolean;
+  /** May stop sharing it (an owner, on any shared view). */
+  canUnshare: boolean;
+  /** When the view was last changed (its definition: name, filters, sort, columns, sharing). Anything kept per view is asked again when it moves. */
+  updatedAt: string;
+}
+
 /**
- * A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too.
- * CRM-S3.4a adds a view's own `sort` here (and makes `queryFor` and `sameAddress` apply it: today a view has no sort of its own, so the
- * address's sort is the only one); CRM-S3.1a added the view's own `columns`.
+ * A view of the table: a name, the filters it stands for, and (from CRM-S3.4a) its own sort and columns. A built-in view is written in code;
+ * a saved view is one the firm keeps (`saved` says what the person may do with it). A view's `sort` is the table's order while the address
+ * holds none (`queryFor`, `sameAddress`, the headers and the line over the table all read it). A view's `columns` are the ids it was saved with;
+ * the person's own choice for the view comes before them (`useMyColumns`, which is given the active view's id), and a view with none leaves
+ * the person's choice for the table.
  *
  * How the table's limit of 20 filters is applied to the total: the view's filters count first and the address's take what is left
  * (`effectiveFilters`). The rows use the current view's room. A tab's count uses the room of ITS view, so a tab whose view has more
@@ -76,12 +99,26 @@ export interface TableView<K extends TableFields> {
   id: string;
   label: string;
   filters: TableFilter<K>[];
-  /**
-   * The view's own columns, as column ids in order (CRM-S3.1a): what a person sees on it until they choose their own for it. A built-in view has none (its
-   * columns are the person's choice for the table); a saved view (CRM-S3.4a) has the ones it was saved with. `useTableColumns` is given the saved view
-   * that is open and reads and keeps the person's own choice on it by its `id`.
-   */
-  columns?: readonly string[];
+  /** The order the view's rows are in while the address holds no sort of its own. None: the table's own order. */
+  sort?: TableSort<keyof K & string> | null;
+  /** The column ids the view was saved with, in order. None: the person's choice for the table applies. */
+  columns?: string[] | null;
+  /** Present on a saved view only: built-in views can't be renamed, shared or deleted. */
+  saved?: SavedViewRights;
+}
+
+/**
+ * A saved view the table can't open: it names a field the table no longer has, or a choice its field no longer lists, so the database would refuse
+ * the question (and, asked in the one call that counts every tab, would blank the count of every tab). It is drawn as a tab that can't be opened,
+ * with its reason, and keeps what the person may do with it (delete their own, stop sharing a shared one); it is not in `views`, so no address can
+ * name it and no count is asked for it.
+ */
+export interface UnavailableView {
+  id: string;
+  label: string;
+  /** In words, why it can't be opened. */
+  reason: string;
+  saved: SavedViewRights;
 }
 
 /**
@@ -116,11 +153,18 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
    */
   listedFilters: (keyof K & string)[];
   columns: ColumnDefinition<Row, keyof K & string, Context>[];
+  /**
+   * The ids of the columns shown until a person chooses their own, in order (the name column is always first). Left out, every column in `columns` is shown.
+   * The others are offered by the Columns menu: the accounts table has more columns than it shows (CRM-A1.1).
+   */
+  usual?: readonly string[];
   rowKey: (row: Row) => string;
   /** The views known now. */
   views: TableView<K>[];
   /** Whether every view the address may name is in `views` yet. Absent means ready. */
   viewsStatus?: Readiness;
+  /** Saved views the table can't open (CRM-S3.4a), drawn after the tabs. Absent means none. */
+  unavailableViews?: UnavailableView[];
   /** The words on the tab that is no view at all ("All statuses"). */
   allViewLabel: string;
   /**
@@ -161,6 +205,8 @@ export const TABLE_FILTER_LIMIT = 20;
 export const FILTER_TEXT_MAX = 200;
 /** "Views are a list of 1 to 20": the most views one call for tab counts takes. The frame asks in batches of this many. */
 export const VIEWS_PER_COUNT_CALL = 20;
+/** A saved view's name: "1 to 60 characters" (`saved_view_name_ok`). The database checks it; this only stops typing at the ceiling. */
+export const VIEW_NAME_MAX = 60;
 /** "needs 1 to 100 values" for a list. */
 export const FILTER_LIST_MAX = 100;
 /** "a whole number of days, 0 to 3660". */

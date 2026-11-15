@@ -39,6 +39,9 @@ const api = {
   recordActivity: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// The account that holds the submission (D-213), as the database answers it: its id and name, or null.
+const submissionAccount = vi.fn();
+vi.mock("@/lib/accountPageApi", () => ({ getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
 let intakeNow: { status: string; data_sha256: string | null; version: string | null } | null = null;
 vi.mock("@/integrations/supabase/client", () => ({
@@ -231,6 +234,109 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockImplementation((id: string) => Promise.resolve(detail({ id })));
     fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledWith("s2", true));
+  });
+
+  describe("its account (D-213, CRM-A2.1b)", () => {
+    const inWorkspace = async (path = "/advisor/submissions/s1") => {
+      const { WorkspaceContext } = await import("@/components/workspace/useWorkspace");
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <WorkspaceContext.Provider value={supportWorkspace(false)}>
+            <MemoryRouter initialEntries={[path]}>
+              <Routes>
+                <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+              </Routes>
+            </MemoryRouter>
+          </WorkspaceContext.Provider>
+        </QueryClientProvider>,
+      );
+    };
+    // Braces: a function a beforeEach returns is called afterwards as its cleanup, and the mock is one.
+    beforeEach(() => { submissionAccount.mockReset(); });
+
+    // Catches: no line, a line that links somewhere else, a line asked of the wrong firm or submission.
+    it("shows \"Account: <name>\", linking to the account, when the submission is on one", async () => {
+      submissionAccount.mockResolvedValue({ id: "a1", name: "Harborview Dental Group" });
+      await inWorkspace();
+      const link = await screen.findByRole("link", { name: "Harborview Dental Group" }, { timeout: 4000 });
+      expect(link).toHaveAttribute("href", "/accounts/a1");
+      expect(link.closest("p")).toHaveTextContent("Account: Harborview Dental Group");
+      expect(submissionAccount).toHaveBeenCalledWith("f1", "s1");
+    });
+
+    // Catches: a refresh clearing the account before asking again, so a failed lookup leaves the link gone.
+    it("keeps the line when a refresh of the same submission cannot read its account", async () => {
+      submissionAccount.mockResolvedValueOnce({ id: "a1", name: "Harborview Dental Group" }).mockRejectedValue(new Error("Couldn't load the account. Try again."));
+      await inWorkspace();
+      await screen.findByRole("link", { name: "Harborview Dental Group" }, { timeout: 4000 });
+      api.addNote.mockResolvedValue(undefined);
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "Called the CFO" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+      await waitFor(() => expect(submissionAccount).toHaveBeenCalledTimes(2), { timeout: 4000 });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.getByRole("link", { name: "Harborview Dental Group" })).toBeInTheDocument();
+    });
+
+    // Catches: the previous submission's account shown under the next submission while its own is read.
+    it("shows nothing of one submission's account under another", async () => {
+      const { WorkspaceContext } = await import("@/components/workspace/useWorkspace");
+      submissionAccount.mockImplementation((_firm: string, id: string) => (id === "s1" ? Promise.resolve({ id: "a1", name: "Harborview Dental Group" }) : new Promise(() => {})));
+      api.loadSubmission.mockImplementation((id: string) => Promise.resolve(detail({ id })));
+      render(
+        <QueryClientProvider client={queryClient}>
+          <WorkspaceContext.Provider value={supportWorkspace(false)}>
+            <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+              <GoTo id="s2" />
+              <Routes>
+                <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+              </Routes>
+            </MemoryRouter>
+          </WorkspaceContext.Provider>
+        </QueryClientProvider>,
+      );
+      await screen.findByRole("link", { name: "Harborview Dental Group" }, { timeout: 4000 });
+      fireEvent.click(screen.getByRole("button", { name: "go to s2" }));
+      await waitFor(() => expect(submissionAccount).toHaveBeenCalledWith("f1", "s2"));
+      await screen.findByRole("heading", { name: "Signed Co" }, { timeout: 4000 });
+      expect(screen.queryByRole("link", { name: "Harborview Dental Group" })).toBeNull();
+    });
+
+    it("replaces the line only by a successful answer, and drops it when the submission has none", async () => {
+      submissionAccount.mockResolvedValueOnce({ id: "a1", name: "Harborview Dental Group" }).mockResolvedValue(null);
+      await inWorkspace();
+      await screen.findByRole("link", { name: "Harborview Dental Group" }, { timeout: 4000 });
+      api.addNote.mockResolvedValue(undefined);
+      fireEvent.change(screen.getByLabelText("New note"), { target: { value: "Called the CFO" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+      await waitFor(() => expect(screen.queryByRole("link", { name: "Harborview Dental Group" })).toBeNull(), { timeout: 4000 });
+    });
+
+    // Catches: an "Account:" line with nothing after it, for a submission on no account or an account the person may not see (the database answers null for both).
+    it("shows no line when there is no account to show", async () => {
+      submissionAccount.mockResolvedValue(null);
+      await inWorkspace();
+      await screen.findByRole("heading", { level: 1, name: "Signed Co" }, { timeout: 4000 });
+      await waitFor(() => expect(submissionAccount).toHaveBeenCalled());
+      expect(screen.queryByText(/^Account:/)).toBeNull();
+    });
+
+    // Catches: the submission failing to load because its account could not be read.
+    it("still shows the submission when its account could not be read, and no line", async () => {
+      submissionAccount.mockRejectedValue(new Error("Couldn't load the account. Try again."));
+      await inWorkspace();
+      await screen.findByRole("heading", { level: 1, name: "Signed Co" }, { timeout: 4000 });
+      await waitFor(() => expect(submissionAccount).toHaveBeenCalled());
+      expect(screen.queryByText(/^Account:/)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    // Catches: the account asked for before the workspace names a firm (the database never guesses one).
+    it("asks nothing outside a workspace that names a firm", async () => {
+      renderPage();
+      await screen.findByRole("heading", { level: 1, name: "Signed Co" }, { timeout: 4000 });
+      expect(submissionAccount).not.toHaveBeenCalled();
+      expect(screen.queryByText(/^Account:/)).toBeNull();
+    });
   });
 
   describe("loading (CRM-S2.1)", () => {

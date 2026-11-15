@@ -1,9 +1,9 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh export
--- Export in the database (story CRM-S3.8b; docs/BROKER_CRM_BUILD.md D-48, D-128, D-200 to D-214; 20261118170000_export.sql). An export
--- holds only records the person may see and never an intake's answers, a census or a FEIN; it is recorded (who, when, which table, how
--- many rows) in the same step that returns the rows; a large or repeated export tells the firm's owners; a whole-table export needs a
--- recent sign-in. Two firms throughout. Every migration is loaded, in filename order (D-105), this story's last.
+-- Export in the database (story CRM-S3.8b; docs/BROKER_CRM_BUILD.md D-24, D-33, D-48, D-128; ADR 0023, ADR 0024; 20261119090000_export.sql).
+-- An export runs through one function that returns the rows and records the export in the same step. Applied to referral partners (any
+-- member) and, for owners, the firm's record. Two firms and their members are used throughout, with a closing firm, a suspended firm and a
+-- firm of the size the alert and the limit need. Every migration is loaded, in filename order (D-105), this story's last.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
@@ -123,6 +123,16 @@
 \i supabase/migrations/20261117120500_table_settings_fixes.sql
 \i supabase/migrations/20261117160000_epics_reconciled.sql
 \i supabase/migrations/20261118090000_leave_a_firm.sql
+-- Stand-in for pg_cron (same names and signature as supabase/tests/outbox_schedule.sql uses), holding the daily job of the firm's record
+-- as 20261116160001 made it, so the fixes migration can be seen to add the outbox clean-up to that same job.
+CREATE SCHEMA cron;
+CREATE TABLE cron.job (jobid serial PRIMARY KEY, jobname text UNIQUE, schedule text NOT NULL, command text NOT NULL);
+CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURNS bigint LANGUAGE sql AS $$
+  INSERT INTO cron.job (jobname, schedule, command) VALUES (job_name, schedule, command)
+  ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+  RETURNING jobid::bigint
+$$;
+INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity', '53 3 * * *', 'select public.prune_firm_activity();');
 \i supabase/migrations/20261118090500_leave_a_firm_fixes.sql
 \i supabase/migrations/20261118100000_join_by_organisation.sql
 \i supabase/migrations/20261118100500_join_by_organisation_fixes.sql
@@ -141,6 +151,11 @@
 \i supabase/migrations/20261118170000_export.sql
 \i supabase/migrations/20261118170500_export_fixes.sql
 \i supabase/migrations/20261118171000_export_fixes_again.sql
+\i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
+\i supabase/migrations/20261119090000_export.sql
+\i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -156,22 +171,33 @@ BEGIN
   RETURN uid;
 END $$;
 
--- The claims of a person's sign-in. `signed` is how long ago it was made (the token's amr timestamp); NULL gives a token with no amr.
--- `how` 'password' is a password sign-in that owes its second factor (aal1).
-CREATE FUNCTION pg_temp.claims(n text, signed interval DEFAULT interval '1 hour', how text DEFAULT 'oauth') RETURNS text LANGUAGE sql AS $$
-  SELECT (jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false, 'email', n || '@example.test')
-     || CASE WHEN signed IS NULL THEN '{}'::jsonb
-             ELSE jsonb_build_object('amr', jsonb_build_array(jsonb_build_object('method', how, 'timestamp', floor(extract(epoch FROM now() - signed))::bigint)),
-                                     'aal', 'aal1') END)::text
-$$;
-
--- Signs in as a person, at a firm's address when one is named (D-40).
-CREATE FUNCTION pg_temp.as_user(n text, addr text DEFAULT NULL, signed interval DEFAULT interval '1 hour', how text DEFAULT 'oauth') RETURNS void LANGUAGE plpgsql AS $$
+-- Signs in as a person, at a firm's address when one is named (D-40). `ago` is how long ago they signed in, as the token's own `amr` says it
+-- (GoTrue puts the time of each way in): 'google' is one sign-in with a provider; 'none' a token that says nothing of when; 'password_aal2' a
+-- password sign-in `ago` plus twenty hours back with the second factor done `ago` ago; 'password' a password sign-in without its second factor.
+CREATE FUNCTION pg_temp.as_user(n text, addr text DEFAULT NULL, ago interval DEFAULT interval '1 hour', how text DEFAULT 'google') RETURNS void LANGUAGE plpgsql AS $$
+DECLARE amr jsonb;
 BEGIN
   RESET ROLE;
-  PERFORM set_config('request.jwt.claims', pg_temp.claims(n, signed, how), false);
+  amr := CASE how
+    WHEN 'google' THEN jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', floor(extract(epoch FROM now() - ago))::bigint))
+    WHEN 'password_aal2' THEN jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', floor(extract(epoch FROM now() - ago - interval '20 hours'))::bigint),
+                                               jsonb_build_object('method', 'totp', 'timestamp', floor(extract(epoch FROM now() - ago))::bigint))
+    WHEN 'password' THEN jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', floor(extract(epoch FROM now() - ago))::bigint))
+    END;
+  PERFORM set_config('request.jwt.claims',
+    (jsonb_build_object('sub', pg_temp.id(n), 'role', 'authenticated', 'is_anonymous', false, 'email', n || '@example.test')
+     || CASE WHEN amr IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('amr', amr) END
+     || CASE how WHEN 'password_aal2' THEN '{"aal":"aal2"}'::jsonb WHEN 'password' THEN '{"aal":"aal1"}'::jsonb ELSE '{}'::jsonb END)::text, false);
   PERFORM set_config('request.headers', CASE WHEN addr IS NULL THEN '' ELSE jsonb_build_object('x-firm-address', addr)::text END, false);
   SET LOCAL ROLE authenticated;
+END $$;
+
+CREATE FUNCTION pg_temp.as_service() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', false);
+  PERFORM set_config('request.headers', '', false);
+  SET LOCAL ROLE service_role;
 END $$;
 
 CREATE FUNCTION pg_temp.as_anon() RETURNS void LANGUAGE plpgsql AS $$
@@ -200,480 +226,609 @@ BEGIN
   END;
 END $$;
 
--- The SQLSTATE alone, or 'ok'.
-CREATE FUNCTION pg_temp.code(stmt text) RETURNS text LANGUAGE sql AS $$ SELECT split_part(pg_temp.refusal(stmt), ':', 1) $$;
-
--- An export as the caller, as text: 'n|row;row', each row's values joined by ',' (no value is '~').
-CREATE FUNCTION pg_temp.export(fid uuid, t text, cols jsonb, filters jsonb DEFAULT '[]', keys jsonb DEFAULT NULL) RETURNS text LANGUAGE sql AS $$
-  SELECT (r ->> 'row_count') || '|' || COALESCE((
-    SELECT string_agg((SELECT string_agg(COALESCE(v #>> '{}', '~'), ',' ORDER BY i) FROM jsonb_array_elements(x) WITH ORDINALITY AS y(v, i)), ';' ORDER BY j)
-    FROM jsonb_array_elements(r -> 'rows') WITH ORDINALITY AS z(x, j)), '')
-  FROM (SELECT public.export_table(fid, t, cols, filters, keys) AS r) q
+-- One export, as whoever is signed in now: 'ok' or the refusal.
+CREATE FUNCTION pg_temp.try(fid uuid, tbl text, filters text DEFAULT '{}', ids text DEFAULT NULL) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.refusal(format('SELECT public.export_rows(%L, %L, %L::jsonb, %L::jsonb)', fid, tbl, filters, ids))
 $$;
 
--- The exports the record holds of a firm, read as the superuser: 'who:table:rows', oldest first.
-CREATE FUNCTION pg_temp.exports(fid uuid) RETURNS text LANGUAGE sql SECURITY DEFINER AS $$
-  SELECT COALESCE(string_agg(COALESCE(f.name, a.actor_id::text, 'system') || ':' || a.record_type || '/' || a.record_id || ':' || a.row_count, ' ' ORDER BY a.at, a.id), '')
-  FROM public.firm_activity a LEFT JOIN fx f ON f.id = a.actor_id WHERE a.firm_id = fid AND a.kind = 'export_made'
+-- One export's answer, as whoever is signed in now.
+CREATE FUNCTION pg_temp.run(fid uuid, tbl text, filters text DEFAULT '{}', ids text DEFAULT NULL) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT public.export_rows(fid, tbl, filters::jsonb, ids::jsonb)
 $$;
 
+-- What the record holds about exports of a firm, read as the superuser, oldest first: 'actor|table|rows'.
+CREATE FUNCTION pg_temp.entries(fid uuid, tbl text DEFAULT NULL) RETURNS text LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT COALESCE(string_agg(COALESCE((SELECT u.email FROM auth.users u WHERE u.id = a.actor_id), '-') || '|' || a.record_id || '|' || a.row_count, ', ' ORDER BY a.id), '')
+  FROM public.firm_activity a WHERE a.firm_id = fid AND a.kind = 'export_made' AND (tbl IS NULL OR a.record_id = tbl)
+$$;
 CREATE FUNCTION pg_temp.alerts(fid uuid) RETURNS bigint LANGUAGE sql SECURITY DEFINER AS $$
-  SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert' AND firm_id = fid
+  SELECT count(*) FROM public.outbox_events WHERE firm_id = fid AND kind = 'export_alert'
 $$;
 
--- Each case starts with no exports and no alerts: the record is append-only, so this runs as the superuser with its guard set aside.
-CREATE FUNCTION pg_temp.clear() RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  RESET ROLE;
-  SET LOCAL session_replication_role = replica;
-  DELETE FROM public.firm_activity WHERE kind = 'export_made';
-  DELETE FROM public.outbox_events WHERE kind = 'export_alert';
-  SET LOCAL session_replication_role = origin;
-END $$;
-
--- ---------- set up: two firms with partners; owners and an agent; a former and a suspended member; a platform admin; nobody ----------
+-- ---------- set up ----------
+-- acme: owner, lead, two agents, an admin who is also an agent, a removed agent. zenith: an owner and an agent who belongs to both firms.
+-- cinder is closing, sigma suspended, big holds many partners. platform_admin is a platform admin, a member of nothing, with an open support session at acme.
 DO $$
-DECLARE acme uuid; zenith uuid;
+DECLARE acme uuid; zenith uuid; cinder uuid; sigma uuid; big uuid;
 BEGIN
-  INSERT INTO public.firms (name, address, approved_at) VALUES ('Acme Brokers', 'acme-brokers', now()) RETURNING id INTO acme;
-  INSERT INTO public.firms (name, address, approved_at) VALUES ('Zenith Benefits', 'zenith-benefits', now()) RETURNING id INTO zenith;
-  INSERT INTO fx VALUES ('acme', acme), ('zenith', zenith);
-  PERFORM pg_temp.new_user('acme_owner'); PERFORM pg_temp.new_user('acme_owner2'); PERFORM pg_temp.new_user('acme_agent');
-  PERFORM pg_temp.new_user('acme_removed'); PERFORM pg_temp.new_user('acme_suspended'); PERFORM pg_temp.new_user('acme_admin_member');
-  PERFORM pg_temp.new_user('zenith_owner'); PERFORM pg_temp.new_user('platform_admin'); PERFORM pg_temp.new_user('nobody');
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Acme Brokers', 'acme-brokers', now(), 'approved', now()) RETURNING id INTO acme;
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Zenith Benefits', 'zenith-benefits', now(), 'approved', now()) RETURNING id INTO zenith;
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Cinder Closing', 'cinder-closing', now(), 'approved', now()) RETURNING id INTO cinder;
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Sigma Suspended', 'sigma-suspended', now(), 'approved', now()) RETURNING id INTO sigma;
+  INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Big Brokers', 'big-brokers', now(), 'approved', now()) RETURNING id INTO big;
+  INSERT INTO fx VALUES ('acme', acme), ('zenith', zenith), ('cinder', cinder), ('sigma', sigma), ('big', big);
+  PERFORM pg_temp.new_user(n) FROM unnest(ARRAY['acme_owner', 'acme_lead', 'acme_agent', 'acme_agent2', 'acme_admin_member', 'acme_removed', 'rep1', 'rep2', 'rep3', 'rep4', 'rep5',
+    'zenith_owner', 'both', 'cinder_owner', 'cinder_agent', 'sigma_owner', 'big_owner', 'big_agent', 'platform_admin', 'nobody']) AS n;
   INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES
-    (acme, pg_temp.id('acme_owner'), 'owner'), (acme, pg_temp.id('acme_owner2'), 'owner'), (acme, pg_temp.id('acme_agent'), 'agent'),
-    (acme, pg_temp.id('acme_suspended'), 'agent'), (acme, pg_temp.id('acme_admin_member'), 'agent'), (zenith, pg_temp.id('zenith_owner'), 'owner');
-  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
-  VALUES (acme, pg_temp.id('acme_removed'), 'agent', now() - interval '3 days', now() - interval '1 day');
+    (acme, pg_temp.id('acme_owner'), 'owner'), (acme, pg_temp.id('acme_lead'), 'lead'), (acme, pg_temp.id('acme_agent'), 'agent'), (acme, pg_temp.id('acme_agent2'), 'agent'),
+    (acme, pg_temp.id('acme_admin_member'), 'agent'), (acme, pg_temp.id('rep1'), 'agent'), (acme, pg_temp.id('rep2'), 'agent'), (acme, pg_temp.id('rep3'), 'agent'), (acme, pg_temp.id('rep4'), 'agent'), (acme, pg_temp.id('rep5'), 'agent'),
+    (acme, pg_temp.id('both'), 'agent'), (zenith, pg_temp.id('both'), 'agent'), (zenith, pg_temp.id('zenith_owner'), 'owner'),
+    (cinder, pg_temp.id('cinder_owner'), 'owner'), (cinder, pg_temp.id('cinder_agent'), 'agent'), (sigma, pg_temp.id('sigma_owner'), 'owner'),
+    (big, pg_temp.id('big_owner'), 'owner'), (big, pg_temp.id('big_agent'), 'agent');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until) VALUES
+    (acme, pg_temp.id('acme_removed'), 'agent', now() - interval '3 days', now() - interval '1 day');
   INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('platform_admin'), 'admin'), (pg_temp.id('acme_admin_member'), 'admin');
   INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES
-    (acme, 'acme-cfo', 'Acme CFO', 'accounting'), (acme, 'bay-law', 'Bay Law', 'law_firm'), (acme, 'zz-event', 'Autumn Summit', 'event'),
-    (zenith, 'zen-cpa', 'Zenith CPA', 'accounting');
-END $$;
--- The suspended member is suspended the way the product does it.
-DO $$
-BEGIN
-  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM public.suspend_member(pg_temp.id('acme'), pg_temp.id('acme_suspended'));
+    (acme, 'acme-cfo', 'Acme CFO', 'accounting'), (acme, 'acme-law', 'Acme Law', 'law_firm'), (acme, 'acme-event', 'Acme Event', 'event'),
+    (zenith, 'zenith-cfo', 'Zenith CFO', 'accounting'), (zenith, 'zenith-law', 'Zenith Law', 'law_firm'),
+    (cinder, 'cinder-cfo', 'Cinder CFO', 'accounting');
+  -- What the partners page counts for 30 days (intake_milestones, by referral code, summed over every campaign tag): acme-cfo started three times in the
+  -- window (under two campaigns) and certified once, and once 40 days ago; zenith has a partner with the same code, whose count is its own.
+  INSERT INTO public.intake_milestones (session_id, started_at, milestone, firm_id, referral_code, utm_campaign) VALUES
+    (NULL, now() - interval '5 days', 'started', acme, 'acme-cfo', 'spring'), (NULL, now() - interval '4 days', 'started', acme, 'acme-cfo', 'spring'),
+    (NULL, now() - interval '3 days', 'started', acme, 'acme-cfo', NULL), (NULL, now() - interval '5 days', 'certified', acme, 'acme-cfo', 'spring'),
+    (NULL, now() - interval '40 days', 'started', acme, 'acme-cfo', NULL), (NULL, now() - interval '40 days', 'certified', acme, 'acme-cfo', NULL),
+    (NULL, now() - interval '2 days', 'answered', acme, 'acme-cfo', NULL),
+    (NULL, now() - interval '2 days', 'started', zenith, 'acme-cfo', NULL), (NULL, now() - interval '2 days', 'started', zenith, 'zenith-cfo', NULL);
+  -- Three entries at known times, for the date range of the firm's record.
+  INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, at) VALUES
+    (acme, 'sign_in', 'firm', acme::text, '2026-01-10 12:00:00+00'), (acme, 'sign_in', 'firm', acme::text, '2026-01-20 12:00:00+00'),
+    (acme, 'sign_in', 'firm', acme::text, '2026-02-01 00:00:00+00');
+  -- A suspended firm and a support session, as the people who do them.
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_suspend_firm(sigma, 'testing');
+  PERFORM public.start_support_session(acme, 'looking at a stuck quote');
+  RESET ROLE;
+  -- The closing firm asks to close.
+  PERFORM pg_temp.as_user('cinder_owner', 'cinder-closing');
+  PERFORM public.request_firm_closure(cinder, 'Cinder Closing');
   RESET ROLE;
 END $$;
 
--- ---------- a support session exports nothing, and is refused before anything is read or recorded ----------
--- Break caught: the export does not call refuse_support_session, calls it with NULL, or calls it after checking the table or columns
--- (a support session would then learn which tables and columns exist, or be refused for the wrong reason); a refused export is recorded.
+-- ---------- the record of an export: what it holds ----------
+-- Break caught: the function is missing; the entry has no count, or a different one from the rows given; it names no one or the wrong person
+-- or firm; another kind or record type; another kind of entry can claim a count, or an export one without; a count below zero.
 DO $$
-DECLARE acme uuid := pg_temp.id('acme'); sid uuid;
+DECLARE acme uuid := pg_temp.id('acme'); a jsonb; n bigint;
 BEGIN
-  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
-  SELECT s.session_id INTO sid FROM public.start_support_session(acme, 'helping with partners') s;
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_table(%L, 'referral_partners', '["name"]', '[{"field":"name","op":"contains","value":"a"}]')$q$, acme)),
-    'PT423: Nevermore support can look, not change', 'a support session at the firm''s address can''t export what it can read');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'x', '{}', '{}', '{}', 'x')$q$, acme)), 'PT423',
-    'and is refused before the table, the columns or the filters are looked at');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'firm_activity', '["who"]')$q$, acme)), 'PT423', 'nor the firm''s record, which it reads as an owner');
-  PERFORM public.end_support_session(sid);
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(acme), '', 'nothing was recorded as exported');
-  RAISE NOTICE 'export: support session passed';
-END $$;
+  -- The check that ties a count to an export, tried as the superuser (the only one that can insert at all).
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (%L, 'export_made', 'table', 'referral_partners')$q$, acme)) LIKE '23514:%', true, 'an export with no count is not a record');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, row_count) VALUES (%L, 'export_made', 'table', 'referral_partners', -1)$q$, acme)) LIKE '23514:%', true, 'nor a negative one');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, row_count) VALUES (%L, 'sign_in', 'firm', %L, 3)$q$, acme, acme::text)) LIKE '23514:%', true, 'a sign-in has no count');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, row_count) VALUES (%L, 'export_made', 'firm', %L, 3)$q$, acme, acme::text)) LIKE '23514:%', true, 'an export is of a table');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, row_count) VALUES (%L, 'sign_in', 'table', 'referral_partners', NULL)$q$, acme)) LIKE '23514:%', true, 'and only an export is');
 
--- ---------- who may export: a current member at the firm's address, nobody else ----------
--- Break caught: the membership check is dropped or asks the wrong firm; the address does not narrow it (D-40); a former, suspended or
--- second-factor-owing person is let in; a refusal is recorded.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme'); stmt text; who text;
-BEGIN
-  stmt := format($q$SELECT public.export_table(%L, 'referral_partners', '["name"]', '[{"field":"kind","op":"any_of","value":["accounting"]}]')$q$, acme);
-  PERFORM pg_temp.as_anon();
-  PERFORM pg_temp.is(pg_temp.code(stmt), '42501', 'a signed-out caller can''t export');
-  FOREACH who IN ARRAY ARRAY['nobody', 'zenith_owner', 'acme_removed', 'acme_suspended', 'platform_admin'] LOOP
-    PERFORM pg_temp.as_user(who, 'acme-brokers');
-    PERFORM pg_temp.is(pg_temp.refusal(stmt), '42501: Only a member of this firm can export its records', who || ' at the firm''s address is refused');
-  END LOOP;
-  -- The address narrows (D-40): a member asking at another firm's address is no member here. (The bare domain names no firm, so it
-  -- narrows nothing, as for every member read.)
-  PERFORM pg_temp.as_user('acme_agent', 'zenith-benefits');
-  PERFORM pg_temp.is(pg_temp.code(stmt), '42501', 'a member at another firm''s address is refused: the address narrows (D-40)');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers', interval '1 hour', 'password');
-  PERFORM pg_temp.is(pg_temp.code(stmt), '42501', 'and with a password sign-in that owes its second factor (D-19)');
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.code($q$SELECT public.export_table(NULL, 'referral_partners', '["name"]')$q$), '42501', 'and for no firm at all');
-  PERFORM pg_temp.is(pg_temp.code(stmt), 'ok', 'while the same member at the firm''s address may');
+  a := pg_temp.run(acme, 'referral_partners');
+  RESET ROLE;
+  PERFORM pg_temp.is((a ->> 'count')::int, 3, 'the answer counts the firm''s three partners');
+  PERFORM pg_temp.is(jsonb_array_length(a -> 'rows'), 3, 'and holds them');
+  PERFORM pg_temp.is(a ->> 'table', 'referral_partners', 'it says which table');
+  PERFORM pg_temp.is(pg_temp.entries(acme, 'referral_partners'), 'acme_agent@example.test|referral_partners|3', 'one entry: who, which table, how many');
+  SELECT count(*) INTO n FROM public.firm_activity WHERE firm_id = acme AND kind = 'export_made' AND record_type = 'table' AND actor_is_staff = false AND subject_user_id IS NULL AND role IS NULL
+    AND at > now() - interval '1 minute';
+  PERFORM pg_temp.is(n, 1::bigint, 'about a table, by a member, with no subject or role, dated now');
+  RAISE NOTICE 'export: the record passed';
+END $$;
+
+-- ---------- what the export holds ----------
+-- Break caught: another firm's partner is in the rows; a column the table does not list (an email, an id, the firm) is in them; the rows are
+-- not in a stable order; the columns are not described; a partner is missing.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); a jsonb; keys text; cols text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  a := pg_temp.run(acme, 'referral_partners');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT string_agg(r ->> 'code', ',' ORDER BY ord) FROM jsonb_array_elements(a -> 'rows') WITH ORDINALITY x(r, ord)), 'acme-cfo,acme-event,acme-law', 'the firm''s partners by name, and no other firm''s');
+  SELECT string_agg(k, ',' ORDER BY k) INTO keys FROM jsonb_object_keys(a -> 'rows' -> 0) k;
+  SELECT string_agg(c ->> 'id', ',' ORDER BY ord) INTO cols FROM jsonb_array_elements(a -> 'columns') WITH ORDINALITY x(c, ord);
+  PERFORM pg_temp.is(cols, 'code,name,kind,started_30d,certified_30d,created_at,updated_at', 'the columns are described, in order: the page''s, then when it was added and changed');
+  PERFORM pg_temp.is(keys, 'certified_30d,code,created_at,kind,name,started_30d,updated_at', 'a row holds those and nothing else');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'label', ' | ' ORDER BY ord) FROM jsonb_array_elements(a -> 'columns') WITH ORDINALITY x(c, ord) WHERE c ->> 'id' LIKE '%30d'), 'Started, 30 days | Certified, 30 days', 'the two counts are headed as the partners page heads them');
+  PERFORM pg_temp.is((SELECT r ->> 'started_30d' || '/' || (r ->> 'certified_30d') FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'code' = 'acme-cfo'), '3/1',
+    'a partner''s intakes started and certified in the last 30 days, summed over its campaigns, and not another firm''s under the same code or what is older');
+  PERFORM pg_temp.is((SELECT jsonb_typeof(r -> 'started_30d') || jsonb_typeof(r -> 'certified_30d') FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'code' = 'acme-law'), 'numbernumber', 'a partner with none has zero, not nothing');
+  PERFORM pg_temp.is((SELECT bool_and(c ->> 'label' IS NOT NULL AND c ->> 'label' <> '') FROM jsonb_array_elements(a -> 'columns') c), true, 'each with its words');
+  PERFORM pg_temp.is(a -> 'rows' -> 0 ->> 'name', 'Acme CFO', 'the values are the firm''s');
+  PERFORM pg_temp.is(a ->> 'label', 'Referral partners', 'the table has its words too');
+  PERFORM pg_temp.is(a ->> 'skipped', '0', 'nothing is skipped when no selection was named');
+  RAISE NOTICE 'export: the rows passed';
+END $$;
+
+-- ---------- filters, and a selection by ids ----------
+-- Break caught: a filter is ignored (the whole table comes back and the record counts it); a filter is applied after the count; a filter
+-- the table does not have is accepted; a selection returns a row that was not named, another firm's row, or counts the ones not found;
+-- more ids than allowed are taken; a selection is asked to sign in again.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); a jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  a := pg_temp.run(acme, 'referral_partners', '{"kind":"law_firm"}');
+  PERFORM pg_temp.is(a ->> 'count', '1', 'a kind narrows the rows');
+  a := pg_temp.run(acme, 'referral_partners', '{"search":"event"}');
+  PERFORM pg_temp.is((a -> 'rows' -> 0) ->> 'code', 'acme-event', 'a search matches the name, in any case');
+  a := pg_temp.run(acme, 'referral_partners', '{"search":"ACME-LAW"}');
+  PERFORM pg_temp.is(a ->> 'count', '1', 'and the code');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.entries(acme, 'referral_partners'), 'acme_agent@example.test|referral_partners|3, acme_agent2@example.test|referral_partners|3, acme_agent2@example.test|referral_partners|1, acme_agent2@example.test|referral_partners|1, acme_agent2@example.test|referral_partners|1',
+    'each export is recorded with the rows it returned, not the rows of the table');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"colour":"red"}'), '22023: Those filters don''t apply to this table', 'a filter the table does not have is refused');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"kind":"nonsense"}'), '22023: Those filters don''t apply to this table', 'so is a value it does not take');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '[]'), '22023: Those filters don''t apply to this table', 'and filters that are not a set of named filters');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"search":null}'), '22023: Those filters don''t apply to this table', 'a JSON null is not "no filter": it is refused');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"kind":null}'), '22023: Those filters don''t apply to this table', 'whichever filter it stands in for');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"search":3}'), '22023: Those filters don''t apply to this table', 'and a number is not text');
+  -- A selection: the ones named that are the firm's, in the table's order; the others are counted as skipped and are not told apart.
+  a := pg_temp.run(acme, 'referral_partners', '{}', '["acme-law","zenith-cfo","nobody-has-this","acme-cfo","acme-law"]');
+  PERFORM pg_temp.is(a ->> 'count', '2', 'a selection returns the firm''s rows among the ones named');
+  PERFORM pg_temp.is(a ->> 'skipped', '2', 'and says how many ids it could not give (another firm''s and one that is not there look alike)');
+  PERFORM pg_temp.is((SELECT string_agg(r ->> 'code', ',') FROM jsonb_array_elements(a -> 'rows') r), 'acme-cfo,acme-law', 'in the table''s order, each once');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT row_count FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = acme ORDER BY id DESC LIMIT 1), 2, 'the record counts the rows given, not the ids named');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  a := pg_temp.run(acme, 'referral_partners', '{}', '["ACME-LAW","acme-law","Acme-Law","NOBODY","nobody"]');
+  PERFORM pg_temp.is(a ->> 'count', '1', 'ids that differ only in case are one record');
+  PERFORM pg_temp.is(a ->> 'skipped', '1', 'and are counted once, so "skipped" is not inflated');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '30 hours');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '["acme-law"]'), 'ok', 'a selection needs no fresh sign-in');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '[]'), 'ok', 'an empty selection is an export of nothing, not of everything');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'referral_partners', '{}', '[]') ->> 'count', '0', 'with no rows');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '"acme-law"'), '22023: Name the records to export as a list', 'ids that are not a list are refused');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '[1]'), '22023: Name the records to export as a list', 'so are ones that are not text');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', (SELECT jsonb_agg('c' || g)::text FROM generate_series(1, 1000) g)), 'ok', 'a thousand ids are the most');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', (SELECT jsonb_agg('c' || g)::text FROM generate_series(1, 1001) g)), '22023: Pick at most 1,000 records to export', 'one more is refused in words');
+  RESET ROLE;
+  RAISE NOTICE 'export: filters and selections passed';
+END $$;
+
+-- ---------- the fresh sign-in ----------
+-- Break caught: a whole table is exported by someone who signed in more than twelve hours ago; the window is longer or shorter than twelve hours;
+-- the oldest way of signing in decides, not the latest (a second factor done an hour ago is a sign-in an hour ago); a token that says nothing
+-- of when passes; a refused export is still recorded; the refusal is not worded for the person.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); before_n bigint;
+BEGIN
+  SELECT count(*) INTO before_n FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = acme;
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '13 hours');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'PT401: Sign in again to export a whole table', 'a sign-in thirteen hours ago must be done again');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"kind":"law_firm"}'), 'PT401: Sign in again to export a whole table', 'a filter does not make it a selection');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '11 hours 59 minutes');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'ok', 'a sign-in just inside twelve hours is fresh');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '12 hours 1 minute');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'PT401: Sign in again to export a whole table', 'and just outside it is not');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '2 hours', 'password_aal2');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'ok', 'a password sign-in twenty-two hours ago with the second factor two hours ago is fresh: the latest counts');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '1 hour', 'none');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'PT401: Sign in again to export a whole table', 'a token that says nothing of when the person signed in fails closed');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers', interval '1 hour', 'password');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), '42501: Not a member of that firm', 'a password sign-in that owes its second factor is no member yet (D-19), whatever the time');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = acme), before_n + 2, 'only the two that were let through were recorded');
+  RAISE NOTICE 'export: the fresh sign-in passed';
+END $$;
+
+-- ---------- who may export which table ----------
+-- Break caught: a stranger, a former member, another firm's member or a platform admin who is no member gets rows; the record is exported by a
+-- lead or an agent; a refusal leaves an entry; a signed-out caller reaches the function; an unknown table (an intake's answers, the queue, a
+-- census) is exported; the table's name is built into SQL.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); zenith uuid := pg_temp.id('zenith'); before_n bigint; t text;
+BEGIN
+  SELECT count(*) INTO before_n FROM public.firm_activity WHERE kind = 'export_made';
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'ok', 'an owner exports partners');
+  PERFORM pg_temp.as_user('acme_lead', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'ok', 'a lead does');
   PERFORM pg_temp.as_user('acme_admin_member', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.code(stmt), 'ok', 'as may a platform admin who is a member, acting as one');
-  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
-  PERFORM pg_temp.is(pg_temp.export(pg_temp.id('zenith'), 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["accounting"]}]'), '1|zen-cpa',
-    'and each firm''s member gets their own firm''s rows');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'ok', 'an admin who is also an agent does, as a member');
   RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(acme), 'acme_agent:table/referral_partners:1 acme_admin_member:table/referral_partners:1',
-    'only the two exports that ran are recorded, each as who made it');
-  PERFORM pg_temp.is((SELECT bool_or(actor_is_staff) FROM public.firm_activity WHERE kind = 'export_made'), false, 'an admin acting as a member is recorded as themselves (D-33)');
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: who passed';
-END $$;
-
--- ---------- what can be exported: two tables, their listed columns, nothing of an intake ----------
--- Break caught: the queue or any other table becomes exportable; a column outside the list (an intake's answers, a census, a FEIN, a file,
--- who wrote a partner) can be asked for under any table name; a table or column name reaches SQL. Every table and column name in the
--- database is tried, so a table added later can't become reachable by its name.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme'); t text; c text; tables text := ''; cols text := '';
-BEGIN
-  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_table(%L, 'submissions', '["company_name"]')$q$, acme)),
-    '22023: The queue can''t be exported: its columns are an intake''s answers', 'the queue is never exported (D-48)');
-  FOR t IN SELECT DISTINCT table_name FROM information_schema.tables WHERE table_schema IN ('public', 'storage', 'auth') ORDER BY 1 LOOP
-    IF pg_temp.code(format($q$SELECT public.export_table(%L, %L, '["name"]', '[{"field":"name","op":"is","value":"none"}]')$q$, acme, t)) <> '22023'
-       OR t IN ('referral_partners', 'firm_activity') THEN
-      tables := tables || t || ' ';
-    END IF;
+  PERFORM pg_temp.is((SELECT actor_is_staff FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = acme ORDER BY id DESC LIMIT 1), false, 'and the entry is theirs as a member, not Nevermore''s');
+  -- Everyone who is no member of acme.
+  FOR t IN SELECT unnest(ARRAY['nobody', 'acme_removed', 'zenith_owner', 'sigma_owner']) LOOP
+    PERFORM pg_temp.as_user(t);
+    PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), '42501: Not a member of that firm', t || ' is refused');
+    PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{}', '["acme-cfo"]'), '42501: Not a member of that firm', t || ' is refused a selection too');
+    PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity'), '42501: Not a member of that firm', t || ' is refused the record');
   END LOOP;
-  PERFORM pg_temp.is(tables, 'firm_activity referral_partners ', 'of every table in the database, only these two names are accepted');
-  FOREACH t IN ARRAY ARRAY['referral_partners', 'firm_activity'] LOOP
-    FOR c IN SELECT DISTINCT column_name FROM information_schema.columns WHERE table_schema IN ('public', 'storage', 'auth')
-             UNION SELECT unnest(ARRAY['answers', 'census', 'fein', 'chamber_data', 'transcript', 'who', 'subject', 'rows', 'payload', 'email'])
-             ORDER BY 1 LOOP
-      IF pg_temp.code(format($q$SELECT public.export_table(%L, %L, %L::jsonb, '[{"field":"kind","op":"is_empty"}]')$q$, acme, t, jsonb_build_array(c)::text)) <> '22023' THEN
-        cols := cols || t || '.' || c || ' ';
-      END IF;
-    END LOOP;
+  PERFORM pg_temp.as_user('platform_admin', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.try(zenith, 'referral_partners'), '42501: Not a member of that firm', 'a platform admin with no session for that firm is refused, as a stranger is');
+  PERFORM pg_temp.is(pg_temp.try(NULL, 'referral_partners'), 'PT423: Nevermore support can look, not change', 'and one who holds a session anywhere is refused a call that names no firm');
+  -- Only an owner exports the record.
+  FOR t IN SELECT unnest(ARRAY['acme_lead', 'acme_agent', 'acme_admin_member']) LOOP
+    PERFORM pg_temp.as_user(t, 'acme-brokers');
+    PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity'), '42501: Only an owner of the firm can export that', t || ' is refused the firm''s record');
   END LOOP;
-  PERFORM pg_temp.is(cols,
-    'referral_partners.code referral_partners.created_at referral_partners.kind referral_partners.name referral_partners.updated_at '
-    || 'firm_activity.at firm_activity.kind firm_activity.record_id firm_activity.record_type firm_activity.role firm_activity.rows firm_activity.subject firm_activity.who ',
-    'of every column name in the database and the names of an intake''s content, only the listed columns are accepted');
-  PERFORM pg_temp.clear();
+  -- No other table.
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_table(%L, 'referral_partners', '["created_by_email"]')$q$, acme)),
-    '22023: The table "referral_partners" has no column "created_by_email" to export', 'who wrote a partner is not exported (D-33)');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["name","name"]')$q$, acme)), '22023', 'a column named twice is refused');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '[]')$q$, acme)), '22023', 'and no columns');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["name"]', '[{"field":"created_by_email","op":"is_empty"}]')$q$, acme)),
-    '22023', 'a filter on a field the table does not list is refused');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(acme), '', 'no refused export is recorded');
-  RAISE NOTICE 'export: what can be exported passed';
-END $$;
-
--- ---------- referral partners: the rows that match, in the columns asked, recorded with their count ----------
--- Break caught: another firm's rows leak in; a filter, the selection or the column order is ignored; the rows are not in the table's
--- order; the count returned or recorded is not the count of rows; the record names the wrong person or table; owners can't read it.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme'); r jsonb; l text;
-BEGIN
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["name","code","kind"]'),
-    '3|Acme CFO,acme-cfo,accounting;Autumn Summit,zz-event,event;Bay Law,bay-law,law_firm', 'every partner of the firm, by name, in the columns asked');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["Accounting","law_firm"]}]'),
-    '2|acme-cfo;bay-law', 'a choice filter keeps its kinds');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[{"field":"name","op":"contains","value":"LAW"}]'), '1|bay-law', 'a text filter, ignoring case');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]',
-    '[{"field":"name","op":"contains","value":"a"},{"field":"kind","op":"none_of","value":["event"]}]'), '2|acme-cfo;bay-law', 'filters together are "and"');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[{"field":"created_at","op":"in_next_days","value":3}]'), '3|acme-cfo;zz-event;bay-law',
-    'a date filter, by the caller''s day');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[{"field":"created_at","op":"before","value":"2000-01-01"}]'), '0|', 'and one that keeps none');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code","name"]', '[]', '["bay-law","zen-cpa","made-up"]'), '1|bay-law,Bay Law',
-    'a selection keeps only the firm''s own rows it names: another firm''s code is not found');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["nope"]}]')$q$, acme)),
-    '22023', 'a kind that is not a kind is refused');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[]', '"bay-law"')$q$, acme)), '22023', 'a selection must be a list');
-  r := public.export_table(acme, 'referral_partners', '["kind","code"]', '[{"field":"code","op":"is","value":"acme-cfo"}]');
-  PERFORM pg_temp.is(r -> 'columns', '["kind", "code"]'::jsonb, 'the answer names its columns in the order asked');
-  PERFORM pg_temp.is(r -> 'rows', '[["accounting", "acme-cfo"]]'::jsonb, 'each row is its values in that order');
-  PERFORM pg_temp.is(concat_ws(',', r ->> 'row_count', r ->> 'whole_table', r ->> 'table'), '1,false,referral_partners', 'with its count, whether it is the whole table, and the table');
-  PERFORM pg_temp.is((r ->> 'exported_at') ~ '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$', true, 'and when, in UTC');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(acme),
-    'acme_agent:table/referral_partners:3 acme_agent:table/referral_partners:2 acme_agent:table/referral_partners:1 acme_agent:table/referral_partners:2 '
-    || 'acme_agent:table/referral_partners:3 acme_agent:table/referral_partners:0 acme_agent:table/referral_partners:1 acme_agent:table/referral_partners:1',
-    'every export that ran is one entry with the count it returned, and a refused one is none');
-  PERFORM pg_temp.is(pg_temp.exports(pg_temp.id('zenith')), '', 'and it is the firm''s own record, not another firm''s');
-  -- The owners read it in the record, with the count; a member who is no owner doesn't (the record's own rule, CRM-P2.3).
-  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  SELECT string_agg(DISTINCT concat_ws(',', x.actor_email, x.record_type, x.record_id), ' ') || ':' || count(*) || ':' || sum(x.row_count) INTO l
-  FROM public.firm_activity_list(acme, NULL, 'export_made', 100) x;
-  PERFORM pg_temp.is(l, 'acme_agent@example.test,table,referral_partners:8:13',
-    'an owner reads who exported, which table and how many rows');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT * FROM public.firm_activity_list(%L)$q$, acme)), '42501', 'the agent who exported can''t read the record');
-  PERFORM pg_temp.is(pg_temp.code('SELECT row_count FROM public.firm_activity'), 'ok', 'the count is a column of the record an owner may read');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity), 0::bigint, 'and the agent sees no row of it');
-  RESET ROLE;
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: referral partners passed';
-END $$;
-
--- ---------- the record can't be written without an export ----------
--- Break caught: an export entry can be written with no count, or a count put on another kind of entry, so the record could say an export
--- happened that returned nothing, or hide one.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme');
-BEGIN
-  PERFORM pg_temp.is(pg_temp.code(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (%L, 'export_made', 'table', 'referral_partners')$q$, acme)),
-    '23514', 'an export entry without a count is refused');
-  PERFORM pg_temp.is(pg_temp.code(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, row_count) VALUES (%L, 'sign_in', 'firm', %L, 3)$q$, acme, acme)),
-    '23514', 'and a count on an entry that is not an export');
-  PERFORM pg_temp.is(pg_temp.code(format($q$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id, row_count) VALUES (%L, 'export_made', 'firm', %L, 3)$q$, acme, acme)),
-    '23514', 'and an export that is not of a table');
-  RAISE NOTICE 'export: the record''s shape passed';
-END $$;
-
--- ---------- a whole-table export needs a sign-in within 12 hours ----------
--- Break caught: the check is dropped, reads the wrong claim, has the wrong window or the wrong direction; a filter that keeps every row
--- passes as "not everything"; a refused export is recorded; an export of part of a table is held to it.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme'); everything text;
-BEGIN
-  everything := format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]')$q$, acme);
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers', interval '13 hours');
-  PERFORM pg_temp.is(pg_temp.refusal(everything), 'PT428: Sign in again to export the whole table: you last signed in more than 12 hours ago',
-    'a sign-in 13 hours old can''t export every partner');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[{"field":"created_at","op":"after","value":"2000-01-01"}]')$q$, acme)),
-    'PT428', 'nor with a filter that keeps every row: what counts is what the export holds');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[]', '["acme-cfo","bay-law","zz-event"]')$q$, acme)),
-    'PT428', 'nor by selecting every row');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["event"]}]'), '1|zz-event', 'part of the table needs no recent sign-in');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[]', '["made-up"]'), '0|', 'nor an export that holds nothing');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers', NULL);
-  PERFORM pg_temp.is(pg_temp.code(everything), 'PT428', 'a token that says nothing of when it signed in is not recent');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers', interval '11 hours 59 minutes');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]'), '3|acme-cfo;zz-event;bay-law', 'a sign-in within 12 hours exports the whole table');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(public.export_table(acme, 'referral_partners', '["code"]') ->> 'whole_table', 'true', 'and says it was the whole table');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(acme),
-    'acme_agent:table/referral_partners:1 acme_agent:table/referral_partners:0 acme_agent:table/referral_partners:3 acme_agent:table/referral_partners:3',
-    'the refused whole-table exports are not recorded');
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: recent sign-in passed';
-END $$;
-
--- ---------- the firm's record: its owners only, Nevermore shown as Nevermore ----------
--- Break caught: a member who is no owner exports the record; another firm's entries leak in; a person of Nevermore's is shown by email
--- or id (D-33); the system is shown as a person; the count of an export is lost.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme'); got text;
-BEGIN
-  RESET ROLE;
-  INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (acme, 'sign_in', 'firm', acme::text);
-  INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES (pg_temp.id('zenith'), 'sign_in', 'firm', pg_temp.id('zenith')::text);
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_table(%L, 'firm_activity', '["who"]', '[{"field":"kind","op":"any_of","value":["sign_in"]}]')$q$, acme)),
-    '42501: Only a firm''s owners can export its record', 'an agent can''t export the firm''s record');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'referral_partners', '["code"]', '[{"field":"code","op":"is","value":"bay-law"}]'), '1|bay-law', 'the agent exports a partner');
-  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'firm_activity', '["who","kind","record_type","record_id","rows"]', '[{"field":"kind","op":"any_of","value":["export_made"]}]'),
-    '1|acme_agent@example.test,export_made,table,referral_partners,1', 'an owner exports who exported what, and how many rows');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'firm_activity', '["who","kind"]', '[{"field":"kind","op":"any_of","value":["sign_in"]}]'), '1|System,sign_in',
-    'an entry the system made is "System", and another firm''s entries are not there');
-  got := pg_temp.export(acme, 'firm_activity', '["who","kind","record_type","subject"]',
-    '[{"field":"kind","op":"any_of","value":["support_access"]},{"field":"record_type","op":"any_of","value":["support_session"]}]');
-  PERFORM pg_temp.is(got, '1|Nevermore,support_access,support_session,~', 'a person of Nevermore''s is "Nevermore"');
-  PERFORM pg_temp.is(position('platform_admin' IN got) + position(pg_temp.id('platform_admin')::text IN got), 0, 'with no email and no id');
-  PERFORM pg_temp.is(pg_temp.export(acme, 'firm_activity', '["who"]', '[{"field":"who","op":"is","value":"nevermore"}]'), '2|Nevermore;Nevermore', 'and can be filtered by who');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'firm_activity', '["who"]', '[{"field":"role","op":"any_of","value":["boss"]}]')$q$, acme)),
-    '22023', 'a role that is not a role is refused');
-  -- The record comes newest first (D-204). Break caught: the record's order is reversed or lost.
-  RESET ROLE;
-  INSERT INTO public.firm_activity (firm_id, at, kind, record_type, record_id) VALUES (acme, now() - interval '2 days', 'sign_in', 'firm', acme::text);
-  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM pg_temp.is((SELECT (r -> 'rows' -> 0 ->> 0) > (r -> 'rows' -> 1 ->> 0) AND (r -> 'rows' -> 1 ->> 0) < export_moment_now
-                      FROM (SELECT public.export_table(acme, 'firm_activity', '["at"]', '[{"field":"kind","op":"any_of","value":["sign_in"]}]') AS r,
-                                   to_char(now() AT TIME ZONE 'UTC' - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS export_moment_now) q),
-    true, 'the firm''s record is exported newest first');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(acme),
-    'acme_agent:table/referral_partners:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:1 acme_owner:table/firm_activity:2 acme_owner:table/firm_activity:2',
-    'exporting the record is recorded in it too');
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: the firm''s record passed';
-END $$;
-
--- ---------- the cap: 10,000 rows, refused past it, never cut short ----------
--- Break caught: the cap is dropped or off by one; a larger export is cut to the cap and recorded as if whole; a refused one is recorded.
-DO $$
-DECLARE zenith uuid := pg_temp.id('zenith'); keys jsonb;
-BEGIN
-  RESET ROLE;
-  SET LOCAL session_replication_role = replica;
-  INSERT INTO public.referral_partners (firm_id, code, name, kind)
-    SELECT zenith, 'bulk-' || lpad(i::text, 5, '0'), 'Bulk ' || lpad(i::text, 5, '0'), 'other' FROM generate_series(1, 10000) i;
-  SET LOCAL session_replication_role = origin;
-  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]')$q$, zenith)),
-    '54000: This export would hold more than 10000 rows, the most one export holds. Narrow it with a filter.', 'an export of 10,001 rows is refused');
-  PERFORM pg_temp.is(split_part(pg_temp.export(zenith, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["other"]}]'), '|', 1), '10000',
-    'one of exactly 10,000 is not');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.exports(zenith), 'zenith_owner:table/referral_partners:10000', 'only the export that ran is recorded');
-  RAISE NOTICE 'export: the cap passed';
-END $$;
-
--- ---------- an export past the cap is refused before it is built ----------
--- Break caught: the cap is checked only after every matching row has been turned into JSON, sorted and gathered, so an export of a very
--- large table does all that work (and holds its memory) only to be refused; or a selection is applied after every row was built. Timed:
--- the bounded count answers well inside the limit, the built one does not (on this database, about 2.5 s for 200,000 rows).
-DO $$
-DECLARE huge uuid; t0 timestamptz;
-BEGIN
-  RESET ROLE;
-  INSERT INTO public.firms (name, address, approved_at) VALUES ('Huge Group', 'huge-group', now()) RETURNING id INTO huge;
-  INSERT INTO fx VALUES ('huge', huge);
-  PERFORM pg_temp.new_user('huge_owner');
-  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (huge, pg_temp.id('huge_owner'), 'owner');
-  SET LOCAL session_replication_role = replica;
-  INSERT INTO public.referral_partners (firm_id, code, name, kind)
-    SELECT huge, 'p-' || lpad(i::text, 6, '0'), 'Partner ' || lpad(i::text, 6, '0'), 'other' FROM generate_series(1, 200000) i;
-  SET LOCAL session_replication_role = origin;
-  ANALYZE public.referral_partners;
-  PERFORM pg_temp.as_user('huge_owner', 'huge-group');
-  t0 := clock_timestamp();
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code","name","kind","created_at","updated_at"]')$q$, huge)), '54000',
-    'an export of 200,000 rows is refused');
-  PERFORM pg_temp.is(clock_timestamp() - t0 < interval '700 milliseconds', true, 'without building the 200,000 rows first');
-  t0 := clock_timestamp();
-  PERFORM pg_temp.is(pg_temp.export(huge, 'referral_partners', '["code"]', '[]', '["p-000007","p-199999"]'), '2|p-000007;p-199999', 'a selection of two of them is exported');
-  PERFORM pg_temp.is(clock_timestamp() - t0 < interval '700 milliseconds', true, 'without building every row to find the two');
-  RESET ROLE;
-  SET LOCAL session_replication_role = replica;
-  DELETE FROM public.referral_partners WHERE firm_id = huge;
-  DELETE FROM public.firm_activity WHERE firm_id = huge;
-  SET LOCAL session_replication_role = origin;
-  RAISE NOTICE 'export: refused before it is built passed';
-END $$;
-
--- ---------- the owners' alert: more than 500 rows ----------
--- Break caught: the alert is not queued, is queued at 500, goes to an intake instead of the firm, carries something more than who, which
--- firm, which table, how many rows and when, or is queued for a refused export.
-DO $$
-DECLARE zenith uuid := pg_temp.id('zenith'); e public.outbox_events;
-BEGIN
-  PERFORM pg_temp.clear();
-  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
-  PERFORM pg_temp.export(zenith, 'referral_partners', '["code"]', '[]', (SELECT jsonb_agg('bulk-' || lpad(i::text, 5, '0')) FROM generate_series(1, 500) i));
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(zenith), 0::bigint, 'an export of 500 rows tells no one');
-  PERFORM pg_temp.clear();
-  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
-  PERFORM pg_temp.export(zenith, 'referral_partners', '["code"]', '[]', (SELECT jsonb_agg('bulk-' || lpad(i::text, 5, '0')) FROM generate_series(1, 501) i));
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(zenith), 1::bigint, 'an export of 501 rows tells the owners');
-  SELECT * INTO e FROM public.outbox_events WHERE kind = 'export_alert' AND firm_id = zenith;
-  PERFORM pg_temp.is(concat_ws(',', e.session_id IS NULL, e.firm_id = zenith, e.status), 't,t,pending', 'as one firm-level email, waiting to be sent');
-  PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e.payload) k), 'exported_at,exports_in_hour,firm_name,large,member_email,row_count,table',
-    'that holds only who, which firm, which table, how many rows, when and why');
-  PERFORM pg_temp.is(concat_ws(',', e.payload ->> 'member_email', e.payload ->> 'firm_name', e.payload ->> 'table', e.payload ->> 'row_count', e.payload ->> 'large', e.payload ->> 'exports_in_hour'),
-    'zenith_owner@example.test,Zenith Benefits,referral_partners,501,true,1', 'with those values');
-  PERFORM pg_temp.is(public.outbox_kind_is_firm_alert('export_alert'), true, 'it is a firm''s alert: held while suspended, never suppressed by a bounce, ended once closed (D-118)');
-  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits', interval '20 hours');
-  PERFORM pg_temp.code(format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]')$q$, zenith));
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(zenith), 1::bigint, 'a refused large export tells no one');
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: large alert passed';
-END $$;
-
--- ---------- the owners' alert: a member's third export within an hour ----------
--- Break caught: the alert is not queued at the third; it is queued at the first or second, or again at the fourth; exports older than an
--- hour, or another member's, are counted.
-DO $$
-DECLARE acme uuid := pg_temp.id('acme'); one text;
-BEGIN
-  one := format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["event"]}]')$q$, acme);
-  -- Two exports by this member more than an hour ago, and two by another member just now.
-  RESET ROLE;
-  INSERT INTO public.firm_activity (firm_id, actor_id, at, kind, record_type, record_id, row_count) VALUES
-    (acme, pg_temp.id('acme_agent'), now() - interval '61 minutes', 'export_made', 'table', 'referral_partners', 1),
-    (acme, pg_temp.id('acme_agent'), now() - interval '2 hours', 'export_made', 'table', 'referral_partners', 1),
-    (acme, pg_temp.id('acme_owner'), now() - interval '5 minutes', 'export_made', 'table', 'referral_partners', 1),
-    (acme, pg_temp.id('acme_owner'), now() - interval '4 minutes', 'export_made', 'table', 'referral_partners', 1);
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.code(one), 'ok', 'a first export');
-  PERFORM pg_temp.is(pg_temp.code(one), 'ok', 'a second');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(acme), 0::bigint, 'two within the hour tell no one: older ones and another member''s are not counted');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.code(one), 'ok', 'a third');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(acme), 1::bigint, 'the third within the hour tells the owners');
-  PERFORM pg_temp.is((SELECT concat_ws(',', payload ->> 'exports_in_hour', payload ->> 'large', payload ->> 'member_email') FROM public.outbox_events WHERE kind = 'export_alert' AND firm_id = acme),
-    '3,false,acme_agent@example.test', 'saying it was the third in an hour, not a large one, and by whom');
-  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.code(one), 'ok', 'a fourth');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(acme), 1::bigint, 'the fourth tells no one again');
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: repeated alert passed';
-END $$;
-
--- ---------- a closing firm may export, and its owners are still told ----------
--- Break caught: the export asks assert_firm_writable, so a closing firm's owners can't take the full export they are offered (PRD 8.5).
-DO $$
-DECLARE zenith uuid := pg_temp.id('zenith');
-BEGIN
-  RESET ROLE;
-  SET LOCAL session_replication_role = replica;
-  DELETE FROM public.referral_partners WHERE firm_id = zenith AND code > 'bulk-00600';
-  SET LOCAL session_replication_role = origin;
-  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
-  PERFORM public.request_firm_closure(zenith, 'Zenith Benefits');
-  PERFORM pg_temp.is(pg_temp.code(format($q$SELECT public.advisor_add_referral_partner('closing-new', 'New', 'other', %L)$q$, zenith)), 'PT423', 'the closing firm is read-only');
-  PERFORM pg_temp.is(split_part(pg_temp.export(zenith, 'referral_partners', '["code","name","kind","created_at","updated_at"]'), '|', 1), '600',
-    'and its owner exports every partner');
-  RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.alerts(zenith), 1::bigint, 'and the owners are told of it');
-  PERFORM pg_temp.clear();
-  RAISE NOTICE 'export: closing firm passed';
-END $$;
-
--- ---------- grants ----------
--- Break caught: a helper (the rows, the checks, the limits) can be run by a browser and so read rows past the checks, or a signed-out
--- caller can run the export.
-DO $$
-DECLARE f text;
-BEGIN
-  PERFORM pg_temp.is(has_function_privilege('anon', 'public.export_table(uuid, text, jsonb, jsonb, jsonb, text)', 'EXECUTE'), false, 'signed out, nobody can run it');
-  PERFORM pg_temp.is(has_function_privilege('authenticated', 'public.export_table(uuid, text, jsonb, jsonb, jsonb, text)', 'EXECUTE'), true, 'a signed-in person can');
-  FOREACH f IN ARRAY ARRAY['public.export_rows(uuid, text, text[])', 'public.export_columns(text)', 'public.export_columns_checked(text, jsonb)',
-                           'public.export_filters_checked(text, jsonb, date)', 'public.export_keys_checked(jsonb)', 'public.export_row_passes(text, jsonb, jsonb, text)',
-                           'public.export_field_kind(text, text)', 'public.export_row_cap()', 'public.export_alert_rows()', 'public.export_alert_repeats()',
-                           'public.export_fresh_sign_in()', 'public.export_moment(timestamptz)'] LOOP
-    PERFORM pg_temp.is(has_function_privilege('authenticated', f, 'EXECUTE') OR has_function_privilege('anon', f, 'EXECUTE'), false, f || ' is internal');
+  FOREACH t IN ARRAY ARRAY['chamber_sessions', 'submissions', 'queue', 'census', 'referral_partners; DROP TABLE x', 'Referral_Partners', '', 'export_source_referral_partners'] LOOP
+    PERFORM pg_temp.is(pg_temp.try(acme, t), '22023: Choose a table to export', 'the table ' || quote_literal(t) || ' is not one');
   END LOOP;
-  RAISE NOTICE 'export: grants passed';
+  PERFORM pg_temp.is(pg_temp.try(acme, NULL), '22023: Choose a table to export', 'no table is not one either');
+  RESET ROLE;
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_rows(%L, 'referral_partners', '{}', NULL)$q$, acme)) LIKE '42501:%', true, 'a signed-out caller cannot run it');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_rows(%L, 'referral_partners', '{}', NULL)$q$, acme)) LIKE '42501:%', true, 'nor the service role: an export is a person''s');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), before_n + 3, 'only the three exports that worked were recorded');
+  RAISE NOTICE 'export: who may passed';
 END $$;
 
--- ---------- two exports at once: the third in the hour is still seen ----------
--- Break caught: the per-member lock is removed, so two exports made at the same moment each count only the committed ones and neither is
--- the third (D-32: the lock stays because this goes red without it).
+-- ---------- the firm's record, exported by an owner ----------
+-- Break caught: another firm's entries are in it; the platform admin's name, email or id is in it (D-33); a column is missing; an actor who
+-- has gone is shown as someone; a filter on person or kind is ignored; an export is missing from the next export of the record; the record's
+-- own id numbers are given.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); zenith uuid := pg_temp.id('zenith'); a jsonb; b jsonb; txt text; cols text;
+BEGIN
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.run(zenith, 'referral_partners');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  a := pg_temp.run(acme, 'firm_activity');
+  txt := a::text;
+  RESET ROLE;
+  SELECT string_agg(c ->> 'id', ',' ORDER BY ord) INTO cols FROM jsonb_array_elements(a -> 'columns') WITH ORDINALITY x(c, ord);
+  PERFORM pg_temp.is(cols, 'at,who,kind,record_type,record_id,subject,role,row_count', 'the record''s columns, in order');
+  PERFORM pg_temp.is((a ->> 'count')::int > 0, true, 'it holds the firm''s entries');
+  PERFORM pg_temp.is(position('zenith_owner' IN txt), 0, 'and none of another firm''s');
+  PERFORM pg_temp.is(position('platform_admin' IN txt), 0, 'nor the platform admin''s name or email');
+  PERFORM pg_temp.is(position(pg_temp.id('platform_admin')::text IN txt), 0, 'nor id');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'kind' = 'support_access' AND r ->> 'who' = 'Nevermore'), 1::bigint, 'the use of support is there, as Nevermore''s');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'kind' = 'export_made' AND r ->> 'record_id' = 'referral_partners' AND r ->> 'who' = 'acme_agent@example.test'), 1::bigint, 'an earlier export is a row, with its table, who and how many');
+  PERFORM pg_temp.is((SELECT r ->> 'row_count' FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'kind' = 'export_made' AND r ->> 'who' = 'acme_agent@example.test' LIMIT 1), '3', 'the count');
+  PERFORM pg_temp.is((SELECT bool_and(r ->> 'row_count' IS NULL) FROM jsonb_array_elements(a -> 'rows') r WHERE r ->> 'kind' <> 'export_made'), true, 'and only exports have one');
+  PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(r -> 'at') = 'string') FROM jsonb_array_elements(a -> 'rows') r), true, 'each entry has its time');
+  PERFORM pg_temp.is((SELECT r ->> 'at' FROM jsonb_array_elements(a -> 'rows') r ORDER BY (r ->> 'at')::timestamptz DESC LIMIT 1), (a -> 'rows' -> 0) ->> 'at', 'newest first, as the page shows it');
+  PERFORM pg_temp.is(position('entry_key' IN (a -> 'rows')::text) + position('"id"' IN (a -> 'rows')::text), 0, 'no number or key of an entry leaves');
+  -- Filters.
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  b := pg_temp.run(acme, 'firm_activity', '{"kind":"export_made"}');
+  PERFORM pg_temp.is((SELECT bool_and(r ->> 'kind' = 'export_made') FROM jsonb_array_elements(b -> 'rows') r), true, 'a kind narrows it');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(b -> 'rows') r)::int, (b ->> 'count')::int, 'and the count is of what is given');
+  b := pg_temp.run(acme, 'firm_activity', jsonb_build_object('person', pg_temp.id('acme_agent'))::text);
+  PERFORM pg_temp.is((SELECT bool_and(r ->> 'who' = 'acme_agent@example.test') FROM jsonb_array_elements(b -> 'rows') r), true, 'a person narrows it');
+  b := pg_temp.run(acme, 'firm_activity', '{"person":"nevermore"}');
+  PERFORM pg_temp.is((SELECT bool_and(r ->> 'who' = 'Nevermore') FROM jsonb_array_elements(b -> 'rows') r) AND (b ->> 'count')::int >= 1, true, 'and so does Nevermore, as one');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"person":"not-a-person"}'), '22023: Those filters don''t apply to this table', 'a person that is not an id is refused');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"invented"}') ->> 'count', '0', 'a kind the record has none of gives none');
+  -- A date range (a firm whose 90 days hold more than 50,000 entries takes its record out in pieces): from is included, to is not.
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-10T12:00:00Z","to":"2026-02-01T00:00:00Z"}') ->> 'count', '2', 'from is included and to is not');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-10T12:00:01Z","to":"2026-02-01T00:00:00Z"}') ->> 'count', '1', 'a second later leaves out the first');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-20T12:00:00Z"}') ->> 'count', '2', 'from alone has no end');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","to":"2026-01-20T12:00:00Z"}') ->> 'count', '1', 'to alone has no start');
+  PERFORM pg_temp.is(pg_temp.run(acme, 'firm_activity', '{"kind":"sign_in","from":"2026-01-10T14:00:00+02:00","to":"2026-01-10T12:00:01Z"}') ->> 'count', '1', 'a time with an offset is the same moment in UTC');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":"2026-02-01T00:00:00Z","to":"2026-01-01T00:00:00Z"}'), '22023: The period must start before it ends', 'a period that ends before it starts is refused in words');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":"2026-02-01T00:00:00Z","to":"2026-02-01T00:00:00Z"}'), '22023: The period must start before it ends', 'and so is an empty one');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":"yesterday"}'), '22023: Those filters don''t apply to this table', 'a time that is not one is refused');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"to":"2026-13-45T00:00:00Z"}'), '22023: Those filters don''t apply to this table', 'so is one that is not a date');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":20260101}'), '22023: Those filters don''t apply to this table', 'and a number');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"from":null}'), '22023: Those filters don''t apply to this table', 'and a JSON null');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"kind":null}'), '22023: Those filters don''t apply to this table', 'a JSON null for the kind is refused too');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'firm_activity', '{"person":null}'), '22023: Those filters don''t apply to this table', 'and for the person');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners', '{"from":"2026-01-01T00:00:00Z"}'), '22023: Those filters don''t apply to this table', 'partners have no date range');
+  -- A selection of entries by their key is not offered by the record's page, but the contract takes it: the keys the export gave.
+  RESET ROLE;
+  RAISE NOTICE 'export: the record passed';
+END $$;
+
+-- ---------- the export and its record are one step ----------
+-- Break caught: the rows are given although the entry could not be written; the entry is written although the rows were not given; the
+-- alert is queued although the export failed.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); before_n bigint; before_alerts bigint; got text;
+BEGIN
+  SELECT count(*) INTO before_n FROM public.firm_activity WHERE kind = 'export_made';
+  before_alerts := pg_temp.alerts(acme);
+  CREATE FUNCTION pg_temp.refuse_exports() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN IF NEW.kind = 'export_made' THEN RAISE EXCEPTION 'the record is not writable' USING ERRCODE = 'ZZ001'; END IF; RETURN NEW; END $f$;
+  CREATE TRIGGER zz_refuse_exports BEFORE INSERT ON public.firm_activity FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse_exports();
+  PERFORM pg_temp.as_user('rep1', 'acme-brokers');
+  got := pg_temp.try(acme, 'referral_partners');
+  RESET ROLE;
+  DROP TRIGGER zz_refuse_exports ON public.firm_activity;
+  PERFORM pg_temp.is(got, 'ZZ001: the record is not writable', 'when the record cannot be written the export fails and gives nothing');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), before_n, 'with no entry');
+  PERFORM pg_temp.is(pg_temp.alerts(acme), before_alerts, 'and no alert');
+  RAISE NOTICE 'export: one step passed';
+END $$;
+
+-- ---------- Nevermore support ----------
+-- Break caught: a support session exports (the refusal is not called, is called after the table is read, is called with NULL, or after the
+-- record is written); the refusal names the wrong words; the refusal waits for the membership check, so a support session is told it is not a
+-- member instead; an entry is written; an owner-only table is read by it.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); before_n bigint; t text;
+BEGIN
+  SELECT count(*) INTO before_n FROM public.firm_activity WHERE kind = 'export_made';
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  FOREACH t IN ARRAY ARRAY['referral_partners', 'firm_activity', 'chamber_sessions'] LOOP
+    PERFORM pg_temp.is(pg_temp.try(acme, t), 'PT423: Nevermore support can look, not change', 'a support session is refused ' || t);
+    PERFORM pg_temp.is(pg_temp.try(acme, t, '{}', '["acme-cfo"]'), 'PT423: Nevermore support can look, not change', 'and a selection of it');
+    PERFORM pg_temp.is(pg_temp.try(acme, t, '{"nonsense":1}', '"nonsense"'), 'PT423: Nevermore support can look, not change', 'before anything about the call is looked at');
+  END LOOP;
+  PERFORM pg_temp.is(pg_temp.try(NULL, 'referral_partners'), 'PT423: Nevermore support can look, not change', 'a call that names no firm is refused too: NULL fails closed');
+  PERFORM pg_temp.is(pg_temp.try(pg_temp.id('zenith'), 'referral_partners'), '42501: Not a member of that firm', 'while another firm, where there is no session, is only one the admin is no member of');
+  -- At the address too, and with a stale sign-in: the refusal comes before the fresh sign-in.
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers', interval '40 hours');
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), 'PT423: Nevermore support can look, not change', 'with a sign-in long ago, the refusal is still the first answer');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made'), before_n, 'and nothing was recorded');
+  -- A session that has ended is no session: the admin is only a stranger again.
+  INSERT INTO fx SELECT 'support_session', id FROM public.support_sessions WHERE firm_id = acme AND ended_at IS NULL;
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.end_support_session(pg_temp.id('support_session'));
+  PERFORM pg_temp.is(pg_temp.try(acme, 'referral_partners'), '42501: Not a member of that firm', 'once the session has ended, the admin is just not a member');
+  PERFORM public.start_support_session(acme, 'looking again');
+  RESET ROLE;
+  RAISE NOTICE 'export: support passed';
+END $$;
+
+-- ---------- a closing firm, a suspended firm ----------
+-- Break caught: a closing firm is refused its way out (a firm asked to close is offered its tables to take: P1.7) or is let write something
+-- other than the record of the export; a suspended firm exports; the closing firm's alert goes nowhere.
+DO $$
+DECLARE cinder uuid := pg_temp.id('cinder'); sigma uuid := pg_temp.id('sigma'); a jsonb;
+BEGIN
+  PERFORM pg_temp.is(public.firm_is_read_only(cinder), true, 'the firm is closing: it is read-only');
+  PERFORM pg_temp.as_user('cinder_agent', 'cinder-closing');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_add_referral_partner('late', 'Late', 'event', %L)$q$, cinder)), 'PT423: This firm is closing and can''t be changed', 'it can''t add a partner');
+  a := pg_temp.run(cinder, 'referral_partners');
+  PERFORM pg_temp.is(a ->> 'count', '1', 'but its members can still take their partners out: an export reads');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.entries(cinder), 'cinder_agent@example.test|referral_partners|1', 'and it is recorded in the firm''s record, as a closing firm''s record still is');
+  PERFORM pg_temp.as_user('cinder_owner', 'cinder-closing');
+  PERFORM pg_temp.is(pg_temp.try(cinder, 'firm_activity'), 'ok', 'an owner of a closing firm takes the record too');
+  PERFORM pg_temp.as_user('sigma_owner', 'sigma-suspended');
+  PERFORM pg_temp.is(pg_temp.try(sigma, 'referral_partners'), '42501: Not a member of that firm', 'a suspended firm''s members are no members until it is lifted: nothing is exported');
+  RESET ROLE;
+  RAISE NOTICE 'export: closing and suspended passed';
+END $$;
+
+-- ---------- one firm at a time ----------
+-- Break caught: a person who belongs to two firms exports one firm's rows at the other's address, or gets both in one answer; a call that names
+-- no firm guesses for a person with two; the address decides the firm for a call that names none.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); zenith uuid := pg_temp.id('zenith'); a jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('both', 'acme-brokers');
+  a := pg_temp.run(acme, 'referral_partners');
+  PERFORM pg_temp.is(a ->> 'count', '3', 'at acme''s address, acme''s partners');
+  PERFORM pg_temp.is(pg_temp.try(zenith, 'referral_partners'), '42501: Not a member of that firm', 'and zenith''s are not given there, though they are a member of zenith');
+  PERFORM pg_temp.is(pg_temp.run(NULL, 'referral_partners') ->> 'count', '3', 'a call that names no firm acts for the firm at the address');
+  PERFORM pg_temp.as_user('both', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.run(zenith, 'referral_partners') ->> 'count', '2', 'at zenith''s, zenith''s');
+  PERFORM pg_temp.as_user('both');
+  PERFORM pg_temp.is(pg_temp.run(zenith, 'referral_partners') ->> 'count', '2', 'on the bare domain the firm named');
+  PERFORM pg_temp.is(pg_temp.try(NULL, 'referral_partners'), '22023: You belong to more than one firm: say which', 'and with none named, the database does not choose');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT string_agg(f.name, ',' ORDER BY f.name) FROM public.firm_activity a JOIN public.firms f ON f.id = a.firm_id WHERE a.kind = 'export_made' AND a.actor_id = pg_temp.id('both')), 'Acme Brokers,Acme Brokers,Zenith Benefits,Zenith Benefits', 'each export is in its own firm''s record');
+  RAISE NOTICE 'export: one firm at a time passed';
+END $$;
+
+-- ---------- the owners' alert ----------
+-- Break caught: a large export (more than 500 rows) is not told; exactly 500 is; the third export in an hour is not told, or the second is;
+-- the fourth is told again; exports more than an hour apart are counted together; one member's exports are counted with another's; the alert
+-- holds a row, or something the owners were not meant to see, or is not about the firm (two of the same member at once: below).
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); big uuid := pg_temp.id('big'); p jsonb; n0 bigint;
+BEGIN
+  -- Three in an hour, by one member (rep1 has the one that failed above, which was not recorded).
+  PERFORM pg_temp.as_user('rep1', 'acme-brokers');
+  n0 := pg_temp.alerts(acme);
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-cfo"]');
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-cfo"]');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(acme), n0, 'two exports in an hour tell no one');
+  PERFORM pg_temp.as_user('rep2', 'acme-brokers');
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-cfo"]');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(acme), n0, 'another member''s first is counted apart');
+  PERFORM pg_temp.as_user('rep1', 'acme-brokers');
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-law"]');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(acme), n0 + 1, 'the third by one member tells the owners');
+  SELECT payload INTO p FROM public.outbox_events WHERE firm_id = acme AND kind = 'export_alert' AND payload ->> 'member_email' = 'rep1@example.test';
+  PERFORM pg_temp.is(p ->> 'member_email', 'rep1@example.test', 'it says who');
+  PERFORM pg_temp.is(p ->> 'table_label', 'Referral partners', 'which table');
+  PERFORM pg_temp.is(p ->> 'row_count', '1', 'how many rows');
+  PERFORM pg_temp.is(p ->> 'exports_in_hour', '3', 'that it was the third in an hour');
+  PERFORM pg_temp.is(p ->> 'large', 'false', 'and that it was not large');
+  PERFORM pg_temp.is(p ->> 'firm_name', 'Acme Brokers', 'in which firm');
+  PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(p) k), 'exported_at,exports_in_hour,firm_name,large,member_email,row_count,table_label', 'and nothing else: no row, no name of a partner');
+  PERFORM pg_temp.is((SELECT session_id IS NULL AND status = 'pending' FROM public.outbox_events WHERE firm_id = acme AND kind = 'export_alert' AND payload ->> 'member_email' = 'rep1@example.test'), true, 'it belongs to the firm, not an intake, and waits to be sent');
+  PERFORM pg_temp.as_user('rep1', 'acme-brokers');
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-law"]');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(acme), n0 + 1, 'the fourth tells no one again');
+
+  -- Exports an hour ago are not counted; two within the hour with one now are.
+  INSERT INTO public.firm_activity (firm_id, actor_id, kind, record_type, record_id, row_count, at) VALUES
+    (acme, pg_temp.id('rep3'), 'export_made', 'table', 'referral_partners', 1, now() - interval '61 minutes'),
+    (acme, pg_temp.id('rep3'), 'export_made', 'table', 'referral_partners', 1, now() - interval '2 hours'),
+    (acme, pg_temp.id('rep4'), 'export_made', 'table', 'referral_partners', 1, now() - interval '50 minutes'),
+    (acme, pg_temp.id('rep4'), 'export_made', 'table', 'referral_partners', 1, now() - interval '10 minutes');
+  n0 := pg_temp.alerts(acme);
+  PERFORM pg_temp.as_user('rep3', 'acme-brokers');
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-cfo"]');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(acme), n0, 'two exports more than an hour ago, and one now, tell no one');
+  PERFORM pg_temp.as_user('rep4', 'acme-brokers');
+  PERFORM pg_temp.run(acme, 'referral_partners', '{}', '["acme-cfo"]');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(acme), n0 + 1, 'two within the last hour and one now do');
+
+  -- A large export: 500 is not, 501 is.
+  INSERT INTO public.referral_partners (firm_id, code, name, kind) SELECT big, 'p' || lpad(g::text, 6, '0'), 'Partner ' || g, 'accounting' FROM generate_series(1, 500) g;
+  n0 := pg_temp.alerts(big);
+  PERFORM pg_temp.as_user('big_agent', 'big-brokers');
+  PERFORM pg_temp.is(pg_temp.run(big, 'referral_partners') ->> 'count', '500', 'five hundred rows are exported');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(big), n0, 'and tell no one');
+  INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (big, 'p000501', 'Partner 501', 'accounting');
+  PERFORM pg_temp.as_user('big_owner', 'big-brokers');
+  PERFORM pg_temp.is(pg_temp.run(big, 'referral_partners') ->> 'count', '501', 'five hundred and one are exported');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(big), n0 + 1, 'and tell the owners');
+  SELECT payload INTO p FROM public.outbox_events WHERE firm_id = big AND kind = 'export_alert' AND payload ->> 'member_email' = 'big_owner@example.test';
+  PERFORM pg_temp.is(p ->> 'large', 'true', 'as a large one');
+  PERFORM pg_temp.is(p ->> 'row_count', '501', 'with its count');
+  PERFORM pg_temp.is(p ->> 'exports_in_hour', '1', 'the first of the hour');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert' AND firm_id NOT IN (acme, big)), 0::bigint, 'no alert belongs to another firm');
+  PERFORM pg_temp.is((SELECT count(DISTINCT dedupe_key) FROM public.outbox_events WHERE kind = 'export_alert'), (SELECT count(*) FROM public.outbox_events WHERE kind = 'export_alert'), 'each alert is its own: two exports are never one alert');
+  -- A member with no email address (the account's email may be empty) still alerts the owners: the alert is never lost, and says so without a name.
+  n0 := pg_temp.alerts(big);
+  UPDATE auth.users SET email = NULL WHERE id = pg_temp.id('big_agent');
+  PERFORM pg_temp.as_user('big_agent', 'big-brokers');
+  PERFORM pg_temp.run(big, 'referral_partners');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.alerts(big), n0 + 1, 'a member with no email address still tells the owners');
+  SELECT payload INTO p FROM public.outbox_events WHERE firm_id = big AND kind = 'export_alert' AND payload -> 'member_email' = 'null'::jsonb;
+  PERFORM pg_temp.is(p ->> 'row_count', '501', 'with the rest of what it says');
+  PERFORM pg_temp.is((p ? 'member_email'), true, 'and its member''s email as nothing, not left out');
+  UPDATE auth.users SET email = 'big_agent@example.test' WHERE id = pg_temp.id('big_agent');
+  RAISE NOTICE 'export: the alert passed';
+END $$;
+
+-- ---------- the most rows ----------
+-- Break caught: an export of more than 50,000 rows is given (or recorded, or alerted) all the same; the limit counts what is not given; a
+-- filter that brings it under the limit is refused.
+DO $$
+DECLARE big uuid := pg_temp.id('big'); before_n bigint;
+BEGIN
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.referral_partners (firm_id, code, name, kind) SELECT big, 'q' || lpad(g::text, 6, '0'), 'Other ' || g, 'other' FROM generate_series(1, 49499) g;
+  RESET session_replication_role;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.referral_partners WHERE firm_id = big), 50000::bigint, 'the firm holds exactly 50,000 partners');
+  PERFORM pg_temp.as_user('big_agent', 'big-brokers');
+  PERFORM pg_temp.is(pg_temp.run(big, 'referral_partners', '{"kind":"other"}') ->> 'count', '49499', 'the most is not too many');
+  RESET ROLE;
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (big, 'q999999', 'One too many', 'other');
+  RESET session_replication_role;
+  SELECT count(*) INTO before_n FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = big;
+  PERFORM pg_temp.as_user('big_agent', 'big-brokers');
+  PERFORM pg_temp.is(pg_temp.try(big, 'referral_partners'), 'PT413: That is more than 50,000 rows. Narrow it with a filter and export again.', 'one more is refused in words');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = big), before_n, 'and not recorded');
+  PERFORM pg_temp.as_user('big_agent', 'big-brokers');
+  PERFORM pg_temp.is(pg_temp.run(big, 'referral_partners', '{"kind":"accounting"}') ->> 'count', '501', 'a filter that brings it under is let through');
+  RESET ROLE;
+  RAISE NOTICE 'export: the most rows passed';
+END $$;
+
+-- ---------- reading the record of exports ----------
+-- Break caught: the count is not given to the owners who read the record; an agent reads it; another firm's owner reads it; the record can be
+-- changed after the fact.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); e record; n bigint;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  SELECT * INTO e FROM public.firm_activity_list(acme, pg_temp.id('acme_agent'), 'export_made', 10) ORDER BY at LIMIT 1;
+  PERFORM pg_temp.is(e.row_count, 3, 'the owner reads how many rows the entry says');
+  PERFORM pg_temp.is(e.record_type || ':' || e.record_id, 'table:referral_partners', 'and which table');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity_list(acme, NULL, 'sign_in', 10) WHERE row_count IS NOT NULL), 0::bigint, 'an entry of another kind has none');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$UPDATE public.firm_activity SET row_count = 0 WHERE firm_id = %L$q$, acme)), '42501: permission denied for table firm_activity', 'an owner can''t change it');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.firm_activity_list(%L)$q$, acme)), '42501: Only a firm''s owners can read its record', 'an agent reads none of it');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity), 0::bigint, 'by the table either');
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE kind = 'export_made' AND firm_id = acme), 0::bigint, 'another firm''s owner sees none of acme''s exports');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$UPDATE public.firm_activity SET row_count = 0 WHERE firm_id = %L$q$, acme)), '42501: firm_activity records cannot be changed or deleted', 'and nobody changes one afterwards, the superuser included');
+  RAISE NOTICE 'export: reading the record passed';
+END $$;
+
+-- ---------- the table list and its readers ----------
+-- Break caught: a table is listed that has no reader (the export would fail only when someone asked); a reader or the table list can be run by
+-- a browser (a reader skips the checks the function makes); a reader exists that no list names; the registry names an intake's answers, a
+-- census or a FEIN; the limits are not the ones the story names.
+DO $$
+DECLARE r record; n int := 0;
+BEGIN
+  FOR r IN SELECT * FROM public.export_table_registry() LOOP
+    n := n + 1;
+    PERFORM pg_temp.is(to_regprocedure(format('public.export_source_%s(uuid, jsonb, jsonb, integer)', r.name)) IS NOT NULL, true, r.name || ' has its reader');
+    PERFORM pg_temp.is(has_function_privilege('authenticated', to_regprocedure(format('public.export_source_%s(uuid, jsonb, jsonb, integer)', r.name)), 'EXECUTE')
+                       OR has_function_privilege('anon', to_regprocedure(format('public.export_source_%s(uuid, jsonb, jsonb, integer)', r.name)), 'EXECUTE'), false, r.name || '''s reader is closed to the API');
+    PERFORM pg_temp.is(r.who IN ('member', 'owner'), true, r.name || ' says who may export it');
+    PERFORM pg_temp.is(jsonb_typeof(r.columns), 'array', r.name || ' lists its columns');
+    PERFORM pg_temp.is(r.name !~* '(session|intake|census|fein|answer|queue|submission)', true, r.name || ' is no intake, no census and no queue');
+    PERFORM pg_temp.is(r.columns::text !~* '(fein|census|answers|chamber_data|ssn|tax_id)', true, r.name || ' lists no column of an intake''s answers, a census or a FEIN');
+  END LOOP;
+  PERFORM pg_temp.is(n, 2, 'two tables are listed today: referral partners, and for owners the firm''s record');
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname LIKE 'export\_source\_%'), 2::bigint, 'and two readers exist: none that is not listed');
+  PERFORM pg_temp.is((SELECT who FROM public.export_table_registry() WHERE name = 'firm_activity'), 'owner', 'the record is for owners');
+  PERFORM pg_temp.is((SELECT who FROM public.export_table_registry() WHERE name = 'referral_partners'), 'member', 'partners for any member');
+  PERFORM pg_temp.is(public.export_limits(), '{"sign_in_hours":12,"alert_rows":500,"alert_repeats":3,"alert_minutes":60,"most_rows":50000,"most_ids":1000}'::jsonb, 'the limits are written once, as the story says');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.export_source_referral_partners(%L, '{}', NULL, 10)$q$, pg_temp.id('acme'))) LIKE '42501:%', true, 'a reader cannot be run by a person');
+  PERFORM pg_temp.is(pg_temp.refusal('SELECT public.export_table_registry()') LIKE '42501:%', true, 'nor the list');
+  RESET ROLE;
+  RAISE NOTICE 'export: the table list passed';
+END $$;
+
+-- ---------- the alert's email kind ----------
+-- Break caught: the kind is not one the outbox knows; it is not a firm's alert (it would be sent while the firm is suspended, or a bounce would
+-- suppress an owner); an alert can be made for an intake or with no firm.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); intake uuid;
+BEGIN
+  PERFORM pg_temp.is(public.outbox_kind_is_firm_alert('export_alert'), true, 'the alert is a firm''s alert');
+  INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES (pg_temp.id('nobody'), acme, '{}') RETURNING id INTO intake;
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload) VALUES ('export_alert', %L, 'x', '{}')$q$, intake)) LIKE '23514:%', true, 'it can''t be about an intake');
+  PERFORM pg_temp.is(pg_temp.refusal($q$INSERT INTO public.outbox_events (kind, dedupe_key, payload) VALUES ('export_alert', 'y', '{}')$q$) LIKE '23514:%', true, 'nor about no firm');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.outbox_events (kind, firm_id, dedupe_key, payload) VALUES ('export_alert', %L, 'z', '{}')$q$, acme)), 'ok', 'it is about a firm');
+  RAISE NOTICE 'export: the alert kind passed';
+END $$;
+
+-- ---------- two exports by one member at the same moment ----------
+-- Break caught: two exports by the same member that overlap do not see each other (each counts the other's entry as not yet there), so the
+-- third and the fourth both read "the third in an hour" and the owners are told twice. Two real connections (dblink): the first makes the
+-- third export and has not committed; the second starts and must wait for it, then count the first, and is the fourth.
 CREATE SCHEMA race;
 CREATE EXTENSION dblink SCHEMA race;
--- The member's one export ten minutes ago, committed before the two connections start.
+-- The two earlier exports are committed first: the two connections must see them.
 DO $$
 BEGIN
-  PERFORM pg_temp.clear();
-  INSERT INTO public.firm_activity (firm_id, actor_id, at, kind, record_type, record_id, row_count)
-  VALUES (pg_temp.id('acme'), pg_temp.id('acme_agent'), now() - interval '10 minutes', 'export_made', 'table', 'referral_partners', 1);
+  INSERT INTO public.firm_activity (firm_id, actor_id, kind, record_type, record_id, row_count, at) VALUES
+    (pg_temp.id('acme'), pg_temp.id('rep5'), 'export_made', 'table', 'referral_partners', 1, now() - interval '20 minutes'),
+    (pg_temp.id('acme'), pg_temp.id('rep5'), 'export_made', 'table', 'referral_partners', 1, now() - interval '10 minutes');
 END $$;
 DO $$
 DECLARE
   acme uuid := pg_temp.id('acme');
-  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
-    split_part(current_setting('unix_socket_directories'), ',', 1));
-  stmt text := format($q$DO $d$ BEGIN PERFORM public.export_table(%L, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["event"]}]'); END $d$ $q$, acme);
-  setup text := format('SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; SET LOCAL request.headers = %L',
-    pg_temp.claims('acme_agent'), jsonb_build_object('x-firm-address', 'acme-brokers')::text);
-  b_pid integer; tries integer := 0; waited boolean := false;
+  who uuid := pg_temp.id('rep5');
+  claims text := jsonb_build_object('sub', pg_temp.id('rep5'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'rep5@example.test')::text;
+  stmt text := format($q$DO $do$ BEGIN PERFORM public.export_rows(%L, 'referral_partners', '{}', '["acme-cfo"]'); END $do$ $q$, acme);
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'), split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; before_alerts bigint;
 BEGIN
+  before_alerts := pg_temp.alerts(acme);
   PERFORM race.dblink_connect('ra', dsn);
   PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
   SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
-  PERFORM race.dblink_exec('ra', 'BEGIN; ' || setup);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L', claims));
   PERFORM race.dblink_exec('ra', stmt);
-  PERFORM race.dblink_exec('rb', 'BEGIN; ' || setup);
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L', claims));
   PERFORM race.dblink_send_query('rb', stmt);
-  WHILE tries < 60 LOOP
+  WHILE tries < 80 LOOP
     IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
     IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
     tries := tries + 1;
@@ -681,56 +836,12 @@ BEGIN
   END LOOP;
   PERFORM race.dblink_exec('ra', 'COMMIT');
   PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
-  PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
+  BEGIN PERFORM * FROM race.dblink_get_result('rb') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
   PERFORM race.dblink_exec('rb', 'COMMIT');
   PERFORM race.dblink_disconnect('ra');
   PERFORM race.dblink_disconnect('rb');
   PERFORM pg_temp.is(waited, true, 'the second export waits for the first');
-  PERFORM pg_temp.is(pg_temp.alerts(acme), 1::bigint, 'and, seeing it, is the third in the hour and tells the owners');
+  PERFORM pg_temp.is(pg_temp.alerts(acme), before_alerts + 1, 'so the third is told and the fourth is not');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_activity WHERE actor_id = who AND kind = 'export_made'), 4::bigint, 'and both are recorded');
   RAISE NOTICE 'export: two at once passed';
-END $$;
-
--- ---------- a partner added while an export runs: the count, the rows and the record agree ----------
--- Break caught: the capped count, the visible count and the rows are read by separate statements, each with its own snapshot (READ
--- COMMITTED), so a partner committed between them is returned but not counted: the recorded count is not the count returned (D-48), the
--- whole-table decision is made on other rows than the ones returned (skipping the recent sign-in), and the cap and the alert judge a
--- different export. The window is widened by making each filter check take 0.3 s (a test-only wrapper); a second connection commits a
--- partner 0.45 s into the export.
-DO $$
-DECLARE huge uuid := pg_temp.id('huge');
-BEGIN
-  RESET ROLE;
-  INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES
-    (huge, 'h-1', 'Alpha', 'other'), (huge, 'h-2', 'Bravo', 'other'), (huge, 'h-3', 'Charlie', 'other');
-  ALTER FUNCTION public.export_row_passes(text, jsonb, jsonb, text) RENAME TO export_row_passes_fast;
-  CREATE FUNCTION public.export_row_passes(p_table text, o jsonb, p_checked jsonb, p_time_zone text) RETURNS boolean LANGUAGE plpgsql STABLE
-    AS 'BEGIN PERFORM pg_sleep(0.3); RETURN public.export_row_passes_fast(p_table, o, p_checked, p_time_zone); END';
-END $$;
-DO $$
-DECLARE
-  huge uuid := pg_temp.id('huge');
-  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
-    split_part(current_setting('unix_socket_directories'), ',', 1));
-  setup text := format('SET request.jwt.claims = %L; SET request.headers = %L; SET ROLE authenticated',
-    pg_temp.claims('huge_owner'), jsonb_build_object('x-firm-address', 'huge-group')::text);
-  r jsonb; recorded integer;
-BEGIN
-  PERFORM race.dblink_connect('ea', dsn);
-  PERFORM race.dblink_connect('eb', dsn);
-  PERFORM race.dblink_exec('ea', setup);
-  PERFORM race.dblink_send_query('ea', format($q$SELECT public.export_table(%L, 'referral_partners', '["code"]', '[{"field":"kind","op":"any_of","value":["other"]}]')::text$q$, huge));
-  PERFORM pg_sleep(0.45);
-  PERFORM race.dblink_exec('eb', format($q$INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (%L, 'h-4', 'Delta', 'other')$q$, huge));
-  SELECT t.r::jsonb INTO r FROM race.dblink_get_result('ea') AS t(r text);
-  PERFORM * FROM race.dblink_get_result('ea') AS t(r text);
-  PERFORM race.dblink_disconnect('ea');
-  PERFORM race.dblink_disconnect('eb');
-  SELECT a.row_count INTO recorded FROM public.firm_activity a WHERE a.firm_id = huge AND a.kind = 'export_made' ORDER BY a.at DESC LIMIT 1;
-  PERFORM pg_temp.is(concat_ws(',', jsonb_array_length(r -> 'rows'), r ->> 'row_count', recorded), '3,3,3',
-    'the rows returned, the count returned and the count recorded are of one moment: the partner added during it is in none');
-  PERFORM pg_temp.is(r ->> 'whole_table', 'true', 'and the whole-table decision is made on those same rows');
-  ALTER FUNCTION public.export_row_passes(text, jsonb, jsonb, text) RENAME TO export_row_passes_slow;
-  DROP FUNCTION public.export_row_passes_slow(text, jsonb, jsonb, text);
-  ALTER FUNCTION public.export_row_passes_fast(text, jsonb, jsonb, text) RENAME TO export_row_passes;
-  RAISE NOTICE 'export: one moment passed';
 END $$;

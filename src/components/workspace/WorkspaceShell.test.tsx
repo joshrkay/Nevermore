@@ -1,5 +1,6 @@
+import { useEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goOffline, goOnline, restoreConnection } from "@/test/connection";
@@ -22,6 +23,14 @@ const { default: WorkspaceShell } = await import("./WorkspaceShell");
 const { default: SettingsPage } = await import("@/pages/advisor/AdvisorSettingsPage");
 
 const alpha = { firm_id: "f1", name: "Alpha Advisory", address: "alpha", role: "agent" };
+// A page that keeps only its own parameters in its address, as the tables' pages do (useTableAddress): it rewrites the address to `view` alone the moment it draws.
+const Rewrites = () => {
+  const navigate = useNavigate();
+  const view = new URLSearchParams(useLocation().search).get("view");
+  useEffect(() => navigate({ search: view ? `?view=${view}` : "" }, { replace: true }), [navigate, view]);
+  return <p>The page</p>;
+};
+const Search = () => <span data-testid="search">{useLocation().search}</span>;
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
 const renderAt = async (at: string) => {
@@ -30,7 +39,8 @@ const renderAt = async (at: string) => {
       <MemoryRouter initialEntries={[at]}>
         <Routes>
           <Route element={<WorkspaceShell />}>
-            <Route path="*" element={<p>The page</p>} />
+            <Route path="/advisor/rewrites" element={<><Rewrites /><Search /></>} />
+            <Route path="*" element={<><p>The page</p><Search /></>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -56,10 +66,10 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the workspace menu", () => {
-  it("holds Quotes, Inbox and Reports, then Settings, and none of the sections that aren't built yet", async () => {
+  it("holds Quotes, Inbox, Accounts and Reports, then Settings, and none of the sections that aren't built yet", async () => {
     await renderAt("/advisor");
-    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Reports", "Settings"]);
-    for (const name of ["New quote", "Home", "Leads", "Accounts"]) {
+    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Accounts", "Reports", "Settings"]);
+    for (const name of ["New quote", "Home", "Leads"]) {
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
@@ -70,6 +80,7 @@ describe("the workspace menu", () => {
     const href = (name: string) => within(menu()).getByRole("link", { name }).getAttribute("href");
     expect(href("Quotes")).toBe("/advisor");
     expect(href("Inbox")).toBe("/advisor?mail=new");
+    expect(href("Accounts")).toBe("/accounts");
     expect(href("Reports")).toBe("/advisor/funnel");
     expect(href("Settings")).toBe("/settings");
   });
@@ -82,6 +93,9 @@ describe("the workspace menu", () => {
     // The queue rewrites mail=new to the filter it stands for (CRM-S3.5a); Inbox stays marked, and Quotes is not.
     ["/advisor?filter=has_new_peo_mail:is:true", "Inbox"],
     ["/advisor?view=won&filter=needs_action:is:true", "Quotes"],
+    ["/accounts", "Accounts"],
+    ["/accounts?view=clients", "Accounts"],
+    ["/accounts/abc", "Accounts"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],
@@ -262,3 +276,49 @@ describe("the no-connection banner", () => {
     expect(offlineStatus()).toHaveTextContent("You're offline.");
   });
 });
+
+describe("a mailbox that couldn't be connected after signing in", () => {
+  // Catches: a failed connection that came back to a page other than the mailbox page being told to nobody.
+  it("is told on the page the sign-in came back to, with a way to the mailbox page", async () => {
+    await renderAt("/advisor/outbox?connect=failed");
+    const note = screen.getByRole("alert");
+    expect(note).toHaveTextContent("We couldn't connect your mailbox");
+    expect(within(note).getByRole("link", { name: "Open your mailbox" })).toHaveAttribute("href", "/advisor/mailbox");
+    expect(screen.getByText("The page")).toBeInTheDocument();
+  });
+
+  // Catches: a page that rewrites its own address (the queue, with a view) dropping the failure before the notice has seen it, so nobody is told.
+  it("is told on a page that rewrites its address to its own parameters, and the failure leaves the address", async () => {
+    await renderAt("/advisor/rewrites?view=won&connect=failed");
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't connect your mailbox");
+    expect(screen.getByTestId("search")).toHaveTextContent("?view=won");
+    expect(screen.getByTestId("search").textContent).not.toContain("connect");
+  });
+
+  // Catches: the note coming back, or being lost, as the person moves between pages after the sign-in.
+  it("stays until it is dismissed, wherever the person goes in the workspace, and not on the mailbox page", async () => {
+    await renderAt("/advisor/rewrites?connect=failed");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("alert")).getByRole("link", { name: "Open your mailbox" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("goes when it is dismissed, leaving the rest of the address as it was", async () => {
+    await renderAt("/advisor/activity?firm=f1&connect=failed");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("search")).toHaveTextContent("?firm=f1");
+    expect(screen.getByTestId("search").textContent).not.toContain("connect");
+  });
+
+  it("is not said twice on the mailbox page, which says it itself", async () => {
+    await renderAt("/advisor/mailbox?connect=failed");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("says nothing when nothing failed", async () => {
+    await renderAt("/advisor/held");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+

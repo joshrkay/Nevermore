@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { formatDateTime } from "@/components/advisor/format";
 import { EmptyBody, LoadingStatus, NothingMatches, NothingYet, PlaceholderBody, PlaceholderLine, SlowLoadLine, useSlowLoad, type PlaceholderColumn, LoadFailed } from "@/components/workspace/states";
-import { ExportButton, type ExportColumnSpec } from "@/components/workspace/export";
-import type { ExportFilter } from "@/lib/exportApi";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
 import { endTime, fetchFirmSupportUses, type FirmSupportUse } from "@/lib/supportApi";
-import { ENTRY_KINDS, entryLabel, kindLabel, recordLabel } from "@/data/firmActivity";
+import { ENTRY_KIND_VALUES, ENTRY_KINDS, entryLabel, kindLabel, recordLabel } from "@/data/firmActivity";
+import { exportedWords } from "@/data/exportTables";
+import { ExportControl } from "@/components/workspace/ExportControl";
+import type { ShownColumn } from "@/lib/exportFile";
 import {
   listFirmActivity, listFirmActivityPeople, NEVERMORE_FILTER,
   type ActivityCursor, type AdvisorApiError, type FirmActivityEntry, type FirmActivityPerson, type OwnedFirm,
@@ -22,6 +23,25 @@ type Load =
   | { kind: "choose"; firms: OwnedFirm[] }
   | { kind: "ready"; firms: OwnedFirm[]; firmId: string; people: FirmActivityPerson[]; entries: FirmActivityEntry[]; hasMore: boolean; uses: Map<string, FirmSupportUse>; asked: string; firmKey: string | null };
 
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The columns of the table below, as an export writes them: the same four, with the kind and the record worded as the page words them. */
+const exportColumns = (uses: Map<string, FirmSupportUse>): ShownColumn[] => [
+  { id: "at", heading: "When" },
+  { id: "who", heading: "Who" },
+  { id: "kind", heading: "What", text: (row) => entryLabel(String(row.kind), String(row.record_type)) },
+  {
+    id: "record_id",
+    heading: "Record",
+    text: (row) => recordText({
+      kind: String(row.kind), record_type: String(row.record_type), record_id: String(row.record_id),
+      role: row.role === null || row.role === undefined ? null : String(row.role),
+      subject_email: row.subject === null || row.subject === undefined ? null : String(row.subject),
+      row_count: typeof row.row_count === "number" ? row.row_count : null,
+    }, uses),
+  },
+];
+
 const select = "min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
 const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 
@@ -32,39 +52,6 @@ const COLUMNS: (PlaceholderColumn & { header: string })[] = [
   { id: "what", header: "What", width: "text" },
   { id: "record", header: "Record", width: "name" },
 ];
-
-/**
- * What the Export button puts in the file (CRM-S3.8a): what this page shows, in the order it shows it, in the words it uses. The Record column is
- * the kind of record, its id and, where it has them, the person it was about, their role and (for an export) how many rows it held, so each of
- * those is a column of the file. An entry made by someone whose account is gone has no email, and is "A former member" here as on the page.
- */
-const EXPORT_COLUMNS_SHOWN: ExportColumnSpec<"firm_activity">[] = [
-  { column: "at", header: "When" },
-  { column: "who", header: "Who", text: (value) => (value === null ? "A former member" : String(value)) },
-  { column: "kind", header: "What", text: (value) => kindLabel(String(value)) },
-  { column: "record_type", header: "Kind of record", text: (value) => recordLabel(String(value)) },
-  { column: "record_id", header: "Record" },
-  { column: "subject", header: "Person it was about" },
-  { column: "role", header: "Role" },
-  { column: "rows", header: "Rows" },
-];
-
-/**
- * The page's filters as the export takes them (D-209): the person is named by their email ("Nevermore" for everyone at Nevermore), which is what the
- * database's `who` holds, and not by the id the page's list uses. The page's cursor (which page the reader is on) is no filter: the export holds
- * every page. Null when the person can't be named to the database: a member whose account is gone has no email left, and every such member is the
- * same empty `who`, so asking for "them" would hand over the others' entries too.
- */
-function exportFilters(person: string | null, kind: string | null, people: FirmActivityPerson[]): ExportFilter[] | null {
-  const filters: ExportFilter[] = [];
-  if (person !== null) {
-    const who = person === NEVERMORE_FILTER ? "Nevermore" : people.find((p) => p.user_id === person)?.email;
-    if (!who) return null;
-    filters.push({ field: "who", op: "is", value: who });
-  }
-  if (kind !== null) filters.push({ field: "kind", op: "any_of", value: [kind] });
-  return filters;
-}
 
 const ActivityHead = () => (
   <thead className="text-left text-xs text-muted-foreground">
@@ -82,10 +69,12 @@ const who = (byNevermore: boolean, actorId: string | null, email: string | null)
   byNevermore ? "Nevermore" : (email ?? (actorId ? "A former member" : "System"));
 
 /**
- * The record an entry was about: what it is and its id, for a membership the person it was about and their role, and for an invitation the role it offered.
+ * The record an entry was about: what it is and its id (for an export, how many rows of which table), for a membership the person it was about and their role, and for an invitation the role it offered.
  * A use of Nevermore support (CRM-P2.4) says why and when, in the words the admin wrote for the firm's owners, never who.
  */
-function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): string {
+function recordText(e: Pick<FirmActivityEntry, "kind" | "record_type" | "record_id" | "role" | "subject_email" | "row_count">, uses: Map<string, FirmSupportUse>): string {
+  // An export is about a table and says how many rows it took (CRM-S3.8b): "Exported 42 referral partners", not "Table referral_partners".
+  if (e.kind === "export_made" && e.record_type === "table" && e.row_count !== null && e.row_count !== undefined) return exportedWords(e.record_id, e.row_count);
   if (e.record_type === "support_session" || e.record_type === "support_session_end") {
     const use = uses.get(e.record_id);
     if (!use) return recordLabel(e.record_type);
@@ -95,8 +84,6 @@ function recordText(e: FirmActivityEntry, uses: Map<string, FirmSupportUse>): st
       : `Ended ${formatDateTime(until)} · Reason: ${use.reason}`;
   }
   const base = `${recordLabel(e.record_type)} ${e.record_id}`;
-  // An export is about a table, and says how many rows it held (CRM-S3.8b records the count, D-200).
-  if (e.kind === "export_made" && typeof e.row_count === "number") return `${base} · ${e.row_count.toLocaleString("en-US")} ${e.row_count === 1 ? "row" : "rows"}`;
   // An invitation sent, sent again or withdrawn is about the firm and records the role it offered.
   if ((e.kind === "invitation_sent" || e.kind === "invitation_withdrawn") && e.role) return `${base} · as ${e.role}`;
   if (e.record_type !== "membership") return base;
@@ -120,8 +107,28 @@ const AdvisorActivityPage = () => {
   const firmParam = params.get("firm");
   const [loaded, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [person, setPerson] = useState<string | null>(null);
-  const [kind, setKind] = useState<string | null>(null);
+  // The filters start as the address says (a person who had to sign in again to export comes back to the filters they had, CRM-S3.8a), when what it says
+  // is something the record knows: a person is a member's id or Nevermore, a kind one of the record's. The address is cleaned of them at once, so a later
+  // reload does not bring back a filter the person has since cleared.
+  const [person, setPerson] = useState<string | null>(() => {
+    const given = params.get("person");
+    return given !== null && (given === NEVERMORE_FILTER || USER_ID.test(given)) ? given : null;
+  });
+  const [kind, setKind] = useState<string | null>(() => {
+    const given = params.get("kind");
+    return given !== null && ENTRY_KIND_VALUES.includes(given) ? given : null;
+  });
+  useEffect(() => {
+    if (!params.has("person") && !params.has("kind")) return;
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("person");
+      next.delete("kind");
+      return next;
+    }, { replace: true });
+    // Once, on opening: the filters are the page's own state from then on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Where each page after the first starts: after the last entry the reader saw on the page before.
   const [trail, setTrail] = useState<ActivityCursor[]>([]);
   const page = trail.length + 1;
@@ -175,11 +182,12 @@ const AdvisorActivityPage = () => {
   };
 
   const filtered = person !== null || kind !== null;
+  // The filters the page has set, as the database's export takes them (the same words as the record's own: a person's id or "nevermore", a kind).
+  const exportFilters = { ...(person !== null ? { person } : {}), ...(kind !== null ? { kind } : {}) };
   // Ten seconds with nothing to show (not a changed filter or the next page, which keep the entries on screen, D-49).
   const retryLoad = useCallback(() => setAttempt((n) => n + 1), []);
   const slowLoad = useSlowLoad(load.kind === "loading", retryLoad);
   const people = load.kind === "ready" ? load.people : null;
-  const forExport = people === null ? null : exportFilters(person, kind, people);
   // The entries on screen answer a different question than the one now asked (the next page, another filter): dimmed and marked busy until the answer arrives.
   const stale = load.kind === "ready" && load.asked !== asking;
   const firmChoice = load.kind === "choose" || load.kind === "ready" || load.kind === "loading" ? load.firms : undefined;
@@ -279,21 +287,10 @@ const AdvisorActivityPage = () => {
                   {ENTRY_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
                 </select>
               </div>
-              {/* Over entries only: there is nothing to export from an empty answer. Not offered during Nevermore support (D-123); the page is for owners alone. */}
-              {load.kind === "ready" && load.entries.length > 0 && (forExport === null ? (
-                <p className="text-xs text-muted-foreground max-w-xs">
-                  The record no longer holds a former member's email, so their entries can't be exported alone. Choose Everyone or another person.
-                </p>
-              ) : (
-                <ExportButton
-                  firmId={load.firmId}
-                  table="firm_activity"
-                  columns={EXPORT_COLUMNS_SHOWN}
-                  filters={forExport}
-                  fileName="who-did-what"
-                  noun={{ singular: "entry", plural: "entries" }}
-                />
-              ))}
+              {/* Every entry that matches the person and the kind chosen, not only the page on screen (the database reads the rest; CRM-S3.8a). */}
+              {load.kind === "ready" && !isEmpty && (
+                <div className="ml-auto"><ExportControl firmId={load.firmId} table="firm_activity" columns={exportColumns(load.uses)} filters={exportFilters} address={exportFilters} /></div>
+              )}
             </div>
 
             {/* One table, whether its rows are grey, real or none (CRM-S2.2): an empty answer is one cell under the same headers, so nothing is rebuilt.

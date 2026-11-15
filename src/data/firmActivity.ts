@@ -54,6 +54,7 @@ const RECORD_LABELS: Record<string, string> = {
   firm: "Firm",
   support_session: "Support session",
   support_session_end: "Support session ended",
+  // An export (20261119090000): the entry is about a table, its id the table's name.
   table: "Table",
 };
 
