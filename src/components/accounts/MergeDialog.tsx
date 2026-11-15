@@ -76,7 +76,7 @@ export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged
     },
     onSaved: ({ words }) => {
       toast.success(words);
-      onMerged({ kind, kept: { id: pair.kept, name: keptName }, removed: { id: pair.removed, name: removedName } });
+      onMerged({ kind, kept: { id: data?.kept.id ?? pair.kept, name: keptName }, removed: { id: data?.removed.id ?? pair.removed, name: removedName } });
     },
     failureMessage: "Couldn't merge. Check your connection and try again.",
     onCancel: onClose,

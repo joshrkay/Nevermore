@@ -109,6 +109,19 @@ describe("MergeDialog: merging", () => {
     expect(screen.getByRole("button", { name: "Merge" })).toBeEnabled();
   });
 
+  // Catches: an owner who has left the firm chosen for the merged record, and the refusal (in the database's words, 22023) lost or turned into a vague failure.
+  it("shows the database's words when the owner chosen is no longer a member, and keeps the choices", async () => {
+    const user = userEvent.setup();
+    api.mergeAccounts.mockRejectedValue(new MergeError("invalid", "Marcus Hale has left the firm, so can't own this account. Choose another owner.", "22023"));
+    show();
+    const group = await screen.findByRole("group", { name: "Which value to keep" });
+    await user.click(within(within(group).getByRole("group", { name: "Owner" })).getAllByRole("radio")[1]);
+    await user.click(screen.getByRole("button", { name: "Merge" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Marcus Hale has left the firm, so can't own this account. Choose another owner.");
+    expect((within(within(group).getByRole("group", { name: "Owner" })).getAllByRole("radio") as HTMLInputElement[]).map((r) => r.checked)).toEqual([false, true]);
+    expect(onMerged).not.toHaveBeenCalled();
+  });
+
   // Catches: a record changed while choosing being merged over, or the person left looking at values that are gone.
   it("asks again for both records when one changed while the person was choosing", async () => {
     const user = userEvent.setup();
