@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { exportTable, ExportRefusal, type ExportColumn, type ExportFilter, type ExportTable } from "@/lib/exportApi";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -9,14 +10,19 @@ import { csvFile, csvFileName } from "./csv";
 /** What the database holds in one cell of an export. */
 export type ExportCell = string | number | null;
 
+/** One row as the database returned it, by column name (the columns the button asked for): what a cell's words may depend on besides its own value. */
+export type ExportRow<T extends ExportTable> = { readonly [C in ExportColumn<T>]?: ExportCell };
+
 /**
  * One column of the file: the database's name for it, the words in its header, and (when the database's value is not the words the page shows) the
- * plain text of a cell. This is the `text` of the table frame's `ColumnDefinition`, for the two pages that are not on the frame yet.
+ * plain text of a cell. This is the `text` of the table frame's `ColumnDefinition`, for the two pages that are not on the frame yet. It is given the
+ * whole row as well as the cell's own value, because the page's words can depend on more than the value: an entry's kind is worded by its record's
+ * type too, and an empty person is "A former member" only on a membership.
  */
 export interface ExportColumnSpec<T extends ExportTable> {
   column: ExportColumn<T>;
   header: string;
-  text?: (value: ExportCell) => string;
+  text?: (value: ExportCell, row: ExportRow<T>) => string;
 }
 
 interface Props<T extends ExportTable> {
@@ -51,15 +57,33 @@ export function ExportButton<T extends ExportTable>({ firmId, table, columns, fi
   // A second press in the same breath as the first (before the state has been drawn) must not start a second export, which would be recorded twice.
   const running = useRef(false);
   const isRunning = phase.kind === "running";
+  // The screen this button is on, as far as an export's file is concerned (D-245): who is signed in, the firm, the table, the filters and the columns it
+  // asks for, and whether downloads are off. By value, so the page drawing the button again with equal arrays changes nothing. `generation` counts the screens
+  // the button has been on: it goes up each time the one it is on ends, by a change of any of those or by the button going (another page, another firm's
+  // page, the sign-in screen). An export is saved only if the count is the one it was asked at, so it was on one screen the whole time, not merely on an equal
+  // one at the end (D-250). The file's name says nothing of the firm or the filters (D-235), so one that arrived on another screen would be taken for that screen's.
+  // The count goes up in a layout effect, as the change is committed: an answer can come in the moment between the page being drawn and React running its other
+  // effects, and would be read against the screen that has just gone (D-251).
+  const { user } = useAuth();
+  const scope = JSON.stringify([user?.id ?? null, firmId, table, filters, columns.map((c) => c.column), downloadsOff]);
+  const generation = useRef(0);
+  useLayoutEffect(() => () => { generation.current += 1; }, [scope]);
 
   const run = async () => {
     if (running.current) return;
     running.current = true;
     setPhase({ kind: "running" });
+    const askedOn = generation.current;
     try {
       // One zone for both: the days a date filter means, and the day in the file's name.
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const result = await exportTable(firmId, table, columns.map((c) => c.column), { filters, timeZone });
+      if (generation.current !== askedOn) {
+        // The database has recorded it (and may have told the owners): say that no file came, since nothing on the screen it was asked on will.
+        toast.message("An export you started finished after the page changed, so its file was not saved.");
+        setPhase({ kind: "idle" });
+        return;
+      }
       // A file of headers and nothing under them is no export: the button is only offered over rows, so this is rows that went meanwhile.
       if (result.rowCount === 0) {
         setPhase({ kind: "done", message: `No ${noun.plural} to export.` });
@@ -68,11 +92,19 @@ export function ExportButton<T extends ExportTable>({ firmId, table, columns, fi
       const specs = result.columns.map((name) => columns.find((c) => c.column === name)!);
       const csv = csvFile(
         specs.map((s) => s.header),
-        result.rows.map((row) => row.map((value, i) => (specs[i].text ?? plain)(value))),
+        result.rows.map((row) => {
+          const byName = Object.fromEntries(result.columns.map((name, i) => [name, row[i]])) as ExportRow<T>;
+          return row.map((value, i) => (specs[i].text ?? plain)(value, byName));
+        }),
       );
       downloadBlob(csv, csvFileName(fileName, result.exportedAt, timeZone));
       setPhase({ kind: "done", message: `Exported ${result.rowCount.toLocaleString("en-US")} ${result.rowCount === 1 ? noun.singular : noun.plural}.` });
     } catch (error) {
+      // A refusal for a screen the person has left is nothing for them to act on.
+      if (generation.current !== askedOn) {
+        setPhase({ kind: "idle" });
+        return;
+      }
       // Whatever it was, nothing else on the page changes. What is not a refusal (a bug of ours, a dropped connection) is said as a failure to try again.
       setPhase({ kind: "refused", refusal: error instanceof ExportRefusal ? error : new ExportRefusal("", "failed") });
     } finally {

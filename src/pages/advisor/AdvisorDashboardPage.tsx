@@ -10,7 +10,7 @@ import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  ColumnsMenu, FilterRow, inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableColumns, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  ColumnsMenu, FilterRow, inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableColumns, useTableContextKey, useTableRows, useTableViewCounts, useViewActions, ViewTabs,
 } from "@/components/workspace/table";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
@@ -37,7 +37,11 @@ const AdvisorDashboardPage = () => {
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
   const refresh = useRefreshTable(table);
-  const shownColumns = useTableColumns(table);
+  // A saved view keeps columns of its own and the person's choice on it (CRM-S3.1, D-193); a built-in view's columns are the person's choice for the table.
+  const openView = table.views.find((v) => v.id === address.view);
+  const shownColumns = useTableColumns(table, openView?.saved ? openView : null);
+  // Saving what is on screen as a view, and changing, renaming, sharing and deleting the open one (CRM-S3.4a).
+  const manage = useViewActions(table, location, shownColumns);
   // The row's "Add filter": where focus goes when filters are cleared, from the row or from the empty state (D-170).
   const addFilterRef = useRef<HTMLButtonElement>(null);
 
@@ -55,7 +59,7 @@ const AdvisorDashboardPage = () => {
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-6">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Company, contact or File ID" onSearch={(term) => change({ search: term })} />
-        <ColumnsMenu table={table} columns={shownColumns} />
+        <ColumnsMenu table={table} columns={shownColumns} view={openView?.saved ? openView : null} />
         {/* Not usable until there are rows to ask again for. It stays in the tab order, says why, and ignores the click. */}
         <button
           onClick={loading ? undefined : refresh}
@@ -74,7 +78,7 @@ const AdvisorDashboardPage = () => {
   );
 
   // Today's status tabs, as the queue's built-in views; CRM-S3.4a turns them into the full saved-views bar.
-  const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} />;
+  const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} manage={manage} onRetry={refresh} />;
 
   // Empty (story CRM-S2.2). The rule that tells the two kinds apart: a bare address (no tab, search or filter) that comes back with no rows is NOTHING YET,
   // because the firm has no submissions to show; a narrowed one is NOTHING MATCHES. The queue does not know how many submissions the firm has without

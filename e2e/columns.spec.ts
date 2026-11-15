@@ -3,7 +3,7 @@ import pg from "pg";
 import { ANON_KEY, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
 import { totpCode } from "./stack/totp.mjs";
 
-// The queue's columns (story CRM-S3.1a, D-185 to D-198), against the real database and a real browser. A member hides a column and moves another with the
+// The queue's columns (story CRM-S3.1a, D-185 to D-199), against the real database and a real browser. A member hides a column and moves another with the
 // Columns menu by keyboard, the table changes at once and the choice is kept (a reload shows it: it is in the database, not the browser); the name column
 // stays in view when the table scrolls sideways (the thing jsdom has no layout to prove); and "Back to default columns" puts the table's own back.
 
@@ -103,9 +103,18 @@ test("a member shows, hides and reorders the queue's columns by keyboard, the ch
     await expect(menu.getByRole("button", { name: "Move Contact down" })).toBeFocused();
     await menu.getByRole("button", { name: "Move Contact up" }).focus();
     await page.keyboard.press("Enter");
-    await expect(headers()).toHaveText(["Company", "Contact", "States", "Employees", "Submitted", "Quotes", "Status", "Waiting since", "Quote expires"]);    await page.keyboard.press("Escape");
+    await expect(headers()).toHaveText(["Company", "Contact", "States", "Employees", "Submitted", "Quotes", "Status", "Waiting since", "Quote expires"]);
+    await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
     await expect(page.getByRole("button", { name: "Columns" })).toBeFocused();
+  });
+
+  await test.step("the change is still on screen after opening a submission and coming back (the page is drawn again, but not from an answer older than the change)", async () => {
+    await page.getByRole("link", { name: "Acme Columns Co" }).click();
+    await expect(page).toHaveURL(/\/advisor\/submissions\//);
+    await page.goBack();
+    await expect(page.getByRole("link", { name: "Acme Columns Co" })).toBeVisible();
+    await expect(headers()).toHaveText(["Company", "Contact", "States", "Employees", "Submitted", "Quotes", "Status", "Waiting since", "Quote expires"]);
   });
 
   await test.step("the choice is kept: a reload shows it, because it is in the database and not the browser", async () => {
