@@ -53,11 +53,13 @@ export const WorkspaceForm = ({ api, children, actions, className, ...aria }: {
  * Save, Cancel (when the form has one) and, beside them, what failed in plain words. Save is never disabled to point at an
  * error: it is disabled only while a save is in flight, and then it says so ("Saving…").
  */
-export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", cancelLabel = "Cancel", className }: {
+export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", cancelLabel = "Cancel", className, between }: {
   submitLabel?: string;
   savingLabel?: string;
   cancelLabel?: string;
   className?: string;
+  /** Another button between Cancel and Save (a form that can also "Save and add another"). It disables itself while saving and when offline, as Save does. */
+  between?: ReactNode;
 }) => {
   const api = useApi();
   const save = api.saveButton;
@@ -74,6 +76,7 @@ export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", c
       {api.cancel && (
         <Button type="button" variant="outline" className="h-11 rounded-md" disabled={api.saving} onClick={api.cancel}>{cancelLabel}</Button>
       )}
+      {between}
       {/* With no connection Save is aria-disabled, not disabled (D-143): it stays in the tab order, says why, and ignores the click. */}
       <Button
         ref={save}

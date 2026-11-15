@@ -14,6 +14,7 @@ import {
 } from "@/lib/accountsApi";
 import type { ShownColumn } from "@/lib/exportFile";
 import type { ExportValue } from "@/lib/exportApi";
+import { firmLabels } from "@/lib/bulkChangeApi";
 import type { ViewCount } from "@/lib/tableQuery";
 
 // The accounts table (story CRM-A1.1a, screen 16) as a workspace table: its columns, its views, its filters and the two calls to the database. The frame
@@ -45,6 +46,7 @@ const FIELD_LABELS: Record<AccountField, string> = {
   status: "Status",
   opportunity_stage: "Opportunity stage",
   states_of_operation: "States of operation",
+  labels: "Label",
   archived: "Archived",
   waiting_on_peo: "Waiting on a PEO",
   renewal_date: "Renewal date",
@@ -67,12 +69,13 @@ const ENFORCED_CHOICES: readonly AccountField[] = ["source", "status", "opportun
 /** Where a first click on a header starts: the most quote requests first (an account with none would otherwise fill the first page). */
 const FIRST_DIRECTIONS: Partial<Record<AccountField, "asc" | "desc">> = { quote_requests_sent: "desc", earliest_quote_expires_on: "asc" };
 
-const fieldsWith = (owners: readonly FieldChoice[] | undefined) =>
+const fieldsWith = (owners: readonly FieldChoice[] | undefined, labels?: readonly FieldChoice[]) =>
   Object.fromEntries(
     (Object.keys(ACCOUNT_FIELDS) as AccountField[]).map((id) => [id, {
       label: FIELD_LABELS[id],
       kind: ACCOUNT_FIELDS[id],
-      ...(id === "owner" && owners ? { choices: owners } : FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id] } : {}),
+      // The firm's own labels are the Label filter's choices, never an enforced list: a word the firm no longer has still matches (nothing), as the database takes it.
+      ...(id === "owner" && owners ? { choices: owners } : id === "labels" && labels ? { choices: labels } : FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id] } : {}),
       ...(FIELD_CHOICES[id] && ENFORCED_CHOICES.includes(id) ? { choicesEnforced: true } : {}),
       ...(FIRST_DIRECTIONS[id] ? { firstDirection: FIRST_DIRECTIONS[id] } : {}),
     }]),
@@ -214,6 +217,11 @@ const accountColumns: ColumnDefinition<AccountRow, keyof Fields>[] = [
     cell: (row) => <span className="text-sm">{row.current_provider ?? dash}</span>,
   },
   {
+    id: "labels", header: "Label", sortField: "labels", filterField: "labels",
+    text: (row) => row.labels.join(", "),
+    cell: (row) => (row.labels.length > 0 ? <span className="flex flex-wrap gap-1">{row.labels.map((l) => <Pill key={l}>{l}</Pill>)}</span> : <span className="text-sm">{dash}</span>),
+  },
+  {
     id: "source", header: "Source", sortField: "source", filterField: "source",
     text: (row) => SOURCE_LABELS[row.source],
     cell: (row) => <span className="text-sm">{SOURCE_LABELS[row.source]}</span>,
@@ -225,7 +233,7 @@ const accountColumns: ColumnDefinition<AccountRow, keyof Fields>[] = [
   },
 ];
 
-/** The columns shown until a person chooses their own (the story's default columns; Renewal and Label come with their stories, D-186, D-198). */
+/** The columns shown until a person chooses their own (the story's default columns; Renewal comes with its story, D-186). Label is one of the story's "other columns": shown from the Columns menu, never forced on a person who has a kept choice (D-217). */
 const USUAL_COLUMNS = ["account", "main_contact", "opportunity", "quotes", "employees", "owner", "last_activity"] as const;
 
 // ---------- views ----------
@@ -278,15 +286,24 @@ export const useAccountsTable = (): AccountsTable => {
     retry: false,
     staleTime: 60_000,
   });
+  // The firm's own labels, for the Label filter. If they can't be listed the filter still works: a word can be typed.
+  const labels = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["table", firmId, ACCOUNTS_TABLE.id, "context", "labels"],
+    queryFn: () => firmLabels(firmId as string),
+    enabled: ready && !!firmId,
+    retry: false,
+    staleTime: 60_000,
+  });
   const { saved, status } = useSavedViewList(ACCOUNTS_TABLE.id);
   return useMemo(() => {
     const people = members.data;
-    const base: AccountsTableDefinition = people ? { ...ACCOUNTS_TABLE, fields: fieldsWith(people) } : ACCOUNTS_TABLE;
+    const words = labels.data?.map((l) => ({ value: l.name, label: l.name }));
+    const base: AccountsTableDefinition = people || words ? { ...ACCOUNTS_TABLE, fields: fieldsWith(people, words) } : ACCOUNTS_TABLE;
     const byId = new Map((people ?? []).map((p) => [p.value, p.label]));
     // A person the lookup can't name (it failed, or they have left the firm) reads "A member", never their id (D-227).
     const settled = !members.isPending;
     return { table: withSavedViews(base, saved, status), names: (id: string) => byId.get(id) ?? (settled ? "A member" : undefined) };
-  }, [members.data, members.isPending, saved, status]);
+  }, [members.data, members.isPending, labels.data, saved, status]);
 };
 
 // ---------- the two calls ----------

@@ -12,7 +12,7 @@ import type { TableFields, TableFilter, TablePage, TableSort, ViewCount } from "
  * The accounts table's fields a filter or a sort may name, with the kind of each. The database holds the same list (accounts_field_kind's `accounts_fields`
  * block; src/lib/accountsApi.test.ts compares them) and refuses any other name. The main contact is not here: it is shown, never filtered or sorted.
  * `renewal_date` (the nearest renewal not done) and `renewing_in_120_days` (the built-in view of that name, D-450) are placements and renewals' (CRM-A2.4a).
- * Labels and custom fields are later stories' (D-198, CRM-X3.1).
+ * Custom fields are a later story's (CRM-X3.1). `labels` is the firm's own words on an account (D-198); a filter names them as text.
  */
 export const ACCOUNT_FIELDS = {
   name: "text",
@@ -36,6 +36,7 @@ export const ACCOUNT_FIELDS = {
   status: "choice",
   opportunity_stage: "choice",
   states_of_operation: "choices",
+  labels: "choices",
   archived: "yes_no",
   waiting_on_peo: "yes_no",
   renewing_in_120_days: "yes_no",
@@ -95,6 +96,8 @@ export interface AccountRow {
   waiting_on_peo: boolean;
   earliest_quote_expires_on: string | null;
   last_activity_at: string;
+  /** The firm's own words on the account (D-198), alphabetically ignoring case. */
+  labels: string[];
   /** The date of the account's nearest renewal not done (D-450), or none. */
   renewal_date: string | null;
 }
@@ -105,7 +108,7 @@ const ROW_COLUMNS: Record<keyof AccountRow, true> = {
   current_provider: true, source: true, status: true, archived: true, archived_at: true, created_at: true, owner: true, owner_name: true,
   main_contact_id: true, main_contact_name: true, main_contact_email: true, main_contact_phone: true, opportunity_id: true, opportunity_name: true,
   opportunity_stage: true, target_start: true, open_opportunities: true, quote_requests_sent: true, quotes_received: true, waiting_on_peo: true,
-  earliest_quote_expires_on: true, last_activity_at: true, renewal_date: true,
+  earliest_quote_expires_on: true, last_activity_at: true, labels: true, renewal_date: true,
 };
 export const ACCOUNT_ROW_KEYS = Object.keys(ROW_COLUMNS) as (keyof AccountRow)[];
 
@@ -121,7 +124,7 @@ const rowSchema = z.object({
   owner: maybeText, owner_name: maybeText, main_contact_id: maybeText, main_contact_name: maybeText, main_contact_email: maybeText, main_contact_phone: maybeText,
   opportunity_id: maybeText, opportunity_name: maybeText, opportunity_stage: z.enum(ACCOUNT_OPEN_STAGES).nullable(), target_start: maybeText,
   open_opportunities: count, quote_requests_sent: count, quotes_received: count, waiting_on_peo: z.boolean(), earliest_quote_expires_on: maybeText,
-  last_activity_at: text, renewal_date: maybeText,
+  last_activity_at: text, labels: z.array(text), renewal_date: maybeText,
 });
 const pageSchema = z.object({ rows: z.array(rowSchema), total: count, page: z.number().int().min(1), page_size: z.number().int().min(1) });
 // A count the database sends as text (a big number) is a number here.

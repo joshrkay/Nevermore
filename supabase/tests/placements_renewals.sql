@@ -155,7 +155,11 @@
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119230000_search_everywhere.sql
+\i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 SET client_min_messages = notice;
 
@@ -538,17 +542,18 @@ BEGIN
   UPDATE public.placements SET ended_on = NULL WHERE id = pg_temp.id('s_won_p');
   PERFORM pg_temp.is(public.account_status(pg_temp.id('s_won')), 'client', 'its placement running: a client');
 
-  -- an ended placement of the account and a won submission with none: the win has no placement, so it is a client
+  -- D-455: a won submission makes a client only while the account has no placement at all; once it has placements, they say
   PERFORM pg_temp.account('s_mixed', 'acme', NULL);
   PERFORM pg_temp.intake('s_mixed_i', 'acme');
   PERFORM pg_temp.opportunity('s_mixed_o', 's_mixed', NULL, 's_mixed_i');
   PERFORM pg_temp.placement('s_mixed_p', 's_mixed', 'Gusto', current_date - 1);
   PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'former_client', 'an ended placement alone: a former client');
   PERFORM pg_temp.move('s_mixed_i', 'won');
-  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'client', 'a win with no placement of its own makes it a client again');
-  -- a won submission archived stays won (D-216)
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'former_client', 'a win the placement does not belong to does not bring the client back: its placements have all ended (D-455)');
   PERFORM pg_temp.move('s_mixed_i', 'archived');
-  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'client', 'archived from won, still a client');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'former_client', 'archived from won, the same');
+  PERFORM pg_temp.placement('s_mixed_p2', 's_mixed', 'TriNet');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('s_mixed')), 'client', 'and a placement running makes it a client');
 
   -- no API role asks it
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_status(%L)$q$, pg_temp.id('a1'))), 'rows:1', 'the superuser asks');
@@ -1223,4 +1228,78 @@ BEGIN
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(pg_temp.attempt('SELECT count(*) FROM public.renewals'), '42501', 'a signed-out caller is refused');
   RESET ROLE;
+END $$;
+
+
+-- ---------- D-455: an account won before placements, whose hand-added placement ends ----------
+-- Break caught: a won submission keeps an account a client after its only placement ended ("Didn't renew" would change nothing, so the account could never be a
+-- former client); or stops making one a client when it has no placement at all (a win from before Epic 4).
+DO $$
+DECLARE r text; j jsonb;
+BEGIN
+  PERFORM pg_temp.account('lg', 'acme', 'acme_agent1');
+  PERFORM pg_temp.intake('lg_i', 'acme');
+  PERFORM pg_temp.opportunity('lg_o', 'lg', 'acme_agent1', 'lg_i');
+  PERFORM pg_temp.move('lg_i', 'won');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('lg')), 'client', 'won before placements, with none: a client');
+  PERFORM pg_temp.is(pg_temp.row_named(pg_temp.list_rows('acme_owner', '[]'), 'lg') ->> 'status', 'client', 'and the table says so');
+  r := pg_temp.add_renewal('acme_agent1', 'lg', 'peo_placement', 'Justworks', current_date + 30, current_date - 335);
+  INSERT INTO fx VALUES ('lg_r', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('lg')), 'client', 'with its placement added by hand running: a client');
+  PERFORM pg_temp.didnt('acme_agent1', 'lg_r', current_date + 30, pg_temp.ver('lg_r'));
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('lg')), 'former_client', 'the placement marked "Didn''t renew": a former client, though the submission is still won');
+  PERFORM pg_temp.is(pg_temp.row_named(pg_temp.list_rows('acme_owner', '[]'), 'lg') ->> 'status', 'former_client', 'and the table says so');
+  PERFORM pg_temp.undo('acme_agent1', 'lg_r', pg_temp.ver('lg_r'));
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('lg')), 'client', 'the undo brings the client back');
+  PERFORM pg_temp.is(pg_temp.row_named(pg_temp.list_rows('acme_owner', '[]'), 'lg') ->> 'status', 'client', 'in the table too');
+  -- the two ways of working the status out agree for every account
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(pg_temp.list_rows('acme_owner', '[]')) e
+                      WHERE e.value ->> 'status' IS DISTINCT FROM public.account_status((e.value ->> 'id')::uuid)), 0::bigint, 'the table''s status is account_status''s for every row');
+END $$;
+
+-- ---------- days away in the caller's own day, from every write (D-448) ----------
+-- Break caught: a write answers days away from the server's date, so a person ahead of or behind it sees a different number from the list's.
+DO $$
+DECLARE r text; ahead int; behind int; rid text;
+BEGIN
+  r := pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.add_renewal(%L, 'current_plan', 'Aetna', current_date, NULL, %L, 'Pacific/Kiritimati')::text$q$, pg_temp.id('rd_empty'), pg_temp.id('acme')));
+  ahead := (r::jsonb -> 'renewal' ->> 'days_away')::int;
+  INSERT INTO fx VALUES ('tz1', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.add_renewal(%L, 'current_plan', 'Aetna', current_date, NULL, %L, 'Etc/GMT+12')::text$q$, pg_temp.id('rd_empty'), pg_temp.id('acme')));
+  behind := (r::jsonb -> 'renewal' ->> 'days_away')::int;
+  PERFORM pg_temp.is(ahead <= behind - 1, true, 'add: a person ahead of the server''s day is further into the date');
+  PERFORM pg_temp.is((pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.add_renewal(%L, 'current_plan', 'Aetna', current_date, NULL, %L)::text$q$, pg_temp.id('rd_empty'), pg_temp.id('acme')))::jsonb -> 'renewal' ->> 'days_away')::int,
+    (SELECT (current_date - (now() AT TIME ZONE 'UTC')::date)), 'with no time zone given, UTC (the same as the list''s default)');
+  ahead := (pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.update_renewal(%L, 'Aetna', current_date, %L, %L, 'Pacific/Kiritimati')::text$q$, pg_temp.id('tz1'), pg_temp.id('acme'), pg_temp.ver('tz1')))::jsonb -> 'record' ->> 'days_away')::int;
+  behind := (pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.update_renewal(%L, 'Aetna', current_date, %L, %L, 'Etc/GMT+12')::text$q$, pg_temp.id('tz1'), pg_temp.id('acme'), pg_temp.ver('tz1')))::jsonb -> 'record' ->> 'days_away')::int;
+  PERFORM pg_temp.is(ahead <= behind - 1, true, 'update: the same');
+  ahead := (pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.mark_renewal_not_renewed(%L, current_date, %L, %L, 'Pacific/Kiritimati')::text$q$, pg_temp.id('tz1'), pg_temp.id('acme'), pg_temp.ver('tz1')))::jsonb -> 'record' ->> 'days_away')::int;
+  behind := (pg_temp.as_call('acme_agent1', 'acme-brokers', format($q$SELECT public.undo_renewal_not_renewed(%L, %L, %L, 'Etc/GMT+12')::text$q$, pg_temp.id('tz1'), pg_temp.id('acme'), pg_temp.ver('tz1')))::jsonb -> 'record' ->> 'days_away')::int;
+  PERFORM pg_temp.is(ahead <= behind - 1, true, 'mark and undo: the same');
+END $$;
+
+-- ---------- the table's query and the closing plan keep what earlier stories gave them ----------
+-- Break caught: this migration restates accounts_rows (or the filters, the sort, the closing plan) from older text, so the row loses `labels` (or cannot be
+-- built at all), the Labels filter is refused, and closing a firm no longer deletes the labels, bulk changes and recent records (a firm that closes keeps them).
+DO $$
+DECLARE j jsonb; lbl uuid;
+BEGIN
+  INSERT INTO public.labels (firm_id, name) VALUES (pg_temp.id('acme'), 'Hot lead') RETURNING id INTO lbl;
+  INSERT INTO public.account_labels (firm_id, account_id, label_id) VALUES (pg_temp.id('acme'), pg_temp.id('rd'), lbl);
+  j := pg_temp.list_rows('acme_owner', '[]');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rd') -> 'labels', '["Hot lead"]'::jsonb, 'a row carries the account''s labels (bulk changes)');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'rd') ->> 'renewal_date', to_char(current_date - 12, 'YYYY-MM-DD'), 'and its renewal date, in the same row');
+  PERFORM pg_temp.is(pg_temp.row_named(j, 'a2') -> 'labels', '[]'::jsonb, 'an account with no label has an empty list');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_owner', '[{"field":"labels","op":"any_of","value":["hot lead"]}]')), 'rd', 'the Labels filter still works');
+  PERFORM pg_temp.is(pg_temp.names_of(pg_temp.list_rows('acme_owner', '[{"field":"labels","op":"any_of","value":["hot lead"]},{"field":"renewing_in_120_days","op":"is","value":true}]')), 'rd', 'beside the renewal view');
+  PERFORM pg_temp.is(jsonb_array_length(pg_temp.list_rows('acme_owner', '[]', 'renewal_date', 'asc')) > 0, true, 'and sorting by the renewal still works');
+  PERFORM pg_temp.is((SELECT array_agg(a.attname::text ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid = 'public.accounts_row'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attname IN ('last_activity_at', 'labels', 'renewal_date')), ARRAY['last_activity_at', 'labels', 'renewal_date'], 'the row''s last three columns, in order');
+  PERFORM pg_temp.is((SELECT array_agg(p.src ORDER BY p.src) FROM public.firm_closing_plan() p
+                      WHERE p.action = 'delete' AND p.src IN ('public.labels', 'public.account_labels', 'public.bulk_changes', 'public.bulk_change_records', 'public.recent_records',
+                                                              'public.activities', 'public.renewals', 'public.placements', 'public.accounts', 'public.contacts', 'public.opportunities')),
+    ARRAY['public.account_labels', 'public.accounts', 'public.activities', 'public.bulk_change_records', 'public.bulk_changes', 'public.contacts', 'public.labels',
+          'public.opportunities', 'public.placements', 'public.recent_records', 'public.renewals'], 'the closing plan deletes the five tables Epic 3 added beside the three records and these two');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'and keeps every table it kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() p WHERE p.action = 'delete' AND p.src IN ('public.renewals', 'public.placements')), 2::bigint, 'each line once');
 END $$;

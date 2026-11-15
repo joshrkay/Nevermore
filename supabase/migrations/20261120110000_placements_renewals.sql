@@ -14,8 +14,8 @@
 --     ADR 0023, ADR 0024) and asks the level rule where it changes something (can_change_firm_record, D-209, D-222).
 --   * Done is worked out and never stored (D-449): a renewal is done when its working opportunity is Won (renewal_is_done) or when it is marked
 --     not renewed.
---   * An account's status (D-451, account_status, redefined): a client while it has a placement not ended, or a won submission with no placement (one won
---     before Epic 4); a FORMER CLIENT when it has placements and all have ended; otherwise a prospect. Still worked out, never stored.
+--   * An account's status (D-451 as D-455 amends it, account_status, redefined): a client while it has a placement not ended, or, with no placement at
+--     all, a won submission (one won before Epic 4); a FORMER CLIENT when it has placements and all have ended; otherwise a prospect. Still worked out.
 --   * The accounts table (D-450): a Renewal column (the nearest renewal not done: its date) and a built-in view "Renewing in 120 days", which in the
 --     table's own mechanism is a filter on the field renewing_in_120_days and a sort by renewal_date: accounts with a renewal not done within the next 120
 --     days, overdue included, soonest first. The query's functions are restated with every rule they had, and these.
@@ -265,7 +265,8 @@ REVOKE ALL ON FUNCTION public.renewal_input_error(text, date) FROM PUBLIC, anon,
 -- there (PT404, one answer for both), an archived account (55000, D-222), what is wrong with what was sent (22023, in words). Anyone who may see the account may
 -- add one (D-452, D-209), not only who may change it.
 CREATE FUNCTION public.add_renewal(
-  p_account_id uuid, p_kind text, p_with_whom text, p_renews_on date, p_placement_start_on date DEFAULT NULL, p_firm_id uuid DEFAULT NULL)
+  p_account_id uuid, p_kind text, p_with_whom text, p_renews_on date, p_placement_start_on date DEFAULT NULL, p_firm_id uuid DEFAULT NULL,
+  p_time_zone text DEFAULT 'UTC')
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -303,18 +304,20 @@ BEGIN
   END IF;
   INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id)
   VALUES (a.firm_id, a.id, p_kind, with_in, p_renews_on, pl.id) RETURNING * INTO made;
-  RETURN jsonb_build_object('renewal', public.crm_renewal_row(made, current_date),
+  RETURN jsonb_build_object('renewal', public.crm_renewal_row(made, (now() AT TIME ZONE public.workspace_time_zone(p_time_zone))::date),
     'placement', CASE WHEN pl.id IS NULL THEN NULL ELSE jsonb_build_object('id', pl.id, 'peo_name', pl.peo_name, 'start_date', pl.start_date) END);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.add_renewal(uuid, text, text, date, date, uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.add_renewal(uuid, text, text, date, date, uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.add_renewal(uuid, text, text, date, date, uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.add_renewal(uuid, text, text, date, date, uuid, text) TO authenticated;
 
--- ---------- 7. An account's status (D-451) ----------
+-- ---------- 7. An account's status (D-451, D-455) ----------
 -- account_status (20261119100000), redefined in place (CREATE OR REPLACE keeps its privileges: no API role runs it). A CLIENT while it has a placement not
--- ended, or a submission won with no placement of its own (one won before Epic 4; one archived straight from won counts as won, D-216); a FORMER CLIENT
--- when it has placements and all of them have ended; otherwise a prospect. NULL for an account that is not there. Worked out each time, never stored.
+-- ended; with no placement at all, while it has a won submission (one won before placements existed; one archived straight from won counts as won, D-216);
+-- a FORMER CLIENT when it has placements and all of them have ended; otherwise a prospect. So an account won before placements whose hand-added placement is
+-- marked "Didn't renew" is a former client (D-455, which amends D-451's "won submission with no placement of its own"). NULL for an account that is not
+-- there. Worked out each time, never stored.
 CREATE OR REPLACE FUNCTION public.account_status(p_account_id uuid)
 RETURNS text
 LANGUAGE sql
@@ -325,23 +328,23 @@ AS $$
   SELECT CASE
     WHEN NOT EXISTS (SELECT 1 FROM public.accounts a WHERE a.id = p_account_id) THEN NULL
     WHEN EXISTS (SELECT 1 FROM public.placements p WHERE p.account_id = p_account_id AND p.ended_on IS NULL) THEN 'client'
+    WHEN EXISTS (SELECT 1 FROM public.placements p WHERE p.account_id = p_account_id) THEN 'former_client'
     WHEN EXISTS (
       SELECT 1 FROM public.opportunities o
-      WHERE o.account_id = p_account_id AND o.intake_id IS NOT NULL AND public.submission_opportunity_stage(o.intake_id) = 'won'
-        AND NOT EXISTS (SELECT 1 FROM public.placements p WHERE p.opportunity_id = o.id)) THEN 'client'
-    WHEN EXISTS (SELECT 1 FROM public.placements p WHERE p.account_id = p_account_id) THEN 'former_client'
+      WHERE o.account_id = p_account_id AND o.intake_id IS NOT NULL AND public.submission_opportunity_stage(o.intake_id) = 'won') THEN 'client'
     ELSE 'prospect'
   END
 $$;
 
 -- ---------- 7b. The accounts table: the Renewal column, "Renewing in 120 days" and Former client (D-450, D-451) ----------
--- The table's query (20261119130000), each function restated with every rule it had and these:
---   * the row gains `renewal_date`, the date of the account's nearest renewal not done (after last_activity_at: a column is added at the end);
+-- The table's query, each function restated from its LATEST definition (20261119130000, then 20261119210000's labels) with every rule it has and these:
+--   * the row gains `renewal_date`, the date of the account's nearest renewal not done (after `labels`, the column the type last gained);
 --   * the fields gain `renewal_date` (a date: filtered and sorted like the others) and `renewing_in_120_days` (yes or no): the built-in view "Renewing in 120
 --     days" is the filter `renewing_in_120_days is yes` sorted by `renewal_date`, soonest first. It is a field so the view's meaning (on or before 120 days
 --     from the caller's today, overdue included) is the database's, the same for the list, the view's count and the export, and not the page's;
 --   * the status takes "former_client", in its choices (so a filter and a sort know it), its row and its export words.
--- accounts_field_choices' and accounts_field_kind's `sync` blocks are the ones src/lib/accountsApi.ts is compared with (src/lib/accountsApi.test.ts).
+-- accounts_field_choices' and accounts_field_kind's `sync` blocks are the ones src/lib/accountsApi.ts is compared with (src/lib/accountsApi.test.ts, which
+-- reads the newest migration that holds each block). A later story that restates one of these functions restates it from this text.
 
 ALTER TYPE public.accounts_row ADD ATTRIBUTE renewal_date date;
 
@@ -375,6 +378,7 @@ AS $$
     WHEN 'status' THEN 'choice'
     WHEN 'opportunity_stage' THEN 'choice'
     WHEN 'states_of_operation' THEN 'choices'
+    WHEN 'labels' THEN 'choices'
     WHEN 'archived' THEN 'yes_no'
     WHEN 'waiting_on_peo' THEN 'yes_no'
     WHEN 'renewing_in_120_days' THEN 'yes_no'
@@ -439,6 +443,7 @@ AS $$
       WHEN 'status' THEN public.workspace_filter_match_choice(r.status, f)
       WHEN 'opportunity_stage' THEN public.workspace_filter_match_choice(r.opportunity_stage, f)
       WHEN 'states_of_operation' THEN public.workspace_filter_match_choices(r.states_of_operation, f)
+      WHEN 'labels' THEN public.workspace_filter_match_choices(r.labels, f)
       WHEN 'archived' THEN public.workspace_filter_match_yes_no(r.archived, f)
       WHEN 'waiting_on_peo' THEN public.workspace_filter_match_yes_no(r.waiting_on_peo, f)
       -- The built-in view "Renewing in 120 days" (D-450): the nearest renewal not done falls on or before 120 days from the caller's today, overdue included.
@@ -474,7 +479,7 @@ BEGIN
     mc.id, mc.name, mc.email, mc.phone,
     oo.id, oo.name, oo.stage, oo.target_start, COALESCE(oo.n, 0),
     COALESCE(q.sent, 0), COALESCE(q.received, 0), COALESCE(q.waiting, false), q.expires,
-    act.at, ren.renews_on
+    act.at, COALESCE(lab.names, '{}'), ren.renews_on
   )::public.accounts_row).*
   FROM public.accounts a
   LEFT JOIN LATERAL (
@@ -484,17 +489,16 @@ BEGIN
     WHERE m.firm_id = p_firm_id AND m.user_id = a.owner_id AND public.membership_is_current(m.valid_from, m.valid_until)
     LIMIT 1
   ) mem ON true
-  -- The account's status (D-197, D-451): a client while it has a placement not ended, or a won submission with no placement of its own; a former client when
-  -- it has placements and all of them have ended. account_status() says the same for any account by its id alone, which no index serves for the opportunities
-  -- (they are indexed by firm and account), so asked for each account of a firm it reads every opportunity of every firm; this asks by firm and account.
-  -- supabase/tests/accounts_query.sql and placements_renewals.sql compare the two for every account.
+  -- The account's status (D-197, D-451, D-455): a client while it has a placement not ended, or, with no placement at all, a won submission (one won before
+  -- placements); a former client when it has placements and all of them have ended. account_status() says the same for any account by its id alone, which no
+  -- index serves for the opportunities (they are indexed by firm and account), so asked for each account of a firm it reads every opportunity of every firm;
+  -- this asks by firm and account. supabase/tests/accounts_query.sql and placements_renewals.sql compare the two for every account.
   LEFT JOIN LATERAL (
     SELECT
       EXISTS (SELECT 1 FROM public.placements p WHERE p.firm_id = p_firm_id AND p.account_id = a.id AND p.ended_on IS NULL)
-      OR EXISTS (
-        SELECT 1 FROM public.opportunities w
-        WHERE w.firm_id = p_firm_id AND w.account_id = a.id AND w.intake_id IS NOT NULL AND public.submission_opportunity_stage(w.intake_id) = 'won'
-          AND NOT EXISTS (SELECT 1 FROM public.placements q WHERE q.opportunity_id = w.id)) AS is_client,
+      OR (NOT EXISTS (SELECT 1 FROM public.placements p WHERE p.firm_id = p_firm_id AND p.account_id = a.id)
+          AND EXISTS (SELECT 1 FROM public.opportunities w
+                      WHERE w.firm_id = p_firm_id AND w.account_id = a.id AND w.intake_id IS NOT NULL AND public.submission_opportunity_stage(w.intake_id) = 'won')) AS is_client,
       EXISTS (SELECT 1 FROM public.placements p WHERE p.firm_id = p_firm_id AND p.account_id = a.id) AS has_placement
   ) st ON true
   -- The Renewal column (D-450): the date of the nearest renewal not done (renewal_is_done: not marked "Didn't renew" and not worked by a Won opportunity).
@@ -536,6 +540,11 @@ BEGIN
     FROM public.contacts c
     WHERE cardinality(terms) > 0 AND c.account_id = a.id
   ) ct ON true
+  LEFT JOIN LATERAL (
+    SELECT array_agg(l.name ORDER BY lower(l.name), l.name) AS names
+    FROM public.account_labels al JOIN public.labels l ON l.id = al.label_id
+    WHERE al.account_id = a.id
+  ) lab ON true
   WHERE a.firm_id = p_firm_id
     AND (a.owner_id = ANY (seen_owners) OR (a.owner_id IS NULL AND seen_unowned))
     AND (p_ids IS NULL OR a.id = ANY (p_ids))
@@ -607,6 +616,7 @@ BEGIN
         WHEN 'state' THEN lower((m.r).state COLLATE "und-x-icu")
         WHEN 'owner' THEN lower((m.r).owner_name COLLATE "und-x-icu")
         WHEN 'states_of_operation' THEN lower(array_to_string((m.r).states_of_operation, ', ') COLLATE "und-x-icu")
+        WHEN 'labels' THEN lower(array_to_string((m.r).labels, ', ') COLLATE "und-x-icu")
       END), '') AS k_text,
       CASE p_sort
         WHEN 'employees' THEN (m.r).employees::numeric
@@ -717,7 +727,8 @@ REVOKE ALL ON FUNCTION public.renewal_to_change(uuid, uuid) FROM PUBLIC, anon, a
 -- Refused, in this order and before the version is looked at: not a member of the firm (42501), a closing firm or Nevermore support (PT423), what is wrong with
 -- the fields (22023), no version (22023), a renewal the caller may not see or that is not there (PT404, one answer for both), one whose account the level rule
 -- does not give the caller (42501), a version the renewal never had (22023).
-CREATE FUNCTION public.update_renewal(p_renewal_id uuid, p_with_whom text, p_renews_on date, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
+CREATE FUNCTION public.update_renewal(
+  p_renewal_id uuid, p_with_whom text, p_renews_on date, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL, p_time_zone text DEFAULT 'UTC')
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -744,7 +755,7 @@ BEGIN
   UPDATE public.renewals SET with_whom = with_in, renews_on = p_renews_on WHERE id = cur.id AND version = p_version RETURNING * INTO changed;
   IF changed.id IS NOT NULL THEN
     UPDATE public.placements SET peo_name = with_in WHERE id = changed.placement_id AND opportunity_id IS NULL;
-    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, current_date));
+    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, (now() AT TIME ZONE public.workspace_time_zone(p_time_zone))::date));
   END IF;
   IF p_version > cur.version THEN
     RAISE EXCEPTION 'This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
@@ -757,8 +768,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.update_renewal(uuid, text, date, uuid, integer, text) TO authenticated;
 
 -- Deletes a renewal. Answers {deleted: true, with_whom}. A renewal a win made (its placement has an opportunity) is deleted only by reopening that win
 -- (CRM-O1.3a): PT409, in words. A PEO placement renewal added by hand takes the placement made with it by hand (one with no opportunity and no other renewal),
@@ -795,7 +806,7 @@ GRANT EXECUTE ON FUNCTION public.delete_renewal(uuid, uuid) TO authenticated;
 -- marking (22023), no version (22023), a renewal the caller may not see or that is not there (PT404), one the level rule does not give them (42501), one a win
 -- already renewed (PT409), a day before the placement began (22023), a version it never had (22023). The answer is update_renewal's:
 -- {conflict: false, record} or {conflict: true, currentVersion, current: {not_renewed_on}, changed}. Internal: the callers have asked the firm and the guard.
-CREATE FUNCTION public.renewal_set_not_renewed(p_firm_id uuid, p_renewal_id uuid, p_mark boolean, p_on date, p_version integer)
+CREATE FUNCTION public.renewal_set_not_renewed(p_firm_id uuid, p_renewal_id uuid, p_mark boolean, p_on date, p_version integer, p_time_zone text DEFAULT 'UTC')
 RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = public, pg_temp
@@ -824,7 +835,7 @@ BEGIN
   UPDATE public.renewals SET not_renewed_on = CASE WHEN p_mark THEN p_on END WHERE id = cur.id AND version = p_version RETURNING * INTO changed;
   IF changed.id IS NOT NULL THEN
     UPDATE public.placements SET ended_on = CASE WHEN p_mark THEN p_on END WHERE id = changed.placement_id;
-    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, current_date));
+    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, (now() AT TIME ZONE public.workspace_time_zone(p_time_zone))::date));
   END IF;
   IF p_version > cur.version THEN
     RAISE EXCEPTION 'This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
@@ -837,12 +848,13 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.renewal_set_not_renewed(uuid, uuid, boolean, date, integer) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.renewal_set_not_renewed(uuid, uuid, boolean, date, integer, text) FROM PUBLIC, anon, authenticated, service_role;
 
 -- "Didn't renew" with a day (the screen offers the renewal's date): the renewal is then done, so it leaves the Renewal column and the 120-day view, and the
 -- placement it came from ends on that day, so an account with no placement left running is a former client. Marking again with another day moves it.
 -- Refused as update_renewal is (not a member 42501, a closing firm or Nevermore support PT423, ...), from a version.
-CREATE FUNCTION public.mark_renewal_not_renewed(p_renewal_id uuid, p_not_renewed_on date, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
+CREATE FUNCTION public.mark_renewal_not_renewed(
+  p_renewal_id uuid, p_not_renewed_on date, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL, p_time_zone text DEFAULT 'UTC')
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -853,15 +865,15 @@ DECLARE
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
-  RETURN public.renewal_set_not_renewed(firm, p_renewal_id, true, p_not_renewed_on, p_version);
+  RETURN public.renewal_set_not_renewed(firm, p_renewal_id, true, p_not_renewed_on, p_version, p_time_zone);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.mark_renewal_not_renewed(uuid, date, uuid, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.mark_renewal_not_renewed(uuid, date, uuid, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.mark_renewal_not_renewed(uuid, date, uuid, integer, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.mark_renewal_not_renewed(uuid, date, uuid, integer, text) TO authenticated;
 
 -- The undo: clears the day, which brings the renewal back to the Renewal column and the view, and reopens the placement, so the account is a client again.
-CREATE FUNCTION public.undo_renewal_not_renewed(p_renewal_id uuid, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
+CREATE FUNCTION public.undo_renewal_not_renewed(p_renewal_id uuid, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL, p_time_zone text DEFAULT 'UTC')
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -872,12 +884,12 @@ DECLARE
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
-  RETURN public.renewal_set_not_renewed(firm, p_renewal_id, false, NULL, p_version);
+  RETURN public.renewal_set_not_renewed(firm, p_renewal_id, false, NULL, p_version, p_time_zone);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.undo_renewal_not_renewed(uuid, uuid, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.undo_renewal_not_renewed(uuid, uuid, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.undo_renewal_not_renewed(uuid, uuid, integer, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.undo_renewal_not_renewed(uuid, uuid, integer, text) TO authenticated;
 
 -- ---------- 8c. Reading an account's renewals (D-448, D-449, D-454) ----------
 -- {count, can_change, rows}: every renewal of an account the caller may see, each as crm_renewal_row gives it (what, with whom, the date, days away from
@@ -916,64 +928,21 @@ REVOKE ALL ON FUNCTION public.account_renewals(uuid, uuid, text) FROM PUBLIC, an
 GRANT EXECUTE ON FUNCTION public.account_renewals(uuid, uuid, text) TO authenticated;
 
 -- ---------- 9. Closing a firm deletes them (D-407) ----------
--- The closing's one list (20261119180000), restated with every line it had and the renewals, then the placements, before the opportunities, contacts and
--- accounts they stand on.
-CREATE OR REPLACE FUNCTION public.firm_closing_plan()
-RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
-LANGUAGE sql
-IMMUTABLE
-SET search_path = public, pg_temp
-AS $$
-  SELECT * FROM (VALUES
-    -- Deleted: the firm's own working data.
-    (10, 'public.firm_invitations', 'delete', 'firm_id', 'pending and past invitations to join'),
-    (20, 'public.firm_organisations', 'delete', 'firm_id', 'the listed Google domains and Microsoft tenants'),
-    (30, 'public.join_requests', 'delete', 'firm_id', 'requests to join'),
-    (40, 'public.table_preferences', 'delete', 'firm_id', 'each person''s column choices'),
-    (50, 'public.saved_views', 'delete', 'firm_id', 'saved views'),
-    (55, 'public.record_history', 'delete', 'firm_id', 'the history of each record: who created it and every change to its fields; it goes with the record'),
-    (60, 'public.referral_partners', 'delete', 'firm_id', 'referral partners'),
-    (56, 'public.renewals', 'delete', 'firm_id', 'renewals (the dates an account''s cover comes up); before the placements they come from and the opportunities working them'),
+-- firm_closing_plan() gets two more lines: the renewals, then the placements, before the opportunities, contacts and accounts they stand on. The function is
+-- read as it is when this runs and the lines are put in, so every line any earlier migration gave it stays (a restated copy would lose the ones a later story
+-- added), and running this twice adds nothing.
+DO $$
+DECLARE
+  def text := pg_get_functiondef('public.firm_closing_plan()'::regprocedure);
+  anchor text := '    (61, ''public.opportunities'',';
+  lines text := $l$    (56, 'public.renewals', 'delete', 'firm_id', 'renewals (the dates an account''s cover comes up); before the placements they come from and the opportunities working them'),
     (57, 'public.placements', 'delete', 'firm_id', 'placements (what the firm placed for its accounts); before the opportunities and accounts they stand on'),
-    (58, 'public.activities', 'delete', 'firm_id', 'calls, notes and tasks on the firm''s accounts and contacts; before the opportunities, contacts and accounts they stand on'),
-    (61, 'public.opportunities', 'delete', 'firm_id', 'opportunities (each is one search for one account); before the contacts and accounts they stand on'),
-    (62, 'public.contacts', 'delete', 'firm_id', 'contacts, the people at the firm''s accounts'),
-    (63, 'public.accounts', 'delete', 'firm_id', 'accounts, the businesses the firm quotes for; the intakes on their opportunities stay with their employers (below)'),
-    (70, 'public.firm_teams', 'delete', 'firm_id', 'teams (the memberships that named one are cleared first)'),
-    -- Kept, and why.
-    (900, 'public.firms', 'keep', NULL, 'the row stays: its address stays taken for twelve months and its record must still exist'),
-    (900, 'public.firm_memberships', 'keep', NULL, 'every membership is ended, not deleted: a membership is the dated record of who belonged (it is never changed)'),
-    (900, 'public.firm_member_suspensions', 'keep', NULL, 'each open one is ended; the rows are the dated record of who was suspended'),
-    (900, 'public.firm_activity', 'keep', NULL, 'the firm''s own record is pruned after ninety days by its own job (D-45)'),
-    (900, 'public.firm_suspensions', 'keep', NULL, 'the platform''s record of suspensions'),
-    (900, 'public.firm_closures', 'keep', NULL, 'the platform''s record of this: when it was asked, by whom, when it closed, and what was deleted, without content'),
-    (900, 'public.support_sessions', 'keep', NULL, 'the platform''s record of each time Nevermore looked at the firm: who, why, when it started and ended (a session ends when the firm closes)'),
-    (900, 'public.advisor_field_reviews', 'keep', NULL, 'an intake''s: it stays for its employer under the intake retention rules'),
-    (900, 'public.advisor_notes', 'keep', NULL, 'an intake''s'),
-    (900, 'public.advisor_review_events', 'keep', NULL, 'an intake''s'),
-    (900, 'public.ai_extraction_events', 'keep', NULL, 'an intake''s'),
-    (900, 'public.chamber_certifications', 'keep', NULL, 'an intake''s'),
-    (900, 'public.chamber_sessions', 'keep', NULL, 'the intakes: they belong to the employer who made them and are not the firm''s to delete'),
-    (900, 'public.document_events', 'keep', NULL, 'an intake''s'),
-    (900, 'public.documents', 'keep', NULL, 'an intake''s'),
-    (900, 'public.information_requests', 'keep', NULL, 'an intake''s'),
-    (900, 'public.intake_consents', 'keep', NULL, 'the employer''s own agreement'),
-    (900, 'public.intake_deletions', 'keep', NULL, 'the record that an intake was deleted, kept after it'),
-    (900, 'public.intake_lifecycle_events', 'keep', NULL, 'an intake''s'),
-    (900, 'public.manuscript_versions', 'keep', NULL, 'an intake''s'),
-    (900, 'public.profiles', 'keep', NULL, 'the employer''s own profile'),
-    (900, 'public.quote_request_addresses', 'keep', NULL, 'a quote request''s: quote requests belong to an intake'),
-    (900, 'public.quote_request_events', 'keep', NULL, 'a quote request''s'),
-    (900, 'public.quote_request_message_attachments', 'keep', NULL, 'a quote request''s'),
-    (900, 'public.quote_request_messages', 'keep', NULL, 'a quote request''s mail thread with a PEO'),
-    (900, 'public.quote_request_messages WHERE quote_request_id IS NULL', 'keep', NULL, 'held mail from a PEO: held for the platform once the firm has no members, and discarded by the holding list''s own schedule'),
-    (900, 'public.quote_request_notes', 'keep', NULL, 'a quote request''s'),
-    (900, 'public.quote_request_thread_reads', 'keep', NULL, 'a quote request''s'),
-    (900, 'public.quote_requests', 'keep', NULL, 'an intake''s'),
-    (900, 'public.submission_status_history', 'keep', NULL, 'an intake''s'),
-    (900, 'public.submission_workflow', 'keep', NULL, 'an intake''s'),
-    (900, 'storage.objects WHERE bucket_id = ''documents''', 'keep', NULL, 'an intake''s files'),
-    (900, 'storage.objects WHERE bucket_id = ''manuscripts''', 'keep', NULL, 'an intake''s files'),
-    (900, 'storage.objects WHERE bucket_id = ''peo-mail''', 'keep', NULL, 'an intake''s files')
-  ) AS t (ord, src, action, firm_column, why)
-$$;
+$l$;
+BEGIN
+  IF position('public.renewals' IN def) = 0 THEN
+    IF position(anchor IN def) = 0 THEN
+      RAISE EXCEPTION 'firm_closing_plan() has no line for the opportunities to put the renewals and placements before';
+    END IF;
+    EXECUTE replace(def, anchor, lines || anchor);
+  END IF;
+END $$;
