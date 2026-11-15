@@ -17,3 +17,5 @@ export { useSavedViewList, useSavedViewsControl, type SavedViewsControl } from "
 export { useFirmReady, useRefreshTable, useTableContextKey, useTableRows, useTableViewCounts, TABLE_REFRESH_MS } from "./useTableRows";
 export { ViewTabs } from "./ViewTabs";
 export { filterInWords, inForceInWords, isNarrowed } from "./words";
+export { SelectionBar } from "./SelectionBar";
+export { useRowSelection, type RowSelection } from "./useRowSelection";
