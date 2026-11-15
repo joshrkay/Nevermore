@@ -109,6 +109,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the Accounts page: the table", () => {
+  // Catches: a former client (D-451, D-455) drawn with no mark in the default columns, so it reads as a prospect unless the Status column is turned on.
+  it("marks a former client in the Account column, as it marks a client, and a prospect not at all", async () => {
+    listAccounts.mockResolvedValue({ rows: [row(), second, row({ id: "a3", name: "Osprey Labs", status: "former_client" })], total: 3 });
+    renderAt();
+    await screen.findByRole("link", { name: "Osprey Labs" });
+    const [prospect, client, former] = within(body()).getAllByRole("row");
+    expect(within(former).getByText("Former client")).toBeInTheDocument();
+    expect(within(client).getByText("Client")).toBeInTheDocument();
+    expect(within(prospect).queryByText(/client|prospect/i)).not.toBeInTheDocument();
+  });
+
   // Catches: a table that asks the wrong firm, drops the table's own order, or says how many in all wrongly.
   it("asks for the firm's first page, newest activity first, and says which rows these are", async () => {
     renderAt();
