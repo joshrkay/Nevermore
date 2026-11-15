@@ -47,6 +47,8 @@ const FIELD_LABELS: Record<AccountField, string> = {
   states_of_operation: "States of operation",
   archived: "Archived",
   waiting_on_peo: "Waiting on a PEO",
+  renewal_date: "Renewal date",
+  renewing_in_120_days: "Renewing in 120 days",
   owner: "Owner",
 };
 
