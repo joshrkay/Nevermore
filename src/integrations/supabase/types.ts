@@ -902,6 +902,15 @@ export type Database = {
         }
         Returns: Json
       }
+      // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
+      // (PT409 for an account that holds an intake); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
+      archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      change_account_owner: {
+        Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
+        Returns: Json
+      }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {

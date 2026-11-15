@@ -1333,7 +1333,15 @@ INSERT INTO callable VALUES
   ('submission_account(p_firm_id uuid, p_submission_id uuid)', 'own', NULL,
    'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
   ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
-   'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there');
+   'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('archive_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for archives an account by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('restore_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for restores an archived account by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('delete_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for deletes an account that holds no intake, with its contacts, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there; PT409 for an account that holds an intake (archive only)'),
+  ('change_account_owner(p_account_id uuid, p_owner_id uuid, p_change_open_opportunities boolean, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for gives an account to another current member, and when asked its open opportunities the caller may change, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there');
 -- CRM-S5.2 (20261118130000_record_history.sql): the history of a record.
 INSERT INTO callable VALUES
   ('record_history_list(p_firm_id uuid, p_table text, p_key text, p_limit integer, p_after_at timestamp with time zone, p_after_key uuid)', 'own', NULL,
@@ -1896,7 +1904,11 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('account_tab', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_tab({firm}, {acct}, 'contacts'))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('submission_account', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.submission_account({firm}, {sid})) WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('update_account', 'advisor', 'by_id',
-   $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$');
+   $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$'),
+  ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
+  ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
+  ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
+  ('change_account_owner', 'advisor', 'by_id', $$SELECT public.change_account_owner({acct}, auth.uid(), true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"opportunities_changed"');
 
 -- Retention review is of certifications past the retention window: both firms' certifications are aged, and restored below.
 DO $$
@@ -3606,6 +3618,11 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_tab', 'firm_scoped', 'the same for a page of one tab of an account: the rows of its contacts, opportunities, quotes, history or files that passed, for someone who may see the account, and nothing for anyone else (4e)'),
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
+  ('archive_account', 'firm_scoped', 'a current member of the firm the call acts for archives an account by the level rule; refused for another firm''s account as for one that is not there (4e)'),
+  ('restore_account', 'firm_scoped', 'the same for restoring an archived account (4e)'),
+  ('delete_account', 'firm_scoped', 'the same for deleting an account that holds no intake, with its contacts and its empty opportunities (4e)'),
+  ('change_account_owner', 'firm_scoped', 'the same for giving an account, and when asked its open opportunities the caller may change, to another current member (4e)'),
+  ('account_to_change', 'service_only', 'the one start of those four: the firm''s account, held, after the may-see and level-rule questions; no API role can call it'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');
 
 INSERT INTO fn_class (fn, class, why) VALUES

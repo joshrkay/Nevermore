@@ -1,7 +1,10 @@
 import { useCallback } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
+import { AccountActions } from "@/components/accounts/AccountActions";
+import { restoreWithWords } from "@/components/accounts/restoreWithWords";
+import { Button } from "@/components/ui/button";
 import { AccountHeader, AccountHeaderLoading } from "@/components/accounts/AccountHeader";
 import { AccountOverview } from "@/components/accounts/AccountOverview";
 import { AccountTabPanel } from "@/components/accounts/AccountTabPanel";
@@ -27,6 +30,7 @@ const AccountPage = () => {
   const tab: TabId = isTab(params.get("tab")) ? (params.get("tab") as TabId) : "overview";
   const contactId = tab === "contacts" ? params.get("contact") : null;
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const query = useAccountPageQuery(firmId, id);
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
@@ -57,6 +61,19 @@ const AccountPage = () => {
   if (!page) return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
 
   const { account, tabs } = page;
+  const actionAccount = {
+    id: account.id,
+    name: account.name,
+    archived: account.archivedAt !== null,
+    ownerId: account.owner?.id ?? null,
+    // The page holds only the first five opportunities: when it holds them all, the open ones are counted; otherwise it is not known.
+    openOpportunities: tabs.opportunities.count <= tabs.opportunities.rows.length ? tabs.opportunities.rows.filter((o) => o.stage !== "won" && o.stage !== "lost").length : null,
+  };
+  // What a change to the whole account does to the page: a deleted account is left for the list; anything else reloads it (its history gained an entry).
+  const done = (what: "archived" | "restored" | "deleted" | "owner") => {
+    if (what === "deleted") navigate("/accounts", { replace: true });
+    else void queryClient.invalidateQueries({ queryKey: accountKey(firmId, id) });
+  };
   const count: Record<TabId, number | null> = {
     overview: null, contacts: tabs.contacts.count, opportunities: tabs.opportunities.count, quotes: tabs.quotes.count, activity: tabs.activity.count, files: tabs.files.count,
   };
@@ -68,13 +85,15 @@ const AccountPage = () => {
         <span aria-current="page">{account.name}</span>
       </nav>
       {account.archivedAt !== null && (
-        // A Restore button comes with CRM-A1.1c; until then the account says it is archived and nothing can be added.
         <div role="note" className="mb-6 flex items-center gap-3 rounded-xl border border-border bg-muted/40 p-4 text-sm">
           <Archive className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <p><strong className="font-medium">This account is archived.</strong> Nothing can be added to it.</p>
+          <p className="flex-1"><strong className="font-medium">This account is archived.</strong> Nothing can be added to it.</p>
+          {page.canChange && firmId && (
+            <Button variant="outline" size="sm" onClick={() => void restoreWithWords(firmId, actionAccount).then((ok) => ok && done("restored"))}>Restore</Button>
+          )}
         </div>
       )}
-      <AccountHeader account={account} />
+      <AccountHeader account={account} actions={page.canChange && firmId ? <AccountActions firmId={firmId} account={actionAccount} onDone={done} label="More actions for this account" /> : undefined} />
       <Tabs value={tab} onValueChange={go}>
         <TabsList aria-label="The account" className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0">
           {TAB_IDS.map((t) => (

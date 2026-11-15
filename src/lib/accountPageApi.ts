@@ -183,7 +183,7 @@ export interface AccountConflict {
 export type AccountSaved = { conflict: false; account: AccountFields };
 
 /** Why a call did not give an answer. The message is in words, the database's own where it says what to do. */
-export type AccountFailure = "invalid" | "notAllowed" | "notFound" | "readOnly" | "failed";
+export type AccountFailure = "invalid" | "notAllowed" | "notFound" | "readOnly" | "holdsIntake" | "failed";
 
 export class AccountError extends Error {
   constructor(readonly kind: AccountFailure, message: string, readonly code?: string) {

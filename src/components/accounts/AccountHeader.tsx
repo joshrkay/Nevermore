@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { AccountDetails } from "@/lib/accountPageApi";
 import { employeesWords, initialsOf, locationOf, STATUS_LABELS } from "@/data/accountPage";
 import { Pill } from "./accountLists";
@@ -9,7 +10,7 @@ import { TAB_IDS, TAB_LABELS } from "./accountColumns";
  * Email and New opportunity are not shown (D-186), and Log a call and Add a task come with CRM-E1.5: `data-account-actions` is the place they go, empty
  * until then, so nothing here is a button that does nothing (D-24).
  */
-export function AccountHeader({ account }: { account: AccountDetails }) {
+export function AccountHeader({ account, actions }: { account: AccountDetails; actions?: ReactNode }) {
   const facts = [
     account.industry,
     locationOf(account),
@@ -30,6 +31,7 @@ export function AccountHeader({ account }: { account: AccountDetails }) {
           </div>
           <p className="mt-1 text-sm text-muted-foreground break-words">{facts.join(" · ")}</p>
         </div>
+        {actions && <div className="ml-auto shrink-0">{actions}</div>}
       </div>
       <div data-account-actions className="mt-4 flex flex-wrap gap-2 empty:hidden" />
     </header>

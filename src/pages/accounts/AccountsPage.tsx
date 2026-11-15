@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Building2, RefreshCw, SearchX } from "lucide-react";
 import { accountsTableWords } from "@/data/accountsPage";
 import { countAccountsViews, exportColumnsFor, fetchAccountsPage, useAccountsTable } from "@/components/accounts/accountsTable";
+import { AccountActions } from "@/components/accounts/AccountActions";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
@@ -14,7 +15,8 @@ import { browserTimeZone } from "@/lib/accountsApi";
 
 // The Accounts page (story CRM-A1.1a, screen 16): the businesses a firm quotes for, on the workspace's table frame as the submissions queue is
 // (src/pages/advisor/AdvisorDashboardPage.tsx). The address holds the page, sort, filters, view and search; the database cuts the pages (D-44) and decides
-// which accounts the person may see. A name opens the account's page. Archive, restore, delete and owner change are CRM-A1.1c, and selecting rows CRM-S3.6.
+// which accounts the person may see. A name opens the account's page. Each row has its own actions: change owner, archive or restore, delete (CRM-A1.1c);
+// selecting rows and doing them to many is CRM-S3.6 and CRM-S3.7.
 
 const AccountsPage = () => {
   const navigate = useNavigate();
@@ -116,6 +118,13 @@ const AccountsPage = () => {
           empty={empty}
           error={error}
           onOpenRow={(row) => navigate(`/accounts/${row.id}`)}
+          rowActions={firmId ? (row) => (
+            <AccountActions
+              firmId={firmId}
+              account={{ id: row.id, name: row.name, archived: row.archived, ownerId: row.owner, openOpportunities: row.open_opportunities }}
+              onDone={refresh}
+            />
+          ) : undefined}
         />
       </main>
     </div>

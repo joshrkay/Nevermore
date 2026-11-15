@@ -32,6 +32,8 @@ interface Props<K extends TableFields, Row, Context> {
   scrollRef?: Ref<HTMLDivElement>;
   /** A click anywhere on a row, outside its links and buttons, opens it. */
   onOpenRow?: (row: Row) => void;
+  /** What the last cell of a row holds, under a header that only a screen reader reads (a row's own actions, CRM-A1.1c). Not a column: nobody hides or sorts it. */
+  rowActions?: (row: Row) => ReactNode;
   /**
    * What a column header holds, in place of the default (its words, and the sort button when `onSort` is given). CRM-S3.3a puts nothing
    * here (its filters are a row of their own); CRM-S3.1a's columns menu is beside the table, not in it.
@@ -53,7 +55,7 @@ const PINNED_CELL = "bg-card group-hover:bg-[image:linear-gradient(hsl(var(--mut
 const EDGE = "shadow-[2px_0_4px_-2px_hsl(var(--foreground)/0.25)]";
 
 /** The table itself: a real table with a caption, column headers with scope, the first column as each row's header, scrolling inside its own box. */
-export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function DataTable<K extends TableFields, Row, Context>({ table, context, rows, columns = table.columns, placeholder, caption, sort, onSort, busy, scrollRef, onOpenRow, rowActions, renderHeader }: Props<K, Row, Context>) {
   // Whether the table has been scrolled sideways: only then does the pinned column need an edge.
   const [scrolled, setScrolled] = useState(false);
   const openRow = (e: MouseEvent, row: Row) => {
@@ -111,6 +113,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                 </th>
               );
             })}
+            {rowActions && <th scope="col" className="h-11 w-12 px-2"><span className="sr-only">Actions</span></th>}
           </tr>
         </thead>
         {placeholder ?? (
@@ -132,6 +135,8 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                   <td key={column.id} className={className}>{cell}</td>
                 );
               })}
+              {/* The menu and its dialogs are drawn in a portal, whose clicks still reach the row through React's tree: none of them opens the row. */}
+              {rowActions && <td onClick={(e) => e.stopPropagation()} className="px-2 py-2 align-top text-right">{rowActions(row)}</td>}
             </tr>
           ))}
         </tbody>

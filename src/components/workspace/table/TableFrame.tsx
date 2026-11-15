@@ -52,6 +52,8 @@ interface Props<K extends TableFields, Row, Context> {
   error: (error: Error, retry: () => void, address: TableAddress<K>) => ReactNode;
   /** A click anywhere on a row, outside its links, opens it. */
   onOpenRow?: (row: Row) => void;
+  /** The last cell of each row (its own actions); passed to the table. */
+  rowActions?: (row: Row) => ReactNode;
   /** What a column header holds, in place of the sort button (CRM-S3.2a: every column with a `sortField` gets one by itself). Default: the header's words and that button. */
   renderHeader?: ComponentProps<typeof DataTable<K, Row, Context>>["renderHeader"];
 }
@@ -69,7 +71,7 @@ const refusalHeading = (reason: string, plural: string): string =>
  * the address holds something the table can't judge yet, the loading slot shows and nothing is asked. When the database refuses the
  * query (a filter it doesn't take) the frame says why in the database's words and offers the way back, to the table's bare address (a refused sort or page is not undone by keeping it); it never offers "Try again".
  */
-export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, toolbar, views, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, toolbar, views, empty, error, onOpenRow, rowActions, renderHeader }: Props<K, Row, Context>) {
   const { address, hrefFor, bareHref, change, notice } = location;
   const { page } = data;
   const pageSize = page?.pageSize ?? TABLE_PAGE_SIZE;
@@ -165,6 +167,7 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             // tab or filter, D-144); a refresh of the same question changes nothing on screen.
             busy={placeholdering || (data.isPlaceholder && !isEmpty)}
             onOpenRow={onOpenRow}
+            rowActions={rowActions}
             renderHeader={renderHeader}
           />
           {!placeholdering && !isEmpty && <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />}

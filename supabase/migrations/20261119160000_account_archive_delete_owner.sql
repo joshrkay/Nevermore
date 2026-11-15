@@ -28,7 +28,8 @@
 -- too (src/lib/accountActionsApi.ts).
 
 -- ---------- 1. The shared start: the account, held and checked ----------
--- The firm's account, held for the change, after the three questions; returns it. p_lock is 'update' (a delete: conflicts with the key-share lock a new
+-- The firm's account (the firm already resolved by firm_to_act_for and cleared by assert_firm_writable, which each caller asks first), held for the change,
+-- after the last two questions (may the caller see it, may they change it); returns it. p_lock is 'update' (a delete: conflicts with the key-share lock a new
 -- opportunity takes) or 'no_key' (a change of the row's own fields). Internal.
 CREATE FUNCTION public.account_to_change(p_firm_id uuid, p_account_id uuid, p_lock text)
 RETURNS public.accounts
@@ -37,11 +38,9 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  firm uuid;
+  firm uuid := p_firm_id;
   cur public.accounts;
 BEGIN
-  firm := public.firm_to_act_for(p_firm_id);
-  PERFORM public.assert_firm_writable(firm);
   IF p_lock = 'update' THEN
     SELECT * INTO cur FROM public.accounts x WHERE x.id = p_account_id AND x.firm_id = firm FOR UPDATE;
   ELSE
@@ -71,10 +70,13 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  firm uuid;
   cur public.accounts;
   done public.accounts;
 BEGIN
-  cur := public.account_to_change(p_firm_id, p_account_id, 'no_key');
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  cur := public.account_to_change(firm, p_account_id, 'no_key');
   IF cur.archived_at IS NOT NULL THEN
     RETURN jsonb_build_object('changed', false, 'record', public.crm_account_fields(cur));
   END IF;
@@ -93,10 +95,13 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  firm uuid;
   cur public.accounts;
   done public.accounts;
 BEGIN
-  cur := public.account_to_change(p_firm_id, p_account_id, 'no_key');
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  cur := public.account_to_change(firm, p_account_id, 'no_key');
   IF cur.archived_at IS NULL THEN
     RETURN jsonb_build_object('changed', false, 'record', public.crm_account_fields(cur));
   END IF;
@@ -117,10 +122,13 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  firm uuid;
   cur public.accounts;
   holding integer;
 BEGIN
-  cur := public.account_to_change(p_firm_id, p_account_id, 'update');
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  cur := public.account_to_change(firm, p_account_id, 'update');
   -- Every opportunity of the account is held before the question is asked (see the header): none can gain an intake, and none can be added, until this ends.
   PERFORM 1 FROM public.opportunities o WHERE o.account_id = cur.id FOR UPDATE;
   SELECT count(*) INTO holding FROM public.opportunities o WHERE o.account_id = cur.id AND o.intake_id IS NOT NULL;
@@ -145,13 +153,16 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  firm uuid;
   cur public.accounts;
   done public.accounts;
   changed integer := 0;
   skipped integer := 0;
   o record;
 BEGIN
-  cur := public.account_to_change(p_firm_id, p_account_id, 'no_key');
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  cur := public.account_to_change(firm, p_account_id, 'no_key');
   IF p_owner_id IS NULL THEN
     RAISE EXCEPTION 'Choose who will own this account.' USING ERRCODE = '22023';
   END IF;

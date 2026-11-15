@@ -17,6 +17,9 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFiles: vi.fn(), updateAccount: vi.fn(), getSubmissionAccount: vi.fn() };
 vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), ...client }));
+const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn() };
+vi.mock("@/lib/accountActionsApi", () => actions);
+vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", () => advisor);
 
@@ -91,7 +94,7 @@ const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
-  for (const fn of [...Object.values(client), ...Object.values(advisor), signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getAccountPage.mockResolvedValue(page());
@@ -658,14 +661,50 @@ describe("AccountPage: the states", () => {
     expect(await screen.findByRole("heading", { name: "This account isn't available." })).toBeInTheDocument();
   });
 
-  // Catches: an archived account that looks like any other, or that offers a Restore that does nothing yet (CRM-A1.1c).
-  it("says an archived account is archived, with nothing to add and no Restore yet", async () => {
+  // Catches: an archived account that looks like any other, or a Restore that does not restore and reload the page (CRM-A1.1c).
+  it("says an archived account is archived, with nothing to add, and Restore brings it back", async () => {
+    const user = userEvent.setup();
     client.getAccountPage.mockResolvedValue(page({ account: { ...account, archivedAt: "2026-11-10T10:00:00+00:00" } }));
+    actions.restoreAccount.mockResolvedValue({ changed: true });
     renderPage();
     const note = await screen.findByRole("note");
     expect(note).toHaveTextContent("This account is archived. Nothing can be added to it.");
-    expect(screen.queryByRole("button", { name: /Restore/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Add/ })).toBeNull();
+    client.getAccountPage.mockResolvedValue(page());
+    await user.click(within(note).getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(actions.restoreAccount).toHaveBeenCalledWith("f1", "a1"));
+    await waitFor(() => expect(screen.queryByRole("note")).toBeNull());
+  });
+
+  // Catches: Restore (and the actions menu) offered to someone the database will refuse (D-209).
+  it("offers neither Restore nor the actions to someone who may not change the account", async () => {
+    client.getAccountPage.mockResolvedValue(page({ canChange: false, account: { ...account, archivedAt: "2026-11-10T10:00:00+00:00" } }));
+    renderPage();
+    await screen.findByRole("note");
+    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /More actions/ })).toBeNull();
+  });
+
+  // Catches: a deleted account's page left on screen, asking the database for an account that is gone.
+  it("leaves for the Accounts list when the account is deleted", async () => {
+    const user = userEvent.setup();
+    actions.deleteAccount.mockResolvedValue({ name: "Harborview Dental Group" });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "More actions for this account" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/accounts"));
+    expect(actions.deleteAccount).toHaveBeenCalledWith("f1", "a1");
+  });
+
+  // Catches: the account's open opportunities counted wrongly for the owner offer (one Lost, one open on the page: one is offered).
+  it("offers the owner change with the open opportunities it holds", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(page({}, { opportunities: tabOf([opportunity(1), opportunity(2, { stage: "lost" })], 2) }));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "More actions for this account" }));
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    expect(await screen.findByLabelText(/Also change the owner of its open opportunities \(1\)/)).toBeInTheDocument();
   });
 });
 

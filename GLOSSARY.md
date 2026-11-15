@@ -560,6 +560,18 @@ _Avoid_: permission, edit rights, ACL
 What the page of one account draws, read in one call: the account's own fields with its version, its worked-out status and source (with the referral partner's name when its first intake came by a partner's link), its owner by name, and for each tab its count and first five rows: Contacts, Opportunities (name, worked-out stage, target start, and the submission its name opens until the opportunity has a page of its own, D-187), Quotes (a quote request on an intake of its opportunities: PEO, status, sent, quote dates), Activity and Files. There is no Renewals tab (D-186). It answers only someone who may see the account, and answers the same nothing for an account that is not there. The save of the account's own fields (`update_account`) is edit in place, from a version, by the level rule; the owner, archiving and source are not among them.
 _Avoid_: account view, 360 view, detail page
 
+**Archived account** (code: `accounts.archived_at`; `archive_account`, `restore_account`; story CRM-A1.1c, D-204, D-222):
+An account put away without deleting it. It is in no view of the Accounts table but Archived; its fields can still be edited and it can be restored by anyone the level rule gives it, but nothing can be added to it (a contact, an opportunity, a call, a note or a task are refused while it is archived). Archiving changes nothing else: its opportunities, its status and its history are kept, and the change is one entry of its history. Archived and restored on the Accounts table's row and on the account's page; archiving an archived account, or restoring one that is not, changes nothing.
+_Avoid_: closed, inactive, hidden, soft-deleted
+
+**Deleting an account** (code: `delete_account`; story CRM-A1.1c, D-204):
+Removing an account with its contacts, its empty opportunities (those that hold no intake) and their history, and later its calls, notes and tasks. Allowed to whoever the level rule gives the account, and refused for an account that **holds an intake**: any of its opportunities holds one (and a quote request sits on an intake), so such an account can only be archived. This keeps every submission and every quote request on an opportunity (CRM-Q1.3) and leaves what an employer certified in place (PRD question 6 is counsel's). An email (Epic 6) will refuse a delete the same way.
+_Avoid_: erase, purge, remove (a member is removed, an account is deleted)
+
+**Change of owner** (code: `change_account_owner`; story CRM-A1.1c, D-209, D-214):
+Giving an account to another current member of the firm, by the level rule. It offers to give the account's **open** opportunities (not Won or Lost) the same owner: those the person may change by the level rule change, and they are told how many of a colleague's were left with their owners. The owner is never cleared, and a former member can't be chosen.
+_Avoid_: reassign, transfer, hand over
+
 **Account's tab** (code: `account_tab(firm, account, tab, limit, offset)`; story CRM-A2.1b):
 One list of an account's page opened in full: Contacts, Opportunities, Quotes, Activity or Files, from any place and a page at a time (fifty on the screen, "Show more" for the next). The Overview shows the first five rows of each and "See all" opens its tab; the rows come from the one function the page's first five come from, so the two are never different lists. A contact's name opens the Contacts tab with that contact in view until a contact has a page of its own (CRM-C1.1); an opportunity's and a quote's name open their submission's page until the opportunity has one (D-187). It answers only someone who may see the account.
 _Avoid_: sub-page, panel (a panel is one box of the Overview)
