@@ -8,6 +8,19 @@ import type { Json } from "@/integrations/supabase/types";
 /** The tables that keep a history. A table is added here when the migration that attaches its trigger adds it to the database's list. */
 export type RecordHistoryTable = "referral_partners" | "accounts" | "contacts" | "opportunities";
 
+/** Why a stage changed when the move was not a person's own choice of stage. */
+export type RecordHistoryCause = "quote_send" | "quote_recorded" | "quote_taken";
+
+const CAUSES: readonly string[] = ["quote_send", "quote_recorded", "quote_taken"];
+
+/** The cause in a person's words, naming the PEO when the database gave one ("the quote from Justworks was taken"); null for no cause. */
+export function historyCauseText(cause: RecordHistoryCause | null, peo: string | null): string | null {
+  if (cause === "quote_taken") return peo ? `the quote from ${peo} was taken` : "the quote was taken";
+  if (cause === "quote_recorded") return peo ? `the quote from ${peo} was recorded` : "the quote was recorded";
+  if (cause === "quote_send") return peo ? `the send to ${peo}` : "the send";
+  return null;
+}
+
 /**
  * One entry of a record's history: its creation, the change of one field, or (an opportunity's only) a change of its stage, read from its submission's
  * status history (D-413). A value that was not there is null.
@@ -27,8 +40,8 @@ export type RecordHistoryEntry = {
   /** The value as it was: a JSON string, number or boolean. A date is its ISO text. Null when there was no value. A stage is its code (qualifying, intake_under_way, ready_to_send, in_market, quoted, won, lost). */
   from: Json | null;
   to: Json | null;
-  /** What made a stage change when no person chose it (ADR 0026): a send or a quote recorded. Null for every other entry and for a person's own move. */
-  cause: "quote_send" | "quote_recorded" | null;
+  /** What made a stage change when no person chose it (ADR 0026): a send or a quote recorded; or the quote the employer took, on a win (D-473). Null for every other entry and for a person's own move. */
+  cause: RecordHistoryCause | null;
   /** The PEO of the quote request that caused it; null when there is no cause or that quote request is gone. */
   causePeo: string | null;
 };
@@ -73,7 +86,7 @@ export async function listRecordHistory(
     field: row.field,
     from: row.from_value,
     to: row.to_value,
-    cause: row.cause as RecordHistoryEntry["cause"],
+    cause: row.cause !== null && CAUSES.includes(row.cause) ? (row.cause as RecordHistoryCause) : null,
     causePeo: row.cause_peo,
   }));
   const last = entries[entries.length - 1];

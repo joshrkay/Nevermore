@@ -729,6 +729,7 @@ DECLARE
   acc2 uuid;
   main_contact uuid;
   placement uuid;
+  opp1 uuid;
 BEGIN
   FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
     fid := pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END);
@@ -738,13 +739,16 @@ BEGIN
     INSERT INTO public.contacts (firm_id, account_id, last_name, email, is_main) VALUES (fid, acc1, 'Fixture', 'c-' || f || '@example.test', true) RETURNING id INTO main_contact;
     INSERT INTO public.contacts (firm_id, account_id, last_name, phone) VALUES (fid, acc2, 'Fixture', '503-555-0100');
     INSERT INTO public.opportunities (firm_id, account_id, name, intake_id, main_contact_id)
-    VALUES (fid, acc1, 'Fixture search', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), main_contact);
+    VALUES (fid, acc1, 'Fixture search', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), main_contact) RETURNING id INTO opp1;
     INSERT INTO public.opportunities (firm_id, account_id, name) VALUES (fid, acc2, 'Fixture search');
     -- CRM-E1.5: a note on each account and a task on the owned one.
     INSERT INTO public.activities (firm_id, account_id, kind, body) VALUES (fid, acc1, 'note', 'Fixture note'), (fid, acc2, 'note', 'Fixture note');
     INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, assignee_id) VALUES (fid, acc1, 'task', 'Fixture task', current_date, agent);
     -- CRM-A2.4a: a placement and its renewal, and a plan's renewal to delete, on the owned account; a plan's renewal on the unowned one.
-    INSERT INTO public.placements (firm_id, account_id, peo_name) VALUES (fid, acc1, 'Fixture PEO') RETURNING id INTO placement;
+    -- CRM-O1.3a: commission is recorded on a placement won from an opportunity, so this one is the owned account's search's, on its intake's quote.
+    INSERT INTO public.placements (firm_id, account_id, peo_name, opportunity_id, quote_request_id)
+    VALUES (fid, acc1, 'Fixture PEO', opp1, (SELECT q.id FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END) ORDER BY q.id LIMIT 1))
+    RETURNING id INTO placement;
     INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (fid, acc1, 'peo_placement', 'Fixture PEO', current_date + 60, placement);
     -- CRM-O1.3a: the owned account's search belongs to the account's owner (so its owner may reopen it), and the placement has one payment of commission received.
     UPDATE public.opportunities SET owner_id = agent WHERE firm_id = fid AND account_id = acc1;
@@ -1467,11 +1471,13 @@ INSERT INTO callable VALUES
   ('opportunity_reopen(p_opportunity_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
    'the record owner of an opportunity or an owner of the firm reopens it, won or lost, from a version; refused as opportunity_mark_won is, and 42501 in words for one who may see it but is neither'),
   ('record_commission_payment(p_placement_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm records commission received against a placement, when the level rule gives them its opportunity (its account, for a placement made by hand); refused as opportunity_mark_won is'),
+   'a current member of the firm records commission received against a placement won from an opportunity, when the level rule gives them that opportunity (PT409 for a placement made by hand); refused as opportunity_mark_won is'),
   ('update_commission_payment(p_payment_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
    'the same for saving a payment from a version; refused as record_commission_payment is'),
   ('delete_commission_payment(p_payment_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
-   'the same for deleting a payment from a version; refused as record_commission_payment is');
+   'the same for deleting a payment from a version; refused as record_commission_payment is'),
+  ('set_placement_commission(p_placement_id uuid, p_firm_id uuid, p_version integer, p_basis text, p_rate numeric, p_expected_yearly numeric)', 'own', NULL,
+   'a current member of the firm adds, changes or clears the commission a placement expects, when the level rule gives them its opportunity, from a version; refused as record_commission_payment is, and conflict-shaped for a stale version');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2119,7 +2125,9 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('update_commission_payment', 'advisor', 'by_id',
    $$SELECT public.update_commission_payment({pay}, current_date, 5, NULL, {firm}, (SELECT version FROM public.commission_payments WHERE id = {pay}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
   ('delete_commission_payment', 'advisor', 'by_id',
-   $$SELECT public.delete_commission_payment({pay}, {firm}, (SELECT version FROM public.commission_payments WHERE id = {pay}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"deleted": true');
+   $$SELECT public.delete_commission_payment({pay}, {firm}, (SELECT version FROM public.commission_payments WHERE id = {pay}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"deleted": true'),
+  ('set_placement_commission', 'advisor', 'by_id',
+   $$SELECT public.set_placement_commission({plc}, {firm}, (SELECT version FROM public.placements WHERE id = {plc}), 'flat', 100, NULL)::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false');
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -3919,6 +3927,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_commission_payment', 'firm_scoped', 'a current member of the firm the call acts for records commission received against a placement of the firm, by the level rule; as not there for another firm''s (4e)'),
   ('update_commission_payment', 'firm_scoped', 'the same for saving a payment from a version (4e)'),
   ('delete_commission_payment', 'firm_scoped', 'the same for deleting a payment from a version (4e)'),
+  ('set_placement_commission', 'firm_scoped', 'a current member of the firm the call acts for adds, changes or clears the commission a placement of the firm expects, by the level rule, from a version; as not there for another firm''s (4e)'),
   ('contact_leave_error', 'service_only', 'the first two of move_contact''s three yeses, in words: the contact''s own level and the account it is on; asked by move_contact and contact_move_choices, no API role can call it'),
   ('bulk_accounts_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what a bulk change would do to the accounts of that firm they may see; another firm''s account is just not available (4e)'),
   ('bulk_accounts_change', 'firm_scoped', 'the same for doing it, to the accounts the level rule gives the caller, all or none; another firm''s account is just not available (4e)'),

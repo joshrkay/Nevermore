@@ -571,6 +571,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.won('acme_agent1', 'o_dd1', tn, NULL, NULL, 'Acme', NULL, 'per_employee', 4.005), '22023: Keep the commission to cents.', 'a fraction of a cent');
   PERFORM pg_temp.is(pg_temp.won('acme_agent1', 'o_dd1', tn, NULL, NULL, 'Acme', NULL, 'flat', 1000000000000), '22023: That commission is too large.', 'a number too large to keep');
   PERFORM pg_temp.is(pg_temp.won('acme_agent1', 'o_dd1', tn, NULL, NULL, 'Acme', NULL, 'flat', 1000, -1), '22023: The expected commission can''t be negative.', 'a negative yearly figure');
+  PERFORM pg_temp.is(pg_temp.won('acme_agent1', 'o_dd1', tn, NULL, NULL, 'Acme', NULL, 'flat', 1000, 5000.005), '22023: Keep the expected commission to cents.', 'a yearly figure with a fraction of a cent');
   PERFORM pg_temp.is(pg_temp.snapshot('dd1', 'd1'), snap, 'none of those did anything');
 
   -- the defaults: no proposed start on TriNet's quote, so the opportunity's target start; the renewal a year later; a share of 20 percent
@@ -762,6 +763,13 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.lost('acme_agent1', 'o_lo5', 'price'), '22023: This opportunity is won. Reopen it first.', 'a won one is not lost without reopening it');
   PERFORM pg_temp.move('lo5', 'archived');
   PERFORM pg_temp.is(pg_temp.lost('acme_agent1', 'o_lo5', 'price'), '22023: This opportunity''s submission is archived. Reopen it first.', 'nor an archived one');
+  -- archived from a stage other than won or lost has no outcome to reopen: win, lose and reopen all say to restore it from the archive
+  PERFORM pg_temp.account('l6', 'acme', 'acme_agent1');
+  PERFORM pg_temp.quoted('lo6', 'acme', 'l6', 'acme_agent1');
+  PERFORM pg_temp.move('lo6', 'archived');
+  PERFORM pg_temp.is(pg_temp.lost('acme_agent1', 'o_lo6', 'price'), '22023: This opportunity''s submission is archived. Restore it from the archive.', 'lost: archived from Quoted is restored, not reopened');
+  PERFORM pg_temp.is(pg_temp.won('acme_agent1', 'o_lo6', pg_temp.qid('lo6', 'Justworks'), NULL, NULL, 'Acme'), '22023: This opportunity''s submission is archived. Restore it from the archive.', 'won: the same words');
+  PERFORM pg_temp.is(pg_temp.pipeline('lo6'), 'archived', 'neither moved it');
 END $$;
 
 -- Break caught: Lost with no intake is not kept on the opportunity (nothing says it is lost: D-408), or kept without who and when, or with an intake as well,
@@ -1009,6 +1017,36 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.snapshot('rgp1', 'rg1'), snap, 'nothing changed');
 END $$;
 
+-- Break caught: "Didn't renew" is undone after the renewal's opportunity was won, which clears the old placement's end day and leaves two placements running (the old
+-- one can then never end). The undo is refused in words while the renewal's working opportunity is won; the win itself is not refused (didn't renew, then won
+-- elsewhere, is normal); once the win is reopened the undo works.
+DO $$
+DECLARE r text; old_p uuid; old_r uuid; rv integer;
+BEGIN
+  PERFORM pg_temp.account('rn4', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'rn4', 'peo_placement', 'Gusto', DATE '2027-05-01', DATE '2026-05-01');
+  old_p := (r::jsonb -> 'placement' ->> 'id')::uuid; old_r := (r::jsonb -> 'renewal' ->> 'id')::uuid;
+  PERFORM pg_temp.quoted('rw4', 'acme', 'rn4', 'acme_agent1');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('o_rw4') WHERE id = old_r;
+  rv := (SELECT version FROM public.renewals WHERE id = old_r);
+  r := pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.mark_renewal_not_renewed(%L, %L, %L, %L)::text', old_r, DATE '2027-02-01', pg_temp.fid('acme_agent1'), rv));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'marked Didn''t renew: ' || r);
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = old_p), DATE '2027-02-01', 'which ended the placement');
+  r := pg_temp.won('acme_agent1', 'o_rw4', pg_temp.qid('rw4', 'Justworks'), DATE '2027-05-01', NULL, 'Acme');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the opportunity is won anyway (didn''t renew, then won elsewhere): ' || r);
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = old_p), DATE '2027-02-01', 'the old placement keeps its end day');
+  rv := (SELECT version FROM public.renewals WHERE id = old_r);
+  r := pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.undo_renewal_not_renewed(%L, %L, %L)::text', old_r, pg_temp.fid('acme_agent1'), rv));
+  PERFORM pg_temp.is(r, 'PT409: This renewal was renewed by PEO search o_rw4. Reopen that win first.', 'the undo is refused in words while the opportunity is won');
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = old_p), DATE '2027-02-01', 'and the old placement stays ended');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE account_id = pg_temp.id('rn4') AND ended_on IS NULL), 1::bigint, 'one placement running');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.reopen('acme_agent1', 'o_rw4')), 'ok', 'the win is reopened');
+  rv := (SELECT version FROM public.renewals WHERE id = old_r);
+  r := pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.undo_renewal_not_renewed(%L, %L, %L)::text', old_r, pg_temp.fid('acme_agent1'), rv));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'then the undo works: ' || r);
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = old_p), NULL::date, 'and the placement runs again');
+END $$;
+
 -- ---------- one way to win, lose and reopen (D-470, D-471) ----------
 CREATE FUNCTION pg_temp.setst(who text, p_intake text, p_status text, p_quote bigint DEFAULT NULL) RETURNS text LANGUAGE sql AS $$
   SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT (public.set_submission_status(%L, %L, NULL, %L)).status', pg_temp.id(p_intake), p_status, p_quote))
@@ -1207,32 +1245,39 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'commission_payments' AND h.record_key = pg_temp.id('cpay2')::text), 0::bigint, 'and its history went with it');
 END $$;
 
--- Break caught: a payment can be recorded on a placement the firm made by hand by someone who may not change the account; or on an archived account; or by a
--- closing firm or Nevermore support (ADR 0023, ADR 0024).
+-- Break caught: a payment can be recorded on a placement the firm made by hand (D-467: commission is recorded on a placement won from an opportunity; a hand-made
+-- one has none), or the refusal is not in words, or comes before the questions of who may see and change the account; a hand-made placement that was refused its
+-- payment can then not be deleted with its renewal; a payment on an archived account; or by a closing firm or Nevermore support (ADR 0023, ADR 0024).
 DO $$
 DECLARE r text; sess uuid; n bigint; pl uuid; rid text;
 BEGIN
   PERFORM pg_temp.account('cp2', 'acme', 'acme_agent2');
   r := pg_temp.add_renewal('acme_agent2', 'cp2', 'peo_placement', 'Gusto', DATE '2027-05-01', DATE '2026-05-01');
   INSERT INTO fx VALUES ('pl_hand', (r::jsonb -> 'placement' ->> 'id')::uuid);
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_agent2', 'pl_hand', current_date, 50)), 'ok', 'money received on a placement made by hand is recorded by whoever may change its account');
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_agent1', 'pl_hand', current_date, 50)), 'PT404', 'and not by one who may not see it');
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_lead', 'pl_hand', current_date, 50)), 'ok', 'a lead of the owner''s team may');
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_owner', 'pl_hand', current_date, 50)), 'ok', 'an owner of the firm may');
+  PERFORM pg_temp.is(pg_temp.pay('acme_agent2', 'pl_hand', current_date, 50), 'PT409: Commission is recorded on a placement won from an opportunity', 'money received on a placement made by hand is refused in words, even for the account''s owner');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_agent1', 'pl_hand', current_date, 50)), 'PT404', 'one who may not see it still finds nothing');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_lead', 'pl_hand', current_date, 50)), 'PT409', 'a lead of the owner''s team is refused as well');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_owner', 'pl_hand', current_date, 50)), 'PT409', 'and an owner of the firm');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.commission_payments WHERE placement_id = pg_temp.id('pl_hand')), 0::bigint, 'none was recorded');
   PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('zenith_agent2', 'pl_zr', current_date, 50)), '42501', 'one who may only see the account may not');
   -- Zenith shows everyone everything: zenith_agent2 sees a placement made by hand on zenith_agent's account and may not record money on it
   r := pg_temp.add_renewal('zenith_agent', 'z1', 'peo_placement', 'Gusto', DATE '2027-05-01', DATE '2026-05-01');
   INSERT INTO fx VALUES ('pl_zhand', (r::jsonb -> 'placement' ->> 'id')::uuid);
   PERFORM pg_temp.is(pg_temp.pay('zenith_agent2', 'pl_zhand', current_date, 50), '42501: Only the account''s owner, a lead of the owner''s team or an owner of the firm can change it.', 'a placement made by hand: one who sees its account but may not change it is refused in words');
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('zenith_agent', 'pl_zhand', current_date, 50)), 'ok', 'its account''s owner records one');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('zenith_agent', 'pl_zhand', current_date, 50)), 'PT409', 'its account''s owner is refused: there is no opportunity');
   -- an account with no owner: an owner of the firm only
   r := pg_temp.add_renewal('acme_owner', 'a3', 'peo_placement', 'Gusto', DATE '2027-05-01', DATE '2026-05-01');
   INSERT INTO fx VALUES ('pl_nohand', (r::jsonb -> 'placement' ->> 'id')::uuid);
   PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_agent1', 'pl_nohand', current_date, 50)), 'PT404', 'an agent does not see an account with no owner');
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_owner', 'pl_nohand', current_date, 50)), 'ok', 'an owner of the firm records one on it');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.pay('acme_owner', 'pl_nohand', current_date, 50)), 'PT409', 'an owner of the firm is refused: there is no opportunity');
   UPDATE public.accounts SET archived_at = now() WHERE id = pg_temp.id('cp2');
   PERFORM pg_temp.is(pg_temp.pay('acme_agent2', 'pl_hand', current_date, 50), '55000: This account is archived. Nothing on it can be changed.', 'an archived account takes no payment');
   UPDATE public.accounts SET archived_at = NULL WHERE id = pg_temp.id('cp2');
+  -- the refused hand-made placement is deleted with its renewal as before
+  r := pg_temp.as_call('acme_agent2', 'acme-brokers', format('SELECT public.delete_renewal(%L, %L, %L)::text', (SELECT id FROM public.renewals WHERE placement_id = pg_temp.id('pl_hand')), pg_temp.fid('acme_agent2'),
+    (SELECT version FROM public.renewals WHERE placement_id = pg_temp.id('pl_hand'))));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a renewal added by hand is still deleted with its placement: ' || r);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pg_temp.id('pl_hand')), 0::bigint, 'the placement went with it');
   n := (SELECT count(*) FROM public.commission_payments);
   rid := pg_temp.id('cpay1')::text;
   INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('acme'), pg_temp.id('acme_owner'), now() + interval '30 days');
@@ -1270,6 +1315,83 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.code(pg_temp.reopen('acme_agent1', 'o_cpq3')), 'ok', 'with its payments deleted it is');
 END $$;
 
+-- ---------- adding or changing a placement's commission later (D-466) ----------
+CREATE FUNCTION pg_temp.setcom(who text, p_placement text, p_version integer, p_basis text, p_rate numeric, p_yearly numeric) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.set_placement_commission(p_placement_id => %L, p_firm_id => %L, p_version => %L, p_basis => %L, p_rate => %L, p_expected_yearly => %L)::text',
+    pg_temp.id(p_placement), pg_temp.fid(who), p_version, p_basis, p_rate, p_yearly))
+$$;
+CREATE FUNCTION pg_temp.plver(n text) RETURNS integer LANGUAGE sql STABLE AS $$ SELECT version FROM public.placements WHERE id = pg_temp.id(n) $$;
+-- Break caught: a win made with no commission can never get one (D-466: it can be added later), or a change is saved with no version, from one it never had or a
+-- stale one (a second person's change overwritten, a conflict that names nothing); the values are not held to the win's limits; it is open to anyone who sees
+-- the opportunity (whoever may change the opportunity it was won on only), or to a placement made by hand (no opportunity: PT409); an archived account takes one;
+-- a closing firm or Nevermore support makes one; the commission is not cleared by sending nothing; the change is not in the placement's history.
+DO $$
+DECLARE r text; j jsonb; v integer; sess uuid; acme uuid := pg_temp.id('acme');
+BEGIN
+  PERFORM pg_temp.account('sc1', 'acme', 'acme_agent1');
+  PERFORM pg_temp.quoted('scq1', 'acme', 'sc1', 'acme_agent1');
+  PERFORM pg_temp.won('acme_agent1', 'o_scq1', pg_temp.qid('scq1', 'Justworks'), NULL, NULL, 'Acme');
+  INSERT INTO fx SELECT 'pl_sc1', id FROM public.placements WHERE opportunity_id = pg_temp.id('o_scq1');
+  v := pg_temp.plver('pl_sc1');
+  PERFORM pg_temp.is(v, 1, 'a win with no commission: version 1');
+  -- who
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.setcom('acme_agent2', 'pl_sc1', v, 'flat', 9000, NULL)), 'PT404', 'someone who may not see it: not there');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.setcom('zenith_owner', 'pl_sc1', v, 'flat', 9000, NULL)), 'PT404', 'another firm''s owner: not there');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.setcom('acme_removed', 'pl_sc1', v, 'flat', 9000, NULL)), '42501', 'a former member');
+  PERFORM pg_temp.is(pg_temp.setcom('zenith_agent2', 'pl_zr', pg_temp.plver('pl_zr'), 'flat', 9000, NULL), '42501: Only the opportunity''s owner, a lead of the owner''s team or an owner of the firm can change it.', 'one who sees but may not change it is refused in words');
+  -- the fields and the version
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc1', v, NULL, 5, NULL), '22023: Choose how the commission is worked out.', 'a number with no basis');
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc1', v, 'share', 101, NULL), '22023: A share is a percent: 100 at most.', 'a share above 100');
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc1', v, 'flat', 9000, 100.005), '22023: Keep the expected commission to cents.', 'a yearly figure with a fraction of a cent');
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc1', NULL, 'flat', 9000, NULL), '22023: This save did not say which version of the placement it started from, so it was refused. Reload the page and try again.', 'no version');
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc1', 9, 'flat', 9000, NULL), '22023: This save names a version of the placement that does not exist, so it was refused. Reload the page and try again.', 'a version it never had');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.setcom('acme_agent1', 'a1', v, 'flat', 9000, NULL)), 'PT404', 'an id that is no placement');
+  PERFORM pg_temp.is((SELECT commission_basis FROM public.placements WHERE id = pg_temp.id('pl_sc1')), NULL::text, 'none of those saved');
+  -- set it
+  r := pg_temp.setcom('acme_agent1', 'pl_sc1', v, 'share', 20, 12000);
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the owner adds the commission later: ' || r);
+  j := r::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, false, 'no conflict');
+  PERFORM pg_temp.is((SELECT row (commission_basis, commission_rate, commission_expected_yearly, version)::text FROM public.placements WHERE id = pg_temp.id('pl_sc1')),
+    row ('share'::text, 20.00::numeric, 12000.00::numeric, 2)::text, 'kept as sent, a new version');
+  PERFORM pg_temp.is(j -> 'record' ->> 'commission_basis', 'share', 'the answer is the placement as the screens read it');
+  PERFORM pg_temp.is((j -> 'record' ->> 'version')::int, 2, 'at its new version');
+  -- stale
+  j := pg_temp.setcom('acme_agent1', 'pl_sc1', 1, 'flat', 5000, NULL)::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, true, 'from an old version: a conflict');
+  PERFORM pg_temp.is((j ->> 'currentVersion')::int, 2, 'naming the version it is at');
+  PERFORM pg_temp.is((j -> 'current' ->> 'commission_basis') || ':' || (j -> 'current' ->> 'commission_rate'), 'share:20.00', 'and what it holds now');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'field', ',' ORDER BY c ->> 'field') FROM jsonb_array_elements(j -> 'changed') c), 'commission_basis,commission_expected_yearly,commission_rate', 'and what the other save changed');
+  PERFORM pg_temp.is((SELECT commission_basis FROM public.placements WHERE id = pg_temp.id('pl_sc1')), 'share', 'nothing was saved');
+  -- change a part, then clear it all
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.setcom('acme_owner', 'pl_sc1', 2, 'flat', 9000, NULL)), 'ok', 'an owner of the firm changes the basis and drops the yearly figure');
+  PERFORM pg_temp.is((SELECT row (commission_basis, commission_rate, commission_expected_yearly)::text FROM public.placements WHERE id = pg_temp.id('pl_sc1')), row ('flat'::text, 9000.00::numeric, NULL::numeric)::text, 'as sent');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.setcom('acme_agent1', 'pl_sc1', 3, NULL, NULL, NULL)), 'ok', 'sending nothing clears the commission');
+  PERFORM pg_temp.is((SELECT row (commission_basis, commission_rate, commission_expected_yearly, version)::text FROM public.placements WHERE id = pg_temp.id('pl_sc1')), row (NULL::text, NULL::numeric, NULL::numeric, 4)::text, 'all three empty');
+  -- history
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history WHERE table_name = 'placements' AND record_key = pg_temp.id('pl_sc1')::text AND kind = 'changed' AND field = 'commission_rate'), 3::bigint, 'each change to the rate is in the placement''s history');
+  -- a placement made by hand has no opportunity
+  PERFORM pg_temp.account('sc2', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'sc2', 'peo_placement', 'Gusto', DATE '2027-05-01', DATE '2026-05-01');
+  INSERT INTO fx VALUES ('pl_sc2', (r::jsonb -> 'placement' ->> 'id')::uuid);
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc2', 1, 'flat', 9000, NULL), 'PT409: Commission is recorded on a placement won from an opportunity', 'a placement made by hand is refused in words');
+  -- archived, closing, support
+  UPDATE public.accounts SET archived_at = now() WHERE id = pg_temp.id('sc1');
+  PERFORM pg_temp.is(pg_temp.setcom('acme_agent1', 'pl_sc1', 4, 'flat', 9000, NULL), '55000: This account is archived. Nothing on it can be changed.', 'an archived account takes none');
+  UPDATE public.accounts SET archived_at = NULL WHERE id = pg_temp.id('sc1');
+  INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (acme, pg_temp.id('acme_owner'), now() + interval '30 days');
+  PERFORM pg_temp.is(left(pg_temp.setcom('acme_owner', 'pl_sc1', 4, 'flat', 9000, NULL), 6), 'PT423:', 'a closing firm sets nothing');
+  PERFORM pg_temp.is(left(pg_temp.setcom('acme_agent2', 'pl_sc1', 4, 'flat', 9000, NULL), 6), 'PT423:', 'and the guard comes before the rule that hides it');
+  DELETE FROM public.firm_closures WHERE firm_id = acme;
+  PERFORM pg_temp.as_user('platform_admin');
+  sess := (SELECT t.session_id FROM public.start_support_session(acme, 'Looking at a placement the firm asked about') t);
+  PERFORM pg_temp.is(left(pg_temp.setcom('platform_admin', 'pl_sc1', 4, 'flat', 9000, NULL), 6), 'PT423:', 'Nevermore support sets nothing');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.end_support_session(sess);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT version FROM public.placements WHERE id = pg_temp.id('pl_sc1')), 4, 'nothing changed');
+END $$;
+
 -- An account's status as the accounts table reads it for its owner (searched by the account's name).
 CREATE FUNCTION pg_temp.row_status(n text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE r text;
@@ -1297,6 +1419,12 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.is(got, 'stage:quoted>won:member stage:quoted>won:member stage:won>quoted:member', 'won, the reopening and the second win are in the opportunity''s history, by a member');
   PERFORM pg_temp.is((SELECT count(*) FROM public.submission_status_history WHERE session_id = pg_temp.id('hsq1') AND changed_by = pg_temp.id('acme_agent1') AND to_status IN ('won', 'quoted')), 3::bigint, 'each move names the person who made it');
+  -- D-473: the quote taken is in the history, by the cause the history list already carries (cause and the PEO's name, no id)
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is((SELECT string_agg(h.cause || ':' || h.cause_peo, ' ') FROM public.record_history_list(acme, 'opportunities', o::text) h WHERE h.kind = 'stage_changed' AND h.to_value #>> '{}' = 'won'),
+    'quote_taken:Justworks quote_taken:Justworks', 'each win in the opportunity''s history says the quote taken, and its PEO');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history_list(acme, 'opportunities', o::text) h WHERE h.kind = 'stage_changed' AND h.to_value #>> '{}' <> 'won' AND h.cause IS NOT NULL), 0::bigint, 'and the reopening, which no quote caused, says none');
+  RESET ROLE;
   -- the commission and the reason are tracked fields
   PERFORM pg_temp.is((SELECT version FROM public.placements WHERE opportunity_id = o), 1, 'a placement made by a win starts at version 1');
   pl := (SELECT id FROM public.placements WHERE opportunity_id = o);
@@ -1316,6 +1444,18 @@ BEGIN
     PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t, regexp_matches(pg_get_triggerdef(t.oid), '''' || got || '''') m WHERE t.tgrelid = 'public.placements'::regclass AND t.tgname = 'placements_version'), 1::bigint,
       'the placement''s version watches ' || got);
   END LOOP;
+END $$;
+
+-- Break caught: the migration's helper that adds tracked fields to a table's version trigger reads the fields already there with a pattern that does not match a
+-- name with a digit in it, so a table with such a field (say field_2) loses it, or the helper refuses the table, when another story's field is added.
+DO $$
+BEGIN
+  CREATE TABLE public.scratch_tracked (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), firm_id uuid, field_2 text, extra text);
+  PERFORM public.record_track('public.scratch_tracked', 'accounts', ARRAY['id'], ARRAY['field_2']);
+  PERFORM pg_temp.track_more('public.scratch_tracked', 'accounts', ARRAY['extra']);
+  PERFORM pg_temp.is((SELECT string_agg(r.m[1], ',' ORDER BY r.ord) FROM pg_trigger t CROSS JOIN LATERAL regexp_matches(pg_get_triggerdef(t.oid), '''([a-z0-9_]+)''', 'g') WITH ORDINALITY AS r (m, ord)
+                      WHERE t.tgrelid = 'public.scratch_tracked'::regclass AND t.tgname = 'scratch_tracked_version'), 'field_2,extra', 'a field with a digit in its name is kept, and the new one added');
+  DROP TABLE public.scratch_tracked;
 END $$;
 
 -- Break caught: a quote reopened by a send keeps the reason it was closed (a quote shown as "closed, went elsewhere" that is open again); a reason is kept on a quote
@@ -1385,8 +1525,8 @@ END $$;
 -- set_submission_status and advisor_update_quote_request hold them: pipeline row first), so recording a quote while someone marks the opportunity won
 -- deadlocks. Shown with two sessions. (1) While the second holds the account's row as an owner change or an archive does (FOR NO KEY UPDATE), each function
 -- waits on the account before it takes anything else: the second can still take the opportunity, the pipeline row, the quote requests, the placement, the renewals
--- and the payment within two seconds. (2) While the second holds the pipeline row as set_submission_status does, each waits on it before it takes the quote
--- requests: the second can still take them. And the old payment functions' account-first order is shown for a placement made by hand.
+-- and the payment within two seconds (a change to the commission takes the same locks as a payment). (2) While the second holds the pipeline row as set_submission_status does, each waits on it before it takes the quote
+-- requests: the second can still take them. 
 CREATE SCHEMA race;
 CREATE EXTENSION dblink SCHEMA race;
 -- The fixtures, committed first (a DO block is one transaction), so the two other sessions below can see them.
@@ -1426,6 +1566,8 @@ BEGIN
     ['reopen', format($q$SELECT public.opportunity_reopen(%L, %L, %s)::text$q$, pg_temp.id('o_lkr'), fid, pg_temp.ver('o_lkr')),
      format($p$PERFORM 1 FROM public.opportunities WHERE id = %L FOR NO KEY UPDATE; PERFORM 1 FROM public.submission_workflow WHERE session_id = %L FOR UPDATE; PERFORM 1 FROM public.quote_requests WHERE session_id = %L FOR UPDATE; PERFORM 1 FROM public.placements WHERE opportunity_id = %L FOR NO KEY UPDATE; PERFORM 1 FROM public.renewals WHERE account_id = %L FOR NO KEY UPDATE$p$, pg_temp.id('o_lkr'), pg_temp.id('lkr'), pg_temp.id('lkr'), pg_temp.id('o_lkr'), acct), pg_temp.id('lkr')::text],
     ['pay', format($q$SELECT public.record_commission_payment(%L, current_date, 5, NULL, %L)::text$q$, pg_temp.id('pl_lkp'), fid),
+     format($p$PERFORM 1 FROM public.opportunities WHERE id = %L FOR NO KEY UPDATE; PERFORM 1 FROM public.placements WHERE id = %L FOR NO KEY UPDATE$p$, pg_temp.id('o_lkp'), pg_temp.id('pl_lkp')), NULL],
+    ['setcom', format($q$SELECT public.set_placement_commission(%L, %L, 1, 'flat', 100, NULL)::text$q$, pg_temp.id('pl_lkp'), fid),
      format($p$PERFORM 1 FROM public.opportunities WHERE id = %L FOR NO KEY UPDATE; PERFORM 1 FROM public.placements WHERE id = %L FOR NO KEY UPDATE$p$, pg_temp.id('o_lkp'), pg_temp.id('pl_lkp')), NULL],
     ['payupd', format($q$SELECT public.update_commission_payment(%L, current_date, 6, NULL, %L, 1)::text$q$, pg_temp.id('lk_pay1'), fid),
      format($p$PERFORM 1 FROM public.opportunities WHERE id = %L FOR NO KEY UPDATE; PERFORM 1 FROM public.placements WHERE id = %L FOR NO KEY UPDATE; PERFORM 1 FROM public.commission_payments WHERE id = %L FOR NO KEY UPDATE$p$, pg_temp.id('o_lkp'), pg_temp.id('pl_lkp'), pg_temp.id('lk_pay1')), NULL],
@@ -1514,4 +1656,53 @@ BEGIN
   PERFORM pg_temp.is(got, '55000', 'and refuses once the archive has committed');
   PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE opportunity_id = pg_temp.id('o_lkw')), 0::bigint, 'leaving no placement on the archived account');
   RAISE NOTICE 'won_lost_commission: lock order passed';
+END $$;
+
+-- ---------- an opportunity that moved to another account while a write waited for the first one ----------
+-- Break caught: opportunity_to_change holds the account it read before the opportunity moved and asks the level rule and the archive check of it, though the
+-- opportunity now belongs to another account (CRM-O1.1a's update_opportunity re-checks and refuses 40001 "moved while you were working"). Shown with two sessions:
+-- the second moves the opportunity to another account and has not committed when the first, which read the old account, holds that account and waits for the
+-- opportunity; once the second commits the first refuses (40001) and writes nothing.
+DO $$
+BEGIN
+  PERFORM pg_temp.account('mva', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('mvb', 'acme', 'acme_agent1');
+  PERFORM pg_temp.quoted('mvq', 'acme', 'mva', 'acme_agent1');
+END $$;
+DO $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  a_pid integer; b_pid integer; tries integer := 0; got text; v integer := pg_temp.ver('o_mvq');
+  open_as text := format('SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; SET LOCAL request.headers = %L',
+    jsonb_build_object('sub', pg_temp.id('acme_agent1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_agent1@example.test')::text,
+    jsonb_build_object('x-firm-address', 'acme-brokers')::text);
+BEGIN
+  PERFORM race.dblink_connect('qa', dsn);
+  PERFORM race.dblink_connect('qb', dsn);
+  SELECT pid INTO a_pid FROM race.dblink('qa', 'SELECT pg_backend_pid()') AS t(pid integer);
+  SELECT pid INTO b_pid FROM race.dblink('qb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('qb', 'BEGIN');
+  PERFORM race.dblink_exec('qb', format('UPDATE public.opportunities SET account_id = %L WHERE id = %L', pg_temp.id('mvb'), pg_temp.id('o_mvq')));
+  PERFORM race.dblink_exec('qa', 'BEGIN');
+  PERFORM race.dblink_exec('qa', open_as);
+  PERFORM race.dblink_send_query('qa', format($q$SELECT public.opportunity_mark_lost(%L, 'price', NULL, %L, %s)::text$q$, pg_temp.id('o_mvq'), pg_temp.id('acme'), v));
+  WHILE tries < 100 AND NOT (b_pid = ANY (pg_blocking_pids(a_pid))) LOOP
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM pg_temp.is(b_pid = ANY (pg_blocking_pids(a_pid)), true, 'the write waits for the opportunity the second session has moved');
+  PERFORM race.dblink_exec('qb', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+    got := 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+  PERFORM race.dblink_exec('qa', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('qa');
+  PERFORM race.dblink_disconnect('qb');
+  PERFORM pg_temp.is(got, '40001', 'refused once the opportunity is on another account');
+  PERFORM pg_temp.is(pg_temp.pipeline('mvq'), 'quoted', 'and nothing was written');
 END $$;

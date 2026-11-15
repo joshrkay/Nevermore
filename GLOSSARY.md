@@ -585,7 +585,7 @@ A move of an opportunity's submission that changes the opportunity's stage, show
 _Avoid_: stage history, transition, activity
 
 **Move cause** (code: `submission_status_history.cause`, `cause_quote_request_id`; story CRM-O1.2, D-412, ADR 0026):
-Why a submission moved when no person chose the move: `quote_send` (a send recorded while it was Ready for market moved it to Sent to PEOs) or `quote_recorded` (a quote recorded while it was Sent to PEOs moved it to Quoted), with the quote request that caused it. Null for a person's own move. The move names the person who recorded the send or the quote as who made it, and an arriving email never makes one (PRD 7).
+Why a submission moved when no person chose the move: `quote_send` (a send recorded while it was Ready for market moved it to Sent to PEOs) or `quote_recorded` (a quote recorded while it was Sent to PEOs moved it to Quoted) or `quote_taken` (the quote the employer took, on a win), with the quote request that caused it. Null for a person's own move. The move names the person who recorded the send or the quote as who made it, and an arriving email never makes one (PRD 7).
 _Avoid_: reason (a Lost reason is something else), trigger, automation
 
 **Web domain** (code: `web_domain_of(website)`, `accounts.web_domain`; story CRM-Q1.1a, D-193):

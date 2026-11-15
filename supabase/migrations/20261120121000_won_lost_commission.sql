@@ -13,7 +13,10 @@
 --     ended"; with none the opportunity keeps Lost itself (lost_at, lost_by). Either way the reason and note are kept on the opportunity.
 --   * opportunity_reopen (ADR 0027): won goes back to Quoted (the quote no longer chosen, the placement and its renewal deleted); lost goes back to the stage
 --     it was lost from (or Qualifying with no intake). Refused while the win's renewal is worked by an opportunity or its placement has payments.
---   * commission_payments (Q-4.1, D-467): what the firm received, recorded, edited and deleted through functions, with a history and a version.
+--   * commission_payments (Q-4.1, D-467): what the firm received, recorded, edited and deleted through functions, with a history and a version; only against a
+--     placement won from an opportunity. set_placement_commission adds, changes or clears a placement's expected commission later (D-466).
+--   * The win is in the opportunity's history with the quote taken (cause quote_taken, D-473); undoing "Didn't renew" is refused while the renewal's opportunity
+--     is won (the review fixes at the end of this file).
 --   * set_submission_status refuses Won and Lost for a submission on an opportunity, and the restore of a submission archived straight from Won or Lost (D-470, D-471).
 --
 -- Every function asks, in this order: the firm (42501), the guard that refuses a closing firm and Nevermore support (PT423), the fields (22023), the version
@@ -50,6 +53,13 @@ REVOKE ALL ON FUNCTION public.quote_request_clear_close_reason() FROM PUBLIC, an
 CREATE TRIGGER quote_requests_clear_close_reason BEFORE INSERT OR UPDATE OF status ON public.quote_requests
   FOR EACH ROW EXECUTE FUNCTION public.quote_request_clear_close_reason();
 
+-- The quote taken in the opportunity's history (D-473): a win is a move with a cause, as a send or a recorded quote is (ADR 0026, 20261120090000). The cause
+-- check gains a third word, additively: every row there keeps its value. record_history_list is unchanged and returns it, with the PEO's name.
+ALTER TABLE public.submission_status_history DROP CONSTRAINT submission_status_history_cause_check;
+ALTER TABLE public.submission_status_history ADD CONSTRAINT submission_status_history_cause_check CHECK (cause IN ('quote_send', 'quote_recorded', 'quote_taken'));
+
+COMMENT ON COLUMN public.submission_status_history.cause IS 'Why the submission moved when no person chose the move: quote_send (a send recorded at Ready for market), quote_recorded (a quote recorded at Sent to PEOs), ADR 0026, or quote_taken (the quote the employer took, on a win, D-473). Null for a person''s own move.';
+
 -- The commission a placement expects (Q-4.1, D-466): the basis (a share of the admin fee, per employee per month, or flat a year), its number (the percent as a
 -- person types it, 20 for 20%, above 0 and at most 100; or dollars, above 0) and the figure expected a year. All optional together: no basis, no number; a yearly
 -- figure needs its basis. One column holds the number for every basis, wide enough for dollars; the share's limit is the check.
@@ -85,6 +95,7 @@ AS $$
     WHEN p_rate > 999999999999.99 THEN 'That commission is too large.'
     WHEN p_yearly < 0 THEN 'The expected commission can''t be negative.'
     WHEN p_yearly > 999999999999.99 THEN 'That expected commission is too large.'
+    WHEN p_yearly <> round(p_yearly, 2) THEN 'Keep the expected commission to cents.'
   END
 $$;
 
@@ -133,6 +144,11 @@ BEGIN
   SELECT * INTO cur FROM public.opportunities x WHERE x.id = p_opportunity_id AND x.firm_id = p_firm_id FOR NO KEY UPDATE;
   IF cur.id IS NULL THEN
     RAISE EXCEPTION 'That opportunity isn''t available' USING ERRCODE = 'PT404';
+  END IF;
+  -- The account held is the one the opportunity was on before the wait; if it moved meanwhile, the level rule and the archive check below would be asked of the
+  -- wrong account (CRM-O1.1a's update_opportunity refuses the same way).
+  IF cur.account_id <> a.id THEN
+    RAISE EXCEPTION 'That opportunity was moved while you were working. Try again.' USING ERRCODE = '40001';
   END IF;
   IF p_rule = 'reopen' THEN
     IF NOT ((cur.owner_id IS NOT NULL AND cur.owner_id = auth.uid()) OR public.firm_role(cur.firm_id) = 'owner') THEN
@@ -218,6 +234,10 @@ BEGIN
   SELECT w.status INTO pipeline FROM public.submission_workflow w WHERE w.session_id = cur.intake_id FOR UPDATE;
   IF pipeline IS DISTINCT FROM 'quoted' THEN
     RAISE EXCEPTION '%', CASE
+      -- Archived from a stage other than Won or Lost has no outcome to reopen: it is restored from the archive (as opportunity_reopen says).
+      WHEN pipeline = 'archived' AND NOT COALESCE((SELECT x.from_status IN ('won', 'lost') FROM public.submission_status_history x
+                                                  WHERE x.session_id = cur.intake_id AND x.to_status = 'archived' AND x.from_status IS DISTINCT FROM 'archived'
+                                                  ORDER BY x.id DESC LIMIT 1), false) THEN 'This opportunity''s submission is archived. Restore it from the archive.'
       WHEN public.opportunity_stage(cur.id) = 'won' THEN 'This opportunity is already won.'
       WHEN public.opportunity_stage(cur.id) = 'lost' THEN 'This opportunity is lost. Reopen it first.'
       ELSE 'Only a quoted opportunity can be won. It is ' || replace(public.opportunity_stage(cur.id), '_', ' ') END USING ERRCODE = '22023';
@@ -249,8 +269,8 @@ BEGIN
   END IF;
 
   UPDATE public.submission_workflow SET status = 'won', won_quote_request_id = q.id, updated_at = now(), updated_by = auth.uid() WHERE session_id = cur.intake_id;
-  INSERT INTO public.submission_status_history (session_id, from_status, to_status, note, changed_by, changed_by_email)
-  VALUES (cur.intake_id, 'quoted', 'won', 'Won: ' || q.peo_name, auth.uid(), auth.jwt() ->> 'email');
+  INSERT INTO public.submission_status_history (session_id, from_status, to_status, note, changed_by, changed_by_email, cause, cause_quote_request_id)
+  VALUES (cur.intake_id, 'quoted', 'won', 'Won: ' || q.peo_name, auth.uid(), auth.jwt() ->> 'email', 'quote_taken', q.id);
   WITH c AS (
     UPDATE public.quote_requests x SET status = 'closed', close_reason = 'went_elsewhere'
     WHERE x.session_id = cur.intake_id AND x.status IN ('sent', 'quoted') AND x.id <> q.id RETURNING x.id)
@@ -296,7 +316,7 @@ DECLARE
   f text;
 BEGIN
   SELECT array_agg(r.m[1] ORDER BY r.ord) INTO fields
-  FROM pg_trigger t CROSS JOIN LATERAL regexp_matches(pg_get_triggerdef(t.oid), '''([a-z_]+)''', 'g') WITH ORDINALITY AS r (m, ord)
+  FROM pg_trigger t CROSS JOIN LATERAL regexp_matches(pg_get_triggerdef(t.oid), '''([a-z0-9_]+)''', 'g') WITH ORDINALITY AS r (m, ord)
   WHERE t.tgrelid = p_table AND t.tgname = (SELECT c.relname FROM pg_class c WHERE c.oid = p_table) || '_version';
   IF fields IS NULL THEN
     RAISE EXCEPTION '% has no version trigger to read its tracked fields from', p_table;
@@ -366,7 +386,11 @@ BEGIN
     ELSIF pipeline = 'won' THEN
       RAISE EXCEPTION 'This opportunity is won. Reopen it first.' USING ERRCODE = '22023';
     ELSIF pipeline = 'archived' THEN
-      RAISE EXCEPTION 'This opportunity''s submission is archived. Reopen it first.' USING ERRCODE = '22023';
+      -- Archived straight from Won or Lost is still that outcome, reopened; from any other stage it is restored from the archive (as opportunity_reopen says).
+      RAISE EXCEPTION '%', CASE WHEN (SELECT x.from_status FROM public.submission_status_history x
+                                      WHERE x.session_id = cur.intake_id AND x.to_status = 'archived' AND x.from_status IS DISTINCT FROM 'archived' ORDER BY x.id DESC LIMIT 1)
+                                     IN ('won', 'lost') THEN 'This opportunity''s submission is archived. Reopen it first.'
+                                ELSE 'This opportunity''s submission is archived. Restore it from the archive.' END USING ERRCODE = '22023';
     ELSIF NOT 'lost' = ANY (public.pipeline_next_statuses(pipeline)) THEN
       RAISE EXCEPTION 'A submission can''t move from % to lost.', replace(pipeline, '_', ' ') USING ERRCODE = '22023';
     END IF;
@@ -621,7 +645,7 @@ DECLARE
   names text[];
 BEGIN
   SELECT COALESCE(array_agg(m[1] ORDER BY m[1]), '{}') INTO names
-  FROM pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z_]+)''', 'g') AS m
+  FROM pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z0-9_]+)''', 'g') AS m
   WHERE c.contypid = 'public.record_history_table'::regtype AND c.conname = 'record_history_table_known';
   IF NOT 'commission_payments' = ANY (names) THEN names := array_append(names, 'commission_payments'); END IF;
   ALTER DOMAIN public.record_history_table DROP CONSTRAINT record_history_table_known;
@@ -681,8 +705,9 @@ $$;
 
 REVOKE ALL ON FUNCTION public.commission_payment_input_error(date, numeric, text) FROM PUBLIC, anon, authenticated, service_role;
 
--- The firm's placement, held for a change to its money, after the questions every write asks (D-467: whoever may change the opportunity it was won on; for a
--- placement the firm made by hand, which has none, whoever may change its account). Returns it. Internal: the callers have asked the firm and the guard.
+-- The firm's placement, held for a change to its money, after the questions every write asks (D-467: whoever may change the opportunity it was won on). A
+-- placement the firm made by hand has no opportunity and so no commission to record: once the caller may see and change its account, and it is not archived, it
+-- is refused (PT409, in words). Returns it. Internal: the callers have asked the firm and the guard.
 -- Lock order: the account, then the opportunity (opportunity_to_change), then the placement.
 CREATE FUNCTION public.placement_to_change(p_firm_id uuid, p_placement_id uuid)
 RETURNS public.placements
@@ -714,6 +739,7 @@ BEGIN
     IF a.archived_at IS NOT NULL THEN
       RAISE EXCEPTION 'This account is archived. Nothing on it can be changed.' USING ERRCODE = '55000';
     END IF;
+    RAISE EXCEPTION 'Commission is recorded on a placement won from an opportunity' USING ERRCODE = 'PT409';
   END IF;
   SELECT * INTO cur FROM public.placements x WHERE x.id = p_placement_id AND x.firm_id = p_firm_id FOR NO KEY UPDATE;
   IF cur.id IS NULL THEN
@@ -737,9 +763,10 @@ $$;
 
 REVOKE ALL ON FUNCTION public.crm_commission_payment_row(public.commission_payments) FROM PUBLIC, anon, authenticated, service_role;
 
--- Records a payment against a placement: the day it was received, an amount above zero (to the cent), a note (at most 500). Answers {payment, received_to_date,
+-- Records a payment against a placement won from an opportunity (a placement made by hand is refused, PT409): the day it was received, an amount above zero (to the cent), a note (at most 500). Answers {payment, received_to_date,
 -- expected_yearly}. Refused, in this order: not a member of the firm (42501), a closing firm or Nevermore support (PT423), what is wrong with the fields
--- (22023, in words), a placement the caller may not see or that is not there (PT404), one the level rule does not give them (42501), an archived account (55000).
+-- (22023, in words), a placement the caller may not see or that is not there (PT404), one the level rule does not give them (42501), an archived account (55000), a
+-- placement with no opportunity (PT409).
 CREATE FUNCTION public.record_commission_payment(
   p_placement_id uuid, p_received_on date, p_amount numeric, p_note text DEFAULT NULL, p_firm_id uuid DEFAULT NULL)
 RETURNS jsonb
@@ -872,3 +899,102 @@ $$;
 
 REVOKE ALL ON FUNCTION public.delete_commission_payment(uuid, uuid, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_commission_payment(uuid, uuid, integer) TO authenticated;
+
+-- ---------- 10. Review fixes ----------
+-- Undoing "Didn't renew" after the renewal's opportunity was won (renewal_set_not_renewed, restated from 20261120110000_placements_renewals.sql, its only
+-- definition, with every rule it had and one more): refused (PT409, in words) while the opportunity working the renewal is won, so the undo can't clear the
+-- end day of the placement the win replaced and leave two placements running. Marking, and the win, are unchanged. Same grants as before (internal).
+CREATE OR REPLACE FUNCTION public.renewal_set_not_renewed(p_firm_id uuid, p_renewal_id uuid, p_mark boolean, p_on date, p_version integer, p_time_zone text DEFAULT 'UTC')
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  cur public.renewals;
+  changed public.renewals;
+  started date;
+BEGIN
+  IF p_mark AND p_on IS NULL THEN
+    RAISE EXCEPTION 'Give the day it didn''t renew.' USING ERRCODE = '22023';
+  END IF;
+  IF p_version IS NULL OR p_version < 1 THEN
+    RAISE EXCEPTION 'This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  cur := public.renewal_to_change(p_firm_id, p_renewal_id);
+  IF p_mark AND cur.opportunity_id IS NOT NULL AND public.opportunity_stage(cur.opportunity_id) = 'won' THEN
+    RAISE EXCEPTION 'This renewal was renewed, so it can''t be marked as not renewed.' USING ERRCODE = 'PT409';
+  END IF;
+  -- The undo of a win-renewed renewal would clear the end day of a placement the win's new placement replaced and leave two running (CRM-O1.3a review): refused
+  -- while the opportunity working the renewal is won. The win itself is not refused: didn't renew, then won elsewhere, is a normal case.
+  IF NOT p_mark AND cur.opportunity_id IS NOT NULL AND public.opportunity_stage(cur.opportunity_id) = 'won' THEN
+    RAISE EXCEPTION 'This renewal was renewed by %. Reopen that win first.',
+      COALESCE((SELECT o.name FROM public.opportunities o WHERE o.id = cur.opportunity_id), 'an opportunity') USING ERRCODE = 'PT409';
+  END IF;
+  IF cur.placement_id IS NOT NULL THEN
+    SELECT p.start_date INTO started FROM public.placements p WHERE p.id = cur.placement_id FOR NO KEY UPDATE;
+    IF p_mark AND started IS NOT NULL AND p_on < started THEN
+      RAISE EXCEPTION 'The placement started on %, so it can''t end before.', to_char(started, 'YYYY-MM-DD') USING ERRCODE = '22023';
+    END IF;
+  END IF;
+  UPDATE public.renewals SET not_renewed_on = CASE WHEN p_mark THEN p_on END WHERE id = cur.id AND version = p_version RETURNING * INTO changed;
+  IF changed.id IS NOT NULL THEN
+    UPDATE public.placements SET ended_on = CASE WHEN p_mark THEN p_on END WHERE id = changed.placement_id;
+    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, (now() AT TIME ZONE public.workspace_time_zone(p_time_zone))::date));
+  END IF;
+  IF p_version > cur.version THEN
+    RAISE EXCEPTION 'This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  RETURN jsonb_build_object(
+    'conflict', true,
+    'currentVersion', cur.version,
+    'current', jsonb_build_object('not_renewed_on', cur.not_renewed_on),
+    'changed', public.record_version_changes(cur.firm_id, 'renewals', cur.id::text, p_version, cur.version));
+END;
+$$;
+
+-- Adds, changes or clears the commission a placement expects, later than the win (D-466): the basis, its number and the yearly figure expected, from the version the
+-- person started from (D-46); all three sent as they should stand, so sending none clears them. Whoever may change the opportunity the placement was won on may (D-467).
+-- Answers {conflict: false, record: <the placement as crm_placement_row reads it>} or, when someone saved first and nothing was saved, {conflict: true,
+-- currentVersion, current: {commission_basis, commission_rate, commission_expected_yearly}, changed}. Refused, in this order, as the payment functions are: not a
+-- member of the firm (42501), a closing firm or Nevermore support (PT423), what is wrong with the values (22023, in words, as the win words them), no version (22023),
+-- a placement the caller may not see or that is not there (PT404), one the level rule does not give them (42501), an archived account (55000), one with no
+-- opportunity (PT409), a version it never had (22023). The same lock order: the account, then the opportunity, then the placement.
+CREATE FUNCTION public.set_placement_commission(
+  p_placement_id uuid, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL, p_basis text DEFAULT NULL, p_rate numeric DEFAULT NULL, p_expected_yearly numeric DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+  problem text;
+  cur public.placements;
+  changed public.placements;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  problem := public.commission_input_error(p_basis, p_rate, p_expected_yearly);
+  IF problem IS NOT NULL THEN
+    RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
+  END IF;
+  IF p_version IS NULL OR p_version < 1 THEN
+    RAISE EXCEPTION 'This save did not say which version of the placement it started from, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  cur := public.placement_to_change(firm, p_placement_id);
+  UPDATE public.placements SET commission_basis = p_basis, commission_rate = p_rate, commission_expected_yearly = p_expected_yearly
+  WHERE id = cur.id AND version = p_version RETURNING * INTO changed;
+  IF changed.id IS NOT NULL THEN
+    RETURN jsonb_build_object('conflict', false, 'record', public.crm_placement_row(changed));
+  END IF;
+  IF p_version > cur.version THEN
+    RAISE EXCEPTION 'This save names a version of the placement that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  RETURN jsonb_build_object('conflict', true, 'currentVersion', cur.version,
+    'current', jsonb_build_object('commission_basis', cur.commission_basis, 'commission_rate', cur.commission_rate, 'commission_expected_yearly', cur.commission_expected_yearly),
+    'changed', public.record_version_changes(cur.firm_id, 'placements', cur.id::text, p_version, cur.version));
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.set_placement_commission(uuid, uuid, integer, text, numeric, numeric) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.set_placement_commission(uuid, uuid, integer, text, numeric, numeric) TO authenticated;
