@@ -871,9 +871,57 @@ export type Database = {
         Args: { p_firm_id: string; p_account_id: string; p_limit?: number; p_offset?: number }
         Returns: Json
       }
-      // A page of one tab of an account's page (contacts, opportunities, quotes, activity or files): {count, rows}; null for anyone who may not see the account.
+      // A page of one tab of an account's page (contacts, opportunities, quotes, activity (or activity_calls, activity_notes, activity_tasks, activity_changes) or files): {count, rows}; null for anyone who may not see the account.
       account_tab: {
         Args: { p_firm_id: string; p_account_id: string; p_tab: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
+      // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
+      log_activity: {
+        Args: {
+          p_kind: string
+          p_account_id: string
+          p_contact_id?: string | null
+          p_opportunity_id?: string | null
+          p_at?: string | null
+          p_outcome?: string | null
+          p_body?: string | null
+          p_title?: string | null
+          p_due_on?: string | null
+          p_for?: string | null
+          p_follow_up_title?: string | null
+          p_follow_up_due_on?: string | null
+          p_follow_up_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      update_activity: {
+        Args: {
+          p_activity_id: string
+          p_contact_id?: string | null
+          p_opportunity_id?: string | null
+          p_at?: string | null
+          p_outcome?: string | null
+          p_body?: string | null
+          p_title?: string | null
+          p_due_on?: string | null
+          p_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      add_to_note: {
+        Args: { p_activity_id: string; p_text: string; p_firm_id?: string | null }
+        Returns: Json
+      }
+      set_task_done: {
+        Args: { p_activity_id: string; p_done: boolean; p_firm_id?: string | null }
+        Returns: Json
+      }
+      account_activity_options: {
+        Args: { p_firm_id: string; p_account_id: string }
         Returns: Json
       }
       // The id and name of the account that holds a submission, for someone who may see that account; null for anyone else.

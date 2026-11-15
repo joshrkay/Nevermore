@@ -615,8 +615,15 @@ _Avoid_: tag, category
 What an agent logs on an account or a contact (later on a lead or an opportunity). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
+**Follow-up task**:
+The task a call can add as it is logged, saved in the same step as the call and on the same account, contact and opportunity. Both are saved or neither is. For the person logging it unless another member is chosen.
+
+**Addition** (to a note):
+Text appended to a note with "Add to note", dated and signed by whoever added it. Anyone who may see the note can add, at any time. A note's own text stays as written once it is fixed, and additions are only ever added at the end, never changed or taken away.
+_Avoid_: edit (of a fixed note)
+
 **Last activity**:
-When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity. Until CRM-E1.5 it is the newest of the account's creation and a status change of a quote request on one of its opportunities' intakes (code: `account_activity_times(firm, account)`, the one function that gains a branch for calls, notes and tasks, and later for email).
+When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity. A call counts at when it took place, a note or a task when it was made, a task again when it is done and a note at each addition. Opening a task again, or changing a call, a task or a note's text, is not activity (code: `account_activity_times(firm, account)`, the one function that gains a branch for email in Epic 6).
 _Avoid_: last modified, updated
 
 ### Advisors
