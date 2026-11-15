@@ -1035,6 +1035,24 @@ BEGIN
   UPDATE public.accounts SET owner_id = pg_temp.id('rj_new_owner') WHERE id = pg_temp.id('ri1r');
 END $$;
 
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('rkacct', 'acme', 'acme_agent1', 'Contacts lock race');
+  FOR i IN 1..4 LOOP
+    PERFORM pg_temp.contact('rk' || i, 'rkacct', 'acme_agent1', 'rk' || i || '@e.example');
+    PERFORM pg_temp.activity('rka' || i, 'call', 'rkacct', 'rk' || i);
+  END LOOP;
+  FOR i IN 1..4 LOOP
+    PERFORM pg_temp.account('rl' || i, 'acme', 'acme_agent1', 'Delete race ' || i);
+  END LOOP;
+  -- The lower id of each pair is marked a possible duplicate of the higher.
+  UPDATE public.accounts SET possible_duplicate_of = (SELECT id FROM public.accounts WHERE id IN (pg_temp.id('rl1'), pg_temp.id('rl2')) ORDER BY id DESC LIMIT 1)
+    WHERE id = (SELECT id FROM public.accounts WHERE id IN (pg_temp.id('rl1'), pg_temp.id('rl2')) ORDER BY id LIMIT 1);
+  UPDATE public.accounts SET possible_duplicate_of = (SELECT id FROM public.accounts WHERE id IN (pg_temp.id('rl3'), pg_temp.id('rl4')) ORDER BY id DESC LIMIT 1)
+    WHERE id = (SELECT id FROM public.accounts WHERE id IN (pg_temp.id('rl3'), pg_temp.id('rl4')) ORDER BY id LIMIT 1);
+END $$;
+
 -- ---------- two merges over the same accounts ----------
 -- Break caught: the two accounts are locked in the order the person named them (kept first), so two merges of the same two accounts in opposite directions hold
 -- one each and wait for the other (a ring: 40P01, or the 20-second timeout above). Locked in id order the second waits at the first account and holds nothing,
@@ -1368,6 +1386,76 @@ BEGIN
   PERFORM pg_temp.is(left(pg_temp.macc('acme_agent1', 'rh1k', 'rh1r'), 1), '{', 'and trying again merges');
   PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE name = 'Late duplicate'), pg_temp.id('rh1k'), 'the late account is marked a duplicate of the account kept');
   RAISE NOTICE 'merge_records: a duplicate marked while a merge starts passed';
+END $$;
+
+-- ---------- two contacts being merged, and a call being pointed at the one kept ----------
+-- Break caught (review): both contacts held FOR UPDATE. A call naming the contact removed is pointed at the contact kept: update_activity holds the call and wants
+-- KEY SHARE on the contact kept, which the merge holds FOR UPDATE while it waits for that call: a ring (40P01). The contact kept is held FOR NO KEY UPDATE, which a key
+-- share does not wait for. Both orders of the two ids. A takes the call (as update_activity does first), B (the merge) is seen waiting at it, then A points the call at
+-- the contact kept.
+CREATE FUNCTION pg_temp.point_call(call_n text, contact_n text) RETURNS text LANGUAGE sql AS $$
+  SELECT format('UPDATE public.activities SET contact_id = %L WHERE id = %L RETURNING ''ok''', pg_temp.id(contact_n), pg_temp.id(call_n))
+$$;
+CREATE FUNCTION pg_temp.call_race(keep text, rem text, call_n text) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.race_x(NULL, format('SELECT 1::text FROM public.activities WHERE id = %L FOR NO KEY UPDATE', pg_temp.id(call_n)), pg_temp.point_call(call_n, keep),
+    'acme_agent1', pg_temp.mcon_stmt(keep, rem))
+$$;
+DO $$
+DECLARE r text; lo text; hi text;
+BEGIN
+  RESET ROLE;
+  SELECT CASE WHEN pg_temp.id('rk1') < pg_temp.id('rk2') THEN 'rk1' ELSE 'rk2' END, CASE WHEN pg_temp.id('rk1') < pg_temp.id('rk2') THEN 'rk2' ELSE 'rk1' END INTO lo, hi;
+  r := pg_temp.call_race(lo, hi, 'rka' || right(hi, 1));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the merge waits for the call');
+  PERFORM pg_temp.is(split_part(r, '|', 2), 'ok', 'the call is pointed at the contact kept without waiting for the merge (the kept contact has the lower id): ' || r);
+  PERFORM pg_temp.is(left(split_part(r, '|', 3), 1), '{', 'and the merge completes, with no deadlock: ' || r);
+  PERFORM pg_temp.is((SELECT contact_id FROM public.activities WHERE id = pg_temp.id('rka' || right(hi, 1))), pg_temp.id(lo), 'the call is with the contact kept');
+  RAISE NOTICE 'merge_records: a call pointed at the contact kept (lower id) passed';
+END $$;
+
+DO $$
+DECLARE r text; lo text; hi text;
+BEGIN
+  RESET ROLE;
+  SELECT CASE WHEN pg_temp.id('rk3') < pg_temp.id('rk4') THEN 'rk3' ELSE 'rk4' END, CASE WHEN pg_temp.id('rk3') < pg_temp.id('rk4') THEN 'rk4' ELSE 'rk3' END INTO lo, hi;
+  r := pg_temp.call_race(hi, lo, 'rka' || right(lo, 1));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the merge waits for the call');
+  PERFORM pg_temp.is(split_part(r, '|', 2), 'ok', 'the call is pointed at the contact kept without waiting for the merge (the kept contact has the higher id): ' || r);
+  PERFORM pg_temp.is(left(split_part(r, '|', 3), 1), '{', 'and the merge completes, with no deadlock: ' || r);
+  PERFORM pg_temp.is((SELECT contact_id FROM public.activities WHERE id = pg_temp.id('rka' || right(lo, 1))), pg_temp.id(hi), 'the call is with the contact kept');
+  RAISE NOTICE 'merge_records: a call pointed at the contact kept (higher id) passed';
+END $$;
+
+-- ---------- deleting an account against a merge and a bulk change ----------
+-- Break caught (review): delete_account held the account and then, through the foreign key action that clears their possible-duplicate mark, the accounts marked a
+-- duplicate of it, in the order the action met them. X (lower id) is marked a duplicate of D (higher). C holds X; B starts first and asks for X (a merge of D into X, or a
+-- bulk change of both); A starts second and deletes D. Locked in id order A waits for X holding nothing, B takes X and D and finishes, and A is then told D is gone. In the old
+-- order A holds D and waits for X; when C commits B gets X and asks for D: a ring (40P01).
+DO $$
+DECLARE r text; lo text; hi text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  SELECT CASE WHEN pg_temp.id('rl1') < pg_temp.id('rl2') THEN 'rl1' ELSE 'rl2' END, CASE WHEN pg_temp.id('rl1') < pg_temp.id('rl2') THEN 'rl2' ELSE 'rl1' END INTO lo, hi;
+  r := pg_temp.race_three(format('SELECT 1::text FROM public.accounts WHERE id = %L FOR UPDATE', pg_temp.id(lo)),
+    'acme_agent1', pg_temp.merge_stmt(lo, hi), 'acme_agent1', format('SELECT public.delete_account(%L, %L)::text', pg_temp.id(hi), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'B:{"moved": {"', 'the merge completes: ' || r);
+  PERFORM pg_temp.is(split_part(r, '|', 2), 'A:PT404', 'and the delete is told the account is gone, with no deadlock: ' || r);
+  RAISE NOTICE 'merge_records: a delete against a merge passed';
+END $$;
+
+DO $$
+DECLARE r text; lo text; hi text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  SELECT CASE WHEN pg_temp.id('rl3') < pg_temp.id('rl4') THEN 'rl3' ELSE 'rl4' END, CASE WHEN pg_temp.id('rl3') < pg_temp.id('rl4') THEN 'rl4' ELSE 'rl3' END INTO lo, hi;
+  r := pg_temp.race_three(format('SELECT 1::text FROM public.accounts WHERE id = %L FOR UPDATE', pg_temp.id(lo)),
+    'acme_agent1', format($q$SELECT public.bulk_accounts_change(%L, 'field', '{"field":"city","value":"Raced"}', NULL, %L)::text$q$, firm, jsonb_build_array(pg_temp.id(lo)::text, pg_temp.id(hi)::text)::text),
+    'acme_agent1', format('SELECT public.delete_account(%L, %L)::text', pg_temp.id(hi), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1) LIKE 'B:{%', true, 'the bulk change completes: ' || r);
+  PERFORM pg_temp.is(split_part(r, '|', 2) LIKE 'A:{%', true, 'and the delete after it, with no deadlock: ' || r);
+  PERFORM pg_temp.is(pg_temp.gone('accounts', hi), true, 'the account is deleted');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of IS NULL FROM public.accounts WHERE id = pg_temp.id(lo)), true, 'and the mark of the account that named it is cleared');
+  RAISE NOTICE 'merge_records: a delete against a bulk change passed';
 END $$;
 
 -- ---------- two merges that do not meet ----------

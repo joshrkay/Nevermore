@@ -60,7 +60,7 @@
 --   2. the chosen owner's membership, FOR SHARE (member_to_own), as every owner change.
 --   3. the removed account's calls, notes and tasks, FOR UPDATE, then its contacts, then its opportunities. update_activity holds an activity and then wants
 --      KEY SHARE on a contact or an opportunity it newly points at: taking the activities first means it is waited for, never met in a ring.
---   For two contacts: the account FOR SHARE (as add_contact and move_contact), both contacts FOR UPDATE by id, then the removed contact's activities (as
+--   For two contacts: the account FOR SHARE (as add_contact and move_contact), both contacts by id (the removed FOR UPDATE, the kept FOR NO KEY UPDATE), then the removed contact's activities (as
 --   move_contact), the opportunities that name it as their main contact.
 -- Nothing in a merge deletes or unlinks an opportunity, so the rule that every submission and quote request sits on one (20261119120000) is never at risk:
 -- an opportunity's account changes, its intake does not (the unlink trigger is on the intake column, and is not fired). The race noted for this story
@@ -789,7 +789,7 @@ GRANT EXECUTE ON FUNCTION public.merge_accounts(uuid, uuid, uuid, text[], intege
 -- ---------- 10. Two contacts of one account ----------
 -- The two contacts, held when p_lock, and their account. Refused, in this order: two not chosen or the same (22023), either not there or its account not seen
 -- (PT404), not of the same account (22023, D-210), the account archived (55000), either contact not changeable by the level rule (42501, in words). With
--- p_lock: the account FOR SHARE (it conflicts with archiving and with a merge of the account), then both contacts FOR UPDATE in id order; a contact that
+-- p_lock: the account FOR SHARE (it conflicts with archiving and with a merge of the account), then both contacts in id order (the one removed FOR UPDATE, the one kept FOR NO KEY UPDATE); a contact that
 -- moved while this waited is refused (40001).
 CREATE FUNCTION public.contact_merge_pair(p_firm_id uuid, p_keep_id uuid, p_remove_id uuid, p_lock boolean, OUT kept_row public.contacts, OUT gone_row public.contacts, OUT account_row public.accounts)
 RETURNS record
@@ -800,6 +800,7 @@ AS $$
 DECLARE
   ka uuid;
   ra uuid;
+  cid uuid;
 BEGIN
   IF p_keep_id IS NULL OR p_remove_id IS NULL THEN
     RAISE EXCEPTION 'Choose two contacts to merge.' USING ERRCODE = '22023';
@@ -826,7 +827,16 @@ BEGIN
     RAISE EXCEPTION 'Only two contacts of the same account can be merged. Move one of them to the other''s account first.' USING ERRCODE = '22023';
   END IF;
   IF p_lock THEN
-    PERFORM 1 FROM public.contacts c WHERE c.id IN (p_keep_id, p_remove_id) AND c.firm_id = p_firm_id ORDER BY c.id FOR UPDATE;
+    -- In id order. The contact removed is deleted, so it is held FOR UPDATE; the contact kept only has its own fields changed, so FOR NO KEY UPDATE, which does not
+    -- stop a call being pointed at it (update_activity holds the call and takes KEY SHARE on the contact; held FOR UPDATE the contact would be waited for by a call
+    -- this merge is itself waiting for, a ring).
+    FOR cid IN SELECT c.id FROM public.contacts c WHERE c.id IN (p_keep_id, p_remove_id) AND c.firm_id = p_firm_id ORDER BY c.id LOOP
+      IF cid = p_remove_id THEN
+        PERFORM 1 FROM public.contacts c WHERE c.id = cid FOR UPDATE;
+      ELSE
+        PERFORM 1 FROM public.contacts c WHERE c.id = cid FOR NO KEY UPDATE;
+      END IF;
+    END LOOP;
   END IF;
   SELECT * INTO kept_row FROM public.contacts c WHERE c.id = p_keep_id AND c.firm_id = p_firm_id;
   SELECT * INTO gone_row FROM public.contacts c WHERE c.id = p_remove_id AND c.firm_id = p_firm_id;
@@ -1128,6 +1138,45 @@ $$;
 
 REVOKE ALL ON FUNCTION public.follow_merged_record(uuid, text, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.follow_merged_record(uuid, text, uuid) TO authenticated;
+
+-- ---------- 15. Deleting an account takes the accounts marked as its duplicates in id order ----------
+-- 20261119160000's delete_account, restated with every rule it had (D-219's refusal while the account has an opportunity, D-235's level rule and words, D-233's
+-- contacts, calls, notes and tasks going with it, the firm, the closing and support guards). The one change: the accounts marked a possible duplicate of this one have
+-- their mark cleared by the delete's own foreign key action, in an order nobody chose, which a merge or a bulk change holding two of them could meet from the other
+-- side (a ring). The account and those accounts are held first, in ONE statement ordered by id, as the merge and the bulk change hold theirs; one marked since the
+-- first look is a clash the person is asked to retry (40001).
+CREATE OR REPLACE FUNCTION public.delete_account(p_account_id uuid, p_firm_id uuid DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+  cur public.accounts;
+  dep uuid[];
+  dep2 uuid[];
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  SELECT COALESCE(array_agg(x.id), '{}') INTO dep FROM public.accounts x WHERE x.firm_id = firm AND x.possible_duplicate_of = p_account_id;
+  PERFORM 1 FROM public.accounts x WHERE x.firm_id = firm AND x.id = ANY (ARRAY[p_account_id] || dep) ORDER BY x.id FOR UPDATE;
+  SELECT COALESCE(array_agg(x.id), '{}') INTO dep2 FROM public.accounts x WHERE x.firm_id = firm AND x.possible_duplicate_of = p_account_id;
+  IF EXISTS (SELECT 1 FROM unnest(dep2) d WHERE d <> ALL (dep)) THEN
+    RAISE EXCEPTION 'An account was marked as a possible duplicate while this was starting. Try again.' USING ERRCODE = '40001';
+  END IF;
+  -- Held FOR UPDATE (above), so an opportunity being added (which holds the row FOR KEY SHARE until it commits) is waited for and seen below.
+  cur := public.account_to_change(firm, p_account_id, 'update');
+  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.account_id = cur.id) THEN
+    RAISE EXCEPTION 'This account has opportunities, so it can''t be deleted. Archive it instead.' USING ERRCODE = 'PT409';
+  END IF;
+  DELETE FROM public.accounts a WHERE a.id = cur.id;
+  RETURN jsonb_build_object('deleted', true, 'name', cur.name);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.delete_account(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.delete_account(uuid, uuid) TO authenticated;
 
 -- ---------- 14. Closing a firm deletes the pointers ----------
 -- 20261119210000's list, restated with every line it had and one more: the old addresses, before the accounts and contacts they lead to.
