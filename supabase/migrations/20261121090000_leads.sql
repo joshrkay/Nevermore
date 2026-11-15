@@ -40,10 +40,10 @@ CREATE TABLE public.leads (
   CONSTRAINT leads_made_only_when_converted CHECK (status = 'converted' OR (converted_account_id IS NULL AND converted_contact_id IS NULL AND converted_opportunity_id IS NULL)),
   -- A converted lead can't be deleted (CRM-L1.1).
   CONSTRAINT leads_converted_not_in_bin CHECK (status <> 'converted' OR deleted_at IS NULL),
-  -- What it made is of its own firm.
+  -- What it made is of its own firm, and the contact and opportunity are of the account it made (the pairs contacts and opportunities keep for that).
   CONSTRAINT leads_converted_account_fkey FOREIGN KEY (firm_id, converted_account_id) REFERENCES public.accounts (firm_id, id) ON DELETE SET NULL (converted_account_id),
-  CONSTRAINT leads_converted_contact_fkey FOREIGN KEY (converted_contact_id) REFERENCES public.contacts (id) ON DELETE SET NULL,
-  CONSTRAINT leads_converted_opportunity_fkey FOREIGN KEY (converted_opportunity_id) REFERENCES public.opportunities (id) ON DELETE SET NULL
+  CONSTRAINT leads_converted_contact_fkey FOREIGN KEY (converted_account_id, converted_contact_id) REFERENCES public.contacts (account_id, id) ON DELETE SET NULL (converted_contact_id),
+  CONSTRAINT leads_converted_opportunity_fkey FOREIGN KEY (converted_account_id, converted_opportunity_id) REFERENCES public.opportunities (account_id, id) ON DELETE SET NULL (converted_opportunity_id)
 );
 
 CREATE INDEX leads_owner_idx ON public.leads (firm_id, owner_id);
@@ -51,6 +51,22 @@ CREATE INDEX leads_owner_idx ON public.leads (firm_id, owner_id);
 COMMENT ON TABLE public.leads IS 'A person and their business the firm is not quoting yet (glossary: Lead). Converting copies it into an account, a contact and an opportunity.';
 
 CREATE TRIGGER leads_updated_at BEFORE UPDATE ON public.leads FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- A lead's source is the product's, as an account's is (D-211): an update keeps what the row had, whoever sends it. So it is in no history.
+CREATE FUNCTION public.keep_lead_source()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.source := OLD.source;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.keep_lead_source() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER leads_keep_source BEFORE UPDATE ON public.leads FOR EACH ROW EXECUTE FUNCTION public.keep_lead_source();
 
 -- ---------- 2. Converted is for good ----------
 -- Whoever writes: a lead becomes Converted only with the account it made, and a converted lead never changes again, but for what it made being deleted

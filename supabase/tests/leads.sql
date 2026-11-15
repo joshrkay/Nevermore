@@ -513,6 +513,28 @@ END $$;
 DELETE FROM public.leads WHERE id = pg_temp.id('lab');
 SELECT pg_temp.is((SELECT count(*)::int FROM public.lead_labels), 0, 'a removed lead''s labels go with it');
 
+-- ---------- 7b. What converting made is of the one account it made; the source is the product's (review of #214) ----------
+SELECT pg_temp.lead('conv', 'acme', 'acme_agent1', 'Conv Co');
+SELECT pg_temp.account('conv_acct', 'acme', 'acme_agent1');
+SELECT pg_temp.account('other_acct', 'acme', 'acme_agent1');
+SELECT pg_temp.contact('other_contact', 'other_acct', 'acme_agent1', 'o@other.example');
+SELECT pg_temp.opportunity('other_opp', 'other_acct', 'acme_agent1');
+SELECT pg_temp.contact('zen_contact', 'zenith_acct', 'zenith_agent', 'z@zen.example');
+SELECT pg_temp.is(pg_temp.attempt($$UPDATE public.leads SET status = 'converted', converted_at = now(), converted_account_id = pg_temp.id('conv_acct'), converted_contact_id = pg_temp.id('other_contact') WHERE id = pg_temp.id('conv')$$),
+  '23503', 'a contact of another account than the one it made');
+SELECT pg_temp.is(pg_temp.attempt($$UPDATE public.leads SET status = 'converted', converted_at = now(), converted_account_id = pg_temp.id('conv_acct'), converted_contact_id = pg_temp.id('zen_contact') WHERE id = pg_temp.id('conv')$$),
+  '23503', 'another firm''s contact');
+SELECT pg_temp.is(pg_temp.attempt($$UPDATE public.leads SET status = 'converted', converted_at = now(), converted_account_id = pg_temp.id('conv_acct'), converted_opportunity_id = pg_temp.id('other_opp') WHERE id = pg_temp.id('conv')$$),
+  '23503', 'an opportunity of another account');
+SELECT pg_temp.contact('conv_contact', 'conv_acct', 'acme_agent1', 'c@conv.example');
+SELECT pg_temp.opportunity('conv_opp', 'conv_acct', 'acme_agent1');
+SELECT pg_temp.is(pg_temp.attempt($$UPDATE public.leads SET status = 'converted', converted_at = now(), converted_account_id = pg_temp.id('conv_acct'), converted_contact_id = pg_temp.id('conv_contact'), converted_opportunity_id = pg_temp.id('conv_opp') WHERE id = pg_temp.id('conv')$$),
+  'rows:1', 'the account it made, with that account''s contact and opportunity');
+
+UPDATE public.leads SET source = 'import' WHERE id = pg_temp.id('conv');
+SELECT pg_temp.is((SELECT source FROM public.leads WHERE id = pg_temp.id('conv')), 'added_by_hand', 'a lead keeps the source it was made with, whoever writes (D-211)');
+
+
 -- ---------- 8. Closing a firm deletes its leads, their labels and their calls, notes and tasks; another firm's stay (D-803, CRM-P1.7) ----------
 DO $$
 DECLARE before_acme int := (SELECT count(*) FROM public.leads WHERE firm_id = pg_temp.id('acme'));
