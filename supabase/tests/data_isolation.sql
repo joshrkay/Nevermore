@@ -733,6 +733,8 @@ BEGIN
     -- CRM-E1.5: a note on each account and a task on the owned one.
     INSERT INTO public.activities (firm_id, account_id, kind, body) VALUES (fid, acc1, 'note', 'Fixture note'), (fid, acc2, 'note', 'Fixture note');
     INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, assignee_id) VALUES (fid, acc1, 'task', 'Fixture task', current_date, agent);
+    -- CRM-S1.2b: the owner's last opened record.
+    INSERT INTO public.recent_records (firm_id, user_id, kind, record_id) VALUES (fid, agent, 'account', acc1::text);
   END LOOP;
 END $$;
 
@@ -3688,16 +3690,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('search_records', 'firm_scoped', 'a current member of the firm the call acts for finds that firm''s accounts, contacts, opportunities and quotes by level, never an intake''s answers; nothing of another firm (4e)'),
   ('note_recent_record', 'firm_scoped', 'a current member notes a record of their own firm that they may see as recently opened, for themselves only; false for another firm''s record as for one that is not there (4e)'),
-  ('my_recent_records', 'firm_scoped', 'a current member reads their own last opened records of the firm, those they may still see (4e)'),
-  ('search_digits', 'service_only', 'a telephone number''s digits alone: pure, used by the search''s index and its query; no API role can call it'),
-  ('account_search_text', 'service_only', 'what a search reads of an account, in lower case: pure, used by the search''s index and its query; no API role can call it'),
-  ('contact_search_text', 'service_only', 'what a search reads of a contact, in lower case: pure, used by the search''s index and its query; no API role can call it'),
-  ('crm_search_terms', 'service_only', 'the words a person typed as the values a search compares with: pure; no API role can call it'),
-  ('crm_terms_found', 'service_only', 'whether every word is found in a text: pure; no API role can call it'),
-  ('crm_visible_owners', 'service_only', 'the owners of a firm''s accounts whose records the caller may see, asked once for the search; no API role can call it'),
-  ('crm_search_row', 'service_only', 'one record as the search shows it, or nothing when the caller may not see it; no API role can call it'),
-  ('crm_opportunity_hits', 'service_only', 'the opportunities of one firm that a word is found on; no API role can call it'),
-  ('crm_quote_hits', 'service_only', 'the quote requests of one firm''s opportunities that a word is found on, by their PEO; no API role can call it');
+  ('my_recent_records', 'firm_scoped', 'a current member reads their own last opened records of the firm, those they may still see (4e)');
 
 INSERT INTO fn_class (fn, class, why) VALUES
   ('admin_add_peo', 'platform_wide', 'the PEO list is the same for every firm, kept by platform admins'),
