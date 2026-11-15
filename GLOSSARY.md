@@ -556,6 +556,14 @@ _Avoid_: unsubscribed (that is a recipient's own choice, recorded by the mail pr
 One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known. It holds at most one intake; next year's renewal is a new opportunity on the same account. Its **Opportunity stage** is worked out, never stored (D-206): Qualifying (no intake), Intake under way (draft, submitted, under review, information requested), Ready to send (ready for market), In market (sent to PEOs), Quoted, Won, and Lost (lost or archived, or marked lost with no intake). It is open until it is won or lost.
 _Avoid_: deal, search (on its own), case
 
+**Contacts on this search** (code: `contacts` of `opportunity_page(firm, opportunity)`; story CRM-O1.1a, D-429):
+The people an opportunity's page lists: its main contact (marked Main) and the contact made from its intake's prospect (marked "fills in the intake"), one row for each person, so the usual case, where the prospect is the main contact, is one row with both marks. An account's other contacts are not on the search; there is no per-opportunity list of contacts or roles.
+_Avoid_: opportunity contacts (as if there were a list kept per opportunity), participants
+
+**Opportunity activity** (code: `opportunity_activity(firm, opportunity, filter, limit, offset)`; story CRM-O1.1a, D-427):
+Everything that happened on one opportunity, newest first: the **Call**s, **Note**s and **Task**s that name it, the events of its quote requests (sent, quoted, declined, closed) and its **Record history** with its **Stage change**s. Filtered All, Calls, Notes, Tasks or Changes; the quote requests' events and the history are the Changes. A call, note or task logged on an opportunity is still on its account, so it is **Last activity** of the account too.
+_Avoid_: timeline, feed
+
 **Main contact**:
 The one contact of an account that is the person to deal with first; an account has at most one, by a constraint (D-29), and an opportunity's main contact is a contact on the same account. Making a new contact the main contact makes it the only one: the old main contact is unticked in the same step, and the person is told who it was. An account made from a submission starts with its prospect as its main contact (D-214).
 _Avoid_: primary contact, lead contact
@@ -687,7 +695,7 @@ For ten minutes after a **Bulk change**, and once, the person who made it can pu
 _Avoid_: revert, rollback
 
 **Call**, **Note**, **Task**:
-What an agent logs on an account or a contact (later on a lead or an opportunity). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
+What an agent logs on an account, a contact or an opportunity (later on a lead). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
 **Follow-up task**:

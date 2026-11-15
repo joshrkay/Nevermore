@@ -215,6 +215,7 @@
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1449,6 +1450,14 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for clears "Didn''t renew" and reopens the placement, by the level rule and from a version; refused as update_renewal is'),
   ('account_renewals(p_firm_id uuid, p_account_id uuid, p_time_zone text)', 'own', NULL,
    'a current member of the firm who may see the account reads its renewals, with days away and whether each is done; NULL for anyone else, as for an account that is not there');
+-- CRM-O1.1a (20261120120000_opportunity_page.sql; supabase/tests/opportunity_page.sql): the opportunity's page, its activity and the save of its own fields.
+INSERT INTO callable VALUES
+  ('opportunity_page(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the opportunity''s account, by level, reads the opportunity with its stage, account, owner, main contact, quote requests, intake summary and contacts, and whether they may change it; PT404, one answer, for an opportunity that is not there, is another firm''s or may not be seen: another firm''s member, a platform admin, a former member, an agent whose level does not reach its account'),
+  ('opportunity_activity(p_firm_id uuid, p_opportunity_id uuid, p_filter text, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for a page of the opportunity''s calls, notes and tasks, its quote requests'' events and its record history with its stage changes, newest first, narrowed to all, calls, notes, tasks or changes; PT404 as the page'),
+  ('update_opportunity(p_opportunity_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_next_step text, p_owner_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for saves an opportunity''s own fields from a version, by the level rule on the opportunity''s own owner (an agent their own, a lead their team''s, an owner the firm''s, one with no owner an owner''s), never its stage or account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity that is not there or whose account the caller may not see, 55000 on an archived account');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2084,6 +2093,13 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('undo_renewal_not_renewed', 'advisor', 'by_id',
    $$SELECT public.undo_renewal_not_renewed({rnw}, {firm}, (SELECT version FROM public.renewals WHERE id = {rnw}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
   ('delete_renewal', 'advisor', 'by_id', $$SELECT public.delete_renewal({rdel}, {firm}, (SELECT version FROM public.renewals WHERE id = {rdel}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true');
+-- CRM-O1.1a: the opportunity's page, its activity and its save ({opp} is an opportunity of the firm's owned account). The reads refuse whoever may not see the
+-- account with the one answer; the save's version is the opportunity's current one, read as the caller.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('opportunity_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_page({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('opportunity_activity', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_activity({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('update_opportunity', 'advisor', 'by_id',
+   $$SELECT public.update_opportunity({opp}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, (SELECT version FROM public.opportunities WHERE id = {opp}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false');
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -2101,6 +2117,10 @@ END $$;
 -- CRM-A2.2: the fixture contacts of an owned account are the account owner's, so the member the probes run as may move one (the picker refuses a person who may
 -- not, in words); no other probe reads a contact's owner.
 UPDATE public.contacts c SET owner_id = a.owner_id FROM public.accounts a WHERE a.id = c.account_id AND a.owner_id IS NOT NULL;
+
+-- CRM-O1.1a: the fixture opportunities of an owned account are the account owner's too, so the member the probes run as may save one (update_opportunity asks
+-- the level rule on the opportunity's own owner; one with no owner is a firm owner's alone); no other probe reads an opportunity's owner.
+UPDATE public.opportunities o SET owner_id = a.owner_id FROM public.accounts a WHERE a.id = o.account_id AND a.owner_id IS NOT NULL;
 
 DO $$
 DECLARE
@@ -2128,7 +2148,8 @@ BEGIN
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'rnw', (SELECT x.id::text FROM public.renewals x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'peo_placement' ORDER BY x.created_at, x.id LIMIT 1)),
-      (f, 'rdel', (SELECT x.id::text FROM public.renewals x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'current_plan' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1));
+      (f, 'rdel', (SELECT x.id::text FROM public.renewals x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'current_plan' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
+      (f, 'opp', (SELECT o.id::text FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id WHERE o.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2332,7 +2353,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|rnw|rdel)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|rnw|rdel|opp)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3817,6 +3838,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('submission_status_history_stamp_staff', 'trigger', 'stamps each new status history row with whether the person who made the move acted as Nevermore staff, decided when the row is written (D-33); no API role can run it or write the table');
 
+-- CRM-O1.1a (20261120120000_opportunity_page.sql; supabase/tests/opportunity_page.sql).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('quote_request_events_stamp_staff', 'trigger', 'stamps each new quote request event with whether the person who made it acted as Nevermore staff, decided when the row is written (D-33); no API role can run it or write the table');
+
 -- CRM-Q1.1a (20261119100000_crm_records.sql; supabase/tests/crm_records.sql): an account's status and an opportunity's stage, worked out.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
@@ -3848,6 +3873,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('contact_page', 'firm_scoped', 'a current member of the firm who may see the contact''s account (by level) reads its page; the same nothing for another firm''s contact as for one that is not there (4e)'),
   ('contact_activity', 'firm_scoped', 'the same for a page of the contact''s calls, notes and tasks (4e)'),
   ('update_contact', 'firm_scoped', 'a current member of the firm the call acts for saves a contact''s own fields from a version, when the level rule gives it them; refused for another firm''s contact as for one that is not there (4e)');
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('opportunity_page', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads its page; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)'),
+  ('opportunity_activity', 'firm_scoped', 'the same for a page of its calls, notes, tasks, quote requests'' events and record history (4e)'),
+  ('update_opportunity', 'firm_scoped', 'a current member of the firm the call acts for saves an opportunity''s own fields from a version, when the level rule gives it them; refused for another firm''s opportunity as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),
