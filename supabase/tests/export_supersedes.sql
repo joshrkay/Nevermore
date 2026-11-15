@@ -414,7 +414,10 @@ END $$;
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119230000_search_everywhere.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried

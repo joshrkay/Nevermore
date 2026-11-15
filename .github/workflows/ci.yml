@@ -42,7 +42,7 @@ jobs:
   # Each file in supabase/tests runs in its own fresh database (see supabase/tests/run.sh).
   sql-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16

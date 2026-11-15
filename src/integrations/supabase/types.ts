@@ -876,6 +876,34 @@ export type Database = {
         Args: { p_firm_id: string; p_account_id: string; p_tab: string; p_limit?: number; p_offset?: number }
         Returns: Json
       }
+      // A contact's page (20261119240000): the contact, its account, whether the person may change or move it, and the opportunities it is the main contact of; null for anyone who may not see its account.
+      contact_page: {
+        Args: { p_firm_id: string; p_contact_id: string }
+        Returns: Json
+      }
+      // A page of the contact's calls, notes and tasks, newest first, narrowed to all, calls, notes or tasks: {count, rows}; null for anyone who may not see its account.
+      contact_activity: {
+        Args: { p_firm_id: string; p_contact_id: string; p_filter?: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // The save of a contact's own fields from a version: {conflict: false, record, previous_main} or the conflict answer.
+      update_contact: {
+        Args: {
+          p_contact_id: string
+          p_first_name: string | null
+          p_last_name: string
+          p_title: string | null
+          p_email: string | null
+          p_phone: string | null
+          p_mobile: string | null
+          p_owner_id?: string | null
+          p_is_main?: boolean
+          p_do_not_email?: boolean
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
       // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
       // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
       log_activity: {
@@ -975,6 +1003,27 @@ export type Database = {
         }
         Returns: Json
       }
+      // Adding a contact to an account and moving one (20261119170000): add_contact answers {record, previous_main}; move_contact {record, from, to, was_main,
+      // activities_moved, opportunity_links_dropped, main_contact_cleared} (PT409 asks for p_confirm); the choices are the accounts it may go to; the context is what the form needs.
+      add_contact: {
+        Args: {
+          p_account_id: string
+          p_first_name: string | null
+          p_last_name: string | null
+          p_title: string | null
+          p_email: string | null
+          p_phone: string | null
+          p_mobile: string | null
+          p_owner_id?: string | null
+          p_is_main?: boolean
+          p_do_not_email?: boolean
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      move_contact: { Args: { p_contact_id: string; p_to_account_id: string; p_confirm?: boolean; p_firm_id?: string | null }; Returns: Json }
+      contact_move_choices: { Args: { p_firm_id: string | null; p_contact_id: string; p_search?: string }; Returns: { id: string; name: string }[] }
+      add_contact_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
       // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
       // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
@@ -985,6 +1034,19 @@ export type Database = {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
         Returns: Json
       }
+      // Bulk changes to accounts (20261119210000): the preview and the change answer {action, selected, limit, too_many, unavailable, will_change, unchanged,
+      // skipped, owner?, label?, opportunities?} (the change adds changed, change_id, undo_until); the undo {restored, skipped, opportunities}.
+      // src/lib/bulkChangeApi.ts reads them. Exactly one of p_filters (the table's filters, search and time zone) and p_ids.
+      bulk_accounts_preview: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_accounts_change: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_accounts_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
+      firm_labels: { Args: { p_firm_id?: string | null }; Returns: Json }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {
