@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { SortDirection, TableFields, TableSort } from "@/lib/tableQuery";
 import { cn } from "@/lib/utils";
 import { firstSortDirection, type ColumnDefinition, type TableDefinition } from "./columns";
+import { PINNED_CELL, PINNED_HEADER } from "./pinned";
 
 interface Props<K extends TableFields, Row, Context> {
   table: TableDefinition<K, Row, Context>;
@@ -57,7 +58,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
         <caption className="sr-only">{caption}</caption>
         <thead className="border-b border-border bg-muted/60">
           <tr>
-            {columns.map((column) => {
+            {columns.map((column, i) => {
               const field = column.sortField;
               const sorted = sort && field !== undefined && field === sort.field ? sort.direction : null;
               const right = column.align === "right";
@@ -71,7 +72,7 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                   scope="col"
                   // Every sortable column says where it stands ("none" on the unsorted ones); a column with no sort says nothing.
                   aria-sort={field === undefined ? undefined : sorted ? word(sorted) : "none"}
-                  className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right")}
+                  className={cn("h-11 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground", !renderHeader && onSort && field !== undefined ? "p-0" : "px-4", right && "text-right", i === 0 && PINNED_HEADER)}
                 >
                   {!renderHeader && onSort && field !== undefined ? (
                     // The name is the header's words and nothing else; `aria-sort` on the cell says the state, and the title says what a click does
@@ -103,12 +104,12 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
             <tr
               key={table.rowKey(row)}
               onClick={onOpenRow ? (e) => openRow(e, row) : undefined}
-              className={cn("border-b border-border last:border-0 hover:bg-muted/50", onOpenRow && "cursor-pointer")}
+              className={cn("group border-b border-border last:border-0 hover:bg-muted/50", onOpenRow && "cursor-pointer")}
             >
               {/* CRM-S3.6 (D-47): the row's checkbox goes here, before the first column. Nothing selects rows yet. */}
               {columns.map((column, i) => {
                 const cell = column.cell(row, context);
-                const className = cn("px-4 py-3 align-top", column.align === "right" && "text-right");
+                const className = cn("px-4 py-3 align-top", column.align === "right" && "text-right", i === 0 && PINNED_CELL);
                 // The first column names the row, so a screen reader reading a cell can say whose it is.
                 return i === 0 ? (
                   <th key={column.id} scope="row" className={cn(className, "text-left font-normal")}>{cell}</th>

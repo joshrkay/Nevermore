@@ -19,6 +19,7 @@ describe("readDispatchConfig", () => {
       advisor: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", appBaseUrl: "https://app.example.com" },
       prospect: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", supportEmail: "support@example.com", responseTime: "2 business days" },
       prospectLink: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>", supportEmail: "support@example.com", appBaseUrl: "https://app.example.com" },
+      sender: { ok: true, from: "Edgar Allan Advisory <intake@mail.example.com>" },
     });
   });
 

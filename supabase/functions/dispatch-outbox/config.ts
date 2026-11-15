@@ -13,6 +13,8 @@ export interface DispatchConfig {
   prospect: Readiness<{ from: string; supportEmail: string; responseTime: string }>;
   /** The prospect emails that link to the intake: an advisor's request for information, and the draft reminder. */
   prospectLink: Readiness<{ from: string; supportEmail: string; appBaseUrl: string }>;
+  /** An email that needs only a sender: it holds no link and no support address (the owners' export alert, D-213). */
+  sender: Readiness<{ from: string }>;
 }
 
 type Env = (name: string) => string | undefined;
@@ -69,6 +71,7 @@ export function readDispatchConfig(env: Env): DispatchConfig {
       prospectLinkProblems.length === 0
         ? { ok: true, from: from!, supportEmail: supportEmail!, appBaseUrl: appBaseUrl! }
         : { ok: false, problems: prospectLinkProblems },
+    sender: from ? { ok: true, from } : { ok: false, problems: fromProblem },
   };
 }
 
@@ -79,6 +82,7 @@ export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<ob
     ["peo_mail_arrived", config.advisor],
     ["member_left", config.advisor],
     ["firm_closing", config.advisor],
+    ["export_alert", config.sender],
     ["prospect_confirmation", config.prospect],
     ["information_request", config.prospectLink],
     ["draft_expiry_reminder", config.prospectLink],

@@ -1,5 +1,6 @@
 export * from "./address";
 export * from "./columns";
+export { ColumnsMenu } from "./ColumnsMenu";
 export { DataTable } from "./DataTable";
 export { FilterRow } from "./FilterRow";
 export * from "./operators";
@@ -9,6 +10,7 @@ export { SearchBox } from "./SearchBox";
 export { TableFrame } from "./TableFrame";
 export { tableIsLoading } from "./tableIsLoading";
 export { useTableAddress } from "./useTableAddress";
+export { useTableColumns, type TableColumns } from "./useTableColumns";
 export { useFirmReady, useRefreshTable, useTableContextKey, useTableRows, useTableViewCounts, TABLE_REFRESH_MS } from "./useTableRows";
 export { ViewTabs } from "./ViewTabs";
 export { filterInWords, inForceInWords, isNarrowed } from "./words";

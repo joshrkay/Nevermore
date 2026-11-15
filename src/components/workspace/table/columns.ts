@@ -64,7 +64,7 @@ export interface ColumnDefinition<Row, Field extends string = string, Context = 
 /**
  * A view of the table: the filters it stands for. A built-in view is written in code; from CRM-S3.4a a saved view is one too.
  * CRM-S3.4a adds a view's own `sort` here (and makes `queryFor` and `sameAddress` apply it: today a view has no sort of its own, so the
- * address's sort is the only one); CRM-S3.1a adds the view's own `columns`.
+ * address's sort is the only one); CRM-S3.1a added the view's own `columns`.
  *
  * How the table's limit of 20 filters is applied to the total: the view's filters count first and the address's take what is left
  * (`effectiveFilters`). The rows use the current view's room. A tab's count uses the room of ITS view, so a tab whose view has more
@@ -76,6 +76,12 @@ export interface TableView<K extends TableFields> {
   id: string;
   label: string;
   filters: TableFilter<K>[];
+  /**
+   * The view's own columns, as column ids in order (CRM-S3.1a): what a person sees on it until they choose their own for it. A built-in view has none (its
+   * columns are the person's choice for the table); a saved view (CRM-S3.4a) has the ones it was saved with. `useTableColumns` is given the saved view
+   * that is open and reads and keeps the person's own choice on it by its `id`.
+   */
+  columns?: readonly string[];
 }
 
 /**

@@ -130,6 +130,16 @@ describe("column choices", () => {
     expect(rpc).toHaveBeenLastCalledWith("set_my_table_columns", { p_firm_id: "f1", p_table: "submissions", p_view_id: "v1", p_columns: null });
   });
 
+  // Catches: a person on a closing firm, or Nevermore support, told "Try again" for a save that can never work, or told nothing about why.
+  it("says, in the database's own words, that a closing firm or a support session can't keep columns", async () => {
+    rpc.mockResolvedValue(refused("PT423", "This firm is closing and can't be changed"));
+    await expect(setMyColumns("f1", "submissions", null, ["a"])).rejects.toThrow("This firm is closing and can't be changed, so your columns weren't kept.");
+    rpc.mockResolvedValue(refused("PT423", "Nevermore support can look, not change"));
+    await expect(setMyColumns("f1", "submissions", null, ["a"])).rejects.toThrow("Nevermore support can look, not change, so your columns weren't kept.");
+    rpc.mockResolvedValue(refused("PT423", ""));
+    await expect(setMyColumns("f1", "submissions", null, ["a"])).rejects.toThrow("This firm can't be changed, so your columns weren't kept.");
+  });
+
   it("puts a refusal into words", async () => {
     rpc.mockResolvedValue(refused("42501"));
     await expect(setMyColumns("f1", "submissions", null, ["a"])).rejects.toThrow("You aren't a member of this firm.");

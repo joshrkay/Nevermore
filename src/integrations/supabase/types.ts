@@ -476,6 +476,8 @@ export type Database = {
           record_id: string
           record_type: string
           role: string | null
+          // How many rows an export held (20261118170000); null for every other kind of entry.
+          row_count: number | null
           subject_user_id: string | null
         }
         Insert: never
@@ -838,6 +840,8 @@ export type Database = {
           record_id: string
           record_type: string
           role: string | null
+          // How many rows an export held (20261118170000); null for every other kind of entry.
+          row_count: number | null
           subject_email: string | null
           subject_user_id: string | null
         }[]
@@ -1263,6 +1267,13 @@ export type Database = {
       queue_view_counts: {
         Args: { p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
+      }
+      // An export (20261118170000, CRM-S3.8b): the rows of one table the caller may see, in the columns asked, recorded in the firm's record
+      // in the same step. Returns { table, columns, rows (arrays in the order of columns), row_count, whole_table, exported_at }; refusals are
+      // PT423 (support), 42501, 22023, 54000 (over 10,000 rows), PT428 (sign in again). src/lib/exportApi.ts is the one caller.
+      export_table: {
+        Args: { p_firm_id: string; p_table: string; p_columns: Json; p_filters?: Json; p_keys?: Json | null; p_time_zone?: string }
+        Returns: Json
       }
       // The history of one record (20261118130000): newest first, for a current member of the record's firm (or a support session). The table is
       // closed to the API; this is the only way in. No id at all: who is a member's email, "Nevermore" or "System" (D-33, D-45).

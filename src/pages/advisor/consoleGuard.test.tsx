@@ -10,6 +10,8 @@ vi.mock("@/hooks/useAuth", () => ({
 let firmAddress: { status: "none" } | { status: "known"; address: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 vi.mock("@/lib/monitoring", () => ({ reportOpsEvent: vi.fn() }));
+// The partners page's Export button (CRM-S3.8a) reaches the database through src/lib/exportApi.ts, which holds the client: not used here.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const api = {
   fetchMyFirms: vi.fn(),
   fetchOwnedFirms: vi.fn(),
