@@ -876,6 +876,20 @@ export type Database = {
         Args: { p_firm_id: string; p_account_id: string; p_tab: string; p_limit?: number; p_offset?: number }
         Returns: Json
       }
+      // Search in the database (20261119230000): the accounts, contacts, opportunities and quotes of one firm that the caller may see, five of each kind
+      // ({query, accounts|contacts|opportunities|quotes: {rows, more}}), and each person's last opened records.
+      search_records: {
+        Args: { p_firm_id: string | null; p_query?: string | null }
+        Returns: Json
+      }
+      note_recent_record: {
+        Args: { p_kind: string; p_id: string; p_firm_id?: string | null }
+        Returns: boolean
+      }
+      my_recent_records: {
+        Args: { p_firm_id?: string | null; p_limit?: number }
+        Returns: Json
+      }
       // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
       // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
       log_activity: {
