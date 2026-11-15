@@ -11,33 +11,46 @@
 --     could not then change.
 --   * The source is Added by hand and is not a parameter (D-211); the version and the history of the making (record_track) are the table's.
 --   * The same name, website or contact email as another account is never refused here: a likeness is a warning (D-193, CRM-S4.2), not a rule.
---   * Every field rule is the database's (D-29). The phone rule is new here and is also a check on the table, so no other writer can keep a phone that is not
---     one; the save of an account's own fields (update_account) asks it too, through account_input_error. The check is added NOT VALID: it holds for every
---     row written or changed from now on, and no existing row is judged by it.
+--   * Every field rule is the database's (D-29). The phone is the repo's own rule, is_valid_phone (20261027090000: 7 to 15 digits, at most 50 characters, an
+--     optional extension). A trigger on the account's phone asks it when the phone is made or CHANGED, never when it is left as it was, as validate_profile_phone
+--     does for a profile: an account that kept an older-format phone can still have any other field saved, by update_account or by any other writer. A constraint
+--     could not do that (even NOT VALID judges every later update of a row).
+--   * account_owner_choices lists the people the maker may give an account to (the level rule above), for the form's Owner choice.
 --
 -- What is NOT here: the renewal date and the firm's own fields (D-186, CRM-X3.1), the warning for a likeness while typing (CRM-S4.2), and "Save and add a
 -- contact" (CRM-A2.2).
 
 -- ---------- 1. The phone rule ----------
--- A phone number is 10 to 15 digits (a US number with its area code, or an international one with its country code), with only spaces, brackets, dots and
--- dashes between them, a plus only at the start, and, after it, an extension: "x" or "ext" with a "." and up to six digits ("(503) 555-0142 x12"). Pure.
-CREATE FUNCTION public.crm_phone_ok(p_phone text)
-RETURNS boolean
-LANGUAGE sql
-IMMUTABLE
+-- An account's phone is judged when it is made or changed, by is_valid_phone (an empty phone is "not given"). A phone the row already had is left alone.
+CREATE FUNCTION public.check_account_phone()
+RETURNS trigger
+LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $$
-  SELECT p_phone IS NULL OR (
-    p_phone ~* '^\+?[0-9 ().-]+(\s*(x|ext\.?)\s*[0-9]{1,6})?$'
-    AND length(regexp_replace(regexp_replace(p_phone, '\s*(x|ext\.?)\s*[0-9]{1,6}$', '', 'i'), '[^0-9]', '', 'g')) BETWEEN 10 AND 15)
+BEGIN
+  IF NEW.phone IS NULL OR NEW.phone = '' THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.phone IS NOT DISTINCT FROM OLD.phone THEN
+    RETURN NEW;
+  END IF;
+  IF NOT public.is_valid_phone(NEW.phone) THEN
+    RAISE EXCEPTION 'Enter a phone number like (503) 555-0142. An extension can follow, like x12.' USING ERRCODE = '22023';
+  END IF;
+  RETURN NEW;
+END;
 $$;
 
-REVOKE ALL ON FUNCTION public.crm_phone_ok(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.check_account_phone() FROM PUBLIC, anon, authenticated, service_role;
 
-ALTER TABLE public.accounts ADD CONSTRAINT accounts_phone_format CHECK (public.crm_phone_ok(phone)) NOT VALID;
+-- The column's own length check (40, 20261119100000) is dropped: the repository's phone rule allows 50, and the trigger holds it.
+ALTER TABLE public.accounts DROP CONSTRAINT accounts_phone_check;
 
--- ---------- 2. The fields' check, with the phone ----------
--- Restated from 20261119140000 with every rule it had and the phone's. Used by the save and by the making.
+CREATE TRIGGER accounts_phone_valid BEFORE INSERT OR UPDATE OF phone ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.check_account_phone();
+
+-- ---------- 1b. The fields' check, without a length of its own for the phone ----------
+-- Restated from 20261119140000 with every rule it had but the phone's length (40): the phone's whole rule, 50 characters included, is is_valid_phone's, asked by
+-- the trigger above, so the save and the making never refuse a phone the repository's rule takes. Used by the save and by the making.
 CREATE OR REPLACE FUNCTION public.account_input_error(
   p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text,
   p_employees integer, p_states_of_operation text[], p_current_provider text)
@@ -51,8 +64,6 @@ AS $$
     WHEN char_length(p_name) > 200 THEN 'Keep the account''s name to 200 characters.'
     WHEN char_length(p_trade_name) > 200 THEN 'Keep the trade name to 200 characters.'
     WHEN char_length(p_website) > 300 THEN 'Keep the website to 300 characters.'
-    WHEN char_length(p_phone) > 40 THEN 'Keep the phone number to 40 characters.'
-    WHEN NOT public.crm_phone_ok(p_phone) THEN 'Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.'
     WHEN char_length(p_street) > 200 THEN 'Keep the street to 200 characters.'
     WHEN char_length(p_city) > 100 THEN 'Keep the city to 100 characters.'
     WHEN p_state IS NOT NULL AND NOT public.is_us_state_code(p_state) THEN 'Choose a state from the list.'
@@ -64,12 +75,36 @@ AS $$
   END
 $$;
 
-REVOKE ALL ON FUNCTION public.account_input_error(text, text, text, text, text, text, text, text, text, integer, text[], text) FROM PUBLIC, anon, authenticated, service_role;
+-- ---------- 2. Whom the maker may give an account to ----------
+-- The firm's current people the caller may make an account for: those can_change_firm_record would let them change (an agent themselves, a lead themselves and
+-- their teams and the teams under, an owner everyone). The same rule create_account asks, so the form never offers what the call would refuse.
+CREATE FUNCTION public.account_owner_choices(p_firm_id uuid)
+RETURNS TABLE (user_id uuid, name text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  RETURN QUERY
+    SELECT m.user_id, public.person_display_name(u.raw_user_meta_data, u.email::text)
+    FROM public.firm_memberships m
+    JOIN auth.users u ON u.id = m.user_id
+    WHERE m.firm_id = firm AND public.membership_is_current(m.valid_from, m.valid_until) AND public.can_change_firm_record(firm, m.user_id)
+    ORDER BY lower(public.person_display_name(u.raw_user_meta_data, u.email::text) COLLATE "und-x-icu"), m.user_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.account_owner_choices(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.account_owner_choices(uuid) TO authenticated;
 
 -- ---------- 3. The making ----------
 -- Makes an account of the firm the call acts for and answers its own fields (as the save's `record`: id, version 1, the fields, source Added by hand).
 -- Refused, in this order: not a person of a firm (42501), not a member of the firm named (42501), a closing firm or Nevermore support (PT423), what is wrong
--- with a field (22023), an owner who is not a current member of the firm (22023), an owner the level rule does not let the maker choose (42501).
+-- with a field, a phone included (22023), an owner who is not a current member of the firm (22023), an owner the level rule does not let the maker choose (42501).
 CREATE FUNCTION public.create_account(
   p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text,
   p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid DEFAULT NULL, p_firm_id uuid DEFAULT NULL)

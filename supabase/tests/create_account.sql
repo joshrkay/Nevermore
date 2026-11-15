@@ -429,7 +429,7 @@ END $$;
 -- many digits, a plus in the middle), a negative number of employees, or a field over its length is saved; or a refusal is not in words. Nothing is made by a
 -- refused call. The phone rule is also the table's: a row written directly with a bad phone is refused.
 DO $$
-DECLARE n bigint := pg_temp.accounts_in('acme'); p text;
+DECLARE n bigint := pg_temp.accounts_in('acme'); p text; r jsonb;
 BEGIN
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"name": "   "}'), '22023: Give the account a name.', 'a name of spaces');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('name', repeat('x', 201))), '22023: Keep the account''s name to 200 characters.', 'a name too long');
@@ -437,29 +437,73 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"states": ["OR", "XX"]}'), '22023: Choose the states of operation from the list.', 'a state of operation that is not one');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"employees": -1}'), '22023: Employees can''t be a negative number.', 'negative employees');
   PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('website', repeat('w', 301))), '22023: Keep the website to 300 characters.', 'a website too long');
-  FOREACH p IN ARRAY ARRAY['call me', '555-0142', '12345678901234567', '503+555+0142', '(503) 555-0142 ext', '503-555-0142 x1234567', '++15035550142'] LOOP
-    PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', p)), '22023: Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.', 'phone ' || p);
+  FOREACH p IN ARRAY ARRAY['call me', '555014', '1234567890123456', '503+555+0142', '(503) 555-0142 ext', '503-555-0142 x1234567', '++15035550142'] LOOP
+    PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', p)), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'phone ' || p);
   END LOOP;
-  FOREACH p IN ARRAY ARRAY['(503) 555-0142', '503-555-0142', '503.555.0142', '+1 503 555 0142', '5035550142', '503 555 0142 x12', '503 555 0142 ext. 345', '+44 20 7946 0958'] LOOP
+  FOREACH p IN ARRAY ARRAY['555-0142', '5550142', '123456789012345', '(503) 555-0142', '503-555-0142', '503.555.0142', '+1 503 555 0142', '5035550142', '503 555 0142 x12', '503 555 0142 ext. 345', '+44 20 7946 0958'] LOOP
     PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', p)), 'ok', 'phone ' || p);
   END LOOP;
-  PERFORM pg_temp.is(pg_temp.accounts_in('acme'), n + 8, 'only the eight good phones made accounts');
+  -- At most 50 characters, as is_valid_phone says (not 40: the older length check of the save is gone).
+  PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', '503' || repeat(' ', 40) || '5550142')), 'ok', 'a phone of 50 characters');
+  PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', jsonb_build_object('phone', '503' || repeat(' ', 41) || '5550142')), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'a phone of 51 characters');
+  PERFORM pg_temp.is(pg_temp.accounts_in('acme'), n + 12, 'only the twelve good phones made accounts');
   RESET ROLE;
-  PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (source, firm_id, name, phone) VALUES ('added_by_hand', pg_temp.id('acme'), 'Bad phone', 'call me')$q$), '23514', 'the table refuses a bad phone');
+  PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (source, firm_id, name, phone) VALUES ('added_by_hand', pg_temp.id('acme'), 'Bad phone', 'call me')$q$), '22023', 'the table refuses a bad phone');
   PERFORM pg_temp.is(pg_temp.attempt($q$INSERT INTO public.accounts (source, firm_id, name, phone) VALUES ('added_by_hand', pg_temp.id('acme'), 'Good phone', '(503) 555-0142')$q$), 'rows:1', 'and takes a good one');
   -- The save of an account's own fields asks the same rule.
   PERFORM pg_temp.account('a1', 'acme', 'acme_owner');
   PERFORM pg_temp.as_user('acme_owner');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.update_account(%L, 'Renamed', NULL, NULL, 'call me', NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, 1)$q$,
-    pg_temp.id('a1'), pg_temp.id('acme'))), '22023: Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.', 'saving an account asks the same phone rule');
+    pg_temp.id('a1'), pg_temp.id('acme'))), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'saving an account asks the same phone rule');
   RESET ROLE;
+  -- An account whose phone was kept before the rule (7 digits was always fine; "call me" is how a legacy row might read) is not judged again while its phone
+  -- is left alone: a save of another field, and a raw update of one, go through. Changing the phone to something else bad is refused; keeping it is not.
+  ALTER TABLE public.accounts DISABLE TRIGGER accounts_phone_valid;
+  INSERT INTO public.accounts (id, source, firm_id, owner_id, name, phone) VALUES ('00000000-0000-4000-8000-0000000000e1', 'added_by_hand', pg_temp.id('acme'), pg_temp.id('acme_owner'), 'Legacy phone', 'call me');
+  ALTER TABLE public.accounts ENABLE TRIGGER accounts_phone_valid;
+  PERFORM pg_temp.as_user('acme_owner');
+  r := public.update_account('00000000-0000-4000-8000-0000000000e1', 'Legacy phone', NULL, NULL, 'call me', NULL, NULL, NULL, NULL, 'Dental practice', NULL, '{}', NULL, pg_temp.id('acme'), 1);
+  PERFORM pg_temp.is(r ->> 'conflict', 'false', 'saving another field of an account with an old-format phone');
+  PERFORM pg_temp.is(r #>> '{record,phone}', 'call me', 'keeps the phone as it was');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.update_account(%L, 'Legacy phone', NULL, NULL, 'still not one', NULL, NULL, NULL, NULL, 'Dental practice', NULL, '{}', NULL, %L, 2)$q$,
+    '00000000-0000-4000-8000-0000000000e1'::uuid, pg_temp.id('acme'))), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'changing the phone to another bad one is refused');
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.attempt($q$UPDATE public.accounts SET industry = 'Raw' WHERE id = '00000000-0000-4000-8000-0000000000e1'$q$), 'rows:1', 'a raw update of another field');
+  PERFORM pg_temp.is(pg_temp.attempt($q$UPDATE public.accounts SET phone = 'x' WHERE id = '00000000-0000-4000-8000-0000000000e1'$q$), '22023', 'but not a raw change of the phone to a bad one');
+  PERFORM pg_temp.is(pg_temp.attempt($q$UPDATE public.accounts SET phone = '555-0142' WHERE id = '00000000-0000-4000-8000-0000000000e1'$q$), 'rows:1', 'or to a good one');
   RAISE NOTICE 'create_account: the fields'' rules passed';
+END $$;
+
+-- ---------- whom the form offers as owner ----------
+-- Break caught: the choices offer a person the level rule would refuse (an agent anyone but themselves, a lead anyone outside their teams), omit one it allows,
+-- list a person who has left the firm or another firm's, or answer a person who is no member of the firm.
+CREATE FUNCTION pg_temp.choices(who text, firm text DEFAULT 'acme') RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.as_user(who);
+  SELECT COALESCE(string_agg(f.name, ',' ORDER BY f.name), '') INTO r FROM public.account_owner_choices(pg_temp.id(firm)) c JOIN fx f ON f.id = c.user_id;
+  RESET ROLE;
+  RETURN r;
+EXCEPTION WHEN OTHERS THEN
+  RESET ROLE;
+  RETURN SQLSTATE;
+END $$;
+
+DO $$
+BEGIN
+  PERFORM pg_temp.is(pg_temp.choices('acme_agent1'), 'acme_agent1', 'an agent is offered themselves');
+  PERFORM pg_temp.is(pg_temp.choices('acme_lead'), 'acme_agent2,acme_lead,acme_west', 'a lead, themselves and the people on their teams and the teams under');
+  PERFORM pg_temp.is(pg_temp.choices('acme_lead2'), 'acme_lead2', 'a lead with no team, themselves');
+  PERFORM pg_temp.is(pg_temp.choices('acme_owner'), 'acme_agent1,acme_agent2,acme_agent3,acme_lead,acme_lead2,acme_owner,acme_west', 'an owner, everyone currently in the firm');
+  PERFORM pg_temp.is(pg_temp.choices('zenith_owner', 'acme'), '42501', 'another firm''s owner naming Acme');
+  PERFORM pg_temp.is(pg_temp.choices('acme_removed'), '42501', 'a former member');
+  PERFORM pg_temp.is(pg_temp.choices('zenith_owner', 'zenith'), 'zenith_agent,zenith_agent2,zenith_lead,zenith_owner', 'and Zenith''s owner Zenith''s people');
+  RAISE NOTICE 'create_account: the owner choices passed';
 END $$;
 
 -- ---------- who may make one ----------
 -- Break caught: a person who is no member of the firm (a former member, a platform admin, another firm's owner, someone with no firm), a signed-out caller or
--- Nevermore support (ADR 0024) makes an account; an account is made in a firm the person did not name and is not a member of; or a person of two firms is
--- given one without saying which.
+-- Nevermore support (ADR 0024) makes an account; or an account is made in a firm the person named and is not a member of.
 DO $$
 DECLARE sess uuid; n bigint := pg_temp.accounts_in('acme'); z bigint := pg_temp.accounts_in('zenith');
 BEGIN
@@ -489,7 +533,7 @@ BEGIN
   PERFORM pg_temp.as_anon();
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.create_account('X', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, %L)$q$, pg_temp.id('acme'))), '42501', 'a signed-out caller may not call it');
   PERFORM pg_temp.as_user('acme_owner');
-  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.crm_phone_ok('(503) 555-0142')$q$), '42501', 'the phone check is internal');
+  PERFORM pg_temp.is(pg_temp.attempt($q$SELECT public.check_account_phone()$q$), '42501', 'the phone check is internal');
   RESET ROLE;
   RAISE NOTICE 'create_account: grants passed';
 END $$;

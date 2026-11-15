@@ -950,7 +950,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent1', 'a1', v, '{"employees": -1}'), '22023: Employees can''t be a negative number.', 'employees are not negative');
   PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent1', 'a1', v, '{"states": ["OR", "XX"]}'), '22023: Choose the states of operation from the list.', 'nor are states of operation made up');
   PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent1', 'a1', v, jsonb_build_object('website', repeat('w', 301))), '22023: Keep the website to 300 characters.', 'a website is at most 300');
-  PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent1', 'a1', v, jsonb_build_object('phone', repeat('1', 41))), '22023: Keep the phone number to 40 characters.', 'a phone at most 40');
+  PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent1', 'a1', v, jsonb_build_object('phone', repeat('1', 41))), '22023: Enter a phone number like (503) 555-0142. An extension can follow, like x12.', 'a phone is the repository''s rule (is_valid_phone), not a length of its own');
   PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent1', 'a1', v, jsonb_build_object('city', repeat('c', 101))), '22023: Keep the city to 100 characters.', 'a city at most 100');
   -- The input is looked at before the account, so a stranger learns nothing of it: the same words whether or not the account is theirs.
   PERFORM pg_temp.is(pg_temp.save_refusal('acme_agent2', 'a1', v, '{"name": ""}'), '22023: Give the account a name.', 'the words are the same for an account the person may not see');
