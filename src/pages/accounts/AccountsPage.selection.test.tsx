@@ -110,15 +110,15 @@ describe("selecting rows on the Accounts page", () => {
     expect(bar()).toBeNull();
   });
 
-  // Catches: the bar absent with a row selected, a wrong count, a button that does nothing (only Export and Clear work today, D-24), or Clear leaving the selection.
-  it("shows the bar with the count, Export and Clear once a row is selected, and Clear empties it", async () => {
+  // Catches: the bar absent with a row selected, a wrong count, a button that does nothing (D-24), or Clear leaving the selection.
+  it("shows the bar with the count, the actions, Export and Clear once a row is selected, and Clear empties it", async () => {
     const user = userEvent.setup();
     renderAt();
     await screen.findByRole("link", { name: "Kestrel Software" });
     await user.click(check("Select Kestrel Software"));
     const selected = within(bar()!);
     expect(selected.getByText("1 selected")).toBeInTheDocument();
-    expect(selected.getAllByRole("button").map((b) => b.textContent)).toEqual(["Export", "Clear"]);
+    expect(selected.getAllByRole("button").map((b) => b.textContent)).toEqual(["Change owner", "Set a field", "Label", "Archive", "Export", "Clear"]);
     // The bar replaces the toolbar: no search box while rows are selected.
     expect(screen.queryByPlaceholderText("Search accounts, contacts, emails")).toBeNull();
     await user.click(selected.getByRole("button", { name: "Clear" }));
