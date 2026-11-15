@@ -29,7 +29,7 @@ const row = {
   created_at: "2026-10-01T00:00:00+00:00", owner: "u1", owner_name: "Ann Agent", main_contact_id: "c1", main_contact_name: "Ann Alpha",
   main_contact_email: "ann@alpha.example", main_contact_phone: null, opportunity_id: "o1", opportunity_name: "Alpha search", opportunity_stage: "in_market",
   target_start: "2027-02-01", open_opportunities: 2, quote_requests_sent: 2, quotes_received: 1, waiting_on_peo: true,
-  earliest_quote_expires_on: "2026-12-31", last_activity_at: "2026-10-20T00:00:00+00:00",
+  earliest_quote_expires_on: "2026-12-31", last_activity_at: "2026-10-20T00:00:00+00:00", labels: ["Hot lead"],
 };
 
 describe("listAccounts", () => {
@@ -228,12 +228,9 @@ describe("the accounts table's fields agree with the database", () => {
     expect(m, `sync block ${name}`).toBeDefined();
     return m![1];
   };
-  // Until CRM-S3.7a puts the Label column and filter on the page, `labels` is the one field and column the database has that the page does not.
-  const NOT_ON_THE_PAGE_YET = ["labels"];
 
   it("names the same fields with the same kinds", () => {
     const server = Object.fromEntries([...block("accounts_fields").matchAll(/WHEN '(\w+)' THEN '(\w+)'/g)].map((m) => [m[1], m[2]]));
-    for (const f of NOT_ON_THE_PAGE_YET) delete server[f];
     expect(server).toEqual(ACCOUNT_FIELDS);
   });
 
@@ -255,7 +252,7 @@ describe("the accounts table's fields agree with the database", () => {
     expect(body).not.toBeNull();
     const created = body![1].split("\n").map((l) => l.trim().match(/^(\w+) /)?.[1]).filter((c): c is string => c !== undefined);
     const added = migrations.flatMap((x) => [...x.matchAll(/ALTER TYPE public\.accounts_row ADD ATTRIBUTE (\w+)/g)].map((m) => m[1]));
-    expect([...ACCOUNT_ROW_KEYS]).toEqual([...created, ...added].filter((c) => !NOT_ON_THE_PAGE_YET.includes(c)));
+    expect([...ACCOUNT_ROW_KEYS]).toEqual([...created, ...added]);
   });
 
   // Every filterable field is a column of the row, so a chip is always for something the page has.
