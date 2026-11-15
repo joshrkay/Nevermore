@@ -46,7 +46,7 @@ export function AddContactDialog({ firmId, accountId, person = "You", onClose, o
           <DialogTitle className="font-display text-xl font-bold">Add a contact</DialogTitle>
           <DialogDescription>{data ? `On ${data.account.name}` : "Add a person at this account."}</DialogDescription>
         </DialogHeader>
-        {context.isError ? (
+        {context.isError && !data ? (
           <div role="alert" className="space-y-3 text-sm">
             <p>{(context.error as Error).message || "Couldn't load the account."}</p>
             <div className="flex gap-2">
@@ -62,15 +62,17 @@ export function AddContactDialog({ firmId, accountId, person = "You", onClose, o
             <Button type="button" variant="outline" onClick={onClose}>Close</Button>
           </div>
         ) : (
-          <AddContactForm firmId={firmId} accountId={accountId} person={person} context={data} onClose={onClose} onAdded={onAdded} closer={closer} />
+          <AddContactForm firmId={firmId} accountId={accountId} person={person} context={data} onClose={onClose} onAdded={onAdded} closer={closer} refreshContext={() => void context.refetch()} />
         )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, closer }: {
+function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, closer, refreshContext }: {
   firmId: string; accountId: string; person: string; context: AddContactContext; onClose: () => void; onAdded: () => void; closer: MutableRefObject<(() => void) | null>;
+  /** Asks who is the account's main contact again: a contact just saved may be it. */
+  refreshContext: () => void;
 }) {
   const { user } = useAuth();
   const me = user?.id ?? "";
@@ -105,6 +107,7 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
     onSaved: ({ added, again }: { added: AddedContact; again: boolean }) => {
       toast.success(added.previousMain ? `Contact added. ${nameOf(added.contact)} is now the main contact, and ${added.previousMain.name} isn't any more.` : "Contact added");
       onAdded();
+      refreshContext();
       if (again) setTimeout(() => api.form.setFocus("first_name"), 0); // after the save ends and the button is usable again
       else onClose();
     },

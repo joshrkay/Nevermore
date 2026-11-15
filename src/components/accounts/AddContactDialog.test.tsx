@@ -112,6 +112,22 @@ describe("the Add a contact form (screen 24)", () => {
     expect(toast.success).toHaveBeenCalledWith("Contact added. Owen Park is now the main contact, and Ada Main isn't any more.");
   });
 
+  // Catches: the form that stays open for "Save and add another" going on naming the main contact it had when it opened, so the next one is said to take over from
+  // someone who is not the main contact any more (found in the browser: the first one saved as main was not named).
+  it("asks who is the main contact again after saving one, so the next to be ticked names them", async () => {
+    addContact.mockResolvedValue({ contact: { id: "c1", firstName: "Owen", lastName: "Park", isMain: true }, previousMain: null });
+    const { user, dialog } = await open();
+    await user.click(field(dialog, "Main contact for this account"));
+    await user.type(field(dialog, "Last name"), "Park");
+    await user.type(field(dialog, "Email"), "owen@harborviewdental.example");
+    getAddContactContext.mockResolvedValue(context({ mainContact: { id: "c1", name: "Owen Park" } }));
+    await user.click(within(dialog).getByRole("button", { name: "Save and add another" }));
+    await waitFor(() => expect(getAddContactContext).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(field(dialog, "Last name")).toHaveValue(""));
+    await user.click(field(dialog, "Main contact for this account"));
+    expect(await within(dialog).findByText("Owen Park is the main contact now. Saving makes this contact the main contact instead.")).toBeInTheDocument();
+  });
+
   // Catches: no say when the account has no main contact to displace (a false claim), or the note shown without the tick.
   it("says nothing of a main contact being replaced when there is none", async () => {
     const { user, dialog } = await open();
