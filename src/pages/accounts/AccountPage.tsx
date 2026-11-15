@@ -12,7 +12,8 @@ import { TAB_IDS, TAB_LABELS, type TabId } from "@/components/accounts/accountCo
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { DuplicateBanner } from "@/components/accounts/DuplicateBanner";
 import { MergeDialog } from "@/components/accounts/MergeDialog";
-import { GoToKept, MergedNote, useMergedAddress } from "@/components/accounts/MergedAddress";
+import { GoToKept, MergedNote } from "@/components/accounts/MergedAddress";
+import { useMergedAddress } from "@/components/accounts/useMergedAddress";
 import { accountKey, useAccountPageQuery } from "@/components/accounts/useAccountQueries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadFailed, NotAvailable, PlaceholderPanel, PlaceholderLines, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
