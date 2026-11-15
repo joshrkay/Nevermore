@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
 import { AccountHeader, AccountHeaderLoading } from "@/components/accounts/AccountHeader";
@@ -52,22 +52,28 @@ const AccountPage = () => {
 
   if (query.isError && query.data === undefined) {
     // An address whose id is no id at all (the database refuses it, 22P02) is an account that isn't there, not a load that could work next time.
-    if ((query.error as { code?: string }).code === "22P02") return <Frame><NotAvailable noun="account" backTo="/advisor" backLabel="Back to all submissions" /></Frame>;
+    if ((query.error as { code?: string }).code === "22P02") return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
     return <Frame><LoadFailed error={query.error as Error} what="this account" onRetry={retry} /></Frame>;
   }
   const page = query.data;
   // The same answer for an account that is gone, another firm's, or one the person's level does not reach.
-  if (!page) return <Frame><NotAvailable noun="account" backTo="/advisor" backLabel="Back to all submissions" /></Frame>;
+  if (!page) return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
 
   const { account, tabs } = page;
   const count: Record<TabId, number | null> = {
     overview: null, contacts: tabs.contacts.count, opportunities: tabs.opportunities.count, quotes: tabs.quotes.count, activity: tabs.activity.count, files: tabs.files.count,
   };
-  // Calls, notes and tasks can be logged (and each of them changed) only where the database will take them: not during a Nevermore support session (ADR 0024),
-  // and not on an archived account, which says nothing can be added to it.
-  const canLog = firmId !== null && !isSupport && account.archivedAt === null;
+  // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024). On an archived account
+  // nothing can be added (D-222: the database refuses a new call, note, task or addition), but an existing call or task can still be changed and a task marked done.
+  const canAct = firmId !== null && !isSupport;
+  const archived = account.archivedAt !== null;
   const body = (
     <>
+      <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
+        <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
+        <span aria-hidden="true"> / </span>
+        <span aria-current="page">{account.name}</span>
+      </nav>
       {account.archivedAt !== null && (
         // A Restore button comes with CRM-A1.1c; until then the account says it is archived and nothing can be added.
         <div role="note" className="mb-6 flex items-center gap-3 rounded-xl border border-border bg-muted/40 p-4 text-sm">
@@ -98,7 +104,7 @@ const AccountPage = () => {
   );
   return (
     <Frame>
-      {canLog ? <AccountActionsProvider firmId={firmId} accountId={id} accountName={account.name} userId={user?.id ?? null}>{body}</AccountActionsProvider> : body}
+      {canAct ? <AccountActionsProvider firmId={firmId} accountId={id} accountName={account.name} userId={user?.id ?? null} canAdd={!archived}>{body}</AccountActionsProvider> : body}
     </Frame>
   );
 };

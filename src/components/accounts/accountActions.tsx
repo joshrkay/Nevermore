@@ -15,14 +15,15 @@ type Open = { mode: "log"; kind: ActivityType; contactId: string | null } | { mo
 
 const SAVED_WORDS: Record<ActivityType, string> = { call: "Call logged", note: "Note added", task: "Task added" };
 
-export function AccountActionsProvider({ firmId, accountId, accountName, userId, children }: {
-  firmId: string; accountId: string; accountName: string; userId: string | null; children: ReactNode;
+export function AccountActionsProvider({ firmId, accountId, accountName, userId, canAdd, children }: {
+  firmId: string; accountId: string; accountName: string; userId: string | null; canAdd: boolean; children: ReactNode;
 }) {
   const [open, setOpen] = useState<Open>(null);
   const queryClient = useQueryClient();
   // Every list of the account is asked again: a new row belongs in the Activity tab, its count and the Overview, and a task's state in each.
   const refresh = useCallback(() => void queryClient.invalidateQueries({ queryKey: accountKey(firmId, accountId) }), [queryClient, firmId, accountId]);
   const actions = useMemo<AccountActions>(() => ({
+    canAdd,
     log: (kind, contactId = null) => setOpen({ mode: "log", kind, contactId }),
     edit: (item) => setOpen({ mode: "edit", item }),
     addTo: (item) => setOpen({ mode: "add", item }),
@@ -34,7 +35,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
         toast.error(err instanceof ActivityError ? err.message : "Couldn't update the task. Check your connection and try again.");
       }
     },
-  }), [firmId, refresh]);
+  }), [firmId, refresh, canAdd]);
   const close = () => setOpen(null);
   return (
     <AccountActionsContext.Provider value={actions}>

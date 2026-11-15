@@ -1240,6 +1240,49 @@ BEGIN
   RAISE NOTICE 'accounts_query: few rows read passed';
 END $$;
 
+-- ---------- last activity reads a handful of rows however much an account holds (CRM-E1.5) ----------
+-- Break caught: last activity scans each account's calls, notes and tasks (and expands every addition) for every account the list sorts, so 5,000 notes with
+-- additions on one account are read to show the first page: the function takes the newest of the maintained moment by the (account, moment) index.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); alpha uuid := pg_temp.id('alpha');
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO public.activities (firm_id, account_id, kind, body, at, created_at, additions)
+  SELECT acme, alpha, 'note', 'Heavy ' || n, timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval, timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval,
+         jsonb_build_array(jsonb_build_object('at', (timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval + interval '1 hour')::text, 'by', NULL, 'text', 'More'),
+                           jsonb_build_object('at', (timestamptz '2026-09-01 00:00+00' + (n || ' minutes')::interval + interval '2 hours')::text, 'by', NULL, 'text', 'Again'))
+  FROM generate_series(1, 5000) n;
+END $$;
+ANALYZE public.activities;
+DO $$
+DECLARE before bigint; used bigint; j jsonb;
+BEGIN
+  PERFORM set_config('enable_seqscan', 'off', true);
+  PERFORM set_config('plan_cache_mode', 'force_generic_plan', true);
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.al('acme');
+  before := pg_temp.rows_read('activities');
+  j := pg_temp.al('acme');
+  used := pg_temp.rows_read('activities') - before;
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), 6, 'the list is whole');
+  PERFORM pg_temp.is(used < 30, true, 'listing 6 accounts, one with 5,000 notes, read ' || used || ' rows of activities, not its history');
+  RESET ROLE;
+END $$;
+-- And the time of that first page, with the planner as it is (a second call, so planning is not counted).
+DO $$
+DECLARE t0 timestamptz; ms numeric; j jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.al('acme');
+  t0 := clock_timestamp();
+  j := pg_temp.al('acme');
+  ms := extract(epoch FROM clock_timestamp() - t0) * 1000;
+  RAISE NOTICE 'accounts_query: the first page with 5000 notes (10000 additions) on one account took % ms', round(ms);
+  PERFORM pg_temp.is(ms < 500, true, 'the first page took ' || round(ms) || ' ms');
+  RESET ROLE;
+END $$;
+
+
 -- ---------- how it is run ----------
 -- Break caught: the functions the browser calls are open to a signed-out caller, or a helper is.
 DO $$

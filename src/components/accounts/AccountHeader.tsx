@@ -34,7 +34,7 @@ export function AccountHeader({ account }: { account: AccountDetails }) {
           <p className="mt-1 text-sm text-muted-foreground break-words">{facts.join(" · ")}</p>
         </div>
       </div>
-      {actions && (
+      {actions?.canAdd && (
         <div data-account-actions className="mt-4 flex flex-wrap gap-2">
           <Button type="button" onClick={() => actions.log("call")}>Log a call</Button>
           <Button type="button" variant="outline" onClick={() => actions.log("task")}>Add a task</Button>

@@ -66,7 +66,7 @@ export function ActivityActions({ row }: { row: ActivityRow }) {
         </button>
       )}
       {item.canEdit && <button type="button" className={button} onClick={() => actions.edit(item)}>Edit<span className="sr-only"> {noun}</span></button>}
-      {item.type === "note" && <button type="button" className={button} onClick={() => actions.addTo(item)}>Add to note</button>}
+      {item.type === "note" && actions.canAdd && <button type="button" className={button} onClick={() => actions.addTo(item)}>Add to note</button>}
     </span>
   );
 }
@@ -74,7 +74,7 @@ export function ActivityActions({ row }: { row: ActivityRow }) {
 /** Log a call or a note on one contact, from the Contacts tab: a contact's own page is CRM-C1.1's. Nothing without actions (a Nevermore support session, an archived account). */
 export function ContactActions({ contact }: { contact: ContactRow }) {
   const actions = useAccountActions();
-  if (!actions) return null;
+  if (!actions?.canAdd) return null;
   const button = "min-h-9 text-sm text-primary underline underline-offset-2 hover:text-primary/90";
   const name = contactName(contact);
   return (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
+import type { Json } from "@/integrations/supabase/types";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { StepUpDialog } from "@/components/workspace/StepUpDialog";
 import { exportedWords } from "@/data/exportTables";
@@ -25,8 +26,8 @@ interface Props {
   table: ExportTable;
   /** The columns the page shows, in the order it shows them, each with its heading and how the page writes its value: the file holds these and no other. */
   columns: readonly ShownColumn[];
-  /** The table's own filters as the page shows them now (`{}` for none), exactly as `exportRows` takes them: the file holds the rows that match. */
-  filters?: Record<string, string>;
+  /** The table's own filters as the page shows them now (`{}` for none), exactly as `exportRows` takes them: the file holds the rows that match. Most tables take text; the accounts table takes its own filters as a list (`filters`), its `search` and `time_zone`. */
+  filters?: Record<string, Json>;
   /**
    * What the page keeps in its own state that the address must carry for the page to open the same way after a sign-in again (the filters). It is put in the
    * address only when the person has to sign in again from the sign-in page.
@@ -50,12 +51,12 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
   const running = useRef(false);
   const mounted = useRef(true);
   // The filters of the export that was refused for its sign-in, so the one that follows asks for the same rows, whatever the page shows by then.
-  const asked = useRef<Record<string, string>>(filters);
+  const asked = useRef<Record<string, Json>>(filters);
   useEffect(() => () => { mounted.current = false; }, []);
 
   if (off) return <DownloadsOffNotice />;
 
-  const run = async (asking: Record<string, string>) => {
+  const run = async (asking: Record<string, Json>) => {
     if (running.current) return;
     running.current = true;
     asked.current = asking;

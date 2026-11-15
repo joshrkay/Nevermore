@@ -58,6 +58,10 @@ CREATE TABLE public.activities (
   done_by uuid REFERENCES auth.users (id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
+  -- The newest moment that counts as activity on the account (D-201), kept by a trigger and never written: the greatest of when a call took place or a note or
+  -- a task was made, when a task was done, and a note's last addition. It only ever grows: opening a task again, or changing a call, a task or a note's text,
+  -- is not activity and takes nothing away. The account's last activity is the newest of these, found by the index below without reading its history.
+  activity_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT activities_account_fkey FOREIGN KEY (firm_id, account_id) REFERENCES public.accounts (firm_id, id) ON DELETE CASCADE,
   -- A contact and an opportunity of the same account. A deleted contact or opportunity leaves the activity on the account. Deferrable, as D-219's main-contact link is,
 -- so a contact or an opportunity can move to another account with its activities in one transaction.
@@ -74,6 +78,7 @@ CREATE TABLE public.activities (
 );
 
 CREATE INDEX activities_account_idx ON public.activities (account_id, at DESC, id DESC);
+CREATE INDEX activities_account_activity_idx ON public.activities (account_id, activity_at DESC);
 CREATE INDEX activities_firm_idx ON public.activities (firm_id, account_id);
 CREATE INDEX activities_contact_idx ON public.activities (contact_id) WHERE contact_id IS NOT NULL;
 -- What Home will ask: the open tasks a person has, by when they are due.
@@ -99,10 +104,11 @@ BEGIN
      OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'A call, note or task can''t be moved to another firm or made into another kind' USING ERRCODE = '42501';
   END IF;
-  -- Its account changes only by following its contact or its opportunity, which has already moved there (the same transaction, an earlier statement).
+  -- Its account changes only by following its contact or its opportunity, which has already moved there (the same transaction, an earlier statement), and which
+  -- the row still names: a different contact or opportunity of the new account in its place is not following.
   IF NEW.account_id IS DISTINCT FROM OLD.account_id AND NOT (
-       (NEW.contact_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.contacts c WHERE c.id = NEW.contact_id AND c.firm_id = NEW.firm_id AND c.account_id = NEW.account_id))
-    OR (NEW.opportunity_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = NEW.opportunity_id AND o.firm_id = NEW.firm_id AND o.account_id = NEW.account_id))) THEN
+       (NEW.contact_id IS NOT NULL AND NEW.contact_id IS NOT DISTINCT FROM OLD.contact_id AND EXISTS (SELECT 1 FROM public.contacts c WHERE c.id = NEW.contact_id AND c.firm_id = NEW.firm_id AND c.account_id = NEW.account_id))
+    OR (NEW.opportunity_id IS NOT NULL AND NEW.opportunity_id IS NOT DISTINCT FROM OLD.opportunity_id AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = NEW.opportunity_id AND o.firm_id = NEW.firm_id AND o.account_id = NEW.account_id))) THEN
     RAISE EXCEPTION 'A call, note or task moves to another account only with its contact or its opportunity' USING ERRCODE = '42501';
   END IF;
   IF NEW.author_id IS DISTINCT FROM OLD.author_id AND NEW.author_id IS NOT NULL THEN
@@ -133,6 +139,26 @@ $$;
 REVOKE ALL ON FUNCTION public.activities_guard() FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE TRIGGER activities_guard BEFORE UPDATE ON public.activities FOR EACH ROW EXECUTE FUNCTION public.activities_guard();
+
+-- Keeps activity_at, whoever writes: what was sent for it is ignored. On insert it is the row's own moments; on update it is that or what it was, whichever is
+-- later, so it never goes back.
+CREATE FUNCTION public.activities_stamp()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.activity_at := GREATEST(
+    CASE WHEN TG_OP = 'UPDATE' THEN OLD.activity_at END,
+    NEW.at, NEW.done_at,
+    (SELECT max((e ->> 'at')::timestamptz) FROM jsonb_array_elements(NEW.additions) AS e));
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.activities_stamp() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER activities_stamp BEFORE INSERT OR UPDATE ON public.activities FOR EACH ROW EXECUTE FUNCTION public.activities_stamp();
 
 -- ---------- 3. Row security ----------
 ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
@@ -497,9 +523,12 @@ BEGIN
       SELECT row_number() OVER (ORDER BY o.target_start DESC NULLS LAST, o.created_at DESC, o.id) AS o, jsonb_build_object('id', o.id, 'name', o.name) AS j
       FROM public.opportunities o WHERE o.account_id = a.id
       ORDER BY o.target_start DESC NULLS LAST, o.created_at DESC, o.id LIMIT 200) x), '[]'::jsonb),
+    -- A member with no name and no email is "A member" (person_display_name), as the accounts table's owner choices have it, so the list is always whole.
     'people', COALESCE((SELECT jsonb_agg(x.j ORDER BY lower(x.n), x.u) FROM (
-      SELECT DISTINCT m.user_id AS u, public.crm_person_name(m.user_id) AS n, jsonb_build_object('id', m.user_id, 'name', public.crm_person_name(m.user_id)) AS j
-      FROM public.firm_memberships m WHERE m.firm_id = a.firm_id AND public.membership_is_current(m.valid_from, m.valid_until)) x), '[]'::jsonb));
+      SELECT DISTINCT m.user_id AS u, public.person_display_name(pu.raw_user_meta_data, pu.email::text) AS n,
+             jsonb_build_object('id', m.user_id, 'name', public.person_display_name(pu.raw_user_meta_data, pu.email::text)) AS j
+      FROM public.firm_memberships m JOIN auth.users pu ON pu.id = m.user_id
+      WHERE m.firm_id = a.firm_id AND public.membership_is_current(m.valid_from, m.valid_until)) x), '[]'::jsonb));
 END;
 $$;
 
@@ -668,8 +697,9 @@ $$;
 -- account_activity_times (20261119130000), restated with every branch it had (the account's making; a status change of a quote request on one of its
 -- opportunities' intakes) and one more: a call, a note or a task logged or completed on the account, which is also how one on its contacts or its
 -- opportunities is found, since each carries the account. A call counts at when it took place, a note or a task at when it was made, a task again when it
--- was done, and a note again at each addition. Found by the firm and the account, so the (firm_id, account_id) index reads it and the accounts table's
--- query keeps reading a few rows. Editing a call, a task or a note's text, or opening a task again, is not activity.
+-- was done, and a note again at each addition: the one maintained moment of each row (activity_at, kept by a trigger), so an account's newest is one row
+-- read through (account_id, activity_at), never its history, however many notes and additions it holds. Editing a call, a task or a note's text, or opening a
+-- task again, is not activity.
 CREATE OR REPLACE FUNCTION public.account_activity_times(p_firm_id uuid, p_account_id uuid)
 RETURNS TABLE (at timestamptz)
 LANGUAGE sql
@@ -684,10 +714,5 @@ AS $$
   JOIN public.quote_requests q ON q.session_id = o.intake_id
   JOIN public.quote_request_events e ON e.quote_request_id = q.id AND e.field = 'status'
   UNION ALL
-  SELECT x.at FROM public.activities x WHERE x.firm_id = p_firm_id AND x.account_id = p_account_id
-  UNION ALL
-  SELECT x.done_at FROM public.activities x WHERE x.firm_id = p_firm_id AND x.account_id = p_account_id AND x.done_at IS NOT NULL
-  UNION ALL
-  SELECT (ad ->> 'at')::timestamptz FROM public.activities x CROSS JOIN LATERAL jsonb_array_elements(x.additions) AS ad
-  WHERE x.firm_id = p_firm_id AND x.account_id = p_account_id AND x.kind = 'note'
+  (SELECT x.activity_at FROM public.activities x WHERE x.account_id = p_account_id AND x.firm_id = p_firm_id ORDER BY x.activity_at DESC LIMIT 1)
 $$;

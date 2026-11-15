@@ -5,6 +5,8 @@ import type { ActivityItem, ActivityType } from "@/lib/activityApi";
 // (accountActions.tsx provides it). Without a provider (a Nevermore support session, an archived account) there are no actions.
 
 export interface AccountActions {
+  /** Whether something new can be added: false on an archived account (D-222), where a call or a task can still be changed and a task marked done. */
+  canAdd: boolean;
   log: (kind: ActivityType, contactId?: string | null) => void;
   edit: (item: ActivityItem) => void;
   addTo: (note: ActivityItem) => void;

@@ -871,6 +871,10 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE account_id = pg_temp.id('mva')), 2::bigint, 'the other contact''s note and the account''s own stayed');
   PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE contact_id = pg_temp.id('mvc') AND account_id = pg_temp.id('mvb')), 2::bigint, 'each still names its contact');
 
+  -- swapping in a different contact or opportunity of the new account is replacing the link, not following it
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.activities SET account_id = %L, contact_id = %L WHERE id = %L$q$, pg_temp.id('mvb'), pg_temp.id('mvc'), pg_temp.id('mv_other'))), '42501', 'a different contact of the new account in its place is refused');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.activities SET account_id = %L, contact_id = NULL, opportunity_id = %L WHERE id = %L$q$, pg_temp.id('mvb'), pg_temp.id('mvo'), pg_temp.id('mv_other'))), '42501', 'and a different opportunity');
+
   -- a move that leaves one behind is refused where it ends
   PERFORM pg_temp.account('mvd', 'acme', 'acme_agent1');
   PERFORM pg_temp.contact('mvc3', 'mva', 'acme_agent1', 'mvc3@example.test');
@@ -902,4 +906,44 @@ BEGIN
   PERFORM pg_temp.is(ms < 300, true, 'the page took ' || round(ms) || ' ms');
   PERFORM pg_temp.is(public.account_tab(acme, pg_temp.id('big'), 'activity_notes', 5, 4995) -> 'rows' -> 4 ->> 'body', 'Note 5000', 'and the last page is the oldest');
   RESET ROLE;
+END $$;
+
+-- ---------- a member with no name and no email (the log form's choices) ----------
+-- Break caught: the form's list of people holds a null name for such a member, which the screen rejects whole, so no dialog on the account opens.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); u uuid := gen_random_uuid(); r jsonb;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO auth.users (id, aud, role, email, email_confirmed_at, is_anonymous, created_at, updated_at) VALUES (u, 'authenticated', 'authenticated', NULL, now(), false, now(), now());
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (acme, u, 'agent');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.account_activity_options(acme, pg_temp.id('a1'));
+  PERFORM pg_temp.is((SELECT x ->> 'name' FROM jsonb_array_elements(r -> 'people') x WHERE x ->> 'id' = u::text), 'A member', 'a member with no name or email is "A member"');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(r -> 'people') x WHERE x ->> 'name' IS NULL), 0::bigint, 'and no name is null');
+  RESET ROLE;
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.firm_memberships WHERE user_id = u;
+END $$;
+
+-- ---------- activity_at only grows, and is no one's to write (D-201) ----------
+-- Break caught: opening a task again, or changing a call's time or a task's words, takes a moment back or moves it; a value sent for it is kept; an addition or
+-- a completion does not move it.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); t uuid; n uuid; c uuid;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, at, created_at, activity_at) VALUES (acme, pg_temp.id('a3'), 'task', 'T', current_date, timestamptz '2026-01-01 00:00+00', timestamptz '2026-01-01 00:00+00', timestamptz '2030-01-01') RETURNING id INTO t;
+  PERFORM pg_temp.is((SELECT activity_at FROM public.activities WHERE id = t), timestamptz '2026-01-01 00:00+00', 'a value sent for it is ignored');
+  UPDATE public.activities SET done_at = timestamptz '2026-01-05 00:00+00' WHERE id = t;
+  PERFORM pg_temp.is((SELECT activity_at FROM public.activities WHERE id = t), timestamptz '2026-01-05 00:00+00', 'a task done moves it');
+  UPDATE public.activities SET done_at = NULL, done_by = NULL WHERE id = t;
+  PERFORM pg_temp.is((SELECT activity_at FROM public.activities WHERE id = t), timestamptz '2026-01-05 00:00+00', 'opening it again takes nothing back');
+  UPDATE public.activities SET title = 'Renamed', activity_at = timestamptz '2020-01-01' WHERE id = t;
+  PERFORM pg_temp.is((SELECT activity_at FROM public.activities WHERE id = t), timestamptz '2026-01-05 00:00+00', 'editing it changes nothing, and nothing can lower it');
+  INSERT INTO public.activities (firm_id, account_id, kind, outcome, at) VALUES (acme, pg_temp.id('a3'), 'call', 'spoke', timestamptz '2026-02-01 00:00+00') RETURNING id INTO c;
+  UPDATE public.activities SET at = timestamptz '2026-01-01 00:00+00' WHERE id = c;
+  PERFORM pg_temp.is((SELECT activity_at FROM public.activities WHERE id = c), timestamptz '2026-02-01 00:00+00', 'a call''s time put earlier does not take its moment back');
+  INSERT INTO public.activities (firm_id, account_id, kind, body, additions) VALUES (acme, pg_temp.id('a3'), 'note', 'N', '[{"at": "2999-01-01T00:00:00+00:00", "by": null, "text": "later"}]') RETURNING id INTO n;
+  PERFORM pg_temp.is((SELECT activity_at FROM public.activities WHERE id = n), timestamptz '2999-01-01 00:00+00', 'a note''s last addition is its moment');
+  DELETE FROM public.activities WHERE id = n;
 END $$;

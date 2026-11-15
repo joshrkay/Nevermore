@@ -98,12 +98,27 @@ describe("the header's buttons", () => {
     expect(screen.queryByRole("button", { name: /Mark done|Add to note|Edit (call|note|task)/ })).toBeNull();
   });
 
-  it("offers neither on an archived account", async () => {
+  // Catches: an archived account hiding edit and mark-done, which the database still allows (D-222), or offering what it refuses (a new call, task, note or addition).
+  it("offers nothing to add on an archived account, but still Edit and Mark done", async () => {
+    const user = userEvent.setup();
     client.getAccountPage.mockResolvedValue(page({ account: { ...account, archivedAt: "2026-11-01T00:00:00+00:00" } }));
+    client.listAccountTab.mockImplementation(async () => tabOf([call, note, task]));
     renderPage();
     await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" });
     expect(screen.queryByRole("button", { name: "Log a call" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add a task" })).toBeNull();
+    client.listAccountTab.mockImplementation(async () => tabOf([contact1]));
+    await user.click(screen.getByRole("tab", { name: /^Contacts/ }));
+    await screen.findByRole("table", { name: "The account's contacts" });
+    expect(screen.queryByRole("button", { name: /Log a call with|Add a note on/ })).toBeNull();
+    client.listAccountTab.mockImplementation(async () => tabOf([call, note, task]));
+    await user.click(screen.getByRole("tab", { name: /^Activity/ }));
+    const table = await screen.findByRole("table", { name: "The account's activity" });
+    expect(within(table).queryByRole("button", { name: "Add to note" })).toBeNull();
+    expect(within(table).getAllByRole("button", { name: /^Edit/ }).length).toBeGreaterThan(0);
+    activity.setTaskDone.mockResolvedValue(task);
+    await user.click(within(table).getByRole("button", { name: /Mark done/ }));
+    await waitFor(() => expect(activity.setTaskDone).toHaveBeenCalledWith("f1", "task1", true));
   });
 });
 
