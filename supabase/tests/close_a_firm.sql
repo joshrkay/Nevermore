@@ -150,6 +150,7 @@
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
@@ -262,6 +263,8 @@ END $$;
 DO $$
 DECLARE fa uuid; fb uuid; fg uuid; fo uuid; fr uuid; fs uuid; s uuid; sb uuid; q bigint; t1 uuid; t2 uuid; sv uuid;
 BEGIN
+  -- The quote request below is made before the opportunity its intake sits on, in this transaction (CRM-Q1.3 asks at its end).
+  SET CONSTRAINTS quote_requests_has_opportunity DEFERRED;
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Alpha Brokers', 'alpha-brokers', now(), 'approved', now()) RETURNING id INTO fa;
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Beta Benefits', 'beta-benefits', now(), 'approved', now()) RETURNING id INTO fb;
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Gamma Group', 'gamma-group', now(), 'approved', now()) RETURNING id INTO fg;

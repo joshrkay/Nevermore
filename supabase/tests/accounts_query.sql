@@ -153,6 +153,7 @@
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
@@ -1128,6 +1129,8 @@ BEGIN
     PERFORM pg_temp.is(pg_temp.f('[{"field":"quotes_received","op":"more_than","value":0}]'), ARRAY['alpha'], 'only the account whose shown opportunity has a quote back has one');
     RESET ROLE;
     -- This year's opportunity has no intake yet (Qualifying): it has no quotes, whatever last year's had.
+    -- CRM-Q1.3 asks that an intake with quote requests sit on an opportunity; this block is rolled back, and asks at its end.
+    SET CONSTRAINTS opportunities_keep_intake_unlink DEFERRED;
     UPDATE public.opportunities SET intake_id = NULL WHERE account_id = pg_temp.id('renew') AND name = 'This year';
     r := pg_temp.row_as_owner('renew');
     PERFORM pg_temp.is(r ->> 'opportunity_stage', 'qualifying', 'an open opportunity with no intake is Qualifying');
