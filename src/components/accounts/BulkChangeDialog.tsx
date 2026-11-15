@@ -11,7 +11,7 @@ import {
   applyBulkChange, BULK_FIELDS, BulkChangeError, firmLabels, previewBulkChange,
   type BulkAction, type BulkField, type BulkOutcome, type BulkSelection,
 } from "@/lib/bulkChangeApi";
-import { accountsWords, changeWords, FIELD_WORDS, plural, skippedLine, unavailableWords, unchangedWords, valueSent } from "./bulkWords";
+import { accountsWords, changeWords, spelled, FIELD_WORDS, plural, skippedLine, unavailableWords, unchangedWords, valueSent } from "./bulkWords";
 
 // The dialog that says exactly what a bulk change will do, from the database's own preview, before anything changes (story CRM-S3.7a, screen 36). The four
 // bar actions open it: Change owner, Set a field, Label (add or remove) and Archive. It asks the preview whenever what is chosen is complete, shows the
@@ -126,9 +126,10 @@ export function BulkChangeDialog({ firmId, kind, selection, count, onClose, onMa
 
   const values = api.form.watch() as Values;
   const wanted = actionOf(kind, values);
-  const settled = useDebounced(wanted, 350);
+  // Debounced as text: an object made new on every render would restart the wait each time, and an open dialog would draw again and again.
   const key = JSON.stringify(wanted);
-  const asked = JSON.stringify(settled);
+  const asked = useDebounced(key, 350);
+  const settled = JSON.parse(asked) as BulkAction | null;
   const current = key === asked;
 
   const preview = useQuery({
@@ -193,7 +194,15 @@ export function BulkChangeDialog({ firmId, kind, selection, count, onClose, onMa
             <div className="grid gap-4 sm:grid-cols-2">
               <Field name="mode" label="Change">
                 {(field) => (
-                  <SelectInput {...field} autoFocus>
+                  <SelectInput
+                    {...field}
+                    autoFocus
+                    onChange={(e) => {
+                      field.onChange(e);
+                      // A word typed to add is not a label chosen to remove: the other half starts empty.
+                      api.form.setValue("name", "");
+                    }}
+                  >
                     <option value="label_add">Add a label</option>
                     <option value="label_remove">Remove a label</option>
                   </SelectInput>
@@ -255,7 +264,7 @@ function WhatWillHappen({ outcome, action }: { outcome: BulkOutcome; action: Bul
   return (
     <div className="space-y-2">
       <p className="font-semibold">
-        {outcome.changed === 0 ? "Nothing will change." : `This will ${changeWords(action, outcome.changed, outcome.ownerName, false)}.`}
+        {outcome.changed === 0 ? "Nothing will change." : `This will ${changeWords(spelled(action, outcome), outcome.changed, outcome.ownerName, false)}.`}
       </p>
       {outcome.unchanged > 0 && <p>{unchangedWords(outcome.unchanged, action)}</p>}
       {outcome.skipped.length > 0 && (

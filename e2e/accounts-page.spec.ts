@@ -169,6 +169,9 @@ test("Accounts opens from the menu, narrows by employees across a reload, and an
     await expect(result).toContainText("Undone.");
     await expect(result).toContainText("3 accounts are back as they were.");
     expect((await labelled()).rows[0].n).toBe(0);
+    // The next step starts on the new account's page.
+    await page.getByRole("link", { name: "Harborview Dental East" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Harborview Dental East" })).toBeVisible();
   });
 
   await test.step("Add contact on the new account: words for what is missing, one main contact that takes over, and Move to another account", async () => {

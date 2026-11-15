@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { BulkChangeError, undoBulkChange, type SkippedAccount, type UndoOutcome } from "@/lib/bulkChangeApi";
+import { BulkChangeError, undoBulkChange, UNDO_WINDOW_MS, type SkippedAccount, type UndoOutcome } from "@/lib/bulkChangeApi";
 import type { BulkMade } from "./BulkChangeDialog";
-import { madeWords, plural, skippedLine, undoneWords } from "./bulkWords";
+import { madeWords, opportunitiesLeftWords, plural, skippedLine, undoneWords } from "./bulkWords";
 
 // What a bulk change did, and Undo for the ten minutes the database allows (story CRM-S3.7a, D-202): a line over the table that says what changed and which
 // accounts were skipped and why, with Undo; after an undo, what it put back and what it left, in words. It lives with the page, so leaving the page ends it
@@ -25,19 +25,15 @@ export function BulkResultBar({ firmId, made, extra, onUndone, onDismiss }: {
 }) {
   const { outcome } = made;
   const [state, setState] = useState<State>({ kind: "made" });
-  // The ten minutes: Undo is offered until the database's own time, and then only the words are left.
-  const until = outcome.undoUntil ? new Date(outcome.undoUntil).getTime() : null;
-  const [expired, setExpired] = useState(until !== null && until <= Date.now());
+  // The ten minutes, counted from the database's answer by this page's own timer, never by its clock against the database's (a clock that is wrong would move
+  // the end). The database still refuses a late undo in words.
+  const timed = outcome.undoUntil !== null;
+  const [expired, setExpired] = useState(false);
   useEffect(() => {
-    if (until === null) return;
-    const left = until - Date.now();
-    if (left <= 0) {
-      setExpired(true);
-      return;
-    }
-    const t = setTimeout(() => setExpired(true), left);
+    if (!timed) return;
+    const t = setTimeout(() => setExpired(true), UNDO_WINDOW_MS);
     return () => clearTimeout(t);
-  }, [until]);
+  }, [timed]);
   const inFlight = useRef(false);
   const [retry, setRetry] = useState<string | null>(null);
 
@@ -50,8 +46,8 @@ export function BulkResultBar({ firmId, made, extra, onUndone, onDismiss }: {
       setState({ kind: "undone", outcome: done });
       onUndone();
     } catch (e) {
-      // Expired, already undone and "not yours" can't be tried again; anything else can.
-      const final = e instanceof BulkChangeError && (e.kind === "expired" || e.kind === "alreadyUndone" || e.kind === "notFound");
+      // Expired, already undone, "not yours", a closing firm and "not allowed" can't be tried again; anything else can.
+      const final = e instanceof BulkChangeError && (e.kind === "expired" || e.kind === "alreadyUndone" || e.kind === "notFound" || e.kind === "readOnly" || e.kind === "notAllowed");
       const words = e instanceof Error && e.message ? e.message : "Couldn't undo that change. Try again.";
       setState(final ? { kind: "cannot", words } : { kind: "made" });
       if (!final) setRetry(words);
@@ -75,6 +71,7 @@ export function BulkResultBar({ firmId, made, extra, onUndone, onDismiss }: {
         ) : (
           <>
             <p className="font-semibold">{nothing ? "Nothing changed." : madeWords(made.action, outcome, made.withOpportunities)}</p>
+            {opportunitiesLeftWords(outcome, made.withOpportunities) && <p>{opportunitiesLeftWords(outcome, made.withOpportunities)}</p>}
             {outcome.unchanged > 0 && <p>{plural(outcome.unchanged, "account was", "accounts were")} already as asked and stayed as {outcome.unchanged === 1 ? "it was" : "they were"}.</p>}
             {state.kind === "cannot" && <p className="text-destructive">{state.words}</p>}
             {!nothing && !canUndo && state.kind !== "cannot" && <p className="text-muted-foreground">The ten minutes to undo this have passed.</p>}

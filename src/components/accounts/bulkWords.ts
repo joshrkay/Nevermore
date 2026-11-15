@@ -56,6 +56,10 @@ export function changeWords(action: BulkAction, count: number, ownerName: string
   return past ? cap(words) : words;
 }
 
+/** The change with the label spelled as the firm has it: the database keeps the first spelling ("Hot lead"), whatever was typed ("hot LEAD"). */
+export const spelled = (action: BulkAction, outcome: Pick<BulkOutcome, "label">): BulkAction =>
+  (action.action === "label_add" || action.action === "label_remove") && outcome.label ? { ...action, name: outcome.label } : action;
+
 /** What "already as asked" is, for the line about accounts that stay as they are: one account, then several. */
 const ALREADY: Record<BulkAction["action"], [string, string]> = {
   owner: ["already belongs to that owner", "already belong to that owner"],
@@ -77,7 +81,7 @@ export const unchangedWords = (n: number, action: BulkAction): string =>
 
 /** What a change that was made says, with the open opportunities it took along. */
 export function madeWords(action: BulkAction, outcome: BulkOutcome, withOpportunities: boolean): string {
-  const base = changeWords(action, outcome.changed, outcome.ownerName, true);
+  const base = changeWords(spelled(action, outcome), outcome.changed, outcome.ownerName, true);
   const opp = withOpportunities && outcome.opportunities ? outcome.opportunities : null;
   const tail = opp && opp.changed > 0 ? `, and ${plural(opp.changed, "open opportunity", "open opportunities")}` : "";
   return `${base}${tail}.`;
@@ -87,8 +91,14 @@ export function madeWords(action: BulkAction, outcome: BulkOutcome, withOpportun
 export function undoneWords(u: UndoOutcome): string[] {
   const lines = [u.restored === 0 ? "Nothing was put back." : `${plural(u.restored, "account is", "accounts are")} back as ${u.restored === 1 ? "it was" : "they were"}.`];
   if (u.opportunities.restored > 0) lines.push(`${plural(u.opportunities.restored, "open opportunity is", "open opportunities are")} back as ${u.opportunities.restored === 1 ? "it was" : "they were"}.`);
-  if (u.opportunities.skipped > 0) lines.push(`${plural(u.opportunities.skipped, "open opportunity was", "open opportunities were")} left as ${u.opportunities.skipped === 1 ? "it is" : "they are"}, because it changed since.`);
+  if (u.opportunities.skipped > 0) lines.push(`${plural(u.opportunities.skipped, "open opportunity was", "open opportunities were")} left as ${u.opportunities.skipped === 1 ? "it is" : "they are"}.`);
   if (u.gone > 0) lines.push(`${plural(u.gone, "account was", "accounts were")} deleted since, so there is nothing to put back.`);
   if (u.opportunities.gone > 0) lines.push(`${plural(u.opportunities.gone, "open opportunity was", "open opportunities were")} deleted since.`);
   return lines;
 }
+
+/** The open opportunities a change left alone because the person may not change them (D-235), or null when none. */
+export const opportunitiesLeftWords = (outcome: BulkOutcome, withOpportunities: boolean): string | null => {
+  const n = withOpportunities && outcome.opportunities ? outcome.opportunities.skipped : 0;
+  return n > 0 ? `${plural(n, "open opportunity was", "open opportunities were")} left as ${n === 1 ? "it is" : "they are"}, because you can't change ${n === 1 ? "it" : "them"}.` : null;
+};
