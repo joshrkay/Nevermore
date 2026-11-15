@@ -446,6 +446,8 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_spot_a_duplicate.sql
 
 -- ---------- reading the new call ----------
