@@ -62,15 +62,19 @@ const Where = () => {
   const l = useLocation();
   return <p data-testid="where">{l.pathname + l.search}</p>;
 };
+let queryClient: QueryClient;
 const renderPage = (path = "/contacts/c1", ws: Workspace = workspace()) => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
   const router = createMemoryRouter([{ path: "/contacts/:id", element: <><ContactPage /><Where /></> }, { path: "*", element: <Where /> }], { initialEntries: [path] });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } })}>
+    <QueryClientProvider client={queryClient}>
       <WorkspaceContext.Provider value={ws}><RouterProvider router={router} /></WorkspaceContext.Provider>
     </QueryClientProvider>,
   );
   return router;
 };
+/** The query keys asked again so far (the first three parts name what: "account", firm, id). */
+const invalidated = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c) => ((c[0] as { queryKey: readonly unknown[] }).queryKey).slice(0, 3).join("/"));
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
@@ -241,6 +245,27 @@ describe("ContactPage: calls, notes and tasks", () => {
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 
+  // Catches: a newer activity logged between two page reads shifting every row down one, so the second page repeats the first's last row and the list ends
+  // one older row short (offsets and the end of the list are counted from raw page lengths).
+  it("reads the loaded pages again when a row arrives between two pages, so no row is skipped", async () => {
+    const user = userEvent.setup();
+    const all = Array.from({ length: 120 }, (_, i) => item({ id: `r${i}`, type: "note", body: `Note ${i}` }));
+    serveActivity(all);
+    renderPage();
+    await screen.findByText("Note 0");
+    all.unshift(item({ id: "new", type: "note", body: "Note new" }));
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Note 98");
+    // Asked again, once: the first two pages from one ordering.
+    await waitFor(() => expect(screen.getByText("Note new")).toBeInTheDocument());
+    while (screen.queryByRole("button", { name: "Show more" })) {
+      await user.click(screen.getByRole("button", { name: "Show more" }));
+      await waitFor(() => expect(client.listContactActivity).toHaveBeenCalled());
+    }
+    for (let i = 0; i < 120; i += 1) expect(screen.getByText(`Note ${i}`)).toBeInTheDocument();
+    expect(screen.getAllByRole("row").length - 1).toBe(121);
+  });
+
   // Catches: this list failing and taking the page with it, or no way to ask again.
   it("fails on its own, with Try again, and the rest of the page stays", async () => {
     const user = userEvent.setup();
@@ -354,6 +379,22 @@ describe("ContactPage: Move", () => {
   });
 });
 
+describe("ContactPage: Move refreshes both accounts", () => {
+  // Catches: the account the contact went to keeping its old contacts list (the provider asks only the account it was on), or the one it left.
+  it("asks the account the contact left and the one it joined again, and the contact", async () => {
+    const user = userEvent.setup();
+    contacts.listMoveChoices.mockResolvedValue([{ id: "a2", name: "Harborview East" }]);
+    contacts.moveContact.mockResolvedValue({ from: { id: "a1", name: "Harborview Dental Group" }, to: { id: "a2", name: "Harborview East" }, wasMain: false, activitiesMoved: 0, opportunityLinksDropped: 0, mainContactCleared: 0 });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Move to another account" }));
+    await user.click(await screen.findByRole("radio", { name: "Harborview East" }));
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    await user.click(screen.getByRole("button", { name: /^Move/ }));
+    await waitFor(() => expect(contacts.moveContact).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invalidated(spy)).toEqual(expect.arrayContaining(["account/f1/a1", "account/f1/a2", "contact/f1/c1"])));
+  });
+});
+
 function renderAndUnmount() {
   const router = createMemoryRouter([{ path: "/contacts/:id", element: <><ContactPage /><Where /></> }], { initialEntries: ["/contacts/c1"] });
   return render(
@@ -452,6 +493,19 @@ describe("ContactPage: edit in place", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Contact saved. Sam Park isn't the main contact any more."));
     expect(client.updateContact.mock.calls[0][2]).toMatchObject({ isMain: true });
+  });
+
+  // Catches: the contact a new main contact displaced keeping its old page (it still shows "Main contact") until its own refresh, a minute later.
+  it("asks the displaced main contact's page again, and the saved contact's and its account's", async () => {
+    client.getContactPage.mockResolvedValue(page({}, { isMain: false }));
+    client.updateContact.mockResolvedValue({ conflict: false, contact: { ...contact, version: 4, isMain: true }, previousMain: { id: "c2", name: "Sam Park" } });
+    renderPage();
+    const user = await open();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    await user.click(screen.getByRole("checkbox", { name: "Main contact for this account" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(invalidated(spy)).toContain("contact/f1/c2"));
+    expect(invalidated(spy)).toEqual(expect.arrayContaining(["contact/f1/c1", "account/f1/a1"]));
   });
 
   // Catches: the owner choice offering the person someone the database would refuse, or dropping the present owner (so saving would change it), or sending an id for none.

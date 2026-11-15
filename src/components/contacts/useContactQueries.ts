@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ACCOUNT_REFRESH_MS, TAB_STEP } from "@/components/accounts/useAccountQueries";
 import { getContactPage, listContactActivity, type ContactActivityFilter, type ContactPage } from "@/lib/contactPageApi";
@@ -42,7 +43,21 @@ export function useContactActivityQuery(firmId: string | null, contactId: string
   const pages = query.data?.pages;
   const gone = pages !== undefined && pages.some((page) => page === null);
   const seen = new Set<string>();
-  const rows = pages === undefined || gone ? [] : pages.flatMap((page) => page?.rows ?? []).filter((r) => (seen.has(r.entryKey) ? false : (seen.add(r.entryKey), true)));
+  const raw = pages === undefined || gone ? [] : pages.flatMap((page) => page?.rows ?? []);
+  const rows = raw.filter((r) => (seen.has(r.entryKey) ? false : (seen.add(r.entryKey), true)));
+  const dropped = raw.length - rows.length;
   const data = pages === undefined ? undefined : gone ? null : { count: (pages[pages.length - 1] as { count: number }).count, rows };
+
+  // A row repeated between two pages means the list shifted between the reads (a newer call, note or task arrived), so the pages may add up to the count while an
+  // older row was never read. The loaded pages are asked again once, in one go (the rows stay on screen meanwhile), so they come from one ordering; if the list is
+  // still moving after that, the rows are shown once each as they are and nothing asks again until a read comes back clean (as the account's tabs do).
+  const asked = useRef(false);
+  useEffect(() => {
+    if (dropped === 0) asked.current = false;
+    else if (!asked.current && !query.isFetching) {
+      asked.current = true;
+      void query.refetch();
+    }
+  }, [dropped, query]);
   return { query, data };
 }

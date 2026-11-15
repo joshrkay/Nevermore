@@ -32,10 +32,12 @@ const ContactPage = () => {
 
   // The saved fields go on the page at once (the reload that follows confirms them); every list of the contact is asked again, since a save adds to its history, and
   // the account's lists too, since a contact's main mark and name are on them.
-  const saved = useCallback((fields: ContactFields) => {
+  const saved = useCallback((fields: ContactFields, previousMain: { id: string; name: string } | null) => {
     queryClient.setQueryData<Page | null>([...contactKey(firmId, id), "page"], (old) => (old ? { ...old, contact: { ...old.contact, ...fields } } : old));
     void queryClient.invalidateQueries({ queryKey: contactKey(firmId, id) });
     void queryClient.invalidateQueries({ queryKey: accountKey(firmId, fields.accountId) });
+    // The contact this one took the main place from is on screen nowhere here, but its own page is cached and shows "Main contact" until it is asked again.
+    if (previousMain) void queryClient.invalidateQueries({ queryKey: contactKey(firmId, previousMain.id) });
   }, [queryClient, firmId, id]);
 
   // Only the answer for this address is drawn: what is held for another contact (or firm) is not shown under it.

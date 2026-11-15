@@ -93,7 +93,12 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
           firmId={firmId}
           contact={{ id: open.contact.id, name: [open.contact.firstName, open.contact.lastName].filter(Boolean).join(" ") }}
           onClose={close}
-          onMoved={refresh}
+          // The account the contact left and the one it joined both list it (and its calls, notes and tasks): each is asked again, not only the one on screen.
+          onMoved={(moved) => {
+            refresh();
+            void queryClient.invalidateQueries({ queryKey: accountKey(firmId, moved.from.id) });
+            void queryClient.invalidateQueries({ queryKey: accountKey(firmId, moved.to.id) });
+          }}
         />
       )}
       {open?.mode === "add" && (
