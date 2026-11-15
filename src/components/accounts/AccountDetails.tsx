@@ -1,34 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { z } from "zod";
 import { Input } from "@/components/ui/input";
-import { Field, FormActions, nameRule, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { US_STATE_CODES } from "@/data/chamberValidation";
+import { accountFieldsSchemaFor } from "@/data/accountFields";
 import { addressLines, editOf, formOf, NOT_GIVEN, sourceWords, valueWords, type AccountForm } from "@/data/accountPage";
 import { listFirmMembers } from "@/lib/accountsApi";
-import { updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
+import { AccountError, updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
 
 // The account's own fields, down one side of the Overview (story CRM-A2.1b): shown as they are, and edited in place (CRM-S4.1) from the version the person
 // started from. Edit is offered only when the database says the person may change the account (`canChange`, the level rule, D-209), and what the database
 // refuses is said in its own words beside Save (a closing firm, Nevermore support, a field it will not take). If someone saved first, the conflict dialog
 // sets what was typed beside what is there now (D-46).
-
-const text = z.string().trim();
-const schema = z.object({
-  name: nameRule("Enter the account's name."),
-  trade_name: text,
-  website: text,
-  phone: text,
-  street: text,
-  city: text,
-  state: text,
-  postal_code: text,
-  industry: text,
-  employees: text.refine((v) => v === "" || /^\d+$/.test(v), "Enter a whole number, like 45."),
-  states_of_operation: text,
-  current_provider: text,
-});
 
 /** An archive date as a person reads it ("Nov 14, 2026"), the database's text if it is not a date. */
 const archivedWords = (v: unknown): string => {
@@ -50,7 +34,7 @@ const conflictFields = (ownerName: (id: string) => string) => ({
   street: { label: "Street" },
   city: { label: "City" },
   state: { label: "State" },
-  postal_code: { label: "Postal code" },
+  postal_code: { label: "ZIP" },
   industry: { label: "Industry" },
   employees: { label: "Employees" },
   states_of_operation: { label: "States of operation", format: (v: unknown) => (Array.isArray(v) ? valueWords(v as string[]) : String(v)) },
@@ -89,6 +73,10 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
     }
   }, [focusEdit, editing]);
 
+  // The phone as it was when the edit began: left as it was, it is not judged again, so an older-format phone never blocks a save of another field.
+  const [phoneAtStart, setPhoneAtStart] = useState<string | null>(account.phone);
+  const schema = useMemo(() => accountFieldsSchemaFor(phoneAtStart), [phoneAtStart]);
+
   const api = useWorkspaceForm({
     schema,
     defaultValues: formOf(account),
@@ -103,6 +91,8 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
       toast.success("Account saved");
       return answer.account;
     },
+    // A number the database's integer can't hold is said under Employees; its other refusals keep the form's usual words.
+    explain: (e) => (e instanceof AccountError && e.code === "22003" ? { message: e.message, field: "employees" } : undefined),
     conflictDialog,
     savedValues: (saved) => formOf(saved),
     onSaved: (saved) => {
@@ -119,6 +109,7 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
 
   const startEditing = () => {
     api.begin(formOf(account), account.version);
+    setPhoneAtStart(account.phone);
     setEditing(true);
   };
 
@@ -151,7 +142,7 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
               )}
             </Field>
           </div>
-          <Field name="postal_code" label="Postal code">{(field) => <Input {...field} />}</Field>
+          <Field name="postal_code" label="ZIP">{(field) => <Input {...field} />}</Field>
           <Field name="industry" label="Industry">{(field) => <Input {...field} />}</Field>
           <Field name="employees" label="Employees">{(field) => <Input {...field} inputMode="numeric" />}</Field>
           <Field name="states_of_operation" label="States of operation" help="Two-letter state codes, separated by commas, like OR, WA.">{(field) => <Input {...field} />}</Field>

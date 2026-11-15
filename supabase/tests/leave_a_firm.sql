@@ -164,6 +164,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 SET client_min_messages = notice;

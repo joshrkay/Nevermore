@@ -514,6 +514,55 @@ describe("AccountPage: where focus goes", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /^Edit/ })).toHaveFocus());
   });
 
+  // Catches: the edit form taking a phone, or states of operation, that the database refuses, now that the form that makes an account asks the same rules.
+  it("asks the edit form's phone and states of operation the rules the New account form asks", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    const phone = screen.getByLabelText("Phone");
+    await user.clear(phone);
+    await user.type(phone, "call me");
+    const states = screen.getByLabelText("States of operation");
+    await user.clear(states);
+    await user.type(states, "OR, XX");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(screen.getByText("Use two-letter state codes from the list, like OR, WA.")).toBeInTheDocument();
+  });
+
+  // Catches: the edit form refusing to save another field because the phone it kept is not in the current format (the phone is judged only when it changes).
+  it("saves another field of an account whose phone is in an older format, and still judges a phone that is changed", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(page({ account: { ...account, phone: "call me" } }));
+    client.updateAccount.mockResolvedValue({ conflict: false, account: { ...account, phone: "call me", industry: "Dentistry", version: 2 } });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    const industry = screen.getByLabelText("Industry");
+    await user.clear(industry);
+    await user.type(industry, "Dentistry");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.updateAccount).toHaveBeenCalledTimes(1));
+    expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ phone: "call me", industry: "Dentistry" });
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.type(screen.getByLabelText("Phone"), "!");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(client.updateAccount).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: the database's answer to a number out of range shown as the generic failure, not under Employees.
+  it("puts the database's answer to a number out of range under Employees", async () => {
+    const { AccountError } = await import("@/lib/accountPageApi");
+    const user = userEvent.setup();
+    client.updateAccount.mockRejectedValue(new AccountError("invalid", "Enter a number up to 2,147,483,647.", "22003"));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.type(screen.getByLabelText("Industry"), "s");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const message = await screen.findByText("Enter a number up to 2,147,483,647.");
+    expect(screen.getByLabelText("Employees")).toHaveAccessibleDescription(expect.stringContaining(message.textContent!));
+  });
+
   // Catches: each arrow key in the tab list adding a history entry, so Back steps through every tab the arrows passed.
   it("replaces the address when a tab is chosen, so Back leaves the page and does not step through tabs", async () => {
     const user = userEvent.setup();
