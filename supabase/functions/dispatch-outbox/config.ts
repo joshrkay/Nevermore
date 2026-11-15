@@ -10,11 +10,11 @@ export type Readiness<T> = ({ ok: true } & T) | { ok: false; problems: string[] 
 export interface DispatchConfig {
   /** Who an advisor alert goes to is not a setting: it is the intake's firm's current members, asked of the database per event. */
   advisor: Readiness<{ from: string; appBaseUrl: string }>;
+  /** The firm's own notices to its owners (a member left, a request to close, an export): they carry no link into the app, so they need a sender and nothing else. */
+  firmNotice: Readiness<{ from: string }>;
   prospect: Readiness<{ from: string; supportEmail: string; responseTime: string }>;
   /** The prospect emails that link to the intake: an advisor's request for information, and the draft reminder. */
   prospectLink: Readiness<{ from: string; supportEmail: string; appBaseUrl: string }>;
-  /** An email that needs only a sender: it holds no link and no support address (the owners' export alert, D-213). */
-  sender: Readiness<{ from: string }>;
 }
 
 type Env = (name: string) => string | undefined;
@@ -63,6 +63,7 @@ export function readDispatchConfig(env: Env): DispatchConfig {
       advisorProblems.length === 0
         ? { ok: true, from: from!, appBaseUrl: appBaseUrl! }
         : { ok: false, problems: advisorProblems },
+    firmNotice: fromProblem.length === 0 ? { ok: true, from: from! } : { ok: false, problems: fromProblem },
     prospect:
       prospectProblems.length === 0
         ? { ok: true, from: from!, supportEmail: supportEmail!, responseTime: responseTime! }
@@ -71,7 +72,6 @@ export function readDispatchConfig(env: Env): DispatchConfig {
       prospectLinkProblems.length === 0
         ? { ok: true, from: from!, supportEmail: supportEmail!, appBaseUrl: appBaseUrl! }
         : { ok: false, problems: prospectLinkProblems },
-    sender: from ? { ok: true, from } : { ok: false, problems: fromProblem },
   };
 }
 
@@ -80,9 +80,9 @@ export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<ob
   return [
     ["advisor_notification", config.advisor],
     ["peo_mail_arrived", config.advisor],
-    ["member_left", config.advisor],
-    ["firm_closing", config.advisor],
-    ["export_alert", config.sender],
+    ["member_left", config.firmNotice],
+    ["firm_closing", config.firmNotice],
+    ["export_alert", config.firmNotice],
     ["prospect_confirmation", config.prospect],
     ["information_request", config.prospectLink],
     ["draft_expiry_reminder", config.prospectLink],

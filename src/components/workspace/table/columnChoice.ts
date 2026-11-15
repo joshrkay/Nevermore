@@ -1,30 +1,54 @@
-import type { ColumnDefinition } from "./columns";
+// The columns a person sees on a table (story CRM-S3.1a, D-43): the definition's own list, or the person's kept choice of it. The choice is
+// the ids of the columns shown, in order, kept in the database per firm, person and table (`my_table_columns`, src/lib/tableSettingsApi.ts).
+// These are the rules about it, with no screen and no database in them.
+//   - The name column (`isName`) is always shown and always first. A kept list that leaves it out or puts it later still has it first.
+//   - A kept id the table doesn't have (a column renamed or removed since, or a custom field that has not loaded: CRM-X3.1) is not drawn.
+//     A choice with none of its ids known is not a choice any more, so the table's usual columns show.
 
-// Which of a table's columns a person shows, and in what order (story CRM-S3.1a). Pure: the hook (useTableColumns) keeps the choice, the menu
-// (ColumnsMenu) changes it, and the frame draws what these return.
+type Defined = { columns: readonly { id: string; isName?: boolean }[] };
 
-type Column = Pick<ColumnDefinition<never, string, never>, "id" | "isName">;
+/** The column that names the row, or undefined for a table that has none. */
+const nameOf = (table: Defined) => table.columns.find((c) => c.isName);
 
-/**
- * The columns a list of column ids names, in its order, with the name column (the one marked `isName`) always first. A list is read as far as it
- * can be: an id the table doesn't have (a column since retired) is left out and an id twice is shown once. No list, or one that names no column
- * the table has, is the table's own columns: it is no choice of the person's.
- */
-export function columnsFor<C extends Column>(all: C[], ids: readonly string[] | null): C[] {
-  if (ids === null) return all;
-  const named = [...new Set(ids)].flatMap((id) => all.filter((c) => c.id === id));
-  if (named.length === 0) return all;
-  const name = all.find((c) => c.isName);
-  return name ? [name, ...named.filter((c) => c !== name)] : named;
+/** The columns to draw: the kept choice, or the table's usual columns (its `usual` list, else every column) when nothing is kept (or nothing kept is known). */
+export function shownColumns<C extends { id: string; isName?: boolean }>(table: { columns: C[]; usual?: readonly string[] }, kept: readonly string[] | null): C[] {
+  // The columns shown when nothing is kept: the ones the table lists as its usual ones, in that order (the name column first), else every column.
+  const usual = (): C[] => {
+    if (!table.usual) return table.columns;
+    const byId = new Map(table.columns.map((c) => [c.id, c]));
+    const name = table.columns.find((c) => c.isName);
+    const chosen = table.usual.map((id) => byId.get(id)).filter((c): c is C => !!c && c !== name);
+    return name ? [name, ...chosen] : chosen;
+  };
+  if (!kept) return usual();
+  const byId = new Map(table.columns.map((c) => [c.id, c]));
+  const name = table.columns.find((c) => c.isName);
+  const chosen = [...new Set(kept)].map((id) => byId.get(id)).filter((c): c is C => !!c && c !== name);
+  const known = chosen.length > 0 || (name !== undefined && kept.includes(name.id));
+  if (!known) return usual();
+  return name ? [name, ...chosen] : chosen;
 }
 
-/**
- * The ids with one column swapped with its neighbour, a place earlier (-1) or later (1). The menu only asks for a move there is room for: the name
- * column (the first) has no arrows, and the first column after it can't go up nor the last go down.
- */
-export function movedIds(ids: readonly string[], id: string, by: -1 | 1): string[] {
-  const from = ids.indexOf(id);
-  const next = [...ids];
-  [next[from], next[from + by]] = [next[from + by], next[from]];
+/** The ids of the columns drawn, in order: what is kept. */
+export const columnIdsShown = (columns: readonly { id: string }[]): string[] => columns.map((c) => c.id);
+
+/** The list with the column hidden. The name column cannot be. */
+export function hideColumn(table: Defined, shown: readonly string[], id: string): string[] {
+  return id === nameOf(table)?.id ? [...shown] : shown.filter((s) => s !== id);
+}
+
+/** The list with a hidden column added at the end. An id the table doesn't have changes nothing. */
+export function showColumn(table: Defined, shown: readonly string[], id: string): string[] {
+  return shown.includes(id) || !table.columns.some((c) => c.id === id) ? [...shown] : [...shown, id];
+}
+
+/** The list with a column one place earlier (-1) or later (1). It stays inside the list and never goes before the name column. */
+export function moveColumn(table: Defined, shown: readonly string[], id: string, by: -1 | 1): string[] {
+  const from = shown.indexOf(id);
+  const to = from + by;
+  const floor = shown[0] !== undefined && shown[0] === nameOf(table)?.id ? 1 : 0;
+  if (from < floor || to < floor || to >= shown.length) return [...shown];
+  const next = [...shown];
+  [next[from], next[to]] = [next[to], next[from]];
   return next;
 }

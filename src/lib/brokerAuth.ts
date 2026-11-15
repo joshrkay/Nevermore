@@ -22,18 +22,30 @@ function pkceClient(): SupabaseClient {
   return client;
 }
 
-/** Where to go after signing in: a page of the advisor console, never anywhere else on or off this site. */
+// A page of the advisor console, or the Accounts page or one account's page, then optionally its query string (a page's filters and its firm). The query takes the characters a query string is
+// written with and no backslash, space, control character, `<`, `>` or `#`.
+const NEXT_PATTERN = /^(?:\/advisor(?:\/[A-Za-z0-9._~\-/]*)?|\/accounts(?:\/[A-Za-z0-9._~-]+)?)(\?[A-Za-z0-9._~\-%=&+,:;@!$'()*/]*)?$/;
+
+/**
+ * Where to go after signing in: a page of the advisor console, the Accounts page or an account's page, with its query string if it has one (a broker asked to sign in again for an export comes
+ * back to the page they were on, with its filters and its firm), never anywhere else on or off this site: no other path, no `//` anywhere (which a
+ * browser reads as another site), no `..`, no scheme, backslash, fragment or control character.
+ */
 export function brokerNext(raw: string | null | undefined): string {
-  if (!raw || !/^\/advisor(\/[A-Za-z0-9._~\-/]*)?$/.test(raw) || raw.includes("..") || raw.includes("//")) return BROKER_DEFAULT_NEXT;
+  if (!raw || !NEXT_PATTERN.test(raw) || raw.includes("//") || raw.split("?")[0].includes("..")) return BROKER_DEFAULT_NEXT;
   return raw;
 }
 
-/** The address the provider sends the broker back to. It must be on Supabase's Redirect URLs list (docs/SUPABASE_SETUP.md). */
+/** Whether a page was named to come back to: a page of the console `brokerNext` keeps as it is. The queue itself ("/advisor") is one; nothing at all, or a link that leaves the console, is not. */
+export const namesABrokerPage = (raw: string | null | undefined): raw is string => !!raw && brokerNext(raw) === raw;
+
+/**
+ * The address the provider sends the broker back to. It must be on Supabase's Redirect URLs list (docs/SUPABASE_SETUP.md). A page that was named is always
+ * carried, the queue included, so the return can tell a sign-in for the queue from one for no page in particular (which a failed mailbox sends to the
+ * mailbox page).
+ */
 export function brokerCallbackUrl(origin: string, next?: string | null): string {
-  const target = brokerNext(next);
-  return target === BROKER_DEFAULT_NEXT
-    ? `${origin}${BROKER_CALLBACK_PATH}`
-    : `${origin}${BROKER_CALLBACK_PATH}?next=${encodeURIComponent(target)}`;
+  return namesABrokerPage(next) ? `${origin}${BROKER_CALLBACK_PATH}?next=${encodeURIComponent(next)}` : `${origin}${BROKER_CALLBACK_PATH}`;
 }
 
 /** Sends the browser to Google or Microsoft to sign in, asking for the send-only permission with it. Throws if Supabase refuses to start. */

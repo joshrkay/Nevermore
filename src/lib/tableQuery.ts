@@ -30,7 +30,7 @@ export interface FiltersByKind<F extends string> {
   /** Several values: any_of keeps the rows holding any of them; none_of the rows holding none, empty ones included. */
   choices: { field: F; op: "any_of" | "none_of"; value: string[] } | { field: F; op: "is_empty" };
   yes_no: { field: F; op: "is"; value: boolean };
-  /** The database refuses these until records have an owner (CRM-A1.1). */
+  /** People by their user id (1 to 100), or the caller (me) or the caller's team and the teams under it (my team): the accounts table's owner (CRM-A1.1b, D-173). */
   person: { field: F; op: "any_of"; value: string[] } | { field: F; op: "me" | "my_team" };
 }
 

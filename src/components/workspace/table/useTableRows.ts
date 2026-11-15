@@ -24,7 +24,7 @@ export function useFirmReady() {
  * show (CRM-S2.4a, D-180): asking again would redraw the failed panel each time (its "Try again" losing focus, its alert read again) over a failure
  * that "Try again" is the way out of. A table that failed over rows keeps asking quietly: the note over the rows stays one note until a refresh works.
  */
-export const keepsAsking = (query: { state: { status: string; data: unknown } }) => !(query.state.status === "error" && query.state.data === undefined);
+const keepsAsking = (query: { state: { status: string; data: unknown } }) => !(query.state.status === "error" && query.state.data === undefined);
 
 /** The key every query of one table starts with, so everything the page shows for it can be asked again together. */
 const tableKey = (firmId: string | null, table: { id: string }) => ["table", firmId, table.id] as const;
@@ -91,13 +91,8 @@ export function useTableViewCounts<K extends TableFields, Row, Context>(
     queryKey: [...tableKey(firmId, table), "counts", views, address.search],
     queryFn: async () => {
       if (last.current.key !== asked) last.current = { key: asked, totals: new Map() };
-      // The built-in views (and "all") are asked for apart from the saved ones (CRM-S3.4a): the database refuses a whole call for one view it can't read (a
-      // saved view's filter on a field it has since dropped), and that must cost the saved views' numbers, never the built-in tabs'.
-      const isSaved = (name: string) => table.views.some((v) => v.id === name && v.saved);
       const batches: (typeof views)[] = [];
-      for (const group of [views.filter((v) => !isSaved(v.name)), views.filter((v) => isSaved(v.name))]) {
-        for (let i = 0; i < group.length; i += VIEWS_PER_COUNT_CALL) batches.push(group.slice(i, i + VIEWS_PER_COUNT_CALL));
-      }
+      for (let i = 0; i < views.length; i += VIEWS_PER_COUNT_CALL) batches.push(views.slice(i, i + VIEWS_PER_COUNT_CALL));
       const answers = await Promise.allSettled(batches.map((batch) => countViews(batch, { search: address.search })));
       const out: ViewCount[] = [];
       answers.forEach((answer, i) => {
@@ -118,8 +113,7 @@ export function useTableViewCounts<K extends TableFields, Row, Context>(
       });
       return out;
     },
-    // The tabs are not known until the table's views are (CRM-S3.4a): asking now would count them once and, when the saved views arrive, again.
-    enabled: ready && !hasHeld(address) && table.viewsStatus !== "loading",
+    enabled: ready && !hasHeld(address),
     placeholderData: keepPreviousData,
     refetchInterval: TABLE_REFRESH_MS,
     refetchOnWindowFocus: true,
@@ -143,7 +137,7 @@ export function useRefreshTable<K extends TableFields, Row, Context>(table: Tabl
 }
 
 /** A key for a page's own query that belongs to the table (so "Refresh" asks it again too). */
-export function useTableContextKey(table: { id: string }, name: string) {
+export function useTableContextKey<K extends TableFields, Row, Context>(table: TableDefinition<K, Row, Context>, name: string) {
   const { firmId } = useFirmReady();
   return [...tableKey(firmId, table), "context", name] as const;
 }

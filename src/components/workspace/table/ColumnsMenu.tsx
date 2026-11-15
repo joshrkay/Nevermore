@@ -3,173 +3,163 @@ import { ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { columnsFor, movedIds } from "./columnChoice";
-import type { TableDefinition, TableView } from "./columns";
-import type { TableColumns } from "./useTableColumns";
+import { columnIdsShown, hideColumn, moveColumn, showColumn, shownColumns } from "./columnChoice";
+import type { TableDefinition } from "./columns";
+import type { MyColumns } from "./useMyColumns";
 
-// The Columns menu (story CRM-S3.1a): a button over the table that opens a small panel where a person shows, hides and reorders the table's columns. Generic:
-// it knows a table only through its definition and the choice `useTableColumns` keeps. Every change applies at once and is kept; nothing is applied by a button.
-//
-//   Company ........................ Always shown        the table's name column: never hidden, never moved, pinned to the left
-//   [x] Contact ................... [up] [down]          a shown column: clear the box to hide it, the arrows to move it
-//   NOT SHOWN
-//   [ ] Employees                                        a hidden column: set the box to show it again, at the end
-//
-// Keyboard and screen reader (D-170's way): every control is a real checkbox or button in the tab order; opening puts focus in the panel, Escape closes it
-// and returns focus to the button; after each change focus stays on the control that was used, wherever its row went; and one polite status in the panel
-// says what the change did (the buttons keep their names and places, so nothing else would). A control that can't be used is `aria-disabled` with the reason as
-// its description, not `disabled` (D-143).
+// The Columns control (story CRM-S3.1a): "Columns" opens one list of the table's columns. A box shows or hides each, a pair of buttons moves a
+// shown one earlier or later (a keyboard has no drag), and "Show the usual columns" forgets the person's choice. Every change is kept at once, with no
+// Apply, because the table behind it changes at once. The name column is always shown and always first.
+//   Nothing can be changed until the person's kept choice has arrived (a change over the usual columns would be kept over their real choice); after a
+//   failed load the usual columns show, read-only, with "Try again".
+//   On a saved view (CRM-S3.4a) the same list is the person's own choice for that view; "Go back to this view's columns" forgets it.
+//   Left for a later story: the firm's custom fields (CRM-X3.1 lists them in the
+//   table's `columns` once loaded, and this list offers them with no change).
+
+const LOADING_REASON = "More columns are available once the table's fields have loaded.";
+const NO_FIRM_REASON = "Available once your firm's details have loaded.";
+const LOADING_CHOICE_REASON = "Available once your columns have loaded.";
+const LOAD_FAILED_REASON = "Couldn't load your columns, so this shows the usual ones.";
+const NAME_NOTE = "Always shown";
+
+const BUTTON = "inline-flex min-h-9 items-center gap-1 rounded-md border border-border px-3 text-sm hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+const MOVE = "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 interface Props<K extends TableFields, Row, Context> {
   table: TableDefinition<K, Row, Context>;
-  columns: TableColumns<K, Row, Context>;
-  /** The saved view that is open, if one is (CRM-S3.4a): the way back goes to its own columns, and says so. A built-in view or none passes nothing. */
-  view?: TableView<K> | null;
+  /** The person's kept choice (`useMyColumns`), which the page also reads to draw the table. */
+  mine: MyColumns;
 }
 
-const MOVE_BUTTON = "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring";
-
-const shownWords = (count: number) => `${count} ${count === 1 ? "column" : "columns"} shown`;
-
-export function ColumnsMenu<K extends TableFields, Row, Context>({ table, columns, view = null }: Props<K, Row, Context>) {
-  const limitId = useId();
-  const defaultId = useId();
-  const loadingId = useId();
-  // What the last change did, in words, for a screen reader.
+export function ColumnsMenu<K extends TableFields, Row, Context>({ table, mine }: Props<K, Row, Context>) {
+  const reasonId = useId();
   const [said, setSaid] = useState("");
-  // The control to put focus on once the change is drawn: a row that moves to the other list is a new element, and one that moves within its list may
-  // be moved by the browser, and either would drop focus to the page.
-  const content = useRef<HTMLDivElement>(null);
-  const focusNext = useRef<string | null>(null);
+  // The move button that was pressed: its row moves, and focus goes back to the same button once it is in its new place.
+  const refocus = useRef<string | null>(null);
+  const list = useRef<HTMLUListElement>(null);
+
+  const all = table.columns;
+  const shown = columnIdsShown(shownColumns(table, mine.kept));
+  const hidden = all.filter((c) => !shown.includes(c.id));
+  const byId = new Map(all.map((c) => [c.id, c]));
+  // Why nothing can be changed yet, in words; the controls stay in the tab order and ignore the click (a disabled one would drop focus).
+  const reason =
+    table.fieldsStatus === "loading" ? LOADING_REASON
+    : mine.status === "no_firm" ? NO_FIRM_REASON
+    : mine.status === "loading" ? LOADING_CHOICE_REASON
+    : mine.status === "failed" ? LOAD_FAILED_REASON
+    : null;
+
+  const order = shown.join("\n");
   useEffect(() => {
-    const key = focusNext.current;
-    if (key === null) return;
-    focusNext.current = null;
-    [...(content.current?.querySelectorAll<HTMLElement>("[data-column-control]") ?? [])].find((el) => el.dataset.columnControl === key)?.focus();
-  });
-  const shown = columns.columns.map((c) => c.id);
-  // The table's name column is its first (CRM-S3.1a: `columnsFor` keeps it there), and the one thing here that can't be changed.
-  const [name, ...reorderable] = columns.columns;
-  const hidden = table.columns.filter((c) => !shown.includes(c.id));
-  const move = (id: string, header: string, by: -1 | 1) => {
-    const next = movedIds(shown, id, by);
-    focusNext.current = `${by < 0 ? "up" : "down"}:${id}`;
-    columns.choose(next);
-    setSaid(`${header} is now column ${next.indexOf(id) + 1} of ${next.length}.`);
+    const target = refocus.current;
+    if (target === null) return;
+    refocus.current = null;
+    list.current?.querySelector<HTMLElement>(`[data-move="${target}"]`)?.focus();
+  }, [order]);
+
+  const keep = (next: string[]) => void mine.save(next);
+  const toggle = (id: string, on: boolean) => {
+    if (reason) return;
+    keep(on ? showColumn(table, shown, id) : hideColumn(table, shown, id));
   };
-  const hide = (id: string, header: string) => {
-    focusNext.current = `check:${id}`;
-    columns.choose(shown.filter((s) => s !== id));
-    setSaid(`${header} hidden. ${shownWords(shown.length - 1)}.`);
+  const move = (id: string, by: -1 | 1) => {
+    if (reason) return;
+    const next = moveColumn(table, shown, id, by);
+    if (next.join("\n") === order) return;
+    refocus.current = `${id}:${by}`;
+    // The place it moved to, so the same move twice is not the same words (a live region says nothing for words that did not change).
+    setSaid(`${byId.get(id)?.header ?? id} moved to ${next.indexOf(id) + 1} of ${next.length}.`);
+    keep(next);
   };
-  const show = (id: string, header: string) => {
-    focusNext.current = `check:${id}`;
-    columns.choose([...shown, id]);
-    setSaid(`${header} shown as column ${shown.length + 1} of ${shown.length + 1}.`);
+  const forget = () => {
+    if (reason || !mine.canForget) return;
+    setSaid("");
+    void mine.save(null);
   };
-  // On a saved view the way back forgets the person's own choice on it, which lands on the view's own columns (the database's order, D-193), not the table's
-  // defaults: so it says so. Whether there is a choice to forget is the same question either way (D-198).
-  const viewColumns = view?.columns ? columnsFor(table.columns, view.columns) : null;
-  const back = () => {
-    columns.choose(null);
-    setSaid(viewColumns ? `This view's columns restored. ${shownWords(viewColumns.length)}.` : `Default columns restored. ${shownWords(table.columns.length)}.`);
-  };
+
   return (
-    <>
-      <Popover>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            // Not usable until the choice it would change is known: in the tab order, says why, and the click is ignored (D-143's way).
-            aria-disabled={columns.loading || undefined}
-            aria-describedby={columns.loading ? loadingId : undefined}
-            onClick={columns.loading ? (e) => e.preventDefault() : undefined}
-            className={cn("inline-flex min-h-9 items-center gap-1 rounded-md border border-border px-3 text-sm text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring", columns.loading ? "opacity-50" : "hover:text-foreground")}
-          >
-            <Columns3 className="h-4 w-4" aria-hidden="true" /> Columns
-          </button>
-        </PopoverTrigger>
-        {columns.loading && <span id={loadingId} className="sr-only">Available once your columns have loaded</span>}
-        <PopoverContent ref={content} align="end" className="w-80" aria-label="Columns">
-          <p className="mb-2 text-sm text-muted-foreground">Choose which columns the table shows, and their order. {name.header} is always shown first.</p>
-          <span id={limitId} className="sr-only">It can't move any further.</span>
-          <div className="max-h-80 overflow-y-auto pr-1">
-            <ul aria-label="Shown columns" className="space-y-1">
-              <li className="flex min-h-8 items-center justify-between gap-2 text-sm">
-                <span className="font-medium">{name.header}</span>
-                <span className="text-xs text-muted-foreground">Always shown</span>
-              </li>
-              {reorderable.map((column, i) => {
-                const first = i === 0;
-                const last = i === reorderable.length - 1;
-                return (
-                  <li key={column.id} className="flex items-center gap-2">
-                    <label className="flex min-h-8 flex-1 cursor-pointer items-center gap-2 text-sm">
-                      <input type="checkbox" className="accent-primary" data-column-control={`check:${column.id}`} checked onChange={() => hide(column.id, column.header)} />
-                      <span>{column.header}</span>
-                    </label>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className={BUTTON}>
+          <Columns3 className="h-4 w-4" aria-hidden="true" />
+          Columns
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80" aria-label="Columns">
+        <p className="mb-2 text-sm text-muted-foreground">
+          {mine.viewId ? "Choose the columns this view shows you. Your choice is kept for you on this view, on any device." : "Choose the columns this table shows you. Your choice is kept for you on any device."}
+        </p>
+        {reason && (
+          <p id={reasonId} className="mb-2 text-sm text-muted-foreground">
+            {reason}
+            {mine.status === "failed" && <> <button type="button" onClick={mine.retryLoad} className="text-primary underline">Try again</button></>}
+          </p>
+        )}
+        {mine.saveError && <p role="alert" className="mb-2 text-sm text-destructive">{mine.saveError}</p>}
+        <ul ref={list} className="space-y-1">
+          {[...shown.map((id) => byId.get(id)!), ...hidden].filter(Boolean).map((column) => {
+            const on = shown.includes(column.id);
+            const isName = !!column.isName;
+            const position = shown.indexOf(column.id);
+            const noteId = `${reasonId}-${column.id}`;
+            const firstMovable = position <= (shown[0] !== undefined && byId.get(shown[0])?.isName ? 1 : 0);
+            return (
+              <li key={column.id} className="flex items-center gap-2">
+                <input
+                  id={noteId + "-box"}
+                  type="checkbox"
+                  checked={on}
+                  aria-disabled={isName || reason ? true : undefined}
+                  aria-describedby={isName ? noteId : reason ? reasonId : undefined}
+                  onChange={(e) => (isName ? undefined : toggle(column.id, e.target.checked))}
+                  className="h-4 w-4"
+                />
+                <label htmlFor={noteId + "-box"} className="flex-1 text-sm">{column.header}</label>
+                {isName && <span id={noteId} className="text-xs text-muted-foreground">{NAME_NOTE}</span>}
+                {on && !isName && (
+                  <>
                     <button
                       type="button"
-                      data-column-control={`up:${column.id}`}
-                      aria-label={`Move ${column.header} up`}
-                      aria-disabled={first || undefined}
-                      aria-describedby={first ? limitId : undefined}
-                      onClick={first ? undefined : () => move(column.id, column.header, -1)}
-                      className={cn(MOVE_BUTTON, first && "opacity-50")}
+                      data-move={`${column.id}:-1`}
+                      aria-label={`Move ${column.header} earlier`}
+                      aria-describedby={reason ? reasonId : undefined}
+                      aria-disabled={firstMovable || reason ? true : undefined}
+                      onClick={() => (firstMovable ? undefined : move(column.id, -1))}
+                      className={cn(MOVE, (firstMovable || reason) && "opacity-50")}
                     >
                       <ArrowUp className="h-4 w-4" aria-hidden="true" />
                     </button>
                     <button
                       type="button"
-                      data-column-control={`down:${column.id}`}
-                      aria-label={`Move ${column.header} down`}
-                      aria-disabled={last || undefined}
-                      aria-describedby={last ? limitId : undefined}
-                      onClick={last ? undefined : () => move(column.id, column.header, 1)}
-                      className={cn(MOVE_BUTTON, last && "opacity-50")}
+                      data-move={`${column.id}:1`}
+                      aria-label={`Move ${column.header} later`}
+                      aria-describedby={reason ? reasonId : undefined}
+                      aria-disabled={position === shown.length - 1 || reason ? true : undefined}
+                      onClick={() => (position === shown.length - 1 ? undefined : move(column.id, 1))}
+                      className={cn(MOVE, (position === shown.length - 1 || reason) && "opacity-50")}
                     >
                       <ArrowDown className="h-4 w-4" aria-hidden="true" />
                     </button>
-                  </li>
-                );
-              })}
-            </ul>
-            {hidden.length > 0 && (
-              <>
-                <p aria-hidden="true" className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Not shown</p>
-                <ul aria-label="Columns not shown" className="space-y-1">
-                  {hidden.map((column) => (
-                    <li key={column.id}>
-                      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
-                        <input type="checkbox" className="accent-primary" data-column-control={`check:${column.id}`} checked={false} onChange={() => show(column.id, column.header)} />
-                        <span>{column.header}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="mt-3 flex items-center justify-between gap-2">
           <button
             type="button"
-            aria-disabled={columns.hasChoice ? undefined : true}
-            aria-describedby={columns.hasChoice ? undefined : defaultId}
-            onClick={columns.hasChoice ? back : undefined}
-            className={cn("mt-3 text-sm text-primary underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring", !columns.hasChoice && "opacity-50")}
+            onClick={forget}
+            aria-describedby={reason ? reasonId : undefined}
+            aria-disabled={!mine.canForget || reason ? true : undefined}
+            className={cn(BUTTON, (!mine.canForget || reason) && "opacity-50")}
           >
-            {viewColumns ? "Back to this view's columns" : "Back to default columns"}
+            {mine.viewId ? "Go back to this view's columns" : "Show the usual columns"}
           </button>
-          <span id={defaultId} className="sr-only">{viewColumns ? "These are this view's columns already." : "These are the default columns already."}</span>
-          <p role="status" aria-live="polite" className="sr-only">{said}</p>
-        </PopoverContent>
-      </Popover>
-      {columns.notKept && <p role="alert" className="max-w-xs text-sm text-destructive">{columns.notKept}</p>}
-      {columns.loadFailed && (
-        <p role="status" className="max-w-xs text-sm text-muted-foreground">
-          Your columns couldn't be loaded, so the default columns are shown.{" "}
-          <button type="button" onClick={columns.retry} className="text-primary underline">Try again</button>
-        </p>
-      )}
-    </>
+        </div>
+        <p role="status" className="sr-only">{said}</p>
+      </PopoverContent>
+    </Popover>
   );
 }

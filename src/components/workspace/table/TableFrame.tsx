@@ -2,9 +2,11 @@ import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import type { TableFields } from "@/lib/tableQuery";
-import { hasHeld, sortFor, viewOf, type TableAddress } from "./address";
+import { hasHeld, viewOf, type TableAddress } from "./address";
 import { TABLE_PAGE_SIZE, type ColumnDefinition, type TableDefinition } from "./columns";
 import { DataTable } from "./DataTable";
+import { SelectAllLine } from "./SelectionBar";
+import type { RowSelection } from "./useRowSelection";
 import { OrderLine } from "./OrderLine";
 import { Pager } from "./Pager";
 import { refusedQueryReason } from "./refusal";
@@ -30,11 +32,6 @@ interface Props<K extends TableFields, Row, Context> {
   /** The columns to draw: the table's own (the default), or the person's visible and ordered ones (CRM-S3.1a). The grey loading rows use the same list. */
   columns?: ColumnDefinition<Row, keyof K & string, Context>[];
   /**
-   * The person's choice of columns has not arrived yet (CRM-S3.1a). The table is then in its loading state, grey rows and all, even if the rows are
-   * already here, so a row is never drawn in columns the person is about to lose.
-   */
-  columnsLoading?: boolean;
-  /**
    * Above the table: the search box and the controls that change the address. CRM-S3.3a's filter row and CRM-S3.1a's columns menu join
    * here. Given as a function, it is told whether the rows are still on their way (`loading`, CRM-S2.1), so it can disable what needs the
    * rows (Refresh, anything acting on rows); controls that change the QUERY (search, filters, tabs, sort) stay usable, so a person can
@@ -45,7 +42,11 @@ interface Props<K extends TableFields, Row, Context> {
   toolbar?: ReactNode | ((state: { loading: boolean; slowLine: ReactNode }) => ReactNode);
   /** The tabs over the table: `ViewTabs`, which CRM-S3.4a extends into the saved-views bar. */
   views?: ReactNode;
-  // CRM-S3.6 (D-47): the bar that appears when rows are selected goes here. Nothing selects rows yet.
+  /**
+   * Row selection (CRM-S3.6), for a table whose page asks for it: the checkboxes in the table, and, once the whole page is selected, the line offering every
+   * row that matches. The bar of bulk actions is the page's (`SelectionBar`, in its toolbar, where it replaces the controls). Left out, nothing is selectable.
+   */
+  selection?: RowSelection<Row>;
   /**
    * What shows in the table's body when no rows come back (CRM-S2.2): "nothing yet" for a bare address, "nothing matches" for a narrowed one (`isNarrowed`).
    * The table stays: its headers and the toolbar do not move. It is given the address the (empty) rows answer, which is the previous one while the next
@@ -57,6 +58,8 @@ interface Props<K extends TableFields, Row, Context> {
   error: (error: Error, retry: () => void, address: TableAddress<K>) => ReactNode;
   /** A click anywhere on a row, outside its links, opens it. */
   onOpenRow?: (row: Row) => void;
+  /** The last cell of each row (its own actions); passed to the table. */
+  rowActions?: (row: Row) => ReactNode;
   /** What a column header holds, in place of the sort button (CRM-S3.2a: every column with a `sortField` gets one by itself). Default: the header's words and that button. */
   renderHeader?: ComponentProps<typeof DataTable<K, Row, Context>>["renderHeader"];
 }
@@ -74,7 +77,7 @@ const refusalHeading = (reason: string, plural: string): string =>
  * the address holds something the table can't judge yet, the loading slot shows and nothing is asked. When the database refuses the
  * query (a filter it doesn't take) the frame says why in the database's words and offers the way back, to the table's bare address (a refused sort or page is not undone by keeping it); it never offers "Try again".
  */
-export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, columnsLoading = false, toolbar, views, empty, error, onOpenRow, renderHeader }: Props<K, Row, Context>) {
+export function TableFrame<K extends TableFields, Row, Context>({ table, location, data, context, caption, columns = table.columns, toolbar, views, empty, error, onOpenRow, rowActions, renderHeader, selection }: Props<K, Row, Context>) {
   const { address, hrefFor, bareHref, change, notice } = location;
   const { page } = data;
   const pageSize = page?.pageSize ?? TABLE_PAGE_SIZE;
@@ -87,8 +90,8 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
 
   // Nothing to show yet (CRM-S2.1): the real table is drawn with grey rows in its body, under its real headers, and the same element
   // takes the rows when they arrive, so focus and the sideways scroll survive. The frame owns the slow-load line for this wait.
-  const loadingNow = tableIsLoading(address, data, columnsLoading);
-  const placeholdering = !page || pastTheEnd || hasHeld(address) || columnsLoading;
+  const loadingNow = tableIsLoading(address, data);
+  const placeholdering = !page || pastTheEnd || hasHeld(address);
   const { ready: firmReady } = useFirmReady();
   const refresh = useRefreshTable(table);
   // Waiting for an answer to a question the person has changed, over the previous answer (dimmed rows, or the dimmed empty words), is a wait too: a request
@@ -109,10 +112,10 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
   const refreshFailed = !!data.error && !!page && !placeholdering;
   const failure = refreshFailed ? null : data.error;
   const refusal = failure ? refusedQueryReason(failure) : null;
-  // The sort the headers show: the address's, else the open view's own (CRM-S3.4a), else the table's own when one column shows it. With none of
-  // them no header is marked and the line over the table says what the order is.
-  const shownSort = sortFor(table, address) ?? table.defaultSort;
-  const openView = viewOf(table, address.view);
+  // The sort the headers show: the address's, or else the view's own (CRM-S3.4a), or else the table's own when one column shows it. With none of them, no
+  // header is marked and the line over the table says what the order is.
+  const view = viewOf(table, address.view);
+  const shownSort = address.sort ?? view?.sort ?? table.defaultSort;
   // A sort that puts a new column in the address is a place a person comes back to (Back undoes it, as it does a page): it pushes a history
   // entry. Reversing the column already in the address only corrects it, so it replaces the entry and asc, desc, asc is one Back.
   const sortBy = (sort: NonNullable<typeof shownSort>) => change({ sort }, address.sort?.field === sort.field ? { replace: true } : { push: true });
@@ -148,7 +151,8 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
       ) : (
         <>
           {placeholdering ? <LoadingStatus name={table.noun.plural} /> : null}
-          <OrderLine table={table} sort={address.sort} view={openView?.sort ? { label: openView.label, sort: openView.sort } : null} onReset={resetSort} />
+          {selection && !placeholdering && !isEmpty && !data.isPlaceholder && <SelectAllLine selection={selection} noun={table.noun} />}
+          <OrderLine table={table} view={view} sort={address.sort} onReset={resetSort} />
           <DataTable
             table={table}
             context={context}
@@ -157,9 +161,9 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             // The grey rows while waiting; when no rows came back, one cell under the real headers with the empty state in it, so it is the same
             // table before and after. Rows that answer another question are dimmed here as elsewhere (no busy mark: the words do not change while it waits).
             placeholder={
-              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} pinFirst />
+              placeholdering ? <PlaceholderBody columns={placeholderColumns(table, columns)} pinFirst selectable={!!selection} />
               : isEmpty ? (
-                <EmptyBody columns={columns.length} dimmed={data.isPlaceholder}>{empty(settled.current, { focusTable })}</EmptyBody>
+                <EmptyBody columns={columns.length + (selection ? 1 : 0)} dimmed={data.isPlaceholder}>{empty(settled.current, { focusTable })}</EmptyBody>
               ) : undefined
             }
             caption={caption}
@@ -170,7 +174,10 @@ export function TableFrame<K extends TableFields, Row, Context>({ table, locatio
             // tab or filter, D-144); a refresh of the same question changes nothing on screen.
             busy={placeholdering || (data.isPlaceholder && !isEmpty)}
             onOpenRow={onOpenRow}
+            rowActions={rowActions}
             renderHeader={renderHeader}
+            selection={selection}
+            selectionPaused={data.isPlaceholder}
           />
           {!placeholdering && !isEmpty && <Pager page={page.page} at={address.page} total={page.total} pageSize={pageSize} hrefFor={(p) => hrefFor({ page: p })} noun={table.noun} search={data.searchOfRows} />}
         </>

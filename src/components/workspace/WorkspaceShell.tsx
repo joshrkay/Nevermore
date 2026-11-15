@@ -11,6 +11,7 @@ import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
 import ClosingBanner from "./ClosingBanner";
 import ConnectionBanner from "./ConnectionBanner";
+import MailboxNotice from "./MailboxNotice";
 import SupportBanner, { SupportEnded } from "./SupportBanner";
 import { useSupportOver } from "./useSupportOver";
 import { badgeText, MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
@@ -150,6 +151,7 @@ const Frame = () => {
       <SupportBanner />
       <ClosingBanner />
       <ConnectionBanner />
+      <MailboxNotice />
       {supportOver ? <SupportEnded /> : <Outlet />}
       <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
     </>

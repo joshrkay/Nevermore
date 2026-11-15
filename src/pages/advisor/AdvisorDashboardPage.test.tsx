@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
-import type { QUEUE_FIELDS, QueueRow } from "@/lib/queueApi";
+import type { QueueRow } from "@/lib/queueApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
 import { allStatuses, expectStatusesOutsideBusy, spoken, watchSlowTimers } from "@/test/loading";
-import { changeAddress, judgeAddress, OPERATORS, readAddress, sameAddress, useTableColumns, type TableView } from "@/components/workspace/table";
+import { changeAddress, judgeAddress, OPERATORS, readAddress, sameAddress } from "@/components/workspace/table";
 
 // The submissions queue on the workspace's table frame (story CRM-S3.5a). The database cuts the pages and runs the filters (supabase/tests/
 // queue_query.sql); these tests are what a person sees and does through the page: the rows, "1 to 50 of 375 submissions", the pager's links, every
@@ -15,11 +15,18 @@ const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
 // The header asks which firm the address names; these pages are tested at the bare domain.
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
-const rpc = vi.hoisted(() => vi.fn());
-vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc } }));
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } }));
 const listQueue = vi.fn();
 const countQueueViews = vi.fn();
 const listEmailProblems = vi.fn();
+// The person's kept columns (CRM-S3.1a): the database's own answers are tested in supabase/tests/table_settings.sql; the page is tried with them faked.
+const fetchMyColumns = vi.fn();
+const setMyColumns = vi.fn();
+vi.mock("@/lib/tableSettingsApi", () => ({
+  listSavedViews: async () => [],
+  fetchMyColumns: (...a: unknown[]) => fetchMyColumns(...a),
+  setMyColumns: (...a: unknown[]) => setMyColumns(...a),
+}));
 vi.mock("@/lib/advisorApi", async (original) => ({ ...(await original<typeof import("@/lib/advisorApi")>()), listEmailProblems: () => listEmailProblems() }));
 // A test can resolve a plain list (one page holding everything) or a whole page with its own total.
 vi.mock("@/lib/queueApi", async (original) => ({
@@ -126,24 +133,14 @@ const pageOf = (page: number, total: number) => ({
   total,
 });
 
-// The database's two functions for a person's column choice (supabase/tests/table_settings.sql holds their rules): what the person has kept for
-// the table, or nothing. Any other call is a surprise and is refused loudly.
-let kept: string[] | null = null;
-const asksOf = (name: string) => rpc.mock.calls.filter(([n]) => n === name).map(([, args]) => args);
-const database = async (name: string, args: Record<string, unknown>) => {
-  if (name === "my_table_columns") return { data: [{ columns: kept, source: kept ? "mine" : "default" }], error: null };
-  if (name === "set_my_table_columns") { kept = args.p_columns as string[] | null; return { data: null, error: null }; }
-  return { data: null, error: { code: "XX000", message: `unexpected call to ${name}` } };
-};
-
 describe("AdvisorDashboardPage", () => {
   beforeEach(() => {
-    kept = null;
-    rpc.mockReset().mockImplementation(database);
     lateTable.table = null;
     listQueue.mockReset();
     countQueueViews.mockReset().mockResolvedValue([]);
     listEmailProblems.mockReset().mockResolvedValue([]);
+    fetchMyColumns.mockReset().mockResolvedValue({ columns: null, source: "default" });
+    setMyColumns.mockReset().mockResolvedValue(undefined);
     signOut.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -1471,10 +1468,10 @@ describe("AdvisorDashboardPage", () => {
   });
 
   describe("when the database refuses the query", () => {
-    // Catches: a refused filter leaving a blank page or a "try again" that can never work. The codes and words are the database's (queue_query.sql).
+    // Catches: a refused filter leaving a blank page or a "try again" that can never work. The code and words are the database's (queue_query.sql, accounts_table_query.sql).
     it.each([
       ["22023", 'The filter "pipeline_status any_of" can\'t match "nonsense": it isn\'t one of the field\'s values'],
-      ["0A000", "Filters on a person arrive with CRM-A1.1, when records have an owner"],
+      ["22023", 'The filter "owner any_of" takes people by their id'],
     ])("shows the reason of a %s refusal plainly, with a way back to every submission and no retry", async (code, reason) => {
       listQueue.mockImplementation(async (o: { filters: unknown[] }) => {
         if (o.filters.length) throw Object.assign(new Error(reason), { code });
@@ -2108,8 +2105,8 @@ describe("AdvisorDashboardPage", () => {
       expect(listQueue.mock.calls.every(([o]) => o.filters[0].field === "needs_action")).toBe(true);
       const a = readAddress(QUEUE_TABLE, new URLSearchParams("filter=waiting_on_peo:is:true&filter=needs_action:is:true"));
       const b = readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true&filter=waiting_on_peo:is:true"));
-      expect(sameAddress(a, b)).toBe(true);
-      expect(sameAddress(a, readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true")))).toBe(false);
+      expect(sameAddress(QUEUE_TABLE, a, b)).toBe(true);
+      expect(sameAddress(QUEUE_TABLE, a, readAddress(QUEUE_TABLE, new URLSearchParams("filter=needs_action:is:true")))).toBe(false);
     });
 
     // Catches: an old parameter and a new filter on the same field both applying, so "yes" and "no" together match nothing.
@@ -2283,15 +2280,12 @@ describe("AdvisorDashboardPage", () => {
       expect(listQueue).not.toHaveBeenCalled();
       expect(countQueueViews).not.toHaveBeenCalled();
       expect(listEmailProblems).not.toHaveBeenCalled();
-      expect(rpc).not.toHaveBeenCalled();
       rerender(tree("firm-1"));
       expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
       await new Promise((r) => setTimeout(r, 80));
       expect(listQueue).toHaveBeenCalledTimes(1);
       expect(countQueueViews).toHaveBeenCalledTimes(1);
       expect(listEmailProblems).toHaveBeenCalledTimes(1);
-      // The person's columns are asked for once, for the firm, once it is known (never for "no firm", which the database would refuse).
-      expect(asksOf("my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: null }]);
     });
 
     it("asks once each outside the shell too", async () => {
@@ -2302,8 +2296,6 @@ describe("AdvisorDashboardPage", () => {
       expect(listQueue).toHaveBeenCalledTimes(1);
       expect(countQueueViews).toHaveBeenCalledTimes(1);
       expect(listEmailProblems).toHaveBeenCalledTimes(1);
-      // There is no firm to ask the database about a column choice for.
-      expect(rpc).not.toHaveBeenCalled();
     });
 
     // Catches: Refresh asking again only for the rows, leaving the tab numbers and the bounced-email marks as they were.
@@ -3217,658 +3209,97 @@ describe("AdvisorDashboardPage", () => {
       });
     });
   });
-
-  // Story CRM-S3.1a. What a person sees and does: the Columns menu, the table's columns, and what the database is asked to keep (its two
-  // functions are `database` above; the rules they keep are tested in supabase/tests/table_settings.sql).
-  describe("columns (CRM-S3.1a)", () => {
-    const ALL = ["Company", "Contact", "States", "Employees", "Submitted", "Status", "Completeness", "Quotes", "Waiting since", "Quote expires"];
-    const firm: Workspace = {
-      firm: { id: "firm-1", name: "Alpha", address: "alpha" }, role: "Agent", isOwner: false, isSupport: false, supportEndsAt: null,
-      supportSessionId: null, isPlatformAdmin: false, person: "Sam",
-    };
-    const renderInFirm = (url = "/advisor", workspace: Workspace = firm) =>
+  // Columns (story CRM-S3.1a): show, hide and reorder, the name column pinned, the choice kept per person in the database (D-43).
+  describe("the columns a person chooses (CRM-S3.1a)", () => {
+    const inFirm = (url = "/advisor") =>
       render(
-        <WorkspaceContext.Provider value={workspace}>
+        <WorkspaceContext.Provider value={{ firm: { id: "firm-1", name: "Alpha", address: "alpha" }, role: "Agent", isOwner: false, isSupport: false, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: false, person: "Sam" }}>
           <QueryClientProvider client={new QueryClient()}>
             <MemoryRouter initialEntries={[url]}>
-              <Routes>
-                <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
-                <Route path="/advisor/submissions/:id" element={<ShowId />} />
-              </Routes>
+              <Routes><Route path="/advisor" element={<AdvisorDashboardPage />} /></Routes>
             </MemoryRouter>
           </QueryClientProvider>
         </WorkspaceContext.Provider>,
       );
-    const headers = () => screen.getAllByRole("columnheader").map((h) => h.textContent);
-    const open = async (user: ReturnType<typeof userEvent.setup>) => {
-      await user.click(screen.getByRole("button", { name: "Columns" }));
-      return screen.findByRole("dialog", { name: "Columns" });
-    };
+    const headerWords = () => screen.getAllByRole("columnheader").map((h) => h.textContent);
 
-    // Catches: a Columns menu that leaves a column out, or that offers to hide the name column (which would leave rows nobody can tell apart).
-    it("offers a Columns menu naming every column: all shown, and Company always shown with nothing to hide it by", async () => {
+    // Catches: a person with no kept choice not seeing the queue's ten columns, in its own order.
+    it("shows every column in the table's own order when the person has kept no choice", async () => {
       listQueue.mockResolvedValue([row()]);
-      renderInFirm();
+      inFirm();
       await screen.findByRole("link", { name: "Acme" });
-      const dialog = await open(userEvent.setup());
-      const boxes = within(dialog).getAllByRole("checkbox");
-      expect(boxes.map((b) => b.closest("label")?.textContent)).toEqual(ALL.slice(1));
-      for (const box of boxes) expect(box).toBeChecked();
-      expect(within(dialog).getByText("Company")).toBeInTheDocument();
-      expect(within(dialog).getByText("Always shown")).toBeInTheDocument();
-      expect(within(dialog).queryByRole("checkbox", { name: "Company" })).not.toBeInTheDocument();
+      expect(headerWords()).toEqual(["Company", "Contact", "States", "Employees", "Submitted", "Status", "Completeness", "Quotes", "Waiting since", "Quote expires"]);
+      expect(fetchMyColumns).toHaveBeenCalledWith("firm-1", "submissions", null);
     });
 
-    // Catches: a hidden column still drawn (its header or its cells), or a column shown again anywhere but at the end of the others.
-    it("hides a column when its box is cleared, cells and header together, and shows it again at the end when it is set", async () => {
+    // Catches: the kept choice reaching the database but not the table, or the order of the headers and the cells disagreeing.
+    it("draws the kept columns, headers and cells, in the kept order", async () => {
+      fetchMyColumns.mockResolvedValue({ columns: ["company", "status", "states"], source: "mine" });
       listQueue.mockResolvedValue([row()]);
-      renderInFirm();
+      inFirm();
       await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      expect(headers()).toEqual(ALL.filter((h) => h !== "Contact"));
-      expect(screen.queryByText("Pat Prospect")).not.toBeInTheDocument();
-      expect(within(screen.getByRole("table")).getAllByRole("row")[1].children).toHaveLength(ALL.length - 1);
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      expect(headers()).toEqual([...ALL.filter((h) => h !== "Contact"), "Contact"]);
-      expect(screen.getByText("Pat Prospect")).toBeInTheDocument();
+      await waitFor(() => expect(headerWords()).toEqual(["Company", "Status", "States"]));
+      const cells = [...screen.getAllByRole("row")[1].querySelectorAll("th, td")];
+      expect(cells).toHaveLength(3);
+      expect(cells[1]).toHaveTextContent("Submitted");
+      expect(cells[2]).toHaveTextContent("CA, NY");
     });
 
-    // Catches: a reorder that moves the menu's list but not the table (or the other way about), a column that can move above the name column, and
-    // a Company that can be moved at all.
-    it("moves a column up or down with its buttons, in the menu and in the table, and never above the name column", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      const order = () => within(dialog).getAllByRole("checkbox").map((b) => b.closest("label")?.textContent);
-      await user.click(within(dialog).getByRole("button", { name: "Move States up" }));
-      expect(headers()).toEqual(["Company", "States", "Contact", ...ALL.slice(3)]);
-      expect(order()).toEqual(["States", "Contact", ...ALL.slice(3)]);
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact down" }));
-      expect(headers()).toEqual(["Company", "States", "Employees", "Contact", ...ALL.slice(4)]);
-      expect(order()).toEqual(["States", "Employees", "Contact", ...ALL.slice(4)]);
-      // The first after Company can't go up, and the last can't go down: the buttons are there, say so, and do nothing.
-      const before = headers();
-      await waitFor(() => expect(asksOf("set_my_table_columns")).toHaveLength(2));
-      const top = within(dialog).getByRole("button", { name: "Move States up" });
-      expect(top).toHaveAttribute("aria-disabled", "true");
-      await user.click(top);
-      const bottom = within(dialog).getByRole("button", { name: "Move Quote expires down" });
-      expect(bottom).toHaveAttribute("aria-disabled", "true");
-      await user.click(bottom);
-      expect(headers()).toEqual(before);
-      // Nothing was kept for them either (the table keeps the name column first whatever a list says, so the table alone would not show it).
-      await new Promise((r) => setTimeout(r, 50));
-      expect(asksOf("set_my_table_columns")).toHaveLength(2);
-      expect(within(dialog).queryByRole("button", { name: /Move Company/ })).not.toBeInTheDocument();
-      expect(within(dialog).getByRole("button", { name: "Move Contact up" })).not.toHaveAttribute("aria-disabled");
-    });
-
-    const IDS = ["company", "contact", "states", "employees", "submitted", "status", "completeness", "quotes", "waiting_since", "quote_expires"];
-    const keeping = (columns: string[] | null) => ({ p_firm_id: "firm-1", p_table: "submissions", p_view_id: null, p_columns: columns });
-
-    // Catches: a choice that lasts only until the page is left (nothing asked of the database), one kept without the name column or out of order,
-    // and one kept for the wrong firm or table.
-    it("has the database keep the person's columns, in order with Company first, for this firm's table, after each change", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      expect(asksOf("set_my_table_columns")).toEqual([]);
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      await waitFor(() => expect(asksOf("set_my_table_columns")).toEqual([keeping(IDS.filter((id) => id !== "contact"))]));
-      await user.click(within(dialog).getByRole("button", { name: "Move Employees up" }));
-      await waitFor(() => expect(asksOf("set_my_table_columns")).toHaveLength(2));
-      expect(asksOf("set_my_table_columns")[1]).toEqual(keeping(["company", "employees", "states", "submitted", "status", "completeness", "quotes", "waiting_since", "quote_expires"]));
-    });
-
-    // Catches: a kept choice that is not read back (the table opens with every column every time), or read for no firm, or asked for more than once.
-    it("opens the table with the columns the person kept, in their order, asked for once for this firm's table", async () => {
-      kept = ["company", "status", "states"];
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      await waitFor(() => expect(headers()).toEqual(["Company", "Status", "States"]));
-      expect(asksOf("my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: null }]);
-      const dialog = await open(userEvent.setup());
-      const notShown = within(within(dialog).getByRole("list", { name: "Columns not shown" })).getAllByRole("checkbox");
-      expect(notShown.map((b) => b.closest("label")?.textContent)).toEqual(["Contact", "Employees", "Submitted", "Completeness", "Quotes", "Waiting since", "Quote expires"]);
-      for (const box of notShown) expect(box).not.toBeChecked();
-      expect(within(dialog).getAllByRole("checkbox", { checked: true }).map((b) => b.closest("label")?.textContent)).toEqual(["Status", "States"]);
-    });
-
-    // Catches: a kept choice the table can no longer honour (a column that has since been retired, a list without the name column or with it out of
-    // place or a column twice) drawing no name column, a column twice (and two of one React key), or throwing.
-    it("reads a kept choice leniently: a column the table no longer has is left out, a repeat is shown once, and Company is first whatever it says", async () => {
-      kept = ["status", "retired_column", "states", "status", "company"];
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      await waitFor(() => expect(headers()).toEqual(["Company", "Status", "States"]));
-      expect(within(screen.getByRole("table")).getAllByRole("row")[1].children).toHaveLength(3);
-    });
-
-    // Catches: a kept choice whose every column has been retired leaving the table with Company alone, which the person never chose (a person who
-    // really chose Company alone has it in their list, and keeps it).
-    it("shows the table's own columns when none of the kept ones is a column the table has, and Company alone when that is what was kept", async () => {
-      kept = ["retired_a", "retired_b"];
-      listQueue.mockResolvedValue([row()]);
-      const first = renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      await waitFor(() => expect(asksOf("my_table_columns")).toHaveLength(1));
-      expect(headers()).toEqual(ALL);
-      first.unmount();
-      kept = ["company"];
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      await waitFor(() => expect(headers()).toEqual(["Company"]));
-    });
-
-    // Catches: the name column scrolling out of view with the rest when the table is wider than the page (the queue has ten columns), in a header or
-    // a row, so a person reading the far columns can no longer tell whose they are. (That it holds in a real browser is checked in e2e/columns.spec.ts.)
-    it("pins the name column to the left of the scrolling table, in the header and in every row, and no other column", async () => {
-      listQueue.mockResolvedValue([row(), row({ session_id: "s2", company_name: "Beta" })]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Beta" });
-      const pinned = (el: HTMLElement) => el.classList.contains("sticky") && el.classList.contains("left-0");
-      const [company, ...otherHeaders] = screen.getAllByRole("columnheader");
-      expect(company).toHaveTextContent("Company");
-      expect(pinned(company)).toBe(true);
-      for (const h of otherHeaders) expect(pinned(h)).toBe(false);
-      for (const r of screen.getAllByRole("row").slice(1)) {
-        const [first, ...rest] = Array.from(r.children) as HTMLElement[];
-        expect(pinned(first)).toBe(true);
-        for (const cell of rest) expect(pinned(cell)).toBe(false);
-      }
-    });
-
-    // Catches: the rows being drawn in the table's own ten columns for the moment before the person's choice arrives, then collapsing to the three they
-    // chose: the whole table jumping on every visit of anyone who has chosen.
-    it("keeps the grey rows until the person's columns are known, so no row is ever drawn in columns the person then loses", async () => {
-      let answer: (value: unknown) => void = () => {};
-      rpc.mockImplementation((name: string, args: Record<string, unknown>) => (name === "my_table_columns" ? new Promise((r) => { answer = r; }) : database(name, args)));
-      listQueue.mockResolvedValue([row()]);
-      const { container } = renderInFirm();
-      await waitFor(() => expect(listQueue).toHaveBeenCalled());
-      await act(async () => {});
-      expect(screen.queryByRole("link", { name: "Acme" })).not.toBeInTheDocument();
-      expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
-      expect(spoken()).toHaveLength(1);
-      expect(spoken()[0]).toHaveTextContent("Loading submissions");
-      await act(async () => answer({ data: [{ columns: ["company", "status", "states"], source: "mine" }], error: null }));
-      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-      expect(headers()).toEqual(["Company", "Status", "States"]);
-      expect(spoken()).toHaveLength(1);
-      expect(spoken()[0]).toHaveTextContent("1 to 1 of 1 submission");
-    });
-
-    // Catches: a table held grey for the person's columns with no word of why and no way out when they never arrive (the rows being on screen is what
-    // would make it look broken), or a Refresh that claims to work while the table is waiting for them.
-    it("says it is taking longer than usual after ten seconds when the person's columns do not arrive, and Try again asks for them again", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
-      let asked = 0;
-      rpc.mockImplementation((name: string, args: Record<string, unknown>) => (name === "my_table_columns" && ++asked === 1 ? new Promise(() => {}) : database(name, args)));
-      kept = ["company", "status"];
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await tick(100);
-      // The rows are here; the table is still waiting, and what needs the rows says so.
-      expect(listQueue).toHaveBeenCalled();
-      expect(screen.queryByRole("link", { name: "Acme" })).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Refresh" })).toHaveAttribute("aria-disabled", "true");
-      await tick(9_000);
-      expect(screen.queryByText("This is taking longer than usual.")).not.toBeInTheDocument();
-      await tick(1_500);
-      expect(screen.getByText("This is taking longer than usual.")).toBeInTheDocument();
-      await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("button", { name: "Try again" }));
-      await tick(100);
-      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-      expect(headers()).toEqual(["Company", "Status"]);
-      expect(asksOf("my_table_columns")).toHaveLength(2);
-      expect(screen.queryByText("This is taking longer than usual.")).not.toBeInTheDocument();
-    });
-
-    // Catches: the grey rows (while the rows are on their way) keeping the table's ten columns after the person chose three, so the table changes
-    // shape twice: once when the choice arrives and again when the rows do.
-    it("draws the grey rows in the person's columns too: the same headers and one grey cell for each, before any row arrives", async () => {
-      kept = ["company", "status", "states"];
+    // Catches: the grey loading rows drawn with the table's own columns while the real ones are the person's, so the table jumps when the rows arrive.
+    it("draws the grey loading rows with the same columns, with the first one pinned", async () => {
+      fetchMyColumns.mockResolvedValue({ columns: ["company", "employees"], source: "mine" });
       listQueue.mockReturnValue(new Promise(() => {}));
-      const { container } = renderInFirm();
-      await waitFor(() => expect(headers()).toEqual(["Company", "Status", "States"]));
-      const grey = container.querySelectorAll("tbody tr");
-      expect(grey).toHaveLength(8);
-      for (const r of Array.from(grey)) expect(r.children).toHaveLength(3);
-      // The first grey cell is pinned as the real first cell is, so scrolling a loading table sideways does not move the name column's place.
-      for (const r of Array.from(grey)) {
-        expect(r.children[0]).toHaveClass("sticky", "left-0");
-        expect(r.children[1]).not.toHaveClass("sticky");
-      }
+      inFirm();
+      await waitFor(() => expect(headerWords()).toEqual(["Company", "Employees"]));
+      const first = tableBody().querySelector("tr")!;
+      expect(first.querySelectorAll("td")).toHaveLength(2);
+      expect(first.querySelector("td")!.className).toMatch(/\bsticky\b/);
     });
 
-    // Catches: a choice the database refuses (a firm that is closing, or Nevermore support looking in) silently undone on screen, or silently not kept so
-    // the person finds it gone next visit; or the warning outliving the next change that was kept.
-    it("keeps the person's choice on screen when it can't be kept, says why where they chose it, and stops saying so once a later change is kept", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
+    // Catches: the name column scrolling out of sight in the queue (ten columns, none sticky before this story).
+    it("keeps the company column in view: its header and every row's first cell are pinned to the left edge", async () => {
+      listQueue.mockResolvedValue([row(), row({ session_id: "s2", company_name: "Birch" })]);
+      inFirm();
       await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
-        name === "set_my_table_columns" ? { data: null, error: { code: "PT423", message: "Nevermore support can look, not change" } } : database(name, args));
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent("Nevermore support can look, not change, so your columns weren't kept.");
-      expect(headers()).toEqual(ALL.filter((h) => h !== "Contact"));
-      expect(kept).toBeNull();
-      rpc.mockImplementation(database);
-      await user.click(within(dialog).getByRole("checkbox", { name: "States" }));
-      await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
-      expect(headers()).toEqual(ALL.filter((h) => h !== "Contact" && h !== "States"));
-      expect(kept).toEqual(IDS.filter((id) => id !== "contact" && id !== "states"));
+      for (const cell of [screen.getByRole("columnheader", { name: "Company" }), ...screen.getAllByRole("rowheader")]) expect(cell.className).toMatch(/\bsticky\b/);
+      expect(screen.getByRole("columnheader", { name: "Contact" }).className).not.toMatch(/sticky/);
     });
 
-    // Catches: a failed read of the person's choice leaving the table grey for ever (the rows wait for it), or silently showing the default columns
-    // as if they were the person's, or no way to ask again.
-    it("shows the default columns, and says so, when the person's can't be loaded; asking again brings them", async () => {
-      let failing = true;
-      rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
-        name === "my_table_columns" && failing ? { data: null, error: { code: "XX000", message: "internal detail" } } : database(name, args));
-      kept = ["company", "status"];
+    // Catches: the control missing from the page, or hiding a column keeping nothing (back again at the next visit, or on another device).
+    it("hides a column from the Columns control and keeps the choice, name column first, for this firm", async () => {
       listQueue.mockResolvedValue([row()]);
-      renderInFirm();
+      const user = userEvent.setup();
+      inFirm();
       await screen.findByRole("link", { name: "Acme" });
-      expect(headers()).toEqual(ALL);
-      const note = await screen.findByText("Your columns couldn't be loaded, so the default columns are shown.");
-      expect(note.closest("[role=status]")).not.toBeNull();
-      expect(screen.queryByText(/internal detail/)).not.toBeInTheDocument();
-      failing = false;
-      await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
-      await waitFor(() => expect(headers()).toEqual(["Company", "Status"]));
-      expect(screen.queryByText(/couldn't be loaded/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Columns" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "Completeness" }));
+      expect(headerWords()).not.toContain("Completeness");
+      expect(headerWords()).toHaveLength(9);
+      await waitFor(() => expect(setMyColumns).toHaveBeenCalledWith("firm-1", "submissions", null, ["company", "contact", "states", "employees", "submitted", "status", "quotes", "waiting_since", "quote_expires"]));
     });
 
-    // Catches: no way back to the default columns short of undoing every change by hand, and a button that claims to restore them while the database is
-    // left holding the old choice (which then comes back next visit).
-    it("goes back to the default columns with one button, which has the database forget the choice, and says it's already so when it is", async () => {
-      kept = ["company", "status"];
+    // Catches: a reordered column breaking sorting (the header's button sorting another column's field) or the rows being asked for again by a change of columns.
+    it("still sorts a moved column by its own field, and does not ask for the rows again when columns change", async () => {
       listQueue.mockResolvedValue([row()]);
-      renderInFirm();
+      const user = userEvent.setup();
+      inFirm();
       await screen.findByRole("link", { name: "Acme" });
-      await waitFor(() => expect(headers()).toEqual(["Company", "Status"]));
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      const back = within(dialog).getByRole("button", { name: "Back to default columns" });
-      expect(back).not.toHaveAttribute("aria-disabled");
-      await user.click(back);
-      expect(headers()).toEqual(ALL);
-      await waitFor(() => expect(asksOf("set_my_table_columns")).toEqual([keeping(null)]));
-      expect(kept).toBeNull();
-      expect(back).toHaveAttribute("aria-disabled", "true");
-      expect(back).toHaveAccessibleDescription("These are the default columns already.");
-      await user.click(back);
-      expect(asksOf("set_my_table_columns")).toHaveLength(1);
+      await user.click(screen.getByRole("button", { name: "Columns" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move Status earlier" }));
+      expect(headerWords().indexOf("Status")).toBe(4);
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: /^Status/ }));
+      await waitFor(() => expect(listQueue).toHaveBeenLastCalledWith(query({ sort: { field: "pipeline_status", direction: "asc" } })));
+      expect(listQueue).toHaveBeenCalledTimes(2);
     });
 
-    // Catches: a reorder that a screen reader user can't hear (the button that was pressed keeps its name and its place in the tab order, so nothing
-    // would say it did anything), and a hidden column that seems to vanish from the list it was in.
-    it("says in one polite status in the menu what each change did: where a column went, that it was hidden or shown, and that the defaults are back", async () => {
+    // Catches: a failure to load the choice taking the queue away with it.
+    it("still shows the queue, with the usual columns, when the kept choice can't be loaded", async () => {
+      fetchMyColumns.mockRejectedValue(new Error("Couldn't load your columns."));
       listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      const status = within(dialog).getByRole("status");
-      expect(within(dialog).getAllByRole("status")).toHaveLength(1);
-      expect(status).toHaveAttribute("aria-live", "polite");
-      expect(status).toBeEmptyDOMElement();
-      await user.click(within(dialog).getByRole("button", { name: "Move States up" }));
-      expect(status).toHaveTextContent("States is now column 2 of 10.");
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      expect(status).toHaveTextContent("Contact hidden. 9 columns shown.");
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      expect(status).toHaveTextContent("Contact shown as column 10 of 10.");
-      await user.click(within(dialog).getByRole("button", { name: "Back to default columns" }));
-      expect(status).toHaveTextContent("Default columns restored. 10 columns shown.");
-    });
-
-    // Catches: focus dropped to the page (and the menu left behind) each time a row of the menu moves, which a person using only the keyboard meets on
-    // every single change: they would have to Tab through the whole menu again to make the next one.
-    it("keeps focus on the control that was used, wherever its row goes, and works by keyboard alone", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      const control = (role: "button" | "checkbox", name: string) => within(dialog).getByRole(role, { name });
-      control("button", "Move States down").focus();
-      await user.keyboard("{Enter}");
-      expect(headers().slice(0, 4)).toEqual(["Company", "Contact", "Employees", "States"]);
-      expect(control("button", "Move States down")).toHaveFocus();
-      await user.keyboard("{Enter}");
-      expect(headers().slice(0, 5)).toEqual(["Company", "Contact", "Employees", "Submitted", "States"]);
-      expect(control("button", "Move States down")).toHaveFocus();
-      // Hiding sends the row to the other list, showing brings it back: focus is on its checkbox both times.
-      control("checkbox", "Status").focus();
-      await user.keyboard(" ");
-      expect(headers()).not.toContain("Status");
-      expect(within(dialog).getByRole("list", { name: "Columns not shown" })).toContainElement(control("checkbox", "Status"));
-      expect(control("checkbox", "Status")).toHaveFocus();
-      await user.keyboard(" ");
-      expect(headers()).toContain("Status");
-      expect(control("checkbox", "Status")).toHaveFocus();
-      // The button at the end of a list stays focused when it can go no further.
-      control("button", "Move Quote expires down").focus();
-      await user.keyboard("{Enter}");
-      expect(control("button", "Move Quote expires down")).toHaveFocus();
-    });
-
-    // Catches: a menu that opens over a choice not yet known, so what the person does first is kept over what they had kept (the database is never
-    // asked what it holds, and the change is made on the table's defaults).
-    it("is not usable until the person's columns are known: it stays in the tab order, says why, and does not open", async () => {
-      let answer: (value: unknown) => void = () => {};
-      rpc.mockImplementation((name: string, args: Record<string, unknown>) => (name === "my_table_columns" ? new Promise((r) => { answer = r; }) : database(name, args)));
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      const button = screen.getByRole("button", { name: "Columns" });
-      expect(button).toHaveAttribute("aria-disabled", "true");
-      expect(button).toHaveAccessibleDescription("Available once your columns have loaded");
-      const user = userEvent.setup();
-      await user.click(button);
-      expect(screen.queryByRole("dialog", { name: "Columns" })).not.toBeInTheDocument();
-      await act(async () => answer({ data: [{ columns: null, source: "default" }], error: null }));
-      await waitFor(() => expect(screen.getByRole("button", { name: "Columns" })).not.toHaveAttribute("aria-disabled"));
-      expect(await open(user)).toBeInTheDocument();
-    });
-
-    // Catches: a change undone on screen when the person opens a row and comes back (the page is drawn again from the answer read before the change, which the query
-    // library keeps and never asks again), and the next change then keeping a list built from that old answer, which loses the earlier change in the database too
-    // (CRM-S3.1a review, D-196).
-    describe("leaving the table and coming back", () => {
-      const renderKeeping = (client: QueryClient) =>
-        render(
-          <WorkspaceContext.Provider value={firm}>
-            <QueryClientProvider client={client}>
-              <MemoryRouter initialEntries={["/advisor"]}>
-                <Routes>
-                  <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
-                  <Route path="/advisor/submissions/:id" element={<><ShowId /><GoBack /></>} />
-                </Routes>
-              </MemoryRouter>
-            </QueryClientProvider>
-          </WorkspaceContext.Provider>,
-        );
-
-      it("still shows the change after opening a row and coming back, and the next change keeps the whole list", async () => {
-        listQueue.mockResolvedValue([row()]);
-        renderKeeping(new QueryClient());
-        await screen.findByRole("link", { name: "Acme" });
-        const user = userEvent.setup();
-        await user.click(within(await open(user)).getByRole("checkbox", { name: "Contact" }));
-        await waitFor(() => expect(kept).toEqual(IDS.filter((id) => id !== "contact")));
-        await user.keyboard("{Escape}");
-        await user.click(screen.getByRole("link", { name: "Acme" }));
-        await screen.findByText("Detail page for s1");
-        await user.click(screen.getByRole("button", { name: "Go back" }));
-        await screen.findByRole("link", { name: "Acme" });
-        expect(headers()).toEqual(ALL.filter((h) => h !== "Contact"));
-        // It is still a kept choice: the way back to the default columns is offered.
-        const dialog = await open(user);
-        expect(within(dialog).getByRole("button", { name: "Back to default columns" })).not.toHaveAttribute("aria-disabled");
-        await user.keyboard("{Escape}");
-        // The next change is made from what is on screen, so it keeps the earlier one as well.
-        await user.click(within(await open(user)).getByRole("checkbox", { name: "States" }));
-        await waitFor(() => expect(kept).toEqual(IDS.filter((id) => id !== "contact" && id !== "states")));
-        expect(asksOf("my_table_columns")).toHaveLength(1);
-      });
-
-      // Catches: "back to default" undone the same way: the default columns forgotten in the database and the old choice drawn again on return.
-      it("still shows the default columns after going back to them, opening a row and coming back", async () => {
-        kept = ["company", "status"];
-        listQueue.mockResolvedValue([row()]);
-        renderKeeping(new QueryClient());
-        await waitFor(() => expect(headers()).toEqual(["Company", "Status"]));
-        const user = userEvent.setup();
-        await user.click(within(await open(user)).getByRole("button", { name: "Back to default columns" }));
-        await waitFor(() => expect(kept).toBeNull());
-        await user.keyboard("{Escape}");
-        await user.click(screen.getByRole("link", { name: "Acme" }));
-        await screen.findByText("Detail page for s1");
-        await user.click(screen.getByRole("button", { name: "Go back" }));
-        await screen.findByRole("link", { name: "Acme" });
-        expect(headers()).toEqual(ALL);
-        // Nothing is kept now, so there is nothing to go back from.
-        expect(within(await open(user)).getByRole("button", { name: "Back to default columns" })).toHaveAttribute("aria-disabled", "true");
-      });
-    });
-
-    // Catches: a Columns menu that can be used before the firm is known: the change is made on the table's defaults, is never kept (there is no firm to keep it
-    // for), and when the firm arrives it wins over what the database holds (CRM-S3.1a review, D-197).
-    it("is not usable before the firm is known, and is once it is and the person's choice has been read", async () => {
-      kept = ["company", "states"];
-      listQueue.mockResolvedValue([row()]);
-      const client = new QueryClient();
-      const tree = (known: boolean) => (
-        <WorkspaceContext.Provider value={{ ...firm, firm: known ? firm.firm : null }}>
-          <QueryClientProvider client={client}>
-            <MemoryRouter initialEntries={["/advisor"]}>
-              <Routes><Route path="/advisor" element={<AdvisorDashboardPage />} /></Routes>
-            </MemoryRouter>
-          </QueryClientProvider>
-        </WorkspaceContext.Provider>
-      );
-      const { rerender } = render(tree(false));
-      const button = screen.getByRole("button", { name: "Columns" });
-      expect(button).toHaveAttribute("aria-disabled", "true");
-      expect(button).toHaveAccessibleDescription("Available once your columns have loaded");
-      const user = userEvent.setup();
-      await user.click(button);
-      expect(screen.queryByRole("dialog", { name: "Columns" })).not.toBeInTheDocument();
-      rerender(tree(true));
-      await waitFor(() => expect(headers()).toEqual(["Company", "States"]));
-      await waitFor(() => expect(screen.getByRole("button", { name: "Columns" })).not.toHaveAttribute("aria-disabled"));
-      expect(asksOf("my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: null }]);
-    });
-
-    // Catches: "Back to default columns" refused ("already") for a person whose kept list happens to equal the default order, so the database keeps a list that
-    // never grows when the table gains a column: it stays hidden for them (D-187: a person with no choice follows the table's defaults).
-    it("still offers to forget the choice when the kept list is the default order", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      await user.click(within(dialog).getByRole("button", { name: "Move Contact up" }));
-      expect(headers()).toEqual(ALL);
-      await waitFor(() => expect(kept).toEqual(IDS));
-      const back = within(dialog).getByRole("button", { name: "Back to default columns" });
-      expect(back).not.toHaveAttribute("aria-disabled");
-      await user.click(back);
-      await waitFor(() => expect(kept).toBeNull());
-      expect(back).toHaveAttribute("aria-disabled", "true");
-    });
-
-    // Catches: two quick changes reaching the database out of order, so the older list is the one kept and the next visit shows a table the person
-    // had already moved on from (each save is the whole list).
-    it("sends each change after the one before has been kept, so the last change is the one that is kept", async () => {
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByRole("link", { name: "Acme" });
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      let finishFirst: () => void = () => {};
-      rpc.mockImplementation((name: string, args: Record<string, unknown>) =>
-        name === "set_my_table_columns" && asksOf("set_my_table_columns").length === 1
-          ? new Promise((r) => { finishFirst = () => r({ data: null, error: null }); })
-          : database(name, args));
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      await user.click(within(dialog).getByRole("checkbox", { name: "States" }));
-      expect(headers()).toEqual(ALL.filter((h) => h !== "Contact" && h !== "States"));
-      await new Promise((r) => setTimeout(r, 50));
-      expect(asksOf("set_my_table_columns")).toHaveLength(1);
-      await act(async () => finishFirst());
-      await waitFor(() => expect(asksOf("set_my_table_columns")).toHaveLength(2));
-      expect(asksOf("set_my_table_columns")[1]).toEqual(keeping(IDS.filter((id) => id !== "contact" && id !== "states")));
-    });
-
-    // Catches: the "couldn't be loaded" line staying over a table whose columns the person has since chosen, which would say the table shows the
-    // defaults when it shows their choice.
-    it("stops saying the person's columns couldn't be loaded once they choose some", async () => {
-      rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
-        name === "my_table_columns" ? { data: null, error: { code: "XX000", message: "internal detail" } } : database(name, args));
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByText("Your columns couldn't be loaded, so the default columns are shown.");
-      const user = userEvent.setup();
-      const dialog = await open(user);
-      await user.click(within(dialog).getByRole("checkbox", { name: "Contact" }));
-      expect(headers()).toEqual(ALL.filter((h) => h !== "Contact"));
-      expect(screen.queryByText(/couldn't be loaded/)).not.toBeInTheDocument();
-      await waitFor(() => expect(kept).toEqual(IDS.filter((id) => id !== "contact")));
-    });
-
-    // Catches: the person's columns being asked for again every time the tab is back in focus or a minute passes (as the rows are, D-49), a request
-    // for an answer that only this person can change, which they have on screen already.
-    it("asks for the person's columns once: a minute passing and the tab coming back ask for the rows again, not for these", async () => {
-      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-      listQueue.mockResolvedValue([row()]);
-      renderInFirm();
-      await screen.findByText("Acme");
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      await act(async () => { window.dispatchEvent(new Event("visibilitychange")); });
-      expect(listQueue.mock.calls.length).toBeGreaterThan(1);
-      expect(asksOf("my_table_columns")).toHaveLength(1);
-    });
-
-    // The seam CRM-S3.4a fills: its page gives `useTableColumns` the saved view that is open. The queue has no saved view yet, so this is tried through a
-    // small page of its own that calls the hook the way that story will.
-    describe("on a saved view (the seam CRM-S3.4a fills)", () => {
-      const view: TableView<typeof QUEUE_FIELDS> = { id: "view-1", label: "Waiting on PEOs", filters: [], columns: ["company", "quotes"] };
-      const Probe = ({ savedView }: { savedView: TableView<typeof QUEUE_FIELDS> | null }) => {
-        const mine = useTableColumns(QUEUE_TABLE, savedView);
-        return (
-          <>
-            <p data-testid="shown">{mine.columns.map((c) => c.id).join(",")}</p>
-            <p data-testid="has-choice">{String(mine.hasChoice)}</p>
-            <button type="button" onClick={() => mine.choose(["company", "states"])}>Choose</button>
-            <button type="button" onClick={() => mine.choose(null)}>Forget</button>
-          </>
-        );
-      };
-      // A client of each test's own: what it has read is kept (the choice is read once), so a shared one would hand a test the last one's answer.
-      let client = new QueryClient();
-      beforeEach(() => { client = new QueryClient(); });
-      const tree = (savedView: TableView<typeof QUEUE_FIELDS> | null) => (
-        <WorkspaceContext.Provider value={firm}><QueryClientProvider client={client}><Probe savedView={savedView} /></QueryClientProvider></WorkspaceContext.Provider>
-      );
-      const shownIds = () => screen.getByTestId("shown").textContent;
-
-      // Catches: the person's own choice on a view being read as their choice for the table (or the view's own columns never showing).
-      it("asks for the person's choice on that view, and shows the view's own columns when they have none", async () => {
-        render(tree(view));
-        await waitFor(() => expect(shownIds()).toBe("company,quotes"));
-        expect(asksOf("my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: "view-1" }]);
-      });
-
-      // Catches: a choice made on one view being kept for the table (or shown on the next view), so one tab's columns change every tab's.
-      it("keeps a choice made on that view for that view alone: not for the table, and not shown once the view is closed", async () => {
-        const { rerender } = render(tree(view));
-        await waitFor(() => expect(shownIds()).toBe("company,quotes"));
-        await userEvent.setup().click(screen.getByRole("button", { name: "Choose" }));
-        expect(shownIds()).toBe("company,states");
-        await waitFor(() => expect(asksOf("set_my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: "view-1", p_columns: ["company", "states"] }]));
-        rerender(tree(null));
-        await waitFor(() => expect(shownIds()).toBe(IDS.join(",")));
-      });
-
-      // Catches: the way back being refused ("nothing to forget") for a person who has a choice of their own on a view, or offered for one who has only the view's
-      // own columns, which are not theirs to forget (D-198).
-      it("keeps a choice of its own on a view apart from the view's own columns: only the first is something to go back from", async () => {
-        const has = () => screen.getByTestId("has-choice").textContent;
-        rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
-          name === "my_table_columns" ? { data: [{ columns: ["company", "states"], source: "mine_for_view" }], error: null } : database(name, args));
-        const { unmount } = render(tree(view));
-        await waitFor(() => expect(shownIds()).toBe("company,states"));
-        expect(has()).toBe("true");
-        unmount();
-        rpc.mockImplementation(async (name: string, args: Record<string, unknown>) =>
-          name === "my_table_columns" ? { data: [{ columns: ["company", "quotes"], source: "view" }], error: null } : database(name, args));
-        client = new QueryClient();
-        render(tree(view));
-        await waitFor(() => expect(shownIds()).toBe("company,quotes"));
-        expect(has()).toBe("false");
-        await userEvent.setup().click(screen.getByRole("button", { name: "Choose" }));
-        expect(has()).toBe("true");
-      });
-
-      // Catches: a choice made on one view being undone when another view is chosen and the first is opened again, which draws the first's answer from before
-      // the change (CRM-S3.1a review, D-196): the same cause as leaving the table and coming back.
-      it("shows a choice made on a view again when another view has been chosen in between and the first is opened again", async () => {
-        const other: TableView<typeof QUEUE_FIELDS> = { id: "view-2", label: "Other", filters: [], columns: ["company", "status"] };
-        const { rerender } = render(tree(view));
-        await waitFor(() => expect(shownIds()).toBe("company,quotes"));
-        const user = userEvent.setup();
-        await user.click(screen.getByRole("button", { name: "Choose" }));
-        expect(shownIds()).toBe("company,states");
-        rerender(tree(other));
-        await waitFor(() => expect(shownIds()).toBe("company,status"));
-        await user.click(screen.getByRole("button", { name: "Choose" }));
-        rerender(tree(view));
-        expect(shownIds()).toBe("company,states");
-      });
-
-      // Catches: "back to default columns" on a saved view showing the table's defaults for a view that has the person's own choice for the table behind
-      // it (the database's order: their choice for the view, the view's own columns, their choice for the table, the defaults), which the page can't know
-      // without asking again.
-      it("forgets the person's choice on that view and shows what the database then says: here their choice for the table", async () => {
-        const plain: TableView<typeof QUEUE_FIELDS> = { id: "view-1", label: "Waiting on PEOs", filters: [] };
-        let forgotten = false;
-        rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
-          if (name === "my_table_columns") return { data: [forgotten ? { columns: ["company", "status"], source: "mine" } : { columns: ["company", "states"], source: "mine_for_view" }], error: null };
-          if (name === "set_my_table_columns") { forgotten = args.p_columns === null; return { data: null, error: null }; }
-          return database(name, args);
-        });
-        render(tree(plain));
-        await waitFor(() => expect(shownIds()).toBe("company,states"));
-        await userEvent.setup().click(screen.getByRole("button", { name: "Forget" }));
-        await waitFor(() => expect(shownIds()).toBe("company,status"));
-        expect(asksOf("set_my_table_columns")).toEqual([{ p_firm_id: "firm-1", p_table: "submissions", p_view_id: "view-1", p_columns: null }]);
-        expect(asksOf("my_table_columns")).toHaveLength(2);
-      });
-
-      // Catches: the table showing the defaults, or nothing, while the database is asked what forgetting landed on; and that answer, arriving late,
-      // undoing a choice the person made in the meantime.
-      it("shows the view's own columns at once when the choice is forgotten, and a choice made before the database answers wins over its answer", async () => {
-        let answer: (value: unknown) => void = () => {};
-        let reads = 0;
-        rpc.mockImplementation((name: string, args: Record<string, unknown>) => {
-          if (name === "my_table_columns") return ++reads === 1 ? Promise.resolve({ data: [{ columns: ["company", "states"], source: "mine_for_view" }], error: null }) : new Promise((r) => { answer = r; });
-          return database(name, args);
-        });
-        const user = userEvent.setup();
-        render(tree(view));
-        await waitFor(() => expect(shownIds()).toBe("company,states"));
-        await user.click(screen.getByRole("button", { name: "Forget" }));
-        expect(shownIds()).toBe("company,quotes");
-        await waitFor(() => expect(reads).toBe(2));
-        await user.click(screen.getByRole("button", { name: "Choose" }));
-        expect(shownIds()).toBe("company,states");
-        await act(async () => answer({ data: [{ columns: ["company", "contact", "status"], source: "mine" }], error: null }));
-        expect(shownIds()).toBe("company,states");
-      });
+      inFirm();
+      expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+      expect(headerWords()).toHaveLength(10);
     });
   });
 });

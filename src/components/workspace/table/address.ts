@@ -2,7 +2,7 @@ import type { TableFields, TableFilter, TableSort } from "@/lib/tableQuery";
 import { has } from "./has";
 import { OPERATORS, type OperatorShape } from "./operators";
 import {
-  FILTER_DAYS_MAX, FILTER_LIST_MAX, FILTER_TEXT_MAX, MAX_TABLE_PAGE, TABLE_FILTER_LIMIT, type TableDefinition, type TableView,
+  FILTER_DAYS_MAX, FILTER_LIST_MAX, FILTER_TEXT_MAX, MAX_TABLE_PAGE, TABLE_FILTER_LIMIT, type TableDefinition,
 } from "./columns";
 
 // The table address (story CRM-S3.5a, D-43): the whole state of a table is in the page's address, so a bookmark, a shared link,
@@ -155,6 +155,12 @@ export const writeFilter = (f: { field: string; op: string; value?: unknown }): 
   return value === null ? `${escapeText(f.field)}:${escapeText(f.op)}` : `${escapeText(f.field)}:${escapeText(f.op)}:${value}`;
 };
 
+/** A filter a saved view holds (`{ field, op, value }`), read the way the address reads it: the filter, or null when the table can't take it. */
+export function readStoredFilter<K extends TableFields>(table: TableDefinition<K, never, never>, stored: { field: string; op: string; value?: unknown }): TableFilter<K> | null {
+  const read = readFilter(table, writeFilter(stored));
+  return "ok" in read ? read.ok : null;
+}
+
 /** A sort parameter read against the table's fields: the sort, or the text when it names a field the table doesn't know. */
 function readSort<K extends TableFields>(table: TableDefinition<K, never, never>, text: string | null): { sort: TableSort<keyof K & string> } | { unknown: string } | null {
   if (!text) return null;
@@ -169,6 +175,12 @@ export function searchTermFor(typed: string, minChars: number): string {
   const text = cut(wellFormed(typed).trim(), FILTER_TEXT_MAX).trim();
   return text.replace(/\s+/g, "").length >= minChars ? text : "";
 }
+
+/** The view an id names, or undefined for no view (the table's "All") and for an id the table doesn't list. */
+export const viewOf = <K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null) => table.views.find((v) => v.id === viewId);
+
+/** The sort a view is in while the address holds none: its own, else none (the table's own order). */
+export const viewSort = <K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null): TableSort<keyof K & string> | null => viewOf(table, viewId)?.sort ?? null;
 
 /** The filters a view stands for (none for no view, or for a view the table doesn't know). */
 export function viewFilters<K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null): TableFilter<K>[] {
@@ -192,20 +204,9 @@ export interface TableQuery<K extends TableFields> {
   search: string;
 }
 
-/** The view an address is on, if the table has it. */
-export const viewOf = <K extends TableFields>(table: TableDefinition<K, never, never>, viewId: string | null): TableView<K> | undefined =>
-  viewId === null ? undefined : table.views.find((v) => v.id === viewId);
-
-/**
- * The sort an address has: its own, or else the view's own (CRM-S3.4a: a saved view keeps its order, and a header click writes a sort of its own to the
- * address, which wins while it is there), or none, which is the table's own order.
- */
-export const sortFor = <K extends TableFields>(table: TableDefinition<K, never, never>, address: TableAddress<K>): TableSort<keyof K & string> | null =>
-  address.sort ?? viewOf(table, address.view)?.sort ?? null;
-
 /** The effective query of an address: the view's filters and the address's together, the sort (the address's, else the view's), the page and the search. */
 export function queryFor<K extends TableFields>(table: TableDefinition<K, never, never>, address: TableAddress<K>): TableQuery<K> {
-  return { filters: effectiveFilters(table, address.view, address.filters), sort: sortFor(table, address), page: address.page, search: address.search };
+  return { filters: effectiveFilters(table, address.view, address.filters), sort: address.sort ?? viewSort(table, address.view), page: address.page, search: address.search };
 }
 
 /** Whether the address holds anything the table can't judge yet: the rows wait until it can. */
@@ -234,6 +235,11 @@ export function judgeAddress<K extends TableFields>(table: TableDefinition<K, ne
   if (sortRead && "sort" in sortRead) sort = sortRead.sort;
   else if (sortRead && "unknown" in sortRead && fieldsLoading) held.sort = sortRead.unknown;
 
+  // A sort equal to the order the table is in without one (the view's own, else the table's default) is no sort: the address never holds it, so
+  // the order line and its way back don't show for it, and a view whose order was only repeated is not a modified view.
+  const base = viewSort(table, view) ?? table.defaultSort;
+  if (sort && base && sort.field === base.field && sort.direction === base.direction) sort = null;
+
   // The view's filters count first against the table's limit; the address takes the room that is left (held ones count too).
   const room = Math.max(0, TABLE_FILTER_LIMIT - viewFilters(table, view).length);
   const known: { text: string; filter: TableFilter<K> }[] = [];
@@ -261,11 +267,6 @@ export function judgeAddress<K extends TableFields>(table: TableDefinition<K, ne
       if (!known.some((k) => (k.filter as { field: string }).field === (filter as { field: string }).field)) add(filter);
     }
   }
-  // A sort equal to the order the address has without it is no sort: the open view's own order (CRM-S3.4a), else the table's own default. The address
-  // never holds it, so the line over the table and its way back don't show for it, and a view isn't taken for a changed one because of it.
-  const without = viewOf(table, view)?.sort ?? table.defaultSort;
-  if (sort && without && sort.field === without.field && sort.direction === without.direction) sort = null;
-
   // One canonical order, so the same filters are one address, one key and one bookmark whatever order they were written in.
   known.sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
   held.filters.sort();
@@ -302,19 +303,25 @@ export function addressToSearch<K extends TableFields>(address: TableAddress<K>)
   return out.join("&");
 }
 
-/** Whether two addresses are the same place: the same page, sort, filters, view and search (S3.4a asks this to tell a view that was modified). */
-export const sameAddress = <K extends TableFields>(a: TableAddress<K>, b: TableAddress<K>): boolean => addressToSearch(a) === addressToSearch(b);
+/**
+ * Whether two addresses are the same place: the same page, sort, filters, view and search. A sort that only repeats the order its view is in
+ * (or the table's own default) is no sort, so an address that writes it out is the place that leaves it out.
+ */
+export const sameAddress = <K extends TableFields>(table: TableDefinition<K, never, never>, a: TableAddress<K>, b: TableAddress<K>): boolean => {
+  const plain = (x: TableAddress<K>): TableAddress<K> => {
+    const base = viewSort(table, x.view) ?? table.defaultSort;
+    return x.sort && base && x.sort.field === base.field && x.sort.direction === base.direction ? { ...x, sort: null } : x;
+  };
+  return addressToSearch(plain(a)) === addressToSearch(plain(b));
+};
 
 /**
- * Whether the open view has something over it that it was not saved with (CRM-S3.4a): a filter in the address (a chip) or a sort of the person's own. It is
- * `sameAddress` of the address, with the page and the search left out (a view keeps neither), and of the bare view: its id and nothing else, because the
- * view's own filters and order are its own and are not in the address. It is asked of an address that is on a view (a sort equal to the view's own is
- * already no sort in the address, so the view's order is not "a change"); only a saved view can be saved over, and only its bar asks (`ViewTabs`).
+ * Whether two addresses ask the same QUESTION of the table: the same view, filters and sort (the search and the page are only where in the answer the person is
+ * looking). What finishes late and rewrites the filters and sort in the address (a view saved or kept) is done as long as the person has not changed those,
+ * however they have searched or paged meanwhile.
  */
-export function isModifiedView<K extends TableFields>(address: TableAddress<K>): boolean {
-  const bare: TableAddress<K> = { ...address, page: 1, search: "", sort: null, filters: [], held: { view: null, sort: null, filters: [] } };
-  return !sameAddress({ ...address, page: 1, search: "" }, bare);
-}
+export const sameQuestion = <K extends TableFields>(table: TableDefinition<K, never, never>, a: TableAddress<K>, b: TableAddress<K>): boolean =>
+  sameAddress(table, { ...a, search: "", page: 1 }, { ...b, search: "", page: 1 });
 
 /** What can change in an address: any part but `held`, and, for the filter row, which held filters stay (`heldFilters`, as written in the address). */
 export type AddressChange<K extends TableFields> = Partial<Omit<TableAddress<K>, "held">> & { heldFilters?: string[] };
