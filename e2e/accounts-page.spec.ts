@@ -151,6 +151,28 @@ test("Accounts opens from the menu, narrows by employees across a reload, and an
     expect(made.rows).toHaveLength(1);
     expect(made.rows[0]).toMatchObject({ source: "added_by_hand", phone: "(503) 555-0142" });
   });
+  // Story CRM-S3.7a: a bulk change says what it will do, changes the selected accounts, and Undo puts them back.
+  await test.step("a bulk label says what will happen, labels every selected account, and Undo takes it off again", async () => {
+    await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Accounts" }).click();
+    await expect(page.getByText("1 to 3 of 3 accounts")).toBeVisible();
+    await page.getByRole("checkbox", { name: "Select all accounts on this page" }).check();
+    await page.getByRole("region", { name: "Selected rows" }).getByRole("button", { name: "Label", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Label", { exact: true }).fill("Hot lead");
+    await expect(dialog.getByText('This will add the label "Hot lead" to 3 accounts.')).toBeVisible();
+    await dialog.getByRole("button", { name: "Change 3 accounts" }).click();
+    const result = page.getByRole("region", { name: "What the change did" });
+    await expect(result).toContainText('Added the label "Hot lead" to 3 accounts.');
+    const labelled = () => withDb((client) => client.query("SELECT count(*)::int AS n FROM public.account_labels al JOIN public.firms f ON f.id = al.firm_id WHERE f.address = $1", [FIRM]));
+    expect((await labelled()).rows[0].n).toBe(3);
+    await result.getByRole("button", { name: "Undo" }).click();
+    await expect(result).toContainText("Undone.");
+    await expect(result).toContainText("3 accounts are back as they were.");
+    expect((await labelled()).rows[0].n).toBe(0);
+    // The next step starts on the new account's page.
+    await page.getByRole("link", { name: "Harborview Dental East" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Harborview Dental East" })).toBeVisible();
+  });
 
   await test.step("Add contact on the new account: words for what is missing, one main contact that takes over, and Move to another account", async () => {
     await page.getByRole("button", { name: "Add contact" }).first().click();

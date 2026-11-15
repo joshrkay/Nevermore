@@ -44,6 +44,8 @@ vi.mock("@/lib/tableSettingsApi", () => ({
 const createAccount = vi.fn();
 const listAccountOwners = vi.fn();
 vi.mock("@/lib/accountCreateApi", () => ({ createAccount: (...a: unknown[]) => createAccount(...a), listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
+const firmLabels = vi.fn();
+vi.mock("@/lib/bulkChangeApi", async (original) => ({ ...(await original<typeof import("@/lib/bulkChangeApi")>()), firmLabels: (...a: unknown[]) => firmLabels(...a) }));
 const exportRows = vi.fn();
 vi.mock("@/lib/exportApi", async () => ({ ...(await vi.importActual<object>("@/lib/exportApi")), exportRows: (...a: unknown[]) => exportRows(...a) }));
 const downloadBlob = vi.fn();
@@ -63,7 +65,7 @@ const row = (over: Partial<AccountRow> = {}): AccountRow => ({
   created_at: "2026-10-28T10:00:00Z", owner: "u1", owner_name: "Dana Reyes", main_contact_id: "c1", main_contact_name: "Elena Marsh",
   main_contact_email: "elena@harborviewdental.example", main_contact_phone: "(503) 555-0142", opportunity_id: "o1", opportunity_name: "January 2027 PEO search",
   opportunity_stage: "in_market", target_start: "2027-01-01", open_opportunities: 1, quote_requests_sent: 3, quotes_received: 1, waiting_on_peo: true,
-  earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", ...over,
+  earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", labels: [], ...over,
 });
 const second = row({
   id: "a2", name: "Kestrel Software", city: "Seattle", state: "WA", status: "client", employees: 64, owner: "u2", owner_name: "Marcus Hale", main_contact_name: "Imani Cole",
@@ -93,11 +95,12 @@ const headers = () => within(screen.getByRole("table")).getAllByRole("columnhead
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
-  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, exportRows, downloadBlob, signOut, ...Object.values(actions), mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
+  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, firmLabels, exportRows, downloadBlob, signOut, ...Object.values(actions), mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
   countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
+  firmLabels.mockResolvedValue([{ id: "l1", name: "Hot lead" }, { id: "l2", name: "Referral" }]);
   fetchMyColumns.mockResolvedValue({ columns: null, source: "none" });
   setMyColumns.mockResolvedValue(undefined);
   saveView.mockResolvedValue("v1");
@@ -379,6 +382,45 @@ describe("the Accounts page: columns", () => {
     await waitFor(() => expect(headers()).toEqual(["Account", "Website", "Source"]));
     expect(within(body()).getAllByRole("row")[0]).toHaveTextContent("harborviewdental.example");
     expect(within(body()).getAllByRole("row")[0]).toHaveTextContent("Employer's intake");
+  });
+});
+
+describe("the Accounts page: the Label column and filter (D-198)", () => {
+  // Catches: the Label column missing from the Columns menu, drawn blank, or shown at once to everyone (it is one of the story's "other columns").
+  it("offers a Label column from the Columns menu, showing each account's labels", async () => {
+    listAccounts.mockResolvedValue({ rows: [row({ labels: ["Hot lead", "Referral"] }), second], total: 2 });
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    expect(headers()).not.toContain("Label");
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(await screen.findByLabelText("Label"));
+    await waitFor(() => expect(headers()).toContain("Label"));
+    const [first, kestrel] = within(body()).getAllByRole("row");
+    expect(first).toHaveTextContent("Hot lead");
+    expect(first).toHaveTextContent("Referral");
+    expect(within(kestrel).getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  // Catches (D-217): a person with a kept column choice getting a column they did not choose; it stays out until they show it.
+  it("leaves the Label column out for a person whose kept choice does not hold it", async () => {
+    fetchMyColumns.mockResolvedValue({ columns: ["account", "owner"], source: "person" });
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await waitFor(() => expect(headers()).toEqual(["Account", "Owner"]));
+  });
+
+  // Catches: the filter not offered, offering ids, or asking the database for the wrong field.
+  it("filters by one of the firm's labels, and the chip says it", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "Add filter" }));
+    await user.click(await screen.findByRole("button", { name: "Label" }));
+    await user.click(await screen.findByLabelText("Hot lead"));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(asked().filters).toEqual([{ field: "labels", op: "any_of", value: ["Hot lead"] }]));
+    expect(await screen.findByRole("button", { name: /Remove filter: Label.*Hot lead/ })).toBeInTheDocument();
   });
 });
 
