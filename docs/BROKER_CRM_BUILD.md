@@ -656,6 +656,8 @@ Builds as Epic 4 rows 3 (database) and 7 (screens).
 | D-452 | Who. Renewals and placements are read by their account's visibility. A renewal is added by anyone who may see the account (as a contact, D-209), and edited or deleted by whoever may change the account. A renewal made by a win is deleted only by reopening that win (CRM-O1.3) |
 | D-453 | Renewals and placements get history and a version (`record_track`); the history domain gains `renewals` and `placements` |
 | D-454 | The account's Renewals tab, with its count: what, with whom, the date, days away, the opportunity working it, and Add a renewal. Empty: "No renewal on file. Add a renewal" (CRM-A2.1). The Overview's renewals list shows the first five |
+| D-455 | Amends D-451 (CRM-A2.4a review, 2026-11-15; the founder's standing answer). An account is a client while it has a placement not ended; with no placement at all, while it has a won submission (one won before Epic 4); a former client when it has placements and all of them have ended; otherwise a prospect account. So an account won before Epic 4 whose hand-added placement is marked "Didn't renew" becomes a former client: a won submission no longer keeps it a client once it has placements. Worked out in `account_status` and the accounts table's status, never stored |
+| D-456 | For CRM-O1.3a, recorded here and not built by CRM-A2.4a. Winning the opportunity that works a renewal ends the placement that renewal came from, on the new placement's start date, so a renewal cycle never leaves a placement that cannot end (the old placement's renewal is done by the win, D-449, and the account stays a client through the new placement) |
 
 ### CRM-O1.3 with Q-4.1 decisions
 
@@ -677,6 +679,7 @@ N-3.4. Builds as Epic 4 rows 4 (database) and 8 (screens).
 | D-471 | Archive keeps D-216: a won submission archived stays Won. Restoring from archived (archived to submitted) is refused by `set_submission_status` when the submission was archived straight from won or from lost, since its opportunity is then a closed search with its outcome, placement or reason: "Reopen it on its opportunity". `opportunity_reopen` restores it, with D-462's who, D-469's cleanup and refusals, and the version check: from won to quoted, from lost to the stage it was lost from. A submission archived from any other stage has no outcome to undo and is restored to submitted as today |
 | D-472 | The banner (CRM-O1.1's "Won or lost" state). "Won · <PEO> · from <start> · renews <date>", with the commission line. Or "Lost · <reason>". Either has Reopen for those allowed (D-462) |
 | D-473 | Won, lost, the quote taken, the reason and each reopening are in the opportunity's history with who (D-413) |
+| D-474 | Winning an opportunity that works a renewal also ends the placement that renewal came from: see D-456 (CRM-A2.4a) |
 
 ## Rules for building one story
 

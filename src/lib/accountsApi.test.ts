@@ -29,7 +29,7 @@ const row = {
   created_at: "2026-10-01T00:00:00+00:00", owner: "u1", owner_name: "Ann Agent", main_contact_id: "c1", main_contact_name: "Ann Alpha",
   main_contact_email: "ann@alpha.example", main_contact_phone: null, opportunity_id: "o1", opportunity_name: "Alpha search", opportunity_stage: "in_market",
   target_start: "2027-02-01", open_opportunities: 2, quote_requests_sent: 2, quotes_received: 1, waiting_on_peo: true,
-  earliest_quote_expires_on: "2026-12-31", last_activity_at: "2026-10-20T00:00:00+00:00", labels: ["Hot lead"],
+  earliest_quote_expires_on: "2026-12-31", last_activity_at: "2026-10-20T00:00:00+00:00", labels: ["Hot lead"], renewal_date: "2026-12-15",
 };
 
 describe("listAccounts", () => {
@@ -119,7 +119,7 @@ describe("listAccounts", () => {
     ["a total below 0", { rows: [row], total: -1, page: 1, page_size: 50 }],
     ["a row with a column missing", { rows: [{ ...row, owner_name: undefined }], total: 1, page: 1, page_size: 50 }],
     ["a row whose name is not text", { rows: [{ ...row, name: 7 }], total: 1, page: 1, page_size: 50 }],
-    ["a row with a status nobody knows", { rows: [{ ...row, status: "former_client" }], total: 1, page: 1, page_size: 50 }],
+    ["a row with a status nobody knows", { rows: [{ ...row, status: "lapsed" }], total: 1, page: 1, page_size: 50 }],
     ["a row whose open opportunities are text", { rows: [{ ...row, open_opportunities: "2" }], total: 1, page: 1, page_size: 50 }],
     ["a row whose states are not a list", { rows: [{ ...row, states_of_operation: "OR" }], total: 1, page: 1, page_size: 50 }],
     ["a second row that is wrong", { rows: [row, { ...row, id: 5 }], total: 2, page: 1, page_size: 50 }],
@@ -234,9 +234,12 @@ describe("the accounts table's fields agree with the database", () => {
     expect(server).toEqual(ACCOUNT_FIELDS);
   });
 
-  // The main contact is shown and never filtered or sorted (CRM-A1.1), so a field of it would be one the database refuses.
-  it("has no field for the main contact, and none for renewal, which a later epic builds", () => {
-    expect(Object.keys(ACCOUNT_FIELDS).filter((f) => /contact|renewal/.test(f))).toEqual([]);
+  // The main contact is shown and never filtered or sorted (CRM-A1.1), so a field of it would be one the database refuses. The renewal's two fields are
+  // placements and renewals' (CRM-A2.4a).
+  it("has no field for the main contact, and has the renewal's two", () => {
+    expect(Object.keys(ACCOUNT_FIELDS).filter((f) => /contact/.test(f))).toEqual([]);
+    expect(ACCOUNT_FIELDS.renewal_date).toBe("date");
+    expect(ACCOUNT_FIELDS.renewing_in_120_days).toBe("yes_no");
   });
 
   it("lists the same sources, statuses and open stages, in the same order", () => {
@@ -255,9 +258,10 @@ describe("the accounts table's fields agree with the database", () => {
     expect([...ACCOUNT_ROW_KEYS]).toEqual([...created, ...added]);
   });
 
-  // Every filterable field is a column of the row, so a chip is always for something the page has.
+  // Every filterable field is a column of the row, so a chip is always for something the page has. One is a view's rule, not a column: the built-in view
+  // "Renewing in 120 days" (D-450), which the database works out from the Renewal date.
   it("names no field that is not a column of the row (the owner's column is `owner`)", () => {
-    expect(Object.keys(ACCOUNT_FIELDS).filter((f) => !(ACCOUNT_ROW_KEYS as readonly string[]).includes(f))).toEqual([]);
+    expect(Object.keys(ACCOUNT_FIELDS).filter((f) => !(ACCOUNT_ROW_KEYS as readonly string[]).includes(f))).toEqual(["renewing_in_120_days"]);
   });
 
   // Catches: the address codec letting through (or cutting short) what the database takes. Each limit is read from the check in the migration that holds it.

@@ -77,7 +77,7 @@ describe("AccountMenu: delete", () => {
     show();
     await openMenu(user);
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
-    expect(screen.getByText(/deletes the account with its contacts, calls, notes and tasks, and cannot be undone. An account that has opportunities can only be archived/)).toBeInTheDocument();
+    expect(screen.getByText(/deletes the account with its contacts, calls, notes, tasks, placements and renewals, and cannot be undone. An account that has opportunities can only be archived/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(client.deleteAccount).toHaveBeenCalledWith("f1", "a1"));
     expect(done).toHaveBeenCalledWith("deleted");
