@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { z } from "zod";
+import { DuplicateWarning } from "@/components/accounts/DuplicateWarning";
+import { useAccountDuplicates } from "@/components/accounts/useDuplicates";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,7 +20,10 @@ import { AccountError, type AccountFields } from "@/lib/accountPageApi";
 //
 // "Save and add a contact" (CRM-A1.2, built with CRM-A2.2) saves the same way and then opens the new account with the Add a contact form already open on it.
 //
-// Not here, and where it goes: the warning that an account with the same website or name exists (CRM-S4.2), the renewal date and the firm's own fields (D-186, CRM-X3.1).
+// While the person types, the database says which accounts of the firm may be the same business (CRM-S4.2, D-193): a warning under the fields that names each one it
+// may be seen and says only who to ask for one it may not. It never stops the save.
+//
+// Not here, and where it goes: merging (CRM-S4.3), the renewal date and the firm's own fields (D-186, CRM-X3.1).
 
 const schema = accountFieldsSchema.extend({ owner: z.string() });
 
@@ -80,6 +85,8 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
   });
 
   const runThenContact = useAlternateSave(thenContact, api);
+  const [typedName, typedWebsite, typedState] = api.form.watch(["name", "website", "state"]) as string[];
+  const duplicates = useAccountDuplicates(firmId, { name: typedName ?? "", website: typedWebsite ?? "", state: typedState ?? "" });
 
   return (
     <Dialog open onOpenChange={(next) => { if (!next) api.requestClose(onClose); }}>
@@ -138,6 +145,7 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
               )}
             </Field>
           </div>
+          <DuplicateWarning found={duplicates} kind="account" />
         </WorkspaceForm>
       </DialogContent>
     </Dialog>
