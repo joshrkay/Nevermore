@@ -216,3 +216,62 @@ describe("the Add a contact form: leaving it", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("the Add a contact form: what the second save and the refusals do", () => {
+  // Catches: the next blank form still holding the main contact from before the save (the refresh is asked for but not waited for), so ticking Main at once says
+  // nothing about the takeover or names the wrong person.
+  it("knows at once, from the saved contact, who is the main contact for the next one", async () => {
+    addContact.mockResolvedValue({ contact: { id: "c1", firstName: "Owen", lastName: "Park", isMain: true }, previousMain: null });
+    const { user, dialog } = await open();
+    await user.click(field(dialog, "Main contact for this account"));
+    await user.type(field(dialog, "Last name"), "Park");
+    await user.type(field(dialog, "First name"), "Owen");
+    await user.type(field(dialog, "Email"), "owen@harborviewdental.example");
+    getAddContactContext.mockReturnValue(new Promise(() => {})); // the refresh never answers in time
+    await user.click(within(dialog).getByRole("button", { name: "Save and add another" }));
+    await waitFor(() => expect(field(dialog, "Last name")).toHaveValue(""));
+    await user.click(field(dialog, "Main contact for this account"));
+    expect(within(dialog).getByText("Owen Park is the main contact now. Saving makes this contact the main contact instead.")).toBeInTheDocument();
+  });
+
+  // Catches: a save that was not a main contact changing who the next form names.
+  it("keeps naming the old main contact when the saved contact was not main", async () => {
+    getAddContactContext.mockResolvedValue(context({ mainContact: { id: "c0", name: "Ada Main" } }));
+    const { user, dialog } = await open();
+    await user.type(field(dialog, "Last name"), "Park");
+    await user.type(field(dialog, "Email"), "owen@harborviewdental.example");
+    getAddContactContext.mockReturnValue(new Promise(() => {}));
+    await user.click(within(dialog).getByRole("button", { name: "Save and add another" }));
+    await waitFor(() => expect(field(dialog, "Last name")).toHaveValue(""));
+    await user.click(field(dialog, "Main contact for this account"));
+    expect(within(dialog).getByText("Ada Main is the main contact now. Saving makes this contact the main contact instead.")).toBeInTheDocument();
+  });
+
+  // Catches: "Save and add another" pressed on a form that fails its checks leaving the second action armed, so Enter after the correction saves and starts another
+  // when the person meant Save.
+  it("does not keep 'Save and add another' armed after a failed check: Enter then saves and closes", async () => {
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("button", { name: "Save and add another" }));
+    expect(await within(dialog).findByText("Enter the contact's last name.")).toBeInTheDocument();
+    expect(addContact).not.toHaveBeenCalled();
+    await user.type(field(dialog, "Last name"), "Park");
+    await user.type(field(dialog, "Email"), "owen@harborviewdental.example{enter}");
+    await waitFor(() => expect(addContact).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  // Catches: every 42501 shown under Owner, so a refusal to replace the main contact points at the wrong field.
+  it("shows the refusal to replace the main contact at the form, and an owner refusal under Owner", async () => {
+    addContact.mockRejectedValueOnce(new ContactError("notAllowed", "Only someone who may change Ada Main can make another contact the main one.", "42501"));
+    const { user, dialog } = await open();
+    await user.type(field(dialog, "Last name"), "Park");
+    await user.type(field(dialog, "Email"), "owen@harborviewdental.example");
+    await user.click(within(dialog).getByRole("button", { name: "Save contact" }));
+    const words = await within(dialog).findByText("Only someone who may change Ada Main can make another contact the main one.");
+    expect(field(dialog, "Owner")).toHaveAttribute("aria-invalid", "false");
+    expect(field(dialog, "Owner").closest("div")?.contains(words)).toBe(false);
+    addContact.mockRejectedValueOnce(new ContactError("notAllowed", "You can add a contact only for yourself and, as a lead, for people on your teams.", "42501"));
+    await user.click(within(dialog).getByRole("button", { name: "Save contact" }));
+    await waitFor(() => expect(field(dialog, "Owner")).toHaveAttribute("aria-invalid", "true"));
+  });
+});

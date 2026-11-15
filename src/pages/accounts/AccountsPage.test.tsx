@@ -656,6 +656,17 @@ describe("the Accounts page: New account", () => {
     expect(await screen.findByText("Account page for a9")).toBeInTheDocument();
   });
 
+  // Catches: "Save and add a contact" pressed on a form that fails its checks leaving the second action armed, so Enter after the correction opens the contact form
+  // when the person meant Save account.
+  it("does not keep Save and add a contact armed after a failed check: Enter then saves and only opens the account", async () => {
+    createAccount.mockResolvedValue(made);
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("button", { name: "Save and add a contact" }));
+    expect(await within(dialog).findByText("Enter the account's name.")).toBeInTheDocument();
+    await user.type(text(dialog, "Account name"), "Harborview Dental East{enter}");
+    expect(await screen.findByText("Account page for a9")).toBeInTheDocument();
+  });
+
   // Catches: the Owner choice offering a person the database will refuse (an agent anyone but themselves, a lead anyone outside their teams), as it did when it
   // listed every member. The choices are the database's own (account_owner_choices), asked for this firm.
   it("offers as owner only the people the database lists for the person, and nobody else of the firm", async () => {

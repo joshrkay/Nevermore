@@ -202,8 +202,29 @@ $$;
 REVOKE ALL ON FUNCTION public.add_contact(uuid, text, text, text, text, text, text, uuid, boolean, boolean, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.add_contact(uuid, text, text, text, text, text, text, uuid, boolean, boolean, uuid) TO authenticated;
 
+-- ---------- 5a. May the caller move this contact off its account ----------
+-- The first two of move_contact's three yeses, in words, or NULL: the contact's own level and the account it is on. Asked by move_contact and by
+-- contact_move_choices, so the picker never offers places the move would refuse. Internal.
+CREATE FUNCTION public.contact_leave_error(p_firm_id uuid, c public.contacts, src public.accounts)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN NOT public.can_change_firm_record(p_firm_id, c.owner_id) THEN
+      CASE WHEN c.owner_id IS NULL THEN 'Only an owner of the firm can move a contact that has no owner.'
+        ELSE 'Only the contact''s owner, a lead of the owner''s team or an owner of the firm can move this contact.' END
+    WHEN NOT public.can_change_firm_record(src.firm_id, src.owner_id) THEN 'You can''t change the account this contact is on, so you can''t move it off.'
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.contact_leave_error(uuid, public.contacts, public.accounts) FROM PUBLIC, anon, authenticated, service_role;
+
 -- ---------- 5. Where a contact may go ----------
--- The firm's accounts the contact could be moved to by move_contact's own rules: seen and changeable by the caller, not archived, not the one it is on. At most
+-- The firm's accounts the contact could be moved to by move_contact's own rules: the caller may move the contact and change the account it is on (else 42501 in
+-- words, as move_contact says), and the account is seen and changeable by the caller, not archived, not the one it is on. At most
 -- 25, by name, narrowed by what was typed (anywhere in the name, case ignored). The contact must be one the caller may see (PT404).
 CREATE FUNCTION public.contact_move_choices(p_firm_id uuid, p_contact_id uuid, p_search text DEFAULT '')
 RETURNS TABLE (id uuid, name text)
@@ -216,6 +237,7 @@ DECLARE
   firm uuid;
   c public.contacts;
   src public.accounts;
+  said text;
   pattern text := '%' || replace(replace(replace(COALESCE(btrim(p_search), ''), '\', '\\'), '%', '\%'), '_', '\_') || '%';
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
@@ -223,6 +245,11 @@ BEGIN
   SELECT * INTO src FROM public.accounts x WHERE x.id = c.account_id;
   IF c.id IS NULL OR NOT public.can_see_firm_record(src.firm_id, src.owner_id) THEN
     RAISE EXCEPTION 'That contact isn''t available' USING ERRCODE = 'PT404';
+  END IF;
+  -- A person who may not move the contact is told so, in words, rather than offered places that could only end in a refusal.
+  said := public.contact_leave_error(firm, c, src);
+  IF said IS NOT NULL THEN
+    RAISE EXCEPTION '%', said USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
     SELECT a.id, a.name FROM public.accounts a
@@ -243,7 +270,7 @@ GRANT EXECUTE ON FUNCTION public.contact_move_choices(uuid, uuid, text) TO authe
 -- (55000), an opportunity the caller may not change that has the contact as its main contact or a call, note or task of the contact about it (42501), a person who is already a contact of the account joined
 -- (22023), and, unless p_confirm, what moving would take off an opportunity (PT409, in words).
 --
--- Locks, in an order that cannot make a ring with add_contact (which takes an account and then a contact): the accounts first, FOR SHARE, lowest id first (so
+-- Locks, in an order that cannot make a ring with add_contact (which takes an account and then a contact) or with update_activity (see below): the accounts first, FOR SHARE, lowest id first (so
 -- archiving either of them is waited for and two moves in opposite directions do not deadlock), then the contact FOR UPDATE, which waits for a call being logged
 -- for it (that insert holds the contact FOR KEY SHARE through its key) and so takes it along. A contact that moved while this waited is refused (40001).
 CREATE FUNCTION public.move_contact(p_contact_id uuid, p_to_account_id uuid, p_confirm boolean DEFAULT false, p_firm_id uuid DEFAULT NULL)
@@ -262,6 +289,7 @@ DECLARE
   links integer;
   mains integer;
   moved integer;
+  held uuid[];
   done public.contacts;
   said text;
 BEGIN
@@ -279,6 +307,12 @@ BEGIN
   IF c.account_id <> seen THEN
     RAISE EXCEPTION 'That contact was moved while you were working. Try again.' USING ERRCODE = '40001';
   END IF;
+  -- The contact's calls, notes and tasks are held too, in id order: everything below (the opportunity checks, the count, the rewrites) is drawn from this one set,
+  -- so an update_activity that adds an opportunity to one of them is waited for and counted, never missed. Lock order: accounts, the contact, its activities.
+  -- update_activity holds an activity and then needs KEY SHARE on a contact or an opportunity it newly points at; it needs the contact only for an activity not in
+  -- this set (one it points at this contact), and this function waits for no such activity, so the two cannot wait on each other in a ring.
+  SELECT COALESCE(array_agg(l.id ORDER BY l.id), '{}') INTO held
+  FROM (SELECT a.id FROM public.activities a WHERE a.contact_id = c.id ORDER BY a.id FOR UPDATE) l;
   SELECT * INTO src FROM public.accounts x WHERE x.id = c.account_id;
   IF NOT public.can_see_firm_record(src.firm_id, src.owner_id) THEN
     RAISE EXCEPTION 'That contact isn''t available' USING ERRCODE = 'PT404';
@@ -291,12 +325,9 @@ BEGIN
     RAISE EXCEPTION 'That contact is already on this account.' USING ERRCODE = '22023';
   END IF;
   -- The three yeses (D-209).
-  IF NOT public.can_change_firm_record(firm, c.owner_id) THEN
-    RAISE EXCEPTION '%', CASE WHEN c.owner_id IS NULL THEN 'Only an owner of the firm can move a contact that has no owner.'
-      ELSE 'Only the contact''s owner, a lead of the owner''s team or an owner of the firm can move this contact.' END USING ERRCODE = '42501';
-  END IF;
-  IF NOT public.can_change_firm_record(src.firm_id, src.owner_id) THEN
-    RAISE EXCEPTION 'You can''t change the account this contact is on, so you can''t move it off.' USING ERRCODE = '42501';
+  said := public.contact_leave_error(firm, c, src);
+  IF said IS NOT NULL THEN
+    RAISE EXCEPTION '%', said USING ERRCODE = '42501';
   END IF;
   IF NOT public.can_change_firm_record(dst.firm_id, dst.owner_id) THEN
     RAISE EXCEPTION 'You can''t change %, so you can''t move a contact onto it.', dst.name USING ERRCODE = '42501';
@@ -310,13 +341,13 @@ BEGIN
   -- rule on it decides, the same way for both.
   IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.main_contact_id = c.id AND NOT public.can_change_firm_record(o.firm_id, o.owner_id))
      OR EXISTS (SELECT 1 FROM public.activities a JOIN public.opportunities o ON o.id = a.opportunity_id
-                WHERE a.contact_id = c.id AND NOT public.can_change_firm_record(o.firm_id, o.owner_id)) THEN
+                WHERE a.id = ANY(held) AND NOT public.can_change_firm_record(o.firm_id, o.owner_id)) THEN
     RAISE EXCEPTION '% is on an opportunity you can''t change, as its main contact or through a call, note or task about it. Ask its owner, or an owner of the firm, to move them.', nm USING ERRCODE = '42501';
   END IF;
   IF c.prospect_user_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.contacts x WHERE x.account_id = dst.id AND x.prospect_user_id = c.prospect_user_id) THEN
     RAISE EXCEPTION 'That account already has this person as a contact.' USING ERRCODE = '22023';
   END IF;
-  SELECT count(*) INTO links FROM public.activities a WHERE a.contact_id = c.id AND a.opportunity_id IS NOT NULL;
+  SELECT count(*) INTO links FROM public.activities a WHERE a.id = ANY(held) AND a.opportunity_id IS NOT NULL;
   SELECT count(*) INTO mains FROM public.opportunities o WHERE o.main_contact_id = c.id;
   IF (links > 0 OR mains > 0) AND NOT COALESCE(p_confirm, false) THEN
     said := CASE WHEN links = 0 THEN NULL WHEN links = 1 THEN 'takes 1 call, note or task off an opportunity on ' || src.name
@@ -329,7 +360,7 @@ BEGIN
   END IF;
   -- The links the contact's history cannot keep, undone first, while every key is still immediate.
   UPDATE public.opportunities SET main_contact_id = NULL WHERE main_contact_id = c.id;
-  UPDATE public.activities SET opportunity_id = NULL WHERE contact_id = c.id AND opportunity_id IS NOT NULL;
+  UPDATE public.activities SET opportunity_id = NULL WHERE id = ANY(held) AND opportunity_id IS NOT NULL;
   -- The contact changes account and its calls, notes and tasks follow: the two keys to the contact are deferrable, so between the two statements the keys are not
   -- looked at, and they are looked at, once, before this function returns.
   SET CONSTRAINTS activities_contact_fkey, opportunities_main_contact_fkey DEFERRED;
@@ -338,7 +369,7 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN
     RAISE EXCEPTION 'That account already has this person as a contact.' USING ERRCODE = '22023';
   END;
-  UPDATE public.activities SET account_id = dst.id WHERE contact_id = c.id;
+  UPDATE public.activities SET account_id = dst.id WHERE id = ANY(held);
   GET DIAGNOSTICS moved = ROW_COUNT;
   SET CONSTRAINTS activities_contact_fkey, opportunities_main_contact_fkey IMMEDIATE;
   RETURN jsonb_build_object(

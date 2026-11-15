@@ -101,6 +101,14 @@ describe("moveContact", () => {
   });
 });
 
+describe("listMoveChoices: a person who may not move the contact", () => {
+  // Catches: the database's refusal (the contact or its account is not the person's to change) shown as "couldn't load", so the dialog never says why it offers nothing.
+  it("gives the database's words and a notAllowed kind", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Only the contact's owner, a lead of the owner's team or an owner of the firm can move this contact." } });
+    expect(await caught(() => listMoveChoices("f1", "c1", ""))).toMatchObject({ kind: "notAllowed", message: "Only the contact's owner, a lead of the owner's team or an owner of the firm can move this contact." });
+  });
+});
+
 describe("listMoveChoices", () => {
   it("asks for the accounts the contact may go to, narrowed by what was typed", async () => {
     rpc.mockResolvedValue({ data: [{ id: "a2", name: "Harborview East" }], error: null });
@@ -108,7 +116,7 @@ describe("listMoveChoices", () => {
     expect(rpc).toHaveBeenCalledWith("contact_move_choices", { p_firm_id: "f1", p_contact_id: "c1", p_search: "east" });
   });
   it("fails in words when the database refuses or answers another shape", async () => {
-    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "no" } });
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000", message: "boom" } });
     await expect(listMoveChoices("f1", "c1", "")).rejects.toThrow("Couldn't load the accounts.");
     rpc.mockResolvedValue({ data: [{ id: 3 }], error: null });
     await expect(listMoveChoices("f1", "c1", "")).rejects.toThrow("Couldn't load the accounts.");

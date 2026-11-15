@@ -45,10 +45,18 @@ export function MoveContactDialog({ firmId, contact, onClose, onMoved }: {
 
   const choices = useQuery({ queryKey: ["move-contact", firmId, contact.id, search], queryFn: () => listMoveChoices(firmId, contact.id, search), retry: false, gcTime: 0, placeholderData: (previous) => previous });
   const rows = choices.data ?? [];
+  const onSearch = (text: string) => {
+    setTyped(text);
+    // A choice made under another search is not one the person can see now, and a question was about it.
+    setChosen(null);
+    setQuestion(null);
+    setProblem(null);
+  };
 
   const go = async (confirm: boolean) => {
     if (inFlight.current) return;
-    if (!chosen) {
+    // Only an account in the list on screen is sent.
+    if (!chosen || !rows.some((a) => a.id === chosen)) {
       setProblem("Choose an account.");
       return;
     }
@@ -93,7 +101,7 @@ export function MoveContactDialog({ firmId, contact, onClose, onMoved }: {
           <form onSubmit={submit} noValidate className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="move-contact-find">Find an account</Label>
-              <Input id="move-contact-find" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus autoComplete="off" />
+              <Input id="move-contact-find" value={typed} onChange={(e) => onSearch(e.target.value)} autoFocus autoComplete="off" />
             </div>
             <fieldset className="space-y-1">
               <legend className="mb-1 text-sm font-medium">Move to</legend>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { FormControl, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { Field, FormActions, SaveRefused, SelectInput, useAlternateFlag, useAlternateSave, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { contactFieldsSchema } from "@/data/contactFields";
 import { useAuth } from "@/hooks/useAuth";
 import { listAccountOwners } from "@/lib/accountCreateApi";
@@ -35,7 +35,8 @@ export function AddContactDialog({ firmId, accountId, person = "You", onClose, o
   onClose: () => void;
   onAdded: () => void;
 }) {
-  const context = useQuery({ queryKey: ["add-contact", firmId, accountId, "context"], queryFn: () => getAddContactContext(firmId, accountId), retry: false, gcTime: 0 });
+  const contextKey = ["add-contact", firmId, accountId, "context"] as const;
+  const context = useQuery({ queryKey: contextKey, queryFn: () => getAddContactContext(firmId, accountId), retry: false, gcTime: 0 });
   const data = context.data;
   const closer = useRef<(() => void) | null>(null);
   return (
@@ -62,16 +63,18 @@ export function AddContactDialog({ firmId, accountId, person = "You", onClose, o
             <Button type="button" variant="outline" onClick={onClose}>Close</Button>
           </div>
         ) : (
-          <AddContactForm firmId={firmId} accountId={accountId} person={person} context={data} onClose={onClose} onAdded={onAdded} closer={closer} refreshContext={() => void context.refetch()} />
+          <AddContactForm firmId={firmId} accountId={accountId} person={person} context={data} onClose={onClose} onAdded={onAdded} closer={closer} contextKey={contextKey} refreshContext={() => void context.refetch()} />
         )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, closer, refreshContext }: {
+function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, closer, contextKey, refreshContext }: {
   firmId: string; accountId: string; person: string; context: AddContactContext; onClose: () => void; onAdded: () => void; closer: MutableRefObject<(() => void) | null>;
-  /** Asks who is the account's main contact again: a contact just saved may be it. */
+  /** Where the form's context is kept, so a saved main contact can be put there at once. */
+  contextKey: readonly unknown[];
+  /** Asks who is the account's main contact again, to confirm what the form was told. */
   refreshContext: () => void;
 }) {
   const { user } = useAuth();
@@ -80,8 +83,9 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
   const yourself = { value: me, label: members.data?.find((m) => m.value === me)?.label ?? person };
   // The people the database lets this person give a contact to (the level rule, D-209: an agent themselves, a lead their teams, an owner anyone), the person first.
   const owners = !members.data ? [yourself] : [yourself, ...members.data.filter((m) => m.value !== me)];
-  // Set by "Save and add another" and read by the save that follows: the form stays open and starts again. Any other save closes it.
-  const another = useRef(false);
+  // Set for the length of "Save and add another" only (see useAlternateSave): the form stays open and starts again. Any other save closes it.
+  const another = useAlternateFlag();
+  const queryClient = useQueryClient();
 
   const api = useWorkspaceForm({
     schema,
@@ -89,7 +93,6 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
     save: async (values) => {
       const v = values as typeof EMPTY & { owner: string };
       const again = another.current;
-      another.current = false;
       try {
         return { added: await addContact(firmId, accountId, {
           firstName: v.first_name, lastName: v.last_name, title: v.title, email: v.email, phone: v.phone, mobile: v.mobile, ownerId: v.owner || null,
@@ -97,7 +100,9 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
         }), again };
       } catch (e) {
         if (e instanceof ContactError && (e.kind === "invalid" || e.kind === "notAllowed" || e.kind === "archived" || e.kind === "readOnly")) {
-          throw new SaveRefused(e.message, e.kind === "notAllowed" || /owner/i.test(e.message) ? "owner" : e.message.startsWith("Enter an email") ? "email" : undefined);
+          // Only a refusal about the owner chosen belongs under Owner; the refusal to replace the main contact is the form's own.
+          const field = /the owner\b|for yourself/i.test(e.message) ? "owner" : e.message.startsWith("Enter an email") ? "email" : undefined;
+          throw new SaveRefused(e.message, field);
         }
         throw e;
       }
@@ -105,6 +110,8 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
     // After "Save and add another" the form starts empty again for the same account and owner.
     savedValues: (result, values) => ({ ...EMPTY, owner: (values as { owner: string }).owner }),
     onSaved: ({ added, again }: { added: AddedContact; again: boolean }) => {
+      // The saved contact may be the main contact now: the form that starts again is told so at once, from the answer, and the refresh below only confirms it.
+      if (added.contact.isMain) queryClient.setQueryData<AddContactContext>(contextKey, (old) => (old ? { ...old, mainContact: { id: added.contact.id, name: nameOf(added.contact) } } : old));
       toast.success(added.previousMain ? `Contact added. ${nameOf(added.contact)} is now the main contact, and ${added.previousMain.name} isn't any more.` : "Contact added");
       onAdded();
       refreshContext();
@@ -115,6 +122,7 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
     onCancel: onClose,
   });
 
+  const runAnother = useAlternateSave(another, api);
   useEffect(() => {
     closer.current = () => api.requestClose(onClose);
     return () => { closer.current = null; };
@@ -127,7 +135,7 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
       api={api}
       aria-label="Add a contact"
       actions={(
-        <div onClickCapture={(e) => { if ((e.target as HTMLElement).closest("button[type=submit]")) another.current = false; }}>
+        <div>
           <FormActions
             submitLabel="Save contact"
             savingLabel="Saving…"
@@ -138,7 +146,7 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
                 className="h-11 rounded-md"
                 disabled={api.saving}
                 aria-disabled={api.offline || undefined}
-                onClick={() => { if (api.offline) return; another.current = true; void api.submit(); }}
+                onClick={() => void runAnother()}
               >
                 Save and add another
               </Button>

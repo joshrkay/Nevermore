@@ -157,3 +157,63 @@ describe("Move a contact: when the move fails after the person agreed", () => {
     expect(onMoved).not.toHaveBeenCalled();
   });
 });
+
+describe("Move a contact: the search and the choice", () => {
+  // Catches: an account chosen and then hidden by a search still being the one moved to (the person cannot see where the contact would go).
+  it("forgets the choice when the search changes, and sends only an account in the list shown", async () => {
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("radio", { name: "Harborview East" }));
+    listMoveChoices.mockResolvedValue([{ id: "a3", name: "Lakeside Clinic" }]);
+    await user.type(within(dialog).getByLabelText("Find an account"), "lake");
+    await waitFor(() => expect(within(dialog).queryByRole("radio", { name: "Harborview East" })).not.toBeInTheDocument());
+    await user.click(within(dialog).getByRole("button", { name: "Move contact" }));
+    expect(await within(dialog).findByText("Choose an account.")).toBeInTheDocument();
+    expect(moveContact).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("radio", { name: "Lakeside Clinic" })).not.toBeChecked();
+  });
+
+  // Catches: a choice kept through a new search even when the account is still in the list (the person typed to look for another).
+  it("starts the choice again on a new search, even when the account is still listed", async () => {
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("radio", { name: "Harborview East" }));
+    listMoveChoices.mockResolvedValue([{ id: "a2", name: "Harborview East" }]);
+    await user.type(within(dialog).getByLabelText("Find an account"), "east");
+    await waitFor(() => expect(listMoveChoices).toHaveBeenLastCalledWith("f1", "c1", "east"));
+    await within(dialog).findByRole("radio", { name: "Harborview East" });
+    expect(within(dialog).getByRole("radio", { name: "Harborview East" })).not.toBeChecked();
+  });
+
+  // Catches: an account chosen from the old list in the moment before the new search's answer arrives, and still sent when that answer no longer lists it.
+  it("sends nothing for an account chosen from a list that the search has since replaced", async () => {
+    const { user, dialog } = await open();
+    listMoveChoices.mockResolvedValue([{ id: "a3", name: "Lakeside Clinic" }]);
+    await user.type(within(dialog).getByLabelText("Find an account"), "lake");
+    await user.click(within(dialog).getByRole("radio", { name: "Harborview East" }));
+    await waitFor(() => expect(within(dialog).queryByRole("radio", { name: "Harborview East" })).not.toBeInTheDocument());
+    await user.click(within(dialog).getByRole("button", { name: "Move contact" }));
+    expect(await within(dialog).findByText("Choose an account.")).toBeInTheDocument();
+    expect(moveContact).not.toHaveBeenCalled();
+  });
+
+  // Catches: the question about an earlier choice staying on screen, to be answered "Move anyway" for an account that is no longer the one chosen.
+  it("takes the question away when the search changes", async () => {
+    moveContact.mockRejectedValueOnce(new ContactError("confirm", "Moving Owen Park takes 1 call, note or task off an opportunity on Harborview Dental. Move anyway?", "PT409"));
+    const { user, dialog } = await open();
+    await user.click(within(dialog).getByRole("radio", { name: "Harborview East" }));
+    await user.click(within(dialog).getByRole("button", { name: "Move contact" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Don't move" }));
+    await user.type(within(dialog).getByLabelText("Find an account"), "x");
+    expect(within(dialog).queryByText(/Move anyway\?/)).not.toBeInTheDocument();
+  });
+
+  // Catches: a person who may not move the contact seeing "No account you can change matches" or "couldn't load" instead of why.
+  it("says in the database's words why no account is offered to a person who may not move the contact", async () => {
+    listMoveChoices.mockReset().mockRejectedValue(new ContactError("notAllowed", "You can't change the account this contact is on, so you can't move it off.", "42501"));
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MoveContactDialog firmId="f1" contact={{ id: "c1", name: "Owen Park" }} onClose={onClose} onMoved={onMoved} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("You can't change the account this contact is on, so you can't move it off.")).toBeInTheDocument();
+  });
+});

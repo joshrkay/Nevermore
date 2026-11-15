@@ -121,7 +121,8 @@ const choicesSchema = z.array(z.object({ id: z.string().min(1), name: z.string()
 /** The accounts a contact may be moved to (seen and changeable by the person, live, not where it is), narrowed by what was typed. */
 export async function listMoveChoices(firmId: string, contactId: string, search: string): Promise<{ id: string; name: string }[]> {
   const { data, error } = await supabase.rpc("contact_move_choices", { p_firm_id: firmId, p_contact_id: contactId, p_search: search.trim() });
-  if (error) throw new ContactError("failed", CHOICES_FALLBACK, error.code);
+  // A person who may not move the contact is told why in the database's words, not "couldn't load".
+  if (error) throw error.code === "42501" ? new ContactError("notAllowed", error.message || CHOICES_FALLBACK, error.code) : new ContactError("failed", CHOICES_FALLBACK, error.code);
   const parsed = choicesSchema.safeParse(data);
   if (!parsed.success) throw new ContactError("failed", CHOICES_FALLBACK);
   return parsed.data;

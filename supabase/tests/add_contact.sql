@@ -856,6 +856,64 @@ BEGIN
   RAISE NOTICE 'add_contact: the removal races passed';
 END $$;
 
+-- ---------- moving races an edit of the contact's activities ----------
+-- The move reads the contact's activities (for the question and for the level rule on the opportunities they name) and then rewrites them, so they are held
+-- FOR UPDATE, in id order, after the accounts and the contact. update_activity holds the activity and then needs KEY SHARE on a contact or an opportunity it
+-- newly points at; the move never waits for an activity while holding anything that update needs (it holds the contact, which update_activity needs only when it
+-- points an activity at THIS contact, and such an activity is not in the move's set), so the two cannot make a ring.
+-- Break caught: an update_activity that adds an opportunity to one of the contact's activities, not yet committed, is missed by the move's count and checks, and
+-- the move then clears the new link unasked and uncounted (or fails at the deferred key with no reason, 23503).
+-- A holds the edit and B moves (B is seen WAITING, then asks again, counting the new link, or refuses if the mover may not change that opportunity); then the
+-- reverse: A holds the move and B edits (B is seen WAITING, then finds the opportunity is not on the activity's account any more).
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.contact('ec1', 'h1', 'acme_agent1', 'ec1@e.example');
+  PERFORM pg_temp.contact('ec2', 'h1', 'acme_agent1', 'ec2@e.example');
+  PERFORM pg_temp.contact('ec3', 'h1', 'acme_agent1', 'ec3@e.example');
+  PERFORM pg_temp.opportunity('eo1', 'h1', 'acme_agent1');
+  PERFORM pg_temp.opportunity('eo2', 'h1', 'acme_agent3');
+  PERFORM pg_temp.activity('ecall1', 'call', 'h1', 'ec1');
+  PERFORM pg_temp.activity('ecall2', 'call', 'h1', 'ec2');
+  PERFORM pg_temp.activity('ecall3', 'call', 'h1', 'ec3');
+END $$;
+
+CREATE FUNCTION pg_temp.edit_stmt(act text, contact text, opp text) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN format($q$SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; DO $d$ BEGIN PERFORM public.update_activity(%L, %L, %L, NULL, 'spoke', 'Said it', NULL, NULL, NULL, %L); END $d$ $q$,
+    jsonb_build_object('sub', pg_temp.id('acme_agent1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_agent1@example.test')::text,
+    pg_temp.id(act), pg_temp.id(contact), pg_temp.id(opp), pg_temp.id('acme'));
+END $$;
+
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(pg_temp.edit_stmt('ecall1', 'ec1', 'eo1'), 'acme_agent1',
+    format($q$SELECT public.move_contact(%L, %L, false, %L)::text$q$, pg_temp.id('ec1'), pg_temp.id('h2'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the move waits for an edit of one of the contact''s activities');
+  PERFORM pg_temp.is(split_part(r, '|', 2), 'PT409', 'and then asks, counting the link that edit added');
+  PERFORM pg_temp.is(pg_temp.acct_of('contacts', 'ec1'), pg_temp.id('h1'), 'nothing moved');
+  PERFORM pg_temp.is((SELECT opportunity_id FROM public.activities WHERE id = pg_temp.id('ecall1')), pg_temp.id('eo1'), 'and the new link was not cleared');
+  PERFORM pg_temp.is(pg_temp.move_refusal('acme_agent1', 'ec1', 'h2'), 'PT409: Moving First ec1 Last ec1 takes 1 call, note or task off an opportunity on Harborview Dental. Move anyway?', 'the question counts it');
+  r := pg_temp.race(pg_temp.edit_stmt('ecall2', 'ec2', 'eo2'), 'acme_agent1',
+    format($q$SELECT public.move_contact(%L, %L, true, %L)::text$q$, pg_temp.id('ec2'), pg_temp.id('h2'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'a confirmed move waits for such an edit too');
+  PERFORM pg_temp.is(split_part(r, '|', 2), '42501', 'and refuses when the mover may not change the opportunity it now names');
+  PERFORM pg_temp.is((SELECT opportunity_id FROM public.activities WHERE id = pg_temp.id('ecall2')), pg_temp.id('eo2'), 'leaving the link');
+  -- The reverse: the move is held, the edit comes after.
+  r := pg_temp.race(
+    format($q$SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; DO $d$ BEGIN PERFORM public.move_contact(%L, %L, false, %L); END $d$ $q$,
+      jsonb_build_object('sub', pg_temp.id('acme_agent1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_agent1@example.test')::text, pg_temp.id('ec3'), pg_temp.id('h2'), firm),
+    'acme_agent1',
+    format($q$SELECT public.update_activity(%L, %L, %L, NULL, 'spoke', 'Said it', NULL, NULL, NULL, %L)::text$q$, pg_temp.id('ecall3'), pg_temp.id('ec3'), pg_temp.id('eo1'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'an edit waits for a move holding the activity');
+  PERFORM pg_temp.is(split_part(r, '|', 2), '22023', 'and then finds the opportunity is not on the activity''s account any more');
+  PERFORM pg_temp.is(pg_temp.acct_of('activities', 'ecall3'), pg_temp.id('h2'), 'the call went with its contact');
+  PERFORM pg_temp.is((SELECT opportunity_id FROM public.activities WHERE id = pg_temp.id('ecall3')), NULL::uuid, 'with no link');
+  RAISE NOTICE 'add_contact: the activity edit races passed';
+END $$;
+
 -- ---------- where a contact may go, and the form's context ----------
 -- Break caught: the picker offers an account the move would refuse (archived, not seen, not changeable, the one the contact is on, another firm's), is not
 -- narrowed by what was typed, or answers more than a page; the form's context names an account the caller may not see, or misses the current main contact.
@@ -875,6 +933,15 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.contact_move_choices(%L, %L, '')$q$, pg_temp.id('acme'), pg_temp.id('pk'))), 'PT404: That contact isn''t available', 'a contact the caller may not see');
   PERFORM pg_temp.as_user('acme_agent1');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.contact_move_choices(%L, %L, '')$q$, pg_temp.id('zenith'), pg_temp.id('pk'))), '42501: Not a member of that firm', 'another firm');
+  -- A person who may not move the contact is told so in words, not offered places that can only end in a refusal (the contact's level, then the account it is on).
+  PERFORM pg_temp.as_user('zenith_agent2');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.contact_move_choices(%L, %L, '')$q$, pg_temp.id('zenith'), pg_temp.id('zc'))),
+    '42501: Only the contact''s owner, a lead of the owner''s team or an owner of the firm can move this contact.', 'a contact the caller may see but not change gets no places');
+  PERFORM pg_temp.as_user('zenith_agent');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.contact_move_choices(%L, %L, '')$q$, pg_temp.id('zenith'), pg_temp.id('zc2'))),
+    '42501: You can''t change the account this contact is on, so you can''t move it off.', 'nor a contact on an account the caller may not change');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contact_move_choices(pg_temp.id('zenith'), pg_temp.id('zc'), '')) >= 1, true, 'while the person who may move it is offered places');
+  RESET ROLE;
   -- The form's context: the account's name, whether it takes more, and who is main now.
   RESET ROLE;
   PERFORM pg_temp.contact('ctxmain', 'h2', 'acme_agent1', 'ctx@e.example', NULL, false);

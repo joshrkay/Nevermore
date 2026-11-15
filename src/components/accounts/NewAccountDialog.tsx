@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRef } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { Field, FormActions, SaveRefused, SelectInput, useAlternateFlag, useAlternateSave, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { US_STATE_CODES } from "@/data/chamberValidation";
 import { accountFieldsSchema } from "@/data/accountFields";
 import { statesOf } from "@/data/accountPage";
@@ -35,8 +34,8 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
   /** `thenContact` is true after "Save and add a contact": the page of the new account opens with the contact form open on it. */
   onCreated: (account: AccountFields, thenContact: boolean) => void;
 }) {
-  // Set by "Save and add a contact" and read by the save that follows (any other save leaves it false).
-  const thenContact = useRef(false);
+  // Set for the length of "Save and add a contact" only (see useAlternateSave); any other save leaves it false.
+  const thenContact = useAlternateFlag();
   const { user } = useAuth();
   const me = user?.id ?? "";
   const members = useQuery({ queryKey: ["new-account", firmId, me, "owners"], queryFn: () => listAccountOwners(firmId), enabled: me !== "", retry: false, staleTime: 60_000 });
@@ -51,7 +50,6 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
     save: async (values) => {
       const v = values as typeof EMPTY & { owner: string };
       const andContact = thenContact.current;
-      thenContact.current = false;
       try {
         return { andContact, account: await createAccount(firmId, {
           name: v.name,
@@ -81,6 +79,8 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
     onCancel: onClose,
   });
 
+  const runThenContact = useAlternateSave(thenContact, api);
+
   return (
     <Dialog open onOpenChange={(next) => { if (!next) api.requestClose(onClose); }}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
@@ -90,7 +90,7 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
           api={api}
           aria-label="New account"
           actions={(
-            <div onClickCapture={(e) => { if ((e.target as HTMLElement).closest("button[type=submit]")) thenContact.current = false; }}>
+            <div>
               <FormActions
                 submitLabel="Save account"
                 savingLabel="Saving…"
@@ -101,7 +101,7 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
                     className="h-11 rounded-md"
                     disabled={api.saving}
                     aria-disabled={api.offline || undefined}
-                    onClick={() => { if (api.offline) return; thenContact.current = true; void api.submit(); }}
+                    onClick={() => void runThenContact()}
                   >
                     Save and add a contact
                   </Button>
