@@ -619,6 +619,32 @@ describe("AccountPage: the states", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" })).toBeInTheDocument();
   });
 
+  // Catches: no way from the account back to the list (screen 17's "Accounts / name"), or a link that goes elsewhere.
+  it("shows 'Accounts / name' above the header, and 'Accounts' goes to the list", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(crumbs).toHaveTextContent("Accounts / Harborview Dental Group");
+    expect(within(crumbs).getByRole("link", { name: "Accounts" })).toHaveAttribute("href", "/accounts");
+    await user.click(within(crumbs).getByRole("link", { name: "Accounts" }));
+    expect(screen.queryByRole("heading", { level: 1, name: "Harborview Dental Group" })).not.toBeInTheDocument();
+  });
+
+  // Catches: the breadcrumb under the archived note (screen 17 puts it first).
+  it("puts the breadcrumb above the archived note", async () => {
+    client.getAccountPage.mockResolvedValue(page({ account: { ...account, archivedAt: "2026-11-10T10:00:00+00:00" } }));
+    renderPage();
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(crumbs.compareDocumentPosition(screen.getByRole("note")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // Catches: an account that isn't there leaving the person a link to the submissions, not the list it was opened from.
+  it("offers the way back to all accounts when an account isn't available", async () => {
+    client.getAccountPage.mockResolvedValue(null);
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Back to all accounts" })).toHaveAttribute("href", "/accounts");
+  });
+
   // Catches: an account that is not there, or not the person's, saying which of the two it is.
   it("says an account that is not there or not theirs isn't available, the same for both", async () => {
     client.getAccountPage.mockResolvedValue(null);

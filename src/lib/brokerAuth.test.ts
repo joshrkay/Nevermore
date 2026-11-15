@@ -30,6 +30,41 @@ describe("where a broker goes after signing in", () => {
     }
   });
 
+  // Catches: a broker who signs in again for an Accounts export (or on an expired session) landing on the queue with the filters gone (D-223).
+  it("keeps the Accounts page and an account's page, with their query", () => {
+    for (const kept of [
+      "/accounts",
+      "/accounts?filter=status:any_of:client&q=elena",
+      "/accounts?view=clients&sort=-last_activity_at&page=2",
+      "/accounts/5f1c2a9e-0000-4000-8000-000000000002",
+      "/accounts/5f1c2a9e-0000-4000-8000-000000000002?tab=contacts&contact=c1",
+    ]) {
+      expect(brokerNext(kept), kept).toBe(kept);
+    }
+  });
+
+  it("refuses every way an Accounts address could lead off the site, and falls back to the console", () => {
+    for (const bad of [
+      "/accounts?next=//evil.example",
+      "/accounts?x=https://evil.example",
+      "/accounts?x=a\\b",
+      "/accounts?x=a\nb",
+      "/accounts?x=a\u0000b",
+      "/accounts?x=a b",
+      "/accounts?x=1#frag",
+      "/accounts#frag",
+      "/accounts?x=<script>",
+      "/accounts//x",
+      "/accounts/../start",
+      "/accounts/a/../../start?x=1",
+      "/accounts\\x",
+      "/accountsx",
+      "/accounts/a b",
+    ]) {
+      expect(brokerNext(bad), JSON.stringify(bad)).toBe("/advisor");
+    }
+  });
+
   it("refuses every other way a query could lead off the site or hide a control character, and falls back to the console", () => {
     for (const bad of [
       "/advisor?next=//evil.example",
@@ -61,6 +96,13 @@ describe("where a broker goes after signing in", () => {
       "https://app.example.com/broker/callback?next=%2Fadvisor%2Factivity%3Fkind%3Dsign_in%26person%3Dnevermore",
     );
     expect(brokerCallbackUrl("https://app.example.com", "https://evil.example")).toBe("https://app.example.com/broker/callback");
+  });
+
+  it("carries the Accounts page and its filters through the provider and back", () => {
+    expect(brokerCallbackUrl("https://app.example.com", "/accounts?filter=status:any_of:client&q=elena")).toBe(
+      "https://app.example.com/broker/callback?next=%2Faccounts%3Ffilter%3Dstatus%3Aany_of%3Aclient%26q%3Delena",
+    );
+    expect(brokerCallbackUrl("https://app.example.com", "/accounts/abc-123")).toBe("https://app.example.com/broker/callback?next=%2Faccounts%2Fabc-123");
   });
 
   // Catches: the queue ("/advisor") being left out of the address because it is the default, so the callback can't tell a sign-in for the queue from one for no page.
