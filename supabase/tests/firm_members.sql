@@ -1057,6 +1057,8 @@ $$;
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
 \i supabase/migrations/20261119230000_search_everywhere.sql
+\i supabase/migrations/20261119240000_contact_page.sql
+\i supabase/migrations/20261120090000_opportunity_stage.sql
 DO $$
 DECLARE job cron.job;
 BEGIN
