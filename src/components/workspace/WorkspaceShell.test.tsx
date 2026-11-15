@@ -66,6 +66,13 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the workspace menu", () => {
+  it("holds the search box above the sections (CRM-S1.2a)", async () => {
+    await renderAt("/advisor");
+    const box = screen.getByRole("searchbox", { name: /search/i });
+    expect(box).toBeInTheDocument();
+    expect(box.compareDocumentPosition(menu()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("holds Quotes, Inbox, Accounts and Reports, then Settings, and none of the sections that aren't built yet", async () => {
     await renderAt("/advisor");
     expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Accounts", "Reports", "Settings"]);
