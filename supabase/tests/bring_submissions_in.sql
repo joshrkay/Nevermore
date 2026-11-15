@@ -466,7 +466,7 @@ END $$;
 DO $$
 DECLARE fn text; r text;
 BEGIN
-  FOREACH fn IN ARRAY ARRAY['public.bring_submissions_in()', 'public.require_opportunity_for_intake(uuid)', 'public.enforce_opportunity_rule()'] LOOP
+  FOREACH fn IN ARRAY ARRAY['public.bring_submissions_in()', 'public.require_opportunity_for_intake(uuid, boolean)', 'public.enforce_opportunity_rule()'] LOOP
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
       PERFORM pg_temp.is(has_function_privilege(r, fn, 'EXECUTE'), false, r || ' can''t run ' || fn);
     END LOOP;
@@ -552,6 +552,28 @@ BEGIN
   PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = older), NULL::uuid, 'the older submission''s account is not marked');
   PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = newer), older, 'the newer account is marked a duplicate of it');
   RAISE NOTICE 'bring_submissions_in: the older one is the earlier passed';
+END $$;
+
+-- ---------- a mark points at the earliest account it matches ----------
+-- B (March) is marked a duplicate of C (February). A brought-in submission from January matches B only (its website), so B is marked a duplicate of A, the
+-- earliest, and A is left unmarked; C stays unmarked. The mark was B's already, so the run made no new mark.
+-- Break caught: B keeps pointing at C because it already pointed at something, or A is marked a duplicate of the later B.
+DO $$
+DECLARE c uuid; b uuid;
+BEGIN
+  INSERT INTO public.accounts (firm_id, source, name, state, created_at) VALUES (public.default_firm_id(), 'added_by_hand', 'Gamma Co LLC', 'TX', '2026-02-01') RETURNING id INTO c;
+  INSERT INTO public.accounts (firm_id, source, name, state, website, created_at, possible_duplicate_of)
+  VALUES (public.default_firm_id(), 'added_by_hand', 'Gamma Co', 'TX', 'https://gamma.example', '2026-03-01', c) RETURNING id INTO b;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.legacy('gam', 'default', 'Alpha Unrelated', 'WA', 'https://www.gamma.example/x', '2026-01-01');
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.is(public.bring_submissions_in() ->> 'possible_duplicates', '0', 'no new mark: B was marked already');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = (pg_temp.acct('i_gam')).id), NULL::uuid, 'the January account is not marked');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = b), (pg_temp.acct('i_gam')).id, 'B points at the earliest account it matches');
+  PERFORM pg_temp.is((SELECT possible_duplicate_of FROM public.accounts WHERE id = c), NULL::uuid, 'C is unmarked');
+  RAISE NOTICE 'bring_submissions_in: the earliest target passed';
 END $$;
 
 -- ---------- the rule: a submission and a quote request sit on an opportunity ----------
@@ -661,4 +683,153 @@ BEGIN
     'a submission can''t be moved to another firm while its opportunity holds it');
   PERFORM pg_temp.is(pg_temp.attempt(format('DELETE FROM public.opportunities WHERE intake_id = %L', pg_temp.id('i_harbor'))), '23514', 'nor can its opportunity be removed to let it');
   RAISE NOTICE 'bring_submissions_in: all cases passed';
+END $$;
+
+-- ---------- two sessions at once ----------
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+
+-- dblink_exec runs commands that return nothing: a SELECT is run as a PERFORM inside an anonymous block.
+CREATE FUNCTION pg_temp.as_command(stmt text) RETURNS text LANGUAGE sql AS $$
+  SELECT CASE WHEN stmt ~* '^SELECT ' THEN format('DO $do$ BEGIN PERFORM %s; END $do$', substr(stmt, 8)) ELSE stmt END
+$$;
+
+-- Runs two statements in two committed-or-not transactions and says what happened: 'waited:<result>' when the second was seen waiting on
+-- the first (the result is what it gave after the first committed: 'ok' or its SQLSTATE), or 'did not wait:<result>' when it finished without
+-- waiting. `*_who` is a user's name, or NULL to stay as the connecting superuser. `a_late` runs in the first after the second is waiting and
+-- before the first commits (its SQLSTATE, or 'ok', is appended as ' late:<it>').
+CREATE FUNCTION pg_temp.race_pair(a_who text, a_stmts text[], b_who text, b_stmt text, a_late text DEFAULT NULL, a_slow text DEFAULT NULL, b_delay numeric DEFAULT 0.4) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; res text; late text := ''; s text; i integer; a_async boolean := false;
+BEGIN
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  IF a_who IS NOT NULL THEN
+    PERFORM race.dblink_exec('ra', 'SET LOCAL ROLE authenticated');
+    PERFORM race.dblink_exec('ra', format('SET LOCAL request.jwt.claims = %L',
+      jsonb_build_object('sub', pg_temp.id(a_who), 'role', 'authenticated', 'is_anonymous', false, 'email', a_who || '@example.test')::text));
+  END IF;
+  FOR i IN 1..cardinality(a_stmts) LOOP
+    IF a_slow IS NOT NULL AND i = cardinality(a_stmts) THEN
+      -- The last statement runs in the background and is slowed inside (a trigger sleeps `a_slow` seconds when it updates a request), so
+      -- the second starts while the first is part-way through, not after it has finished.
+      PERFORM race.dblink_exec('ra', format('SET LOCAL zz.slow = %L', a_slow));
+      PERFORM race.dblink_send_query('ra', a_stmts[i]);
+      a_async := true;
+      PERFORM pg_sleep(b_delay);
+    ELSE
+      PERFORM race.dblink_exec('ra', pg_temp.as_command(a_stmts[i]));
+    END IF;
+  END LOOP;
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  IF b_who IS NOT NULL THEN
+    PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+    PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L',
+      jsonb_build_object('sub', pg_temp.id(b_who), 'role', 'authenticated', 'is_anonymous', false, 'email', b_who || '@example.test')::text));
+  END IF;
+  PERFORM race.dblink_send_query('rb', b_stmt);
+  WHILE tries < 80 LOOP
+    IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
+    IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  IF a_async THEN
+    BEGIN PERFORM * FROM race.dblink_get_result('ra') AS t(r text); EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE; late := late || ' first:' || s; END;
+    BEGIN PERFORM * FROM race.dblink_get_result('ra') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  END IF;
+  IF a_late IS NOT NULL THEN
+    BEGIN
+      PERFORM race.dblink_exec('ra', pg_temp.as_command(a_late));
+      late := ' late:ok';
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+      late := ' late:' || s;
+    END;
+  END IF;
+  BEGIN PERFORM race.dblink_exec('ra', 'COMMIT'); EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('rb') AS t(r text);
+    res := 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    res := s;
+  END;
+  BEGIN PERFORM * FROM race.dblink_get_result('rb') AS t(r text); EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN PERFORM race.dblink_exec('rb', 'COMMIT'); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  RETURN CASE WHEN waited THEN 'waited:' ELSE 'did not wait:' END || res || late;
+END $$;
+
+-- The certification a prospect sends for an intake, as text for a connection that is not this one.
+CREATE FUNCTION pg_temp.certify_stmt(n text, p_signer text DEFAULT 'Jo Doe') RETURNS text LANGUAGE sql AS $$
+  SELECT format($q$UPDATE public.chamber_sessions SET status = 'submitted', submission = jsonb_build_object('signer_name', %L, 'signer_title', 'CEO',
+    'signed_at', '2026-11-01T12:00:00Z', 'consent_version', '2026-10-draft-1', 'consent_text', '["I certify."]'::jsonb, 'chamber_data', chamber_data) WHERE id = %L$q$,
+    p_signer, pg_temp.id(n))
+$$;
+
+
+-- A draft an agent started: its account and opportunity, committed, with a prospect who can certify it.
+CREATE FUNCTION pg_temp.agent_draft(tag text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE a uuid;
+BEGIN
+  PERFORM pg_temp.new_prospect('p_' || tag, 'Pat ' || tag, '555-0100');
+  PERFORM pg_temp.start_intake('i_' || tag, 'p_' || tag, pg_temp.answers('Race ' || tag || ' Co', 'ID'), 'default');
+  INSERT INTO public.accounts (firm_id, name, source) VALUES (public.default_firm_id(), 'Agent ' || tag, 'added_by_hand') RETURNING id INTO a;
+  INSERT INTO public.opportunities (firm_id, account_id, intake_id, name) VALUES (public.default_firm_id(), a, pg_temp.id('i_' || tag), 'Agent search');
+  INSERT INTO fx VALUES ('opp_' || tag, a);
+END $$;
+
+DO $$ BEGIN PERFORM pg_temp.agent_draft('ra'); PERFORM pg_temp.agent_draft('rb'); END $$;
+
+-- The employer certifies an intake while an agent's opportunity on it is being deleted. The deletion is first: the certification waits for it and then, finding
+-- no opportunity, makes the chain.
+-- Break caught: both commit, and the submission sits on no opportunity (each looked at a snapshot that did not hold the other).
+DO $$
+DECLARE r text;
+BEGIN
+  r := pg_temp.race_pair(NULL, ARRAY[format('DELETE FROM public.opportunities WHERE intake_id = %L', pg_temp.id('i_ra'))], NULL, pg_temp.certify_stmt('i_ra'));
+  PERFORM pg_temp.is(r, 'waited:ok', 'the certification waits for the deletion and goes through');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE intake_id = pg_temp.id('i_ra')), 1::bigint, 'and the submission sits on an opportunity (the chain it made)');
+  PERFORM pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp.id('i_ra')), 'submitted', 'it is certified');
+  RAISE NOTICE 'bring_submissions_in: deletion then certification passed';
+END $$;
+
+-- The certification is first: the deletion waits for it, and is refused, for the intake is a submission now.
+-- Break caught: the same.
+DO $$
+DECLARE r text;
+BEGIN
+  r := pg_temp.race_pair(NULL, ARRAY[pg_temp.certify_stmt('i_rb')], NULL, format('DELETE FROM public.opportunities WHERE intake_id = %L', pg_temp.id('i_rb')));
+  PERFORM pg_temp.is(r, 'waited:23514', 'the deletion waits for the certification and is refused');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE intake_id = pg_temp.id('i_rb')), 1::bigint, 'the submission keeps its opportunity');
+  RAISE NOTICE 'bring_submissions_in: certification then deletion passed';
+END $$;
+
+-- The run picks a submission, and an employer certifying it again makes its chain first: the run finds the chain and brings it in all the same.
+-- Break caught: the chain keeps the date of the run and is not counted (made = false skips the work).
+DO $$
+BEGIN
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_has_opportunity;
+  PERFORM pg_temp.legacy('rc', 'default', 'Race Chain Business', 'WY', NULL, '2026-01-05');
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_chain;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_has_opportunity;
+END $$;
+DO $$
+DECLARE r text;
+BEGIN
+  r := pg_temp.race_pair(NULL, ARRAY[format('SELECT public.make_intake_chain(%L)', pg_temp.id('i_rc'))], NULL, 'SELECT public.bring_submissions_in()');
+  PERFORM pg_temp.is(r, 'waited:ok', 'the run waits for the other session''s chain');
+  PERFORM pg_temp.is((pg_temp.acct('i_rc')).created_at, '2026-01-05'::timestamptz, 'its account is as old as the submission');
+  PERFORM pg_temp.is((pg_temp.opp('i_rc')).created_at, '2026-01-05'::timestamptz, 'and its opportunity');
+  PERFORM pg_temp.is((SELECT c.created_at FROM public.contacts c WHERE c.account_id = (pg_temp.acct('i_rc')).id), '2026-01-05'::timestamptz, 'and its contact');
+  RAISE NOTICE 'bring_submissions_in: a chain made while the run waited passed';
 END $$;

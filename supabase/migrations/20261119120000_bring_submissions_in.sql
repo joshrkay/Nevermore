@@ -206,6 +206,9 @@ DECLARE
   closed_left integer := 0;
   quote_requests_on integer := 0;
   n integer;
+  v_account uuid;
+  v_match uuid;
+  v_match_prev uuid;
 BEGIN
   -- The certified intakes that sit on no opportunity, earliest first certification first (the id breaks a tie).
   FOR s IN
@@ -222,25 +225,40 @@ BEGIN
     r := public.make_intake_chain(s.id);
     IF COALESCE((r ->> 'closed')::boolean, false) THEN
       closed_left := closed_left + 1;
-    ELSIF (r ->> 'made')::boolean THEN
-      -- The records are the submission's age, not the migration's, so the next intake's match finds the earliest account first.
-      UPDATE public.accounts SET created_at = s.first_at WHERE id = (r ->> 'account_id')::uuid;
-      UPDATE public.contacts SET created_at = s.first_at WHERE id = (r ->> 'contact_id')::uuid;
-      UPDATE public.opportunities SET created_at = s.first_at WHERE id = (r ->> 'opportunity_id')::uuid;
+    ELSE
+      -- The chain is new either way: this intake sat on no opportunity when it was picked. "made" false means another session made it first (an employer
+      -- certifying it again while this ran: the step waited for that session's lock and found its chain), and it is brought in the same way.
+      v_account := (r ->> 'account_id')::uuid;
+      -- The records are the submission's age, not the migration's, so the next intake's match finds the earliest account first. Only an account made later than
+      -- the submission, with this intake alone on it, is moved back; the prospect's own contact only.
+      UPDATE public.accounts a SET created_at = s.first_at
+        WHERE a.id = v_account AND a.created_at > s.first_at AND (SELECT count(*) FROM public.opportunities o WHERE o.account_id = a.id) = 1;
+      UPDATE public.contacts c SET created_at = s.first_at
+        WHERE c.account_id = v_account AND c.prospect_user_id = (SELECT cs.user_id FROM public.chamber_sessions cs WHERE cs.id = s.id) AND c.created_at > s.first_at;
+      UPDATE public.opportunities SET created_at = s.first_at WHERE id = (r ->> 'opportunity_id')::uuid AND created_at > s.first_at;
       accounts_made := accounts_made + 1;
       opportunities_made := opportunities_made + 1;
-      IF r ->> 'contact_id' IS NOT NULL THEN contacts_made := contacts_made + 1; END IF;
-      IF r ->> 'possible_duplicate_of' IS NOT NULL THEN
+      IF EXISTS (SELECT 1 FROM public.contacts c WHERE c.account_id = v_account AND c.prospect_user_id = (SELECT cs.user_id FROM public.chamber_sessions cs WHERE cs.id = s.id)) THEN
+        contacts_made := contacts_made + 1;
+      END IF;
+      v_match := (SELECT a.possible_duplicate_of FROM public.accounts a WHERE a.id = v_account);
+      IF v_match IS NOT NULL THEN
         -- The step marks the account it made as the duplicate of the earliest match. When that match is LATER than this submission (an account made at a
-        -- certification since the chain began), it is the later one that D-195 marks: the match is marked as a duplicate of this account, whatever pointed at
-        -- the match points at this one, and this account is left unmarked.
-        IF (SELECT m.created_at FROM public.accounts m WHERE m.id = (r ->> 'possible_duplicate_of')::uuid) > s.first_at THEN
-          UPDATE public.accounts SET possible_duplicate_of = NULL WHERE id = (r ->> 'account_id')::uuid;
-          UPDATE public.accounts SET possible_duplicate_of = (r ->> 'account_id')::uuid WHERE possible_duplicate_of = (r ->> 'possible_duplicate_of')::uuid;
-          UPDATE public.accounts SET possible_duplicate_of = (r ->> 'account_id')::uuid
-            WHERE id = (r ->> 'possible_duplicate_of')::uuid AND possible_duplicate_of IS NULL;
+        -- certification since the chain began), it is the later one that D-195 marks: this account is left unmarked, whatever pointed at the match points at
+        -- this one, and the match points at it unless it already points at an account earlier than this one.
+        IF (SELECT m.created_at FROM public.accounts m WHERE m.id = v_match) > s.first_at THEN
+          UPDATE public.accounts SET possible_duplicate_of = NULL WHERE id = v_account;
+          UPDATE public.accounts SET possible_duplicate_of = v_account WHERE possible_duplicate_of = v_match;
+          SELECT m.possible_duplicate_of INTO v_match_prev FROM public.accounts m WHERE m.id = v_match;
+          IF v_match_prev IS NULL THEN
+            duplicates := duplicates + 1;
+          END IF;
+          UPDATE public.accounts m SET possible_duplicate_of = v_account
+            WHERE m.id = v_match AND (m.possible_duplicate_of IS NULL
+              OR (SELECT t.created_at FROM public.accounts t WHERE t.id = m.possible_duplicate_of) > s.first_at);
+        ELSE
+          duplicates := duplicates + 1;
         END IF;
-        duplicates := duplicates + 1;
       END IF;
       SELECT count(*) INTO n FROM public.quote_requests q WHERE q.session_id = s.id;
       quote_requests_on := quote_requests_on + n;
@@ -263,24 +281,45 @@ REVOKE ALL ON FUNCTION public.bring_submissions_in() FROM PUBLIC, anon, authenti
 -- ---------- 2. The rule ----------
 -- Refuses (23514) an intake that is a submission or holds a quote request and sits on no opportunity, unless its firm is closed or closing now, or it is
 -- gone. The one place that says what the rule is; the three triggers below ask it.
-CREATE OR REPLACE FUNCTION public.require_opportunity_for_intake(p_intake_id uuid)
+DROP FUNCTION IF EXISTS public.require_opportunity_for_intake(uuid);
+CREATE OR REPLACE FUNCTION public.require_opportunity_for_intake(p_intake_id uuid, p_lock boolean DEFAULT false)
 RETURNS void
 LANGUAGE plpgsql
-STABLE
+VOLATILE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_firm uuid;
 BEGIN
-  IF p_intake_id IS NULL OR EXISTS (SELECT 1 FROM public.opportunities o WHERE o.intake_id = p_intake_id) THEN
+  IF p_intake_id IS NULL THEN
     RETURN;
   END IF;
   SELECT cs.firm_id INTO v_firm FROM public.chamber_sessions cs WHERE cs.id = p_intake_id;
   IF NOT FOUND THEN
     RETURN;
   END IF;
-  IF public.firm_is_closed(v_firm) OR current_setting('nevermore.closing_firm', true) = v_firm::text THEN
+  -- The firm's closing deletes its opportunities and holds the firm's row for it: it asks for no intake's row, so it can't wait on a certification that
+  -- holds the intake's row and waits on the firm's.
+  IF current_setting('nevermore.closing_firm', true) = v_firm::text THEN
+    RETURN;
+  END IF;
+  -- Whoever takes an opportunity from an intake (p_lock) asks after taking the intake's row, which a certification of it holds from its update to its commit
+  -- (the same row, and it conflicts with the update). A certification that did not see the opportunity and made no chain is therefore waited for, and what is
+  -- asked next, in a new snapshot (this function is volatile), is what it committed: a submission, which is refused. A certification that comes after waits for
+  -- this transaction and finds no opportunity, and makes the chain. The closing is excused above, before any lock, and only the opportunity's triggers
+  -- ask for this row (a quote request's does not, so a send being recorded, which holds the submission's workflow row, never waits on a certification that
+  -- waits for that row), so no two sessions can wait on each other.
+  IF p_lock THEN
+    PERFORM 1 FROM public.chamber_sessions cs WHERE cs.id = p_intake_id FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+      RETURN;
+    END IF;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.intake_id = p_intake_id) THEN
+    RETURN;
+  END IF;
+  IF public.firm_is_closed(v_firm) THEN
     RETURN;
   END IF;
   IF EXISTS (SELECT 1 FROM public.chamber_sessions cs WHERE cs.id = p_intake_id AND cs.status = 'submitted')
@@ -291,7 +330,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.require_opportunity_for_intake(uuid) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.require_opportunity_for_intake(uuid, boolean) FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.enforce_opportunity_rule()
 RETURNS trigger
@@ -301,7 +340,7 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF TG_TABLE_NAME = 'opportunities' THEN
-    PERFORM public.require_opportunity_for_intake(OLD.intake_id);
+    PERFORM public.require_opportunity_for_intake(OLD.intake_id, true);
   ELSIF TG_TABLE_NAME = 'chamber_sessions' THEN
     PERFORM public.require_opportunity_for_intake(NEW.id);
   ELSE
