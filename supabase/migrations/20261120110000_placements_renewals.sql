@@ -445,6 +445,132 @@ $$;
 REVOKE ALL ON FUNCTION public.delete_renewal(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_renewal(uuid, uuid) TO authenticated;
 
+-- ---------- 8b. "Didn't renew", and its undo (D-451) ----------
+-- The one change both functions below make: set (p_mark) or clear the day a renewal did not renew, and end or reopen the placement it came from on that
+-- same day, in the one statement order that holds the renewal and then its placement. Refused, in this order and before the version is looked at: no day when
+-- marking (22023), no version (22023), a renewal the caller may not see or that is not there (PT404), one the level rule does not give them (42501), one a win
+-- already renewed (PT409), a day before the placement began (22023), a version it never had (22023). The answer is update_renewal's:
+-- {conflict: false, record} or {conflict: true, currentVersion, current: {not_renewed_on}, changed}. Internal: the callers have asked the firm and the guard.
+CREATE FUNCTION public.renewal_set_not_renewed(p_firm_id uuid, p_renewal_id uuid, p_mark boolean, p_on date, p_version integer)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  cur public.renewals;
+  changed public.renewals;
+  started date;
+BEGIN
+  IF p_mark AND p_on IS NULL THEN
+    RAISE EXCEPTION 'Give the day it didn''t renew.' USING ERRCODE = '22023';
+  END IF;
+  IF p_version IS NULL OR p_version < 1 THEN
+    RAISE EXCEPTION 'This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  cur := public.renewal_to_change(p_firm_id, p_renewal_id);
+  IF p_mark AND cur.opportunity_id IS NOT NULL AND public.opportunity_stage(cur.opportunity_id) = 'won' THEN
+    RAISE EXCEPTION 'This renewal was renewed, so it can''t be marked as not renewed.' USING ERRCODE = 'PT409';
+  END IF;
+  IF cur.placement_id IS NOT NULL THEN
+    SELECT p.start_date INTO started FROM public.placements p WHERE p.id = cur.placement_id FOR NO KEY UPDATE;
+    IF p_mark AND started IS NOT NULL AND p_on < started THEN
+      RAISE EXCEPTION 'The placement started on %, so it can''t end before.', to_char(started, 'YYYY-MM-DD') USING ERRCODE = '22023';
+    END IF;
+  END IF;
+  UPDATE public.renewals SET not_renewed_on = CASE WHEN p_mark THEN p_on END WHERE id = cur.id AND version = p_version RETURNING * INTO changed;
+  IF changed.id IS NOT NULL THEN
+    UPDATE public.placements SET ended_on = CASE WHEN p_mark THEN p_on END WHERE id = changed.placement_id;
+    RETURN jsonb_build_object('conflict', false, 'record', public.crm_renewal_row(changed, current_date));
+  END IF;
+  IF p_version > cur.version THEN
+    RAISE EXCEPTION 'This save names a version of the renewal that does not exist, so it was refused. Reload the page and try again.' USING ERRCODE = '22023';
+  END IF;
+  RETURN jsonb_build_object(
+    'conflict', true,
+    'currentVersion', cur.version,
+    'current', jsonb_build_object('not_renewed_on', cur.not_renewed_on),
+    'changed', public.record_version_changes(cur.firm_id, 'renewals', cur.id::text, p_version, cur.version));
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.renewal_set_not_renewed(uuid, uuid, boolean, date, integer) FROM PUBLIC, anon, authenticated, service_role;
+
+-- "Didn't renew" with a day (the screen offers the renewal's date): the renewal is then done, so it leaves the Renewal column and the 120-day view, and the
+-- placement it came from ends on that day, so an account with no placement left running is a former client. Marking again with another day moves it.
+-- Refused as update_renewal is (not a member 42501, a closing firm or Nevermore support PT423, ...), from a version.
+CREATE FUNCTION public.mark_renewal_not_renewed(p_renewal_id uuid, p_not_renewed_on date, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  RETURN public.renewal_set_not_renewed(firm, p_renewal_id, true, p_not_renewed_on, p_version);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.mark_renewal_not_renewed(uuid, date, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.mark_renewal_not_renewed(uuid, date, uuid, integer) TO authenticated;
+
+-- The undo: clears the day, which brings the renewal back to the Renewal column and the view, and reopens the placement, so the account is a client again.
+CREATE FUNCTION public.undo_renewal_not_renewed(p_renewal_id uuid, p_firm_id uuid DEFAULT NULL, p_version integer DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  firm uuid;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  RETURN public.renewal_set_not_renewed(firm, p_renewal_id, false, NULL, p_version);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.undo_renewal_not_renewed(uuid, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.undo_renewal_not_renewed(uuid, uuid, integer) TO authenticated;
+
+-- ---------- 8c. Reading an account's renewals (D-448, D-449, D-454) ----------
+-- {count, can_change, rows}: every renewal of an account the caller may see, each as crm_renewal_row gives it (what, with whom, the date, days away from
+-- today in `p_time_zone`, the opportunity working it, whether it is done and how, whether a win made it). Those not done come first, soonest first (an overdue
+-- one first of all), then those done. `can_change` is the level rule asked of this account, so the screen shows Edit and Delete to those it will serve. NULL,
+-- the same as for an account that is not there, for anyone who may not see the account (another firm's member, a former member, a platform admin who is
+-- no member, an agent the level does not reach), as account_page answers. Nothing is stored: done and days away are worked out each time.
+CREATE FUNCTION public.account_renewals(p_firm_id uuid, p_account_id uuid, p_time_zone text DEFAULT 'UTC')
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  a public.accounts;
+  today date := (now() AT TIME ZONE public.workspace_time_zone(p_time_zone))::date;
+BEGIN
+  IF p_firm_id IS NULL OR p_account_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  SELECT * INTO a FROM public.accounts x WHERE x.id = p_account_id AND x.firm_id = p_firm_id;
+  IF a.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
+    RETURN NULL;
+  END IF;
+  RETURN jsonb_build_object(
+    'count', (SELECT count(*) FROM public.renewals r WHERE r.account_id = a.id),
+    'can_change', public.can_change_firm_record(a.firm_id, a.owner_id),
+    'rows', COALESCE((
+      SELECT jsonb_agg(public.crm_renewal_row(r, today) ORDER BY public.renewal_is_done(r.not_renewed_on, r.opportunity_id), r.renews_on, r.id)
+      FROM public.renewals r WHERE r.account_id = a.id), '[]'::jsonb));
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.account_renewals(uuid, uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.account_renewals(uuid, uuid, text) TO authenticated;
+
 -- ---------- 9. Closing a firm deletes them (D-407) ----------
 -- The closing's one list (20261119180000), restated with every line it had and the renewals, then the placements, before the opportunities, contacts and
 -- accounts they stand on.

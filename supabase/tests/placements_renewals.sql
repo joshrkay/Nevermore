@@ -743,3 +743,228 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src IN ('public.accounts', 'public.contacts', 'public.opportunities', 'public.activities', 'public.record_history', 'public.referral_partners')), 6::bigint, 'and every line it had is kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'with every kept table');
 END $$;
+
+
+-- ---------- "Didn't renew" and its undo (D-451) ----------
+CREATE FUNCTION pg_temp.ver(p_renewal text) RETURNS integer LANGUAGE sql AS $$ SELECT version FROM public.renewals WHERE id = pg_temp.id(p_renewal) $$;
+CREATE FUNCTION pg_temp.didnt(who text, p_renewal text, p_on date, p_version integer) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.mark_renewal_not_renewed(%L, %L, %L, %L)::text', pg_temp.id(p_renewal), p_on, pg_temp.fid(who), p_version))
+$$;
+CREATE FUNCTION pg_temp.undo(who text, p_renewal text, p_version integer) RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.undo_renewal_not_renewed(%L, %L, %L)::text', pg_temp.id(p_renewal), pg_temp.fid(who), p_version))
+$$;
+
+-- Break caught: marking a renewal not renewed leaves its placement running (the account stays a client, D-451); ends a placement the renewal did not come from;
+-- sets a date before the placement began (a check the table would raise as an error nobody can read); keeps no date; the undo leaves the placement ended or
+-- the renewal marked (the account never comes back); a current plan's renewal ends something it has not got; both ignore the version; a renewal that a win
+-- already renewed is marked as not renewed.
+DO $$
+DECLARE r text; j jsonb;
+BEGIN
+  PERFORM pg_temp.account('nr', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'nr', 'peo_placement', 'Justworks', current_date + 40, current_date - 325);
+  INSERT INTO fx VALUES ('nr1', (r::jsonb -> 'renewal' ->> 'id')::uuid), ('nr1_p', (r::jsonb -> 'placement' ->> 'id')::uuid);
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('nr')), 'client', 'the account is a client with its placement running');
+
+  r := pg_temp.didnt('acme_agent1', 'nr1', current_date + 40, 1);
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the owner marks it "Didn''t renew" with a date');
+  j := r::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, false, 'no conflict');
+  PERFORM pg_temp.is(j -> 'record' ->> 'not_renewed_on', to_char(current_date + 40, 'YYYY-MM-DD'), 'the date is kept on the renewal');
+  PERFORM pg_temp.is(j -> 'record' ->> 'done', 'true', 'it is done');
+  PERFORM pg_temp.is(j -> 'record' ->> 'outcome', 'not_renewed', 'as not renewed');
+  PERFORM pg_temp.is((j -> 'record' ->> 'version')::int, 2, 'a new version');
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = pg_temp.id('nr1_p')), current_date + 40, 'the placement it came from ends on that day');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('nr')), 'former_client', 'and the account is a former client');
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = pg_temp.id('p1b')), NULL::date, 'another account''s placements are not ended');
+
+  -- the undo brings both back
+  r := pg_temp.undo('acme_agent1', 'nr1', 2);
+  PERFORM pg_temp.is(r::jsonb -> 'record' ->> 'not_renewed_on', NULL::text, 'undo clears the date');
+  PERFORM pg_temp.is(r::jsonb -> 'record' ->> 'done', 'false', 'the renewal is not done');
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = pg_temp.id('nr1_p')), NULL::date, 'the placement is not ended');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('nr')), 'client', 'and the account is a client again');
+  PERFORM pg_temp.is((r::jsonb -> 'record' ->> 'version')::int, 3, 'each is a version');
+
+  -- a different day can be given by marking again (the placement ends on the new day)
+  PERFORM pg_temp.didnt('acme_agent1', 'nr1', current_date + 41, 3);
+  r := pg_temp.didnt('acme_agent1', 'nr1', current_date + 45, 4);
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = pg_temp.id('nr1_p')), current_date + 45, 'marked again, the placement ends on the later day');
+  PERFORM pg_temp.undo('acme_agent1', 'nr1', 5);
+
+  -- the date is needed, and not before the placement began
+  PERFORM pg_temp.is(pg_temp.didnt('acme_agent1', 'nr1', NULL, 6), '22023: Give the day it didn''t renew.', 'a date is asked for');
+  PERFORM pg_temp.is(pg_temp.didnt('acme_agent1', 'nr1', current_date - 326, 6), '22023: The placement started on ' || to_char(current_date - 325, 'YYYY-MM-DD') || ', so it can''t end before.', 'not before the placement began');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.didnt('acme_agent1', 'nr1', current_date - 325, 6)), 'ok', 'the day it began is allowed');
+  PERFORM pg_temp.undo('acme_agent1', 'nr1', 7);
+
+  -- a current plan's renewal has no placement to end
+  r := pg_temp.add_renewal('acme_agent1', 'nr', 'current_plan', 'Aetna', current_date + 12);
+  INSERT INTO fx VALUES ('nr2', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.didnt('acme_agent1', 'nr2', current_date + 12, 1);
+  PERFORM pg_temp.is(r::jsonb -> 'record' ->> 'done', 'true', 'a current plan''s renewal can be marked too');
+  PERFORM pg_temp.is(public.account_status(pg_temp.id('nr')), 'client', 'and the account''s placement is untouched');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE account_id = pg_temp.id('nr') AND ended_on IS NOT NULL), 0::bigint, 'none ended');
+
+  -- the version
+  j := pg_temp.didnt('acme_agent1', 'nr1', current_date + 40, 1)::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, true, 'a save from an old version is a conflict');
+  PERFORM pg_temp.is((j ->> 'currentVersion')::int, pg_temp.ver('nr1'), 'naming the version it is at');
+  PERFORM pg_temp.is(j -> 'current' ->> 'not_renewed_on', NULL::text, 'and what is there now');
+  PERFORM pg_temp.is((SELECT ended_on FROM public.placements WHERE id = pg_temp.id('nr1_p')), NULL::date, 'nothing was saved');
+  PERFORM pg_temp.is(pg_temp.didnt('acme_agent1', 'nr1', current_date + 40, NULL),
+    '22023: This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.', 'no version');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.didnt('acme_agent1', 'nr1', current_date + 40, 99)), '22023', 'a version it never had');
+  PERFORM pg_temp.is(pg_temp.undo('acme_agent1', 'nr1', NULL),
+    '22023: This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.', 'the undo needs one too');
+  j := pg_temp.undo('acme_agent1', 'nr1', 1)::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, true, 'an undo from an old version is a conflict');
+  PERFORM pg_temp.didnt('acme_agent1', 'nr1', current_date + 40, pg_temp.ver('nr1'));
+  j := pg_temp.undo('acme_agent1', 'nr1', 1)::jsonb;
+  PERFORM pg_temp.is((j ->> 'conflict')::boolean, true, 'and one that would undo what a later save did');
+  PERFORM pg_temp.is(j -> 'current' ->> 'not_renewed_on', to_char(current_date + 40, 'YYYY-MM-DD'), 'it shows the day now there');
+  PERFORM pg_temp.is((SELECT string_agg(c ->> 'field', ',') FROM jsonb_array_elements(j -> 'changed') c), 'not_renewed_on', 'and the field that was changed');
+  PERFORM pg_temp.undo('acme_agent1', 'nr1', pg_temp.ver('nr1'));
+END $$;
+
+-- Break caught: a renewal a win has already renewed (its working opportunity is Won) is marked as not renewed, so it is "done" two ways and the account
+-- is a former client while its newest placement runs.
+DO $$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.account('wn', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'wn', 'peo_placement', 'Justworks', current_date + 5);
+  INSERT INTO fx VALUES ('wn1', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  PERFORM pg_temp.intake('wn_i', 'acme');
+  PERFORM pg_temp.opportunity('wn_o', 'wn', 'acme_agent1', 'wn_i');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('wn_o') WHERE id = pg_temp.id('wn1');
+  PERFORM pg_temp.is(pg_temp.didnt('acme_agent1', 'wn1', current_date + 5, pg_temp.ver('wn1')) LIKE '%"conflict": false%', true, 'while the opportunity is open, it can be marked');
+  PERFORM pg_temp.undo('acme_agent1', 'wn1', pg_temp.ver('wn1'));
+  PERFORM pg_temp.move('wn_i', 'won');
+  PERFORM pg_temp.is(pg_temp.didnt('acme_agent1', 'wn1', current_date + 5, pg_temp.ver('wn1')),
+    'PT409: This renewal was renewed, so it can''t be marked as not renewed.', 'once the opportunity is won, it can not');
+  PERFORM pg_temp.is((SELECT not_renewed_on FROM public.renewals WHERE id = pg_temp.id('wn1')), NULL::date, 'nothing was saved');
+END $$;
+
+-- Break caught: either function skips the questions every write asks, or asks them in another order (a closing firm or support session refused first, then who
+-- may see, then who may change).
+DO $$
+DECLARE sess uuid; r text;
+BEGIN
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.didnt('acme_agent2', 'nr1', current_date, pg_temp.ver('nr1'))), 'PT404', 'someone who may not see the account: not there');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.undo('acme_agent2', 'nr1', pg_temp.ver('nr1'))), 'PT404', 'nor the undo');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.didnt('acme_agent1', 'zr1', current_date, 1)), 'PT404', 'another firm''s renewal is not there');
+  r := pg_temp.didnt('zenith_agent2', 'zr1', current_date, pg_temp.ver('zr1'));
+  PERFORM pg_temp.is(left(r, 6), '42501:', 'one who sees but may not change it is refused');
+  PERFORM pg_temp.is(left(pg_temp.undo('zenith_agent2', 'zr1', pg_temp.ver('zr1')), 6), '42501:', 'and the undo');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.didnt('acme_removed', 'nr1', current_date, 1)), '42501', 'a former member');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.didnt('zenith_owner', 'zr1', current_date, pg_temp.ver('zr1'))), 'ok', 'a firm''s owner may');
+  PERFORM pg_temp.undo('zenith_owner', 'zr1', pg_temp.ver('zr1'));
+
+  -- a closing firm and Nevermore support change nothing, whichever function (ADR 0023, ADR 0024): the guard is asked before anything else, so even a renewal
+  -- the caller could not see answers PT423
+  INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('acme'), pg_temp.id('acme_owner'), now() + interval '30 days');
+  PERFORM pg_temp.is(left(pg_temp.add_renewal('acme_owner', 'a1', 'current_plan', 'X', current_date), 6), 'PT423:', 'a closing firm adds nothing');
+  PERFORM pg_temp.is(left(pg_temp.upd('acme_owner', 'r1', 'X', current_date, pg_temp.ver('r1')), 6), 'PT423:', 'edits nothing');
+  PERFORM pg_temp.is(left(pg_temp.del('acme_owner', 'r1'), 6), 'PT423:', 'deletes nothing');
+  PERFORM pg_temp.is(left(pg_temp.didnt('acme_owner', 'nr1', current_date, pg_temp.ver('nr1')), 6), 'PT423:', 'marks nothing');
+  PERFORM pg_temp.is(left(pg_temp.undo('acme_owner', 'nr1', pg_temp.ver('nr1')), 6), 'PT423:', 'undoes nothing');
+  PERFORM pg_temp.is(left(pg_temp.didnt('acme_agent2', 'nr1', current_date, pg_temp.ver('nr1')), 6), 'PT423:', 'and the guard comes before the rule that hides the account');
+  DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
+  PERFORM pg_temp.as_user('platform_admin');
+  sess := (SELECT t.session_id FROM public.start_support_session(pg_temp.id('acme'), 'Looking at an account the firm asked about') t);
+  PERFORM pg_temp.is(left(pg_temp.add_renewal('platform_admin', 'a1', 'current_plan', 'X', current_date), 6), 'PT423:', 'Nevermore support adds nothing');
+  PERFORM pg_temp.is(left(pg_temp.upd('platform_admin', 'r1', 'X', current_date, pg_temp.ver('r1')), 6), 'PT423:', 'edits nothing');
+  PERFORM pg_temp.is(left(pg_temp.del('platform_admin', 'r1'), 6), 'PT423:', 'deletes nothing');
+  PERFORM pg_temp.is(left(pg_temp.didnt('platform_admin', 'nr1', current_date, pg_temp.ver('nr1')), 6), 'PT423:', 'marks nothing');
+  PERFORM pg_temp.is(left(pg_temp.undo('platform_admin', 'nr1', pg_temp.ver('nr1')), 6), 'PT423:', 'undoes nothing');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.end_support_session(sess);
+  RESET ROLE;
+END $$;
+
+
+-- ---------- reading an account's renewals (D-448, D-449, D-454) ----------
+CREATE FUNCTION pg_temp.renewals_of(who text, p_account text, p_tz text DEFAULT 'UTC') RETURNS text LANGUAGE sql AS $$
+  SELECT pg_temp.as_call(who, pg_temp.addr(who), format('SELECT public.account_renewals(%L, %L, %L)::text', pg_temp.fid(who), pg_temp.id(p_account), p_tz))
+$$;
+-- One row of the answer by the renewal's name.
+CREATE FUNCTION pg_temp.row_of(j jsonb, p_renewal text) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT e.value FROM jsonb_array_elements(j -> 'rows') e WHERE e.value ->> 'id' = pg_temp.id(p_renewal)::text
+$$;
+
+-- Break caught: the list leaves out what a person needs (what, with whom, the date, how far away, the opportunity working it, whether it is done); days away
+-- is stored or taken from another day than the caller's (D-448: worked out each time, from today); a past renewal not done reads as done; done is read from
+-- anything but the opportunity being Won and the not-renewed day (D-449); a lost opportunity makes it done; the list is another account's or another firm's.
+DO $$
+DECLARE r text; j jsonb; one jsonb;
+BEGIN
+  PERFORM pg_temp.account('rd', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('rd_empty', 'acme', 'acme_agent1');
+  r := pg_temp.add_renewal('acme_agent1', 'rd', 'peo_placement', 'Justworks', current_date + 45);        INSERT INTO fx VALUES ('rd_a', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.add_renewal('acme_agent1', 'rd', 'current_plan', 'Aetna', current_date);                   INSERT INTO fx VALUES ('rd_b', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.add_renewal('acme_agent1', 'rd', 'current_plan', 'Cigna', current_date - 12);               INSERT INTO fx VALUES ('rd_c', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.add_renewal('acme_agent1', 'rd', 'peo_placement', 'Gusto', current_date + 300);            INSERT INTO fx VALUES ('rd_d', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.add_renewal('acme_agent1', 'rd', 'peo_placement', 'TriNet', current_date + 100);           INSERT INTO fx VALUES ('rd_e', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  r := pg_temp.add_renewal('acme_agent1', 'rd', 'current_plan', 'Kaiser', current_date + 200);            INSERT INTO fx VALUES ('rd_f', (r::jsonb -> 'renewal' ->> 'id')::uuid);
+  -- rd_d is worked by an opportunity that was won (renewed); rd_e by one that was lost; rd_f by one still open; rd_c is marked not renewed
+  PERFORM pg_temp.intake('rd_won_i', 'acme');  PERFORM pg_temp.opportunity('rd_won', 'rd', 'acme_agent1', 'rd_won_i');  PERFORM pg_temp.move('rd_won_i', 'won');
+  PERFORM pg_temp.intake('rd_lost_i', 'acme'); PERFORM pg_temp.opportunity('rd_lost', 'rd', 'acme_agent1', 'rd_lost_i'); PERFORM pg_temp.move('rd_lost_i', 'lost');
+  PERFORM pg_temp.opportunity('rd_open', 'rd', 'acme_agent1');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('rd_won') WHERE id = pg_temp.id('rd_d');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('rd_lost') WHERE id = pg_temp.id('rd_e');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('rd_open') WHERE id = pg_temp.id('rd_f');
+  PERFORM pg_temp.didnt('acme_agent1', 'rd_c', current_date - 12, pg_temp.ver('rd_c'));
+
+  r := pg_temp.renewals_of('acme_agent1', 'rd');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the owner of the account reads its renewals');
+  j := r::jsonb;
+  PERFORM pg_temp.is((j ->> 'count')::int, 6, 'six renewals');
+  PERFORM pg_temp.is(jsonb_array_length(j -> 'rows'), 6, 'six rows');
+  PERFORM pg_temp.is((j ->> 'can_change')::boolean, true, 'the owner may change them');
+  one := pg_temp.row_of(j, 'rd_a');
+  PERFORM pg_temp.is(one - 'id' - 'account_id' - 'placement_id' - 'version', jsonb_build_object('kind', 'peo_placement', 'with_whom', 'Justworks',
+    'renews_on', to_char(current_date + 45, 'YYYY-MM-DD'), 'days_away', 45, 'opportunity', NULL, 'not_renewed_on', NULL, 'done', false, 'outcome', NULL, 'made_by_win', false),
+    'what, with whom, the date, 45 days away, no opportunity, not done');
+  PERFORM pg_temp.is((pg_temp.row_of(j, 'rd_b') ->> 'days_away')::int, 0, 'today is 0 days away');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_b') ->> 'done', 'false', 'a renewal today is not done');
+  -- rd_c is past and marked not renewed: done. A past one not done would read negative and not done (below).
+  PERFORM pg_temp.is((pg_temp.row_of(j, 'rd_c') ->> 'days_away')::int, -12, 'twelve days ago is -12');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_c') ->> 'outcome', 'not_renewed', 'marked "Didn''t renew": done');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_d') ->> 'outcome', 'renewed', 'its opportunity Won: done, renewed');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_d') ->> 'done', 'true', 'done');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_d') -> 'opportunity' ->> 'name', 'PEO search rd_won', 'it names the opportunity');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_d') -> 'opportunity' ->> 'stage', 'won', 'and its stage');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_e') ->> 'done', 'false', 'a lost opportunity does not make it done');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_e') -> 'opportunity' ->> 'stage', 'lost', 'it shows the opportunity, lost');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_f') ->> 'done', 'false', 'an open opportunity does not make it done');
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_f') -> 'opportunity' ->> 'stage', 'qualifying', 'it shows the open opportunity''s stage');
+  PERFORM pg_temp.is((SELECT string_agg(left(e.value ->> 'with_whom', 6), ',') FROM jsonb_array_elements(j -> 'rows') e), 'Aetna,Justwo,TriNet,Kaiser,Cigna,Gusto',
+    'not done first, soonest first; done after');
+
+  -- a past renewal not done reads negative and not done (D-448: shown in the warning colour)
+  UPDATE public.renewals SET not_renewed_on = NULL WHERE id = pg_temp.id('rd_c');
+  j := pg_temp.renewals_of('acme_agent1', 'rd')::jsonb;
+  PERFORM pg_temp.is(pg_temp.row_of(j, 'rd_c') ->> 'done', 'false', 'a past renewal not done is not done');
+  PERFORM pg_temp.is((SELECT e.value ->> 'with_whom' FROM jsonb_array_elements(j -> 'rows') e LIMIT 1), 'Cigna', 'and comes first, overdue');
+
+  -- days away follows the caller's day
+  PERFORM pg_temp.is((pg_temp.row_of(pg_temp.renewals_of('acme_agent1', 'rd', 'Pacific/Kiritimati')::jsonb, 'rd_a') ->> 'days_away')::int
+    <= (pg_temp.row_of(pg_temp.renewals_of('acme_agent1', 'rd', 'Etc/GMT+12')::jsonb, 'rd_a') ->> 'days_away')::int - 1, true, 'days away is counted from the caller''s own today');
+
+  -- who reads them: whoever may see the account, nothing for anyone else
+  PERFORM pg_temp.is(pg_temp.renewals_of('acme_agent2', 'rd'), NULL::text, 'someone who may not see the account reads nothing, as for an account not there');
+  PERFORM pg_temp.is(pg_temp.renewals_of('zenith_owner', 'rd'), NULL::text, 'another firm''s owner reads nothing');
+  PERFORM pg_temp.is(pg_temp.renewals_of('acme_owner', 'rd') IS NOT NULL, true, 'an owner of the firm reads them');
+  PERFORM pg_temp.is((pg_temp.renewals_of('acme_owner', 'rd')::jsonb ->> 'can_change')::boolean, true, 'and may change them');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.account_renewals(%L, %L)::text', pg_temp.id('zenith'), pg_temp.id('rd'))), NULL::text, 'naming the wrong firm: nothing');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.account_renewals(%L, %L)::text', pg_temp.id('acme'), gen_random_uuid())), NULL::text, 'an account that is not there: nothing');
+  PERFORM pg_temp.is(pg_temp.as_call('platform_admin', 'acme-brokers', format('SELECT public.account_renewals(%L, %L)::text', pg_temp.id('acme'), pg_temp.id('rd'))), NULL::text, 'a platform admin who is no member: nothing');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_removed', 'acme-brokers', format('SELECT public.account_renewals(%L, %L)::text', pg_temp.id('acme'), pg_temp.id('rd'))), NULL::text, 'a former member: nothing');
+  -- Zenith shows everyone everything: one who may see an account reads its renewals but may not change them
+  j := pg_temp.renewals_of('zenith_agent2', 'z1')::jsonb;
+  PERFORM pg_temp.is((j ->> 'count')::int, 2, 'a member who sees a colleague''s account reads its renewals');
+  PERFORM pg_temp.is((j ->> 'can_change')::boolean, false, 'and is told they may not change them');
+  -- an account with none
+  PERFORM pg_temp.is(pg_temp.renewals_of('acme_agent1', 'rd_empty')::jsonb, jsonb_build_object('count', 0, 'rows', '[]'::jsonb, 'can_change', true), 'an account with no renewal: none, to add one');
+END $$;
