@@ -214,6 +214,7 @@
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

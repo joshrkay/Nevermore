@@ -130,7 +130,8 @@ const accountColumns: ColumnDefinition<AccountRow, keyof Fields>[] = [
       <>
         <div className="flex flex-wrap items-center gap-2">
           <Link to={`/accounts/${row.id}`} className="font-medium text-foreground hover:text-primary">{row.name}</Link>
-          {row.status === "client" && <Pill>{STATUS_LABELS.client}</Pill>}
+          {/* A client and a former client are marked (D-451, D-455); a prospect account is the default and is not. */}
+          {row.status !== "prospect" && <Pill>{STATUS_LABELS[row.status]}</Pill>}
         </div>
         {locationOf(row) && <p className="text-xs text-muted-foreground">{locationOf(row)}</p>}
       </>
