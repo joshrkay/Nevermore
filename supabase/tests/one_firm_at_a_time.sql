@@ -161,6 +161,23 @@
 \i supabase/migrations/20261118170000_export.sql
 \i supabase/migrations/20261118170500_export_fixes.sql
 \i supabase/migrations/20261118171000_export_fixes_again.sql
+\i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
+\i supabase/migrations/20261119090000_export.sql
+\i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
+\i supabase/migrations/20261119100000_crm_records.sql
+\i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
+\i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119150000_create_account.sql
+\i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119230000_search_everywhere.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -311,6 +328,7 @@ DECLARE
   sid uuid;
   qr bigint;
 BEGIN
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity; -- the fixture puts a quote request on a draft that sits on no opportunity (CRM-Q1.3)
   FOREACH n IN ARRAY ARRAY['two', 'only_a', 'only_b', 'admin_w', 'platform_admin', 'founder_r', 'founder_w', 'former_b', 'prospect'] LOOP
     PERFORM pg_temp.new_user(n);
   END LOOP;
@@ -345,6 +363,7 @@ BEGIN
     INSERT INTO public.referral_partners (firm_id, code, name, kind) VALUES (pg_temp.id(n), 'cfo-' || n, 'CFO of ' || n, 'accounting');
     INSERT INTO public.firm_teams (firm_id, name) VALUES (pg_temp.id(n), 'Team ' || n);
   END LOOP;
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
 END $$;
 
 -- The firm tables the two firms' rows are counted in, each row found by the firm it hangs off.

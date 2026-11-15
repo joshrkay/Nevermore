@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Inbox, RefreshCw, SearchX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
 } from "@/components/advisor/queueTable";
 import {
-  ColumnsMenu, FilterRow, inForceInWords, isNarrowed, SearchBox, TableFrame, useFirmReady, useRefreshTable, useTableAddress, useTableColumns, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
+  ColumnsMenu, FilterRow, hasHeld, refusedQueryReason, useSavedViewsControl, inForceInWords, isNarrowed, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns, useRefreshTable, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 
 // The submissions queue (story CRM-S3.5a): the first page on the workspace's table frame (src/components/workspace/table/). The address
@@ -37,7 +37,13 @@ const AdvisorDashboardPage = () => {
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
   const refresh = useRefreshTable(table);
-  const shownColumns = useTableColumns(table);
+  // The columns this person chose for the queue, kept in the database (CRM-S3.1a, D-43); the table and its grey loading rows draw the same list.
+  // On a saved view it is the person's choice for that view (CRM-S3.4a); CRM-X3.1's custom fields join the table's `columns`.
+  const mine = useMyColumns(table, address.view);
+  const columns = useMemo(() => shownColumns(table, mine.kept), [table, mine.kept]);
+  // Saving, renaming, sharing and deleting views (CRM-S3.4a); a new view keeps the columns the person sees now, once those have arrived, and nothing the
+  // database refuses is kept.
+  const savedViews = useSavedViewsControl(table, location, { columns: mine.kept, columnsStatus: mine.status, refused: !!data.error && refusedQueryReason(data.error) !== null, rowsSettled: !hasHeld(address) && !data.isPlaceholder && (data.page !== null || data.error !== null) });
   // The row's "Add filter": where focus goes when filters are cleared, from the row or from the empty state (D-170).
   const addFilterRef = useRef<HTMLButtonElement>(null);
 
@@ -55,7 +61,6 @@ const AdvisorDashboardPage = () => {
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-6">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Company, contact or File ID" onSearch={(term) => change({ search: term })} />
-        <ColumnsMenu table={table} columns={shownColumns} />
         {/* Not usable until there are rows to ask again for. It stays in the tab order, says why, and ignores the click. */}
         <button
           onClick={loading ? undefined : refresh}
@@ -66,6 +71,7 @@ const AdvisorDashboardPage = () => {
         >
           <RefreshCw className="w-4 h-4" />
         </button>
+        <ColumnsMenu table={table} mine={mine} />
         {loading && <span id="refresh-unavailable" className="sr-only">Available when the list has loaded</span>}
       </div>
     </div>
@@ -74,7 +80,7 @@ const AdvisorDashboardPage = () => {
   );
 
   // Today's status tabs, as the queue's built-in views; CRM-S3.4a turns them into the full saved-views bar.
-  const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} />;
+  const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} saved={savedViews} />;
 
   // Empty (story CRM-S2.2). The rule that tells the two kinds apart: a bare address (no tab, search or filter) that comes back with no rows is NOTHING YET,
   // because the firm has no submissions to show; a narrowed one is NOTHING MATCHES. The queue does not know how many submissions the firm has without
@@ -120,8 +126,7 @@ const AdvisorDashboardPage = () => {
           location={location}
           data={data}
           context={context}
-          columns={shownColumns.columns}
-          columnsLoading={shownColumns.loading}
+          columns={columns}
           caption="Submissions"
           toolbar={toolbar}
           views={views}

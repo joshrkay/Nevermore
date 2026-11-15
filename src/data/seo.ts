@@ -83,6 +83,9 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/advisor\/peos$/, "PEOs"],
   [/^\/advisor\/mailbox$/, "Mailbox"],
   [/^\/advisor\/activity$/, "Activity"],
+  [/^\/accounts$/, "Accounts"],
+  [/^\/accounts\/[^/]+$/, "Account"],
+  [/^\/contacts\/[^/]+$/, "Contact"],
   [/^\/advisor\/held$/, "Held mail"],
   [/^\/advisor\/firms$/, "Firm approvals"],
   [/^\/advisor(\/.*)?$/, "Advisor Console"],
@@ -106,6 +109,9 @@ export const PRIVATE_PATH_EXAMPLES = [
   "/advisor",
   "/advisor/outbox",
   "/advisor/submissions/123",
+  "/accounts",
+  "/accounts/123",
+  "/contacts/123",
 ];
 
 /**

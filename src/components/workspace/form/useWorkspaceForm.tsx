@@ -151,7 +151,12 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown, Current = 
   const dirty = form.formState.isDirty;
   const guard = useUnsavedChangesGuard(dirty);
 
+  // True from the moment a save starts until it has ended: a second submit (Enter again, a second event) and a close are ignored meanwhile. A ref, so it holds
+  // in the same breath, before the `saving` state has rendered.
+  const inFlight = useRef(false);
+
   const submit = form.handleSubmit(async (values) => {
+    if (inFlight.current) return;
     // Nothing is sent without a connection (the Save button says so; a save made with Enter says it too).
     if (!navigator.onLine) {
       setSaveError(OFFLINE_SAVE_FAILED);
@@ -184,11 +189,17 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown, Current = 
       if (said.field) form.setError(said.field, { type: "server", message: said.message }, { shouldFocus: true });
       else setSaveError(said.message);
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   });
 
-  const requestClose = guard.ask;
+  // A form is not closed or discarded while it is saving: the save would still land and move the page for a form the person had closed.
+  const ask = guard.ask;
+  const requestClose = useCallback<typeof guard.ask>((...args) => {
+    if (inFlight.current) return;
+    return ask(...args);
+  }, [ask]);
   const cancel = onCancel
     ? () => guard.ask(() => {
         baseline.current = defaultValues as Record<string, unknown>;
@@ -264,7 +275,7 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown, Current = 
 
   return {
     form, formId, saving, saveError, dirty, startedVersion, begin, startFrom: setStartedVersion, submit, onKeyDown, cancel, offline: !online, saveButton,
-    requestClose: useCallback(requestClose, [requestClose]),
+    requestClose,
     prompt: <>{guard.prompt}{dialog}</>,
   };
 }

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { BellRing } from "lucide-react";
 import {
@@ -9,7 +10,7 @@ import { US_STATE_CODES } from "@/data/chamberValidation";
 import { RECOMMENDED_ITEMS, REQUIRED_ITEMS } from "@/data/readiness";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 import { INBOX_PARAM } from "@/components/workspace/menu";
-import type { ColumnDefinition, FieldChoice, FieldDefinitions, TableDefinition, TableQuery, TableView } from "@/components/workspace/table";
+import { useSavedViewList, withSavedViews, type ColumnDefinition, type FieldChoice, type FieldDefinitions, type TableDefinition, type TableQuery, type TableView } from "@/components/workspace/table";
 import { QUEUE_FIELDS, listQueue, type QueueField, type QueueFilter, type QueuePage, type QueueRow } from "@/lib/queueApi";
 import type { EmailProblem } from "@/lib/advisorApi";
 
@@ -102,6 +103,12 @@ const FIELD_CHOICES: Partial<Record<QueueField, readonly FieldChoice[]>> = {
 };
 
 /**
+ * The choice fields whose values the database checks: it refuses a value outside the list (`queue_field_choices`; a state must be a state code). The
+ * other lists (missing items) are only what the screen offers, and the database takes any text there.
+ */
+const ENFORCED_CHOICES: readonly QueueField[] = ["pipeline_status", "intake_status", "states"];
+
+/**
  * A first click on a date column sorts newest first, except these two, where the person wants the oldest day first: the longest wait on a
  * PEO is the earliest "waiting since", and the quote about to lapse is the earliest expiry (the two orders the old Sort box offered). A
  * first click on Quotes sorts the most requests first (an intake with none has the number 0 and would otherwise fill the first page).
@@ -114,6 +121,7 @@ const queueFields = Object.fromEntries(
     label: FIELD_LABELS[id],
     kind: QUEUE_FIELDS[id],
     ...(FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id] } : {}),
+    ...(FIELD_CHOICES[id] && ENFORCED_CHOICES.includes(id) ? { choicesEnforced: true } : {}),
     ...(FIRST_DIRECTIONS[id] ? { firstDirection: FIRST_DIRECTIONS[id] } : {}),
   }]),
 ) as FieldDefinitions<Fields>;
@@ -128,6 +136,8 @@ const submittedText = (row: QueueRow) =>
     ? formatDate(row.submitted_at)
     : CLOSED_INTAKE_LABELS[row.intake_status ?? ""] ?? (row.intake_status === "submitted" ? "Date not recorded" : row.signer_name ? "Needs re-certification" : "Not certified");
 
+// Each column's `id` is kept in the database in a person's column choice (CRM-S3.1a): never rename or reuse one once shipped. A new column is
+// hidden for a person who has a kept choice until they show it from the Columns menu.
 const queueColumns: ColumnDefinition<QueueRow, keyof Fields, QueueContext>[] = [
   {
     id: "company",
@@ -310,10 +320,14 @@ export const QUEUE_TABLE: QueueTableDefinition = {
 };
 
 /**
- * The queue's definition. A hook so that CRM-S3.4a can add the firm's saved views to it once they have loaded (with `viewsStatus`
- * "loading" until then); today everything is in code and it is always ready.
+ * The queue's definition: what is in code, and the firm's saved views after the built-in ones once they have loaded (CRM-S3.4a). Until the first
+ * answer `viewsStatus` is "loading" (an address that names a view the table doesn't list yet waits for it, D-141); the definition is memoized on
+ * the list, so it is the same object until a view is added, changed or removed.
  */
-export const useQueueTable = (): QueueTableDefinition => QUEUE_TABLE;
+export const useQueueTable = (): QueueTableDefinition => {
+  const { saved, status } = useSavedViewList(QUEUE_TABLE.id);
+  return useMemo(() => withSavedViews(QUEUE_TABLE, saved, status), [saved, status]);
+};
 
 /** The page's one call to the database: the effective query (the view's filters and the address's together). */
 export const fetchQueuePage = (query: TableQuery<Fields>): Promise<QueuePage> => listQueue(query);

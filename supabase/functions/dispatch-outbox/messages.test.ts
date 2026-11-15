@@ -5,6 +5,7 @@ import {
   oneLine,
   parseAdvisorNotification,
   parseDraftExpiryReminder,
+  parseExportAlert,
   parseInformationRequest,
   parsePeoMailArrived,
   parseProspectConfirmation,
@@ -460,5 +461,49 @@ describe("PEO mail notice", () => {
     expect(parsePeoMailArrived({ peo_name: "TriNet" })).toBeNull();
     expect(parsePeoMailArrived({ reference: "EAA-1" })).toBeNull();
     expect(parsePeoMailArrived("nope")).toBeNull();
+  });
+});
+
+// The owners' alert of an export comes in two shapes while Epic 3's export supersedes main's (D-218): Epic 3's names the table in words
+// (`table_label`), main's by its name (`table`). 20261118180000_epic3_export_supersedes.sql rewrites main's queued alerts into Epic 3's shape,
+// but an alert this dispatcher claimed before the rewrite, or found queued because it was deployed ahead of the migrations, is still main's.
+describe("export alert", () => {
+  const epic3 = {
+    member_email: "sam@firm-a.example", table_label: "Referral partners", row_count: 3, exports_in_hour: 3, large: false,
+    exported_at: "2026-11-18T09:15:00Z", firm_name: "Acme Brokers",
+  };
+  const main = (table: unknown) => ({
+    member_email: "sam@firm-a.example", firm_name: "Acme Brokers", table, row_count: 3, exported_at: "2026-11-18T09:15:00Z", large: false,
+    exports_in_hour: 3,
+  });
+  const read = {
+    memberEmail: "sam@firm-a.example", firmName: "Acme Brokers", tableLabel: "Referral partners", rowCount: 3, large: false, exportsInHour: 3,
+    exportedAt: "2026-11-18T09:15:00Z",
+  };
+
+  // Catches: main's alert is no alert (the owners are never told), or its table comes out in other words than the rewrite and Epic 3's
+  // export_table_registry() give it ("Referral partners", "The firm's record").
+  it("reads main's alert, which names the table, in the words Epic 3 uses for that table", () => {
+    expect(parseExportAlert(main("referral_partners"))).toEqual(read);
+    expect(parseExportAlert(main("firm_activity"))).toEqual({ ...read, tableLabel: "The firm's record" });
+  });
+
+  // Catches: main's shape lets any table through (its name in the email, or a name the prototype answers to), or one written another way.
+  it.each([["submissions"], ["toString"], ["__proto__"], ["constructor"], ["Referral partners"], ["REFERRAL_PARTNERS"], ["referral_partners "], [""], [7], [null]])(
+    "is no alert in main's shape when the table is %j",
+    (table) => {
+      expect(parseExportAlert(main(table))).toBeNull();
+    },
+  );
+
+  // Catches: Epic 3's own alert changes how it is read, or a broken one is rescued by a `table` beside its words.
+  it("reads Epic 3's alert as before, by its words alone", () => {
+    expect(parseExportAlert(epic3)).toEqual(read);
+    expect(parseExportAlert({ ...epic3, table_label: "The firm's record" })).toEqual({ ...read, tableLabel: "The firm's record" });
+    expect(parseExportAlert({ ...epic3, table: "firm_activity" })).toEqual(read);
+    expect(parseExportAlert({ ...epic3, table_label: "", table: "referral_partners" })).toBeNull();
+    expect(parseExportAlert({ ...epic3, table_label: null, table: "referral_partners" })).toBeNull();
+    const { table_label: _gone, ...noWords } = epic3;
+    expect(parseExportAlert(noWords)).toBeNull();
   });
 });

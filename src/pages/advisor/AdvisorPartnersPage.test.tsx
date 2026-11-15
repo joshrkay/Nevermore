@@ -6,12 +6,12 @@ import { toast } from "sonner";
 import { goOffline, goOnline, restoreConnection } from "@/test/connection";
 
 const signOut = vi.fn();
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
+// Whether the person has an authenticator decides how they step up for an export (`mfa` below), not how they signed in.
+const auth = { user: { email: "adv@example.com", app_metadata: { providers: ["email"] } } as { email: string; app_metadata: { providers: string[] } }, signOut };
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 let firmAddress: { status: string; address?: string; name?: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
-// The Export button (CRM-S3.8a, tested in AdvisorPartnersPage.export.test.tsx) reaches the database through src/lib/exportApi.ts, which holds the client: not used here.
-vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const api = {
   listMyFirms: vi.fn(),
   listReferralPartners: vi.fn(),
@@ -20,9 +20,20 @@ const api = {
   updateReferralPartner: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// The Export button asks the database through exportRows (its refusals are the real ExportError) and hands the file to downloadBlob: both are faked here,
+// so the test sees the file the person would have been given, never the browser's own download.
+// The authenticator's calls (src/lib/secondFactor.ts), faked at the client: which app the person has, and whether a code is right.
+const mfa = { listFactors: vi.fn(), challengeAndVerify: vi.fn() };
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: { mfa } } }));
+const exportRows = vi.fn();
+vi.mock("@/lib/exportApi", async () => ({ ...(await vi.importActual<object>("@/lib/exportApi")), exportRows: (...a: unknown[]) => exportRows(...a) }));
+const downloadBlob = vi.fn();
+vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...a: unknown[]) => downloadBlob(...a) }));
 
 const { default: AdvisorPartnersPage } = await import("./AdvisorPartnersPage");
 const { DEFAULT_FIRM_ID } = await import("@/data/referralPartners");
+const { ExportError } = await import("@/lib/exportApi");
+const { WorkspaceContext } = await import("@/components/workspace/workspaceContext");
 
 // Every intake a browser starts belongs to the default firm (D-101), so only its partners' links can work today.
 const DEFAULT_FIRM = DEFAULT_FIRM_ID;
@@ -49,6 +60,12 @@ describe("AdvisorPartnersPage", () => {
     vi.mocked(toast.success).mockReset();
     vi.mocked(toast.error).mockReset();
     firmAddress = { status: "none" };
+    signOut.mockReset();
+    mfa.listFactors.mockReset().mockResolvedValue({ data: { totp: [], all: [] }, error: null });
+    mfa.challengeAndVerify.mockReset();
+    auth.user = { email: "adv@example.com", app_metadata: { providers: ["email"] } };
+    exportRows.mockReset();
+    downloadBlob.mockReset();
     api.listMyFirms.mockResolvedValue([alpha]);
     api.listReferralPartners.mockResolvedValue([acme]);
     api.loadIntakeSources.mockResolvedValue([
@@ -1161,6 +1178,315 @@ describe("AdvisorPartnersPage", () => {
       renderPage();
       expect(await screen.findByText(/aren't a member of a firm/)).toBeInTheDocument();
       expect(api.listReferralPartners).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the Export button (story CRM-S3.8a)", () => {
+    // What the database gives for a partner: more columns than the page shows (the kind, when it was added), which stay out of the file.
+    const COLUMNS = [
+      { id: "code", label: "Code" }, { id: "name", label: "Name" }, { id: "kind", label: "Kind" },
+      { id: "started_30d", label: "Started, 30 days" }, { id: "certified_30d", label: "Certified, 30 days" }, { id: "created_at", label: "Added" },
+    ];
+    const answer = (rows: Record<string, string | number | null>[], over: Record<string, unknown> = {}) => ({
+      table: "referral_partners", label: "Referral partners", columns: COLUMNS, rows, count: rows.length, skipped: 0, exportedAt: "2026-11-19T10:00:00+00:00", ...over,
+    });
+    const row = (over: Record<string, string | number | null> = {}) =>
+      ({ code: "acme-cfo", name: "Acme CFO Partners", kind: "accounting", started_30d: 5, certified_30d: 2, created_at: "2026-11-01T00:00:00+00:00", ...over });
+    const exportButton = () => screen.findByRole("button", { name: "Export" });
+    /** The one file handed to the browser: its name, its text and its first bytes. */
+    const theFile = async () => {
+      expect(downloadBlob).toHaveBeenCalledTimes(1);
+      const [blob, name] = downloadBlob.mock.calls[0] as [Blob, string];
+      return { name, text: await blobText(blob), bytes: await blobBytes(blob) };
+    };
+    // The page's own columns, as the table on screen words them: its default firm shows each partner's link, any other firm its code.
+    const HEAD = 'Partner,Their link,"Started, 30 days","Certified, 30 days"';
+
+    it("downloads a CSV of every partner with the columns the page shows, in the order it shows them, named for the table and the day, and says how many", async () => {
+      exportRows.mockResolvedValue(answer([row(), row({ code: "acme-law", name: "Acme Law", kind: "law_firm", started_30d: 0, certified_30d: 0 })]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByText("Exported 2 referral partners.")).toBeInTheDocument();
+      // A whole table: the firm and the table, and no filters (the page has none) and no ids.
+      expect(exportRows).toHaveBeenCalledWith({ firmId: DEFAULT_FIRM, table: "referral_partners", filters: {} });
+      const { name, text } = await theFile();
+      expect(name).toBe("referral-partners-2026-11-19.csv");
+      // The kind and when it was added are the database's, not the page's: they are not in the file. The link is what the page shows for the code.
+      expect(text).toBe(
+        `${HEAD}\r\n` +
+        "Acme CFO Partners,https://nevermorepeo.com/?ref=acme-cfo,5,2\r\n" +
+        "Acme Law,https://nevermorepeo.com/?ref=acme-law,0,0\r\n",
+      );
+    });
+
+    it("names the column as the page does when the firm has no link to show: their code", async () => {
+      api.listMyFirms.mockResolvedValue([beta]);
+      api.listReferralPartners.mockResolvedValue([{ ...acme, firm_id: "firm-b" }]);
+      exportRows.mockResolvedValue(answer([row()]));
+      renderPage("/advisor/partners?firm=firm-b");
+      fireEvent.click(await exportButton());
+      await screen.findByText("Exported 1 referral partner.");
+      expect((await theFile()).text).toBe('Partner,Their code,"Started, 30 days","Certified, 30 days"\r\nAcme CFO Partners,acme-cfo,5,2\r\n');
+    });
+
+    it("starts the file with a byte order mark, so a spreadsheet reads an accent as it was written", async () => {
+      exportRows.mockResolvedValue(answer([row({ name: "José Müller" })]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      await screen.findByText("Exported 1 referral partner.");
+      const { bytes, text } = await theFile();
+      expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      expect(text).toContain("José Müller");
+    });
+
+    it("says one in the singular, and the file holds that one partner", async () => {
+      exportRows.mockResolvedValue(answer([row()]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByText("Exported 1 referral partner.")).toBeInTheDocument();
+      expect((await theFile()).text).toBe(`${HEAD}\r\nAcme CFO Partners,https://nevermorepeo.com/?ref=acme-cfo,5,2\r\n`);
+    });
+
+    it("says nothing matched when the database gave no row, and the file holds only the headings", async () => {
+      exportRows.mockResolvedValue(answer([]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByText("Nothing matched, so the file holds only the headings.")).toBeInTheDocument();
+      expect((await theFile()).text).toBe(`${HEAD}\r\n`);
+    });
+
+    it("fails, with no file, when the database's answer lacks a column the page shows", async () => {
+      exportRows.mockResolvedValue(answer([row()], { columns: COLUMNS.filter((c) => c.id !== "certified_30d") }));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't export. Try again.");
+      expect(downloadBlob).not.toHaveBeenCalled();
+    });
+
+    it("neutralises a cell a spreadsheet would run as a formula, and quotes commas, semicolons, quotes and line breaks (RFC 4180)", async () => {
+      exportRows.mockResolvedValue(answer([
+        row({ code: "a", name: '=HYPERLINK("http://evil.example","x")' }),
+        row({ code: "b", name: "+1+1" }),
+        row({ code: "c", name: "-2+3" }),
+        row({ code: "d", name: "@SUM(A1)" }),
+        row({ code: "e", name: 'Say "hi", then\nleave' }),
+        row({ code: "f", name: null }),
+        row({ code: "g", name: "Fine, Inc." }),
+        // An Excel set to a semicolon separator splits at each one, so a cell holding one is quoted, and what starts the cell is still neutralised.
+        row({ code: "h", name: "x;=cmd|' /C calc'!A0;" }),
+        row({ code: "i", name: "=cmd;x" }),
+        // A leading line feed, and the full-width forms of the four characters, which a spreadsheet's input method can turn back into formulas.
+        row({ code: "j", name: "\n=1+1" }),
+        row({ code: "k", name: "＝1+1" }),
+        row({ code: "l", name: "＋1" }),
+        row({ code: "m", name: "－1" }),
+        row({ code: "n", name: "＠SUM(A1)" }),
+        row({ code: "o", name: "\t=1" }),
+      ]));
+      renderPage();
+      fireEvent.click(await exportButton());
+      await screen.findByText("Exported 15 referral partners.");
+      const { text } = await theFile();
+      const lines = text.split("\r\n");
+      const tail = (code: string) => `,https://nevermorepeo.com/?ref=${code},5,2`;
+      // Each risky value is kept as text by a leading apostrophe; its own quotes are doubled inside a quoted cell.
+      expect(lines[1]).toBe(`"'=HYPERLINK(""http://evil.example"",""x"")"${tail("a")}`);
+      expect(lines[2]).toBe(`'+1+1${tail("b")}`);
+      expect(lines[3]).toBe(`'-2+3${tail("c")}`);
+      expect(lines[4]).toBe(`'@SUM(A1)${tail("d")}`);
+      expect(text).toContain(`"Say ""hi"", then\nleave"${tail("e")}\r\n`);
+      expect(lines[6]).toBe(tail("f"));
+      expect(text).toContain(`"Fine, Inc."${tail("g")}\r\n`);
+      expect(text).toContain(`"x;=cmd|' /C calc'!A0;"${tail("h")}\r\n`);
+      expect(text).toContain(`"'=cmd;x"${tail("i")}\r\n`);
+      expect(text).toContain(`"'\n=1+1"${tail("j")}\r\n`);
+      expect(text).toContain(`'＝1+1${tail("k")}\r\n`);
+      expect(text).toContain(`'＋1${tail("l")}\r\n`);
+      expect(text).toContain(`'－1${tail("m")}\r\n`);
+      expect(text).toContain(`'＠SUM(A1)${tail("n")}\r\n`);
+      expect(text).toContain(`'\t=1${tail("o")}\r\n`);
+    });
+
+    it("does not start a second export from a second click made before the page has drawn the first", async () => {
+      let finish: (v: unknown) => void = () => {};
+      exportRows.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+      renderPage();
+      const button = await exportButton();
+      // Both clicks reach the button as it was drawn, before React has disabled it: only the control's own guard can stop the second.
+      act(() => { button.click(); button.click(); });
+      expect(exportRows).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Exporting…" })).toBeDisabled();
+      finish(answer([row()]));
+      expect(await screen.findByRole("button", { name: "Export" })).toBeEnabled();
+      expect(downloadBlob).toHaveBeenCalledTimes(1);
+    });
+
+    describe("when the last sign-in is too old for a whole table (PT401)", () => {
+      const tooOld = () => new ExportError("signInAgain", "Sign in again to export a whole table.");
+      /** The first export is refused for its sign-in; the next, once the person has stepped up, gives the file. */
+      const refusedThenGiven = () => {
+        exportRows.mockRejectedValueOnce(tooOld());
+        exportRows.mockResolvedValue(answer([row()]));
+      };
+      const press = async () => { fireEvent.click(await exportButton()); return screen.findByRole("dialog"); };
+
+      it("asks a person with an authenticator for its code, in place, and exports again with the same request once it is right", async () => {
+        mfa.listFactors.mockResolvedValue({ data: { totp: [{ id: "factor-1" }], all: [] }, error: null });
+        mfa.challengeAndVerify.mockResolvedValue({ data: {}, error: null });
+        refusedThenGiven();
+        renderPage();
+        const dialog = await press();
+        expect(dialog).toHaveTextContent("Sign in again to export a whole table.");
+        expect(downloadBlob).not.toHaveBeenCalled();
+        fireEvent.change(within(dialog).getByLabelText(/6-digit code/), { target: { value: "123 456" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        expect(await screen.findByText("Exported 1 referral partner.")).toBeInTheDocument();
+        expect(mfa.challengeAndVerify).toHaveBeenCalledWith({ factorId: "factor-1", code: "123456" });
+        expect(exportRows).toHaveBeenCalledTimes(2);
+        expect(exportRows.mock.calls[1]).toEqual(exportRows.mock.calls[0]);
+        expect((await theFile()).name).toBe("referral-partners-2026-11-19.csv");
+        // Nobody was signed out, and the dialog is gone.
+        expect(signOut).not.toHaveBeenCalled();
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+
+      it("says in words that a code was wrong, or could not be checked, and exports nothing until one is right", async () => {
+        mfa.listFactors.mockResolvedValue({ data: { totp: [{ id: "factor-1" }], all: [] }, error: null });
+        refusedThenGiven();
+        renderPage();
+        const dialog = await press();
+        const code = within(dialog).getByLabelText(/6-digit code/);
+        // Not six digits: not even asked.
+        fireEvent.change(code, { target: { value: "12" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent("Enter the 6 digits from your authenticator app.");
+        expect(mfa.challengeAndVerify).not.toHaveBeenCalled();
+        mfa.challengeAndVerify.mockResolvedValueOnce({ data: null, error: Object.assign(new Error("bad"), { code: "mfa_verification_failed" }) });
+        fireEvent.change(code, { target: { value: "000000" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        expect(await within(dialog).findByText(/That code didn't work/)).toBeInTheDocument();
+        mfa.challengeAndVerify.mockResolvedValueOnce({ data: null, error: new Error("network") });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        expect(await within(dialog).findByText(/couldn't check your code/)).toBeInTheDocument();
+        expect(exportRows).toHaveBeenCalledTimes(1);
+        expect(downloadBlob).not.toHaveBeenCalled();
+        // The next right code goes through.
+        mfa.challengeAndVerify.mockResolvedValueOnce({ data: {}, error: null });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and export" }));
+        expect(await screen.findByText("Exported 1 referral partner.")).toBeInTheDocument();
+      });
+
+      // D-19: a password sign-in that has not done its second factor opens no firm's data, so a password is no way to step up. Without an authenticator
+      // the person signs in again, on this device only, whatever they signed in with.
+      it.each([["a password", ["email"]], ["Google or Microsoft", ["google"]], ["a password and Google", ["email", "google"]]])(
+        "signs in again, on this device only, a person with no authenticator who signed in with %s: no code, no password",
+        async (_, providers) => {
+          auth.user = { email: "adv@example.com", app_metadata: { providers } };
+          refusedThenGiven();
+          renderPage();
+          const dialog = await press();
+          expect(within(dialog).queryByLabelText("Password")).not.toBeInTheDocument();
+          expect(within(dialog).queryByLabelText(/6-digit code/)).not.toBeInTheDocument();
+          expect(dialog).toHaveTextContent("This signs you out on this device only");
+          expect(signOut).not.toHaveBeenCalled();
+          fireEvent.click(within(dialog).getByRole("button", { name: "Sign in again" }));
+          // The sign-out that keeps the person's other devices and brings them back to this page (useAuth, RequireAccess).
+          expect(signOut).toHaveBeenCalledWith("step_up");
+          expect(exportRows).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      it("leaves the dialog without exporting when the person cancels, and a later press asks again", async () => {
+        mfa.listFactors.mockResolvedValue({ data: { totp: [{ id: "factor-1" }], all: [] }, error: null });
+        exportRows.mockRejectedValue(tooOld());
+        renderPage();
+        const dialog = await press();
+        fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(mfa.challengeAndVerify).not.toHaveBeenCalled();
+        expect(downloadBlob).not.toHaveBeenCalled();
+        expect(await exportButton()).toBeEnabled();
+        fireEvent.click(await exportButton());
+        expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      });
+
+      it("says it could not export, with no dialog, when it cannot tell which way the person can step up", async () => {
+        mfa.listFactors.mockResolvedValue({ data: null, error: new Error("network") });
+        exportRows.mockRejectedValue(tooOld());
+        renderPage();
+        fireEvent.click(await exportButton());
+        expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't export. Try again.");
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+    });
+
+    it.each([
+      ["tooMany", "That is more than 50,000 rows. Narrow it with a filter and export again."],
+      ["support", "Nevermore support can look, not change, so it can't export."],
+      ["notAllowed", "You aren't a member of this firm."],
+      ["failed", "Couldn't export. Try again."],
+    ] as const)("says in words why an export was refused (%s), gives no file, and lets the person try again", async (kind, words) => {
+      exportRows.mockRejectedValueOnce(new ExportError(kind, words));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByRole("alert")).toHaveTextContent(words);
+      expect(downloadBlob).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      // The next try is a fresh one: the words go, the file comes.
+      exportRows.mockResolvedValue(answer([row()]));
+      fireEvent.click(await exportButton());
+      expect(await screen.findByText("Exported 1 referral partner.")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("ends the session when the server no longer accepts it, as every other page does", async () => {
+      exportRows.mockRejectedValue(Object.assign(new Error("Your session has expired. Sign in again to continue."), { unauthenticated: true }));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired");
+      expect(signOut).toHaveBeenCalledWith("expired");
+    });
+
+    it("says what went wrong, never the network's words, when the call itself fails", async () => {
+      exportRows.mockRejectedValue(new TypeError("Failed to fetch"));
+      renderPage();
+      fireEvent.click(await exportButton());
+      expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't export. Try again.");
+      expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
+    });
+
+    it("offers no Export when there is no partner to export or the list has not loaded", async () => {
+      api.listReferralPartners.mockResolvedValue([]);
+      renderPage();
+      await screen.findByText("No referral partners yet.");
+      expect(screen.queryByRole("button", { name: "Export" })).not.toBeInTheDocument();
+    });
+
+    it("exports the firm the page is showing, not another the person belongs to", async () => {
+      api.listMyFirms.mockResolvedValue([alpha, beta]);
+      api.listReferralPartners.mockResolvedValue([{ ...acme, firm_id: "firm-b" }]);
+      exportRows.mockResolvedValue(answer([row()]));
+      renderPage("/advisor/partners?firm=firm-b");
+      fireEvent.click(await exportButton());
+      await screen.findByText("Exported 1 referral partner.");
+      expect(exportRows).toHaveBeenCalledWith({ firmId: "firm-b", table: "referral_partners", filters: {} });
+    });
+
+    describe("during a Nevermore support session (ADR 0024)", () => {
+      const support = { firm: null, role: "Nevermore support" as const, isOwner: false, isSupport: true, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: true, person: "x" };
+      it("offers no download, says so in one plain line where the button was, and asks the database for nothing", async () => {
+        render(<MemoryRouter initialEntries={["/advisor/partners"]}><WorkspaceContext.Provider value={support}><AdvisorPartnersPage /></WorkspaceContext.Provider></MemoryRouter>);
+        await screen.findByRole("row", { name: /Acme CFO Partners/ });
+        expect(screen.queryByRole("button", { name: /Export/ })).not.toBeInTheDocument();
+        expect(screen.getByText("Downloads are off during Nevermore support.")).toBeInTheDocument();
+        expect(exportRows).not.toHaveBeenCalled();
+      });
+
+      it("says nothing of the kind to a member who is not on a support session", async () => {
+        renderPage();
+        await exportButton();
+        expect(screen.queryByText("Downloads are off during Nevermore support.")).not.toBeInTheDocument();
+      });
     });
   });
 });
