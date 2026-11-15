@@ -175,15 +175,37 @@ describe("AccountMenu: change owner", () => {
     expect(await screen.findByLabelText("Also change the owner of its open opportunities")).toBeInTheDocument();
   });
 
-  // Catches: Change owner sent with nobody chosen.
-  it("asks for a person before it sends anything", async () => {
+  // Catches: the dialog starting on the current owner, so pressing Change owner at once "changes" nothing for the account but hands every open opportunity the
+  // person may change to that same owner, a change nobody chose.
+  it("starts with nobody chosen, can't be pressed until another person is picked, and sends nothing before", async () => {
+    const user = userEvent.setup();
+    client.changeAccountOwner.mockResolvedValue({ ownerName: "Marcus Hale", opportunitiesChanged: 0, opportunitiesSkipped: 0 });
+    show();
+    await openMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
+    const choose = await screen.findByLabelText("New owner");
+    await screen.findByRole("option", { name: "Marcus Hale" });
+    expect(choose).toHaveValue("");
+    const save = screen.getByRole("button", { name: "Change owner" });
+    expect(save).toBeDisabled();
+    await user.click(save);
+    expect(client.changeAccountOwner).not.toHaveBeenCalled();
+    // The current owner is not a choice.
+    expect(screen.queryByRole("option", { name: "Dana Reyes" })).toBeNull();
+    await user.selectOptions(choose, "u2");
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await waitFor(() => expect(client.changeAccountOwner).toHaveBeenCalledWith("f1", "a1", "u2", true));
+  });
+
+  // Catches: an account with no owner unable to be given to the first person, or a person left unchosen being sent.
+  it("offers every person when the account has no owner, and still waits for a choice", async () => {
     const user = userEvent.setup();
     show({ ...base, ownerId: null });
     await openMenu(user);
     await user.click(screen.getByRole("menuitem", { name: "Change owner" }));
     await screen.findByRole("option", { name: "Dana Reyes" });
-    await user.click(screen.getByRole("button", { name: "Change owner" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Choose who will own this account.");
+    expect(screen.getByRole("button", { name: "Change owner" })).toBeDisabled();
     expect(client.changeAccountOwner).not.toHaveBeenCalled();
   });
 });

@@ -140,7 +140,8 @@ function DeleteDialog({ firmId, account, onClose, onDone, onArchiveInstead }: Di
 
 function OwnerDialog({ firmId, account, onClose, onDone }: DialogProps) {
   const people = useQuery({ queryKey: ["account-owner-choices", firmId], queryFn: () => listFirmMembers(firmId), retry: false, staleTime: 60_000 });
-  const [owner, setOwner] = useState(account.ownerId ?? "");
+  // Nobody is chosen at first: starting on the current owner would let Change owner hand every open opportunity to the owner it already has.
+  const [owner, setOwner] = useState("");
   const [withOpen, setWithOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -185,7 +186,7 @@ function OwnerDialog({ firmId, account, onClose, onDone }: DialogProps) {
               className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             >
               <option value="">{people.isPending ? "Loading people" : "Choose a person"}</option>
-              {(people.data ?? []).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              {(people.data ?? []).filter((p) => p.value !== account.ownerId).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
             {people.isError && <p role="alert" className="mt-1 text-sm text-destructive">Couldn't load the firm's people. Try again.</p>}
           </div>
@@ -203,7 +204,7 @@ function OwnerDialog({ firmId, account, onClose, onDone }: DialogProps) {
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-          <Button onClick={() => void run()} disabled={busy}>Change owner</Button>
+          <Button onClick={() => void run()} disabled={busy || !owner || owner === account.ownerId}>Change owner</Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

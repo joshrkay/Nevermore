@@ -645,6 +645,54 @@ BEGIN
   RAISE NOTICE 'account_archive_delete_owner: the race passed';
 END $$;
 
+-- ---------- the owner change races a member's removal ----------
+-- Break caught: change_account_owner asks "is the chosen person a current member" without holding their membership row (FOR SHARE), so a removal that commits
+-- after the question leaves the account (and its opportunities) owned by a former member. Both orders are seen WAITING: a removal not yet committed makes the
+-- owner change wait and then be refused in words (22023); an owner change not yet committed makes the removal wait, and the owner change keeps its answer.
+-- The removal (remove_member) holds the membership row FOR UPDATE and then the firm's row (keep_firm_owner, for an owner only); the owner change holds the
+-- account, then the membership FOR SHARE, then the opportunities: the removal never takes an account or an opportunity, so the two cannot wait on each other in a ring.
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.new_user('acme_mover1'); PERFORM pg_temp.new_user('acme_mover2'); PERFORM pg_temp.new_user('acme_mover3');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
+    (pg_temp.id('acme'), pg_temp.id('acme_mover1'), 'agent', NULL), (pg_temp.id('acme'), pg_temp.id('acme_mover2'), 'agent', NULL), (pg_temp.id('acme'), pg_temp.id('acme_mover3'), 'agent', NULL);
+  PERFORM pg_temp.account('m1', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('m2', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('m3', 'acme', 'acme_agent1');
+END $$;
+
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme');
+BEGIN
+  RESET ROLE;
+  -- A removes the person (not yet committed); B gives them an account.
+  r := pg_temp.race_delete(
+    format($q$SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; DO $d$ BEGIN PERFORM public.remove_member(%L, %L); END $d$ $q$,
+      jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text, firm, pg_temp.id('acme_mover1')),
+    'acme_agent1',
+    format($q$SELECT public.change_account_owner(%L, %L, true, %L)::text$q$, pg_temp.id('m1'), pg_temp.id('acme_mover1'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the owner change waits for the removal of the person it names');
+  PERFORM pg_temp.is(split_part(r, '|', 2), '22023', 'and, once it has committed, is refused: not a current member');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.accounts WHERE id = pg_temp.id('m1')), pg_temp.id('acme_agent1'), 'the account is not left with a former member');
+  -- A gives an account to the person (not yet committed); B removes them.
+  r := pg_temp.race_delete(
+    format($q$SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; DO $d$ BEGIN PERFORM public.change_account_owner(%L, %L, false, %L); END $d$ $q$,
+      jsonb_build_object('sub', pg_temp.id('acme_agent1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_agent1@example.test')::text, pg_temp.id('m2'), pg_temp.id('acme_mover2'), firm),
+    'acme_owner',
+    format($q$SELECT public.remove_member(%L, %L)::text$q$, firm, pg_temp.id('acme_mover2')));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the removal waits for an owner change that names the person');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.accounts WHERE id = pg_temp.id('m2')), pg_temp.id('acme_mover2'), 'and the owner change stands');
+  -- A plain update of the membership's end (a non-key update, which a weaker lock than FOR SHARE would not wait for), whatever path made it.
+  r := pg_temp.race_delete(
+    format($q$UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = %L$q$, pg_temp.id('acme_mover3')),
+    'acme_agent1',
+    format($q$SELECT public.change_account_owner(%L, %L, false, %L)::text$q$, pg_temp.id('m3'), pg_temp.id('acme_mover3'), firm));
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the owner change waits for any update that ends the membership');
+  PERFORM pg_temp.is(split_part(r, '|', 2), '22023', 'and is then refused');
+  RAISE NOTICE 'account_archive_delete_owner: the removal races passed';
+END $$;
+
 -- ---------- which accounts the caller may change ----------
 -- Break caught: the table offers row actions on accounts the database will refuse (a colleague's in a firm that shows everyone everything, an unowned one to a
 -- lead, any in a closing firm or a support session); another firm's account id, or one the caller may not see, is answered as changeable; more than 100 ids

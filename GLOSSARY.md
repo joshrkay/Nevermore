@@ -568,12 +568,12 @@ _Avoid_: account view, 360 view, detail page
 An account put away without deleting it. It is in no view of the Accounts table but Archived; its fields can still be edited and it can be restored by anyone the level rule gives it, but nothing can be added to it (a contact, an opportunity, a call, a note or a task are refused while it is archived). Archiving changes nothing else: its opportunities, its status and its history are kept, and the change is one entry of its history. Archived and restored on the Accounts table's row and on the account's page; archiving an archived account, or restoring one that is not, changes nothing.
 _Avoid_: closed, inactive, hidden, soft-deleted
 
-**Deleting an account** (code: `delete_account`; story CRM-A1.1c, D-204):
-Removing an account with its contacts, its empty opportunities (those that hold no intake) and their history, and later its calls, notes and tasks. Allowed to whoever the level rule gives the account, and refused for an account that **holds an intake**: any of its opportunities holds one (and a quote request sits on an intake), so such an account can only be archived. This keeps every submission and every quote request on an opportunity (CRM-Q1.3) and leaves what an employer certified in place (PRD question 6 is counsel's). An email (Epic 6) will refuse a delete the same way.
+**Deleting an account** (code: `delete_account`; story CRM-A1.1c, D-204, D-219, D-233):
+Removing an account together with its contacts, its calls, notes and tasks, and their history. Allowed to whoever the level rule gives the account, and refused (PT409) for an account that has **any opportunity**: an opportunity is another person's work (it has its own owner, and may hold an intake, a submission and quote requests), so a delete never removes one and never chooses between them. The person is offered **Archive** instead. This also keeps every submission and every quote request on an opportunity (CRM-Q1.3). An email (Epic 6) will refuse a delete the same way.
 _Avoid_: erase, purge, remove (a member is removed, an account is deleted)
 
 **Change of owner** (code: `change_account_owner`; story CRM-A1.1c, D-209, D-214):
-Giving an account to another current member of the firm, by the level rule. It offers to give the account's **open** opportunities (not Won or Lost) the same owner: those the person may change by the level rule change, and they are told how many of a colleague's were left with their owners. The owner is never cleared, and a former member can't be chosen.
+Giving an account to another current member of the firm, by the level rule. The dialog starts with nobody chosen and offers only people other than the current owner; it can't be saved until a new owner is picked. It offers to give the account's **open** opportunities (not Won or Lost) the same owner: those the person may change by the level rule change, and they are told how many of a colleague's were left with their owners. The owner is never cleared, and a former member can't be chosen.
 _Avoid_: reassign, transfer, hand over
 
 **Account's tab** (code: `account_tab(firm, account, tab, limit, offset)`; story CRM-A2.1b):

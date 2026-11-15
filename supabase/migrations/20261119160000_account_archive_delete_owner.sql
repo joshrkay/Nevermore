@@ -160,9 +160,14 @@ BEGIN
   IF p_owner_id IS NULL THEN
     RAISE EXCEPTION 'Choose who will own this account.' USING ERRCODE = '22023';
   END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM public.firm_memberships m
-    WHERE m.firm_id = cur.firm_id AND m.user_id = p_owner_id AND public.membership_is_current(m.valid_from, m.valid_until)) THEN
+  -- The chosen person's membership is held FOR SHARE to the end of this transaction: removing or suspending a member is an UPDATE of valid_until (a non-key
+  -- update, FOR NO KEY UPDATE, which FOR KEY SHARE would not stop), so a removal not yet committed is waited for and then seen (the row no longer qualifies),
+  -- and one that starts after this question waits for this change. Lock order: account, membership, opportunities; a removal takes the membership (then the
+  -- firm's row, for an owner) and never an account or an opportunity, so the two can not wait on each other in a ring.
+  PERFORM 1 FROM public.firm_memberships m
+  WHERE m.firm_id = cur.firm_id AND m.user_id = p_owner_id AND public.membership_is_current(m.valid_from, m.valid_until)
+  FOR SHARE;
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Choose a current member of the firm.' USING ERRCODE = '22023';
   END IF;
   UPDATE public.accounts SET owner_id = p_owner_id WHERE id = cur.id AND owner_id IS DISTINCT FROM p_owner_id RETURNING * INTO done;
