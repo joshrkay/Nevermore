@@ -1113,3 +1113,114 @@ BEGIN
   PERFORM pg_temp.is(public.accounts_words('status', 'former_client'), 'Former client', 'the export says Former client');
   PERFORM pg_temp.is(public.accounts_words('status', 'client'), 'Client', 'and still says Client');
 END $$;
+
+
+-- ---------- the rules the tables hold themselves (D-446, D-449) ----------
+-- Break caught: a PEO placement renewal with no placement, or a current plan's with one (what renews and where it came from disagree); a renewal on another
+-- account's placement or opportunity; two renewals working one opportunity (D-449: at most one each way); two placements from one opportunity; a placement that
+-- ended before it began; a blank PEO or one past 80 characters; a renewal of a kind nobody listed; an opportunity's deletion that takes a renewal with it
+-- (it clears the link), or a placement's deletion that leaves its renewal.
+DO $$
+DECLARE
+  acct uuid := pg_temp.id('a1'); firm uuid := pg_temp.id('acme'); other uuid := pg_temp.id('a2');
+BEGIN
+  PERFORM pg_temp.opportunity('k_o1', 'a1', 'acme_agent1');
+  PERFORM pg_temp.opportunity('k_o2', 'a1', 'acme_agent1');
+  PERFORM pg_temp.opportunity('k_other', 'a2', 'acme_agent2');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (%L, %L, 'peo_placement', 'X', current_date)$q$, firm, acct)),
+    '23514', 'a PEO placement renewal needs its placement');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'current_plan', 'X', current_date, %L)$q$, firm, acct, pg_temp.id('p1'))),
+    '23514', 'a current plan''s renewal has none');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'peo_placement', 'X', current_date, %L)$q$, firm, other, pg_temp.id('p1'))),
+    '23503', 'a renewal can''t come from another account''s placement');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, opportunity_id) VALUES (%L, %L, 'current_plan', 'X', current_date, %L)$q$, firm, acct, pg_temp.id('k_other'))),
+    '23503', 'nor be worked by another account''s opportunity');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (%L, %L, 'lease', 'X', current_date)$q$, firm, acct)), '23514', 'a kind nobody listed');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (%L, %L, 'current_plan', '  ', current_date)$q$, firm, acct)), '23514', 'a blank with whom');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (%L, %L, 'current_plan', %L, current_date)$q$, firm, acct, repeat('x', 81))), '23514', 'one past 80');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom) VALUES (%L, %L, 'current_plan', 'X')$q$, firm, acct)), '23502', 'a renewal needs its date');
+
+  -- one opportunity works at most one renewal
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('k_o1') WHERE id = pg_temp.id('r1b');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.renewals SET opportunity_id = %L WHERE id = %L$q$, pg_temp.id('k_o1'), pg_temp.id('r1'))), '23505', 'two renewals can''t name one opportunity');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.renewals SET opportunity_id = %L WHERE id = %L$q$, pg_temp.id('k_o2'), pg_temp.id('r1b'))), 'rows:1', 'a renewal names another one when the first is lost track of');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('k_o1') WHERE id = pg_temp.id('r1b');
+  -- an opportunity's deletion clears the link and keeps the renewal
+  DELETE FROM public.opportunities WHERE id = pg_temp.id('k_o1');
+  PERFORM pg_temp.is((SELECT opportunity_id FROM public.renewals WHERE id = pg_temp.id('r1b')), NULL::uuid, 'deleting the opportunity working a renewal clears the link');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE id = pg_temp.id('r1b')), 1::bigint, 'and keeps the renewal');
+
+  -- placements
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name, start_date, ended_on) VALUES (%L, %L, 'X', current_date, current_date - 1)$q$, firm, acct)),
+    '23514', 'a placement can''t end before it began');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name, start_date, ended_on) VALUES (%L, %L, 'X', current_date, current_date)$q$, firm, acct)),
+    'rows:1', 'but may end the day it began');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name) VALUES (%L, %L, ' ')$q$, firm, acct)), '23514', 'a blank PEO');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name) VALUES (%L, %L, %L)$q$, firm, acct, repeat('x', 81))), '23514', 'a PEO past 80');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name, broker_of_record) VALUES (%L, %L, 'X', %L)$q$, firm, acct, repeat('x', 121))), '23514', 'a broker of record past 120');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name, broker_of_record) VALUES (%L, %L, 'X', %L)$q$, firm, acct, repeat('x', 120))), 'rows:1', 'and 120 is allowed');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name, opportunity_id) VALUES (%L, %L, 'X', %L)$q$, firm, acct, pg_temp.id('k_other'))), '23503', 'a placement can''t stand on another account''s opportunity');
+  UPDATE public.placements SET opportunity_id = pg_temp.id('k_o2') WHERE id = pg_temp.id('p1b');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.placements (firm_id, account_id, peo_name, opportunity_id) VALUES (%L, %L, 'X', %L)$q$, firm, acct, pg_temp.id('k_o2'))), '23505', 'an opportunity makes one placement');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$DELETE FROM public.opportunities WHERE id = %L$q$, pg_temp.id('k_o2'))), '23503', 'an opportunity a placement stands on is not deleted from under it');
+  UPDATE public.placements SET opportunity_id = NULL WHERE id = pg_temp.id('p1b');
+
+  -- a placement's deletion takes the renewals made with it
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE placement_id = pg_temp.id('p1b')), 1::bigint, 'a renewal names its placement');
+  DELETE FROM public.placements WHERE id = pg_temp.id('p1b');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE id = pg_temp.id('r1b')), 0::bigint, 'deleting a placement takes the renewal made with it (reopening a win)');
+  -- an account's deletion takes its placements and renewals
+  PERFORM pg_temp.account('k_del', 'acme', NULL);
+  PERFORM pg_temp.add_renewal('acme_owner', 'k_del', 'peo_placement', 'X', current_date);
+  DELETE FROM public.accounts WHERE id = pg_temp.id('k_del');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE account_id = pg_temp.id('k_del')) + (SELECT count(*) FROM public.placements WHERE account_id = pg_temp.id('k_del')), 0::bigint,
+    'deleting an account deletes its placements and renewals');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name IN ('renewals', 'placements') AND NOT public.record_history_record_exists(h.firm_id, h.table_name, h.record_key)), 0::bigint,
+    'and their history with them');
+END $$;
+
+-- Break caught: the stamp (updated_at) stays as it was when a renewal is saved.
+DO $$
+DECLARE t0 timestamptz; t1 timestamptz;
+BEGIN
+  SELECT updated_at INTO t0 FROM public.renewals WHERE id = pg_temp.id('r1');
+  PERFORM pg_sleep(0.01);
+  UPDATE public.renewals SET with_whom = 'Stamp test' WHERE id = pg_temp.id('r1');
+  SELECT updated_at INTO t1 FROM public.renewals WHERE id = pg_temp.id('r1');
+  PERFORM pg_temp.is(t1 > t0, true, 'a saved renewal is stamped');
+  UPDATE public.renewals SET with_whom = 'Justworks PEO' WHERE id = pg_temp.id('r1');
+END $$;
+
+-- ---------- who reads the tables (D-452) ----------
+-- Break caught: either table is read by someone who may not see its account (another agent, another firm, a platform admin, a signed-out caller), or by no one
+-- who may (an agent can't read their own account's renewals); a firm that shows everyone everything hides a colleague's from a member.
+CREATE FUNCTION pg_temp.rows_seen(who text, tbl text) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n bigint;
+BEGIN
+  PERFORM pg_temp.as_user(who);
+  EXECUTE format('SELECT count(*) FROM public.%I', tbl) INTO n;
+  RESET ROLE;
+  RETURN n;
+END $$;
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['renewals', 'placements'] LOOP
+    PERFORM pg_temp.is(pg_temp.rows_seen('acme_agent1', t),
+      (SELECT count(*) FROM (SELECT x.id, x.account_id FROM public.renewals x WHERE t = 'renewals' UNION ALL SELECT x.id, x.account_id FROM public.placements x WHERE t = 'placements') y
+       JOIN public.accounts a ON a.id = y.account_id WHERE a.owner_id = pg_temp.id('acme_agent1')), 'an agent reads the ' || t || ' of the accounts they own');
+    PERFORM pg_temp.is(pg_temp.rows_seen('acme_agent1', t) > 0, true, 'and there are some');
+    PERFORM pg_temp.is(pg_temp.rows_seen('acme_agent2', t), 0::bigint, 'another agent reads none of the ' || t || ' of an account they may not see');
+    PERFORM pg_temp.is(pg_temp.rows_seen('acme_owner', t),
+      (SELECT count(*) FROM (SELECT x.id, x.firm_id FROM public.renewals x WHERE t = 'renewals' UNION ALL SELECT x.id, x.firm_id FROM public.placements x WHERE t = 'placements') y WHERE y.firm_id = pg_temp.id('acme')),
+      'an owner of the firm reads all of its ' || t);
+    PERFORM pg_temp.is(pg_temp.rows_seen('zenith_agent2', t),
+      (SELECT count(*) FROM (SELECT x.id, x.firm_id FROM public.renewals x WHERE t = 'renewals' UNION ALL SELECT x.id, x.firm_id FROM public.placements x WHERE t = 'placements') y WHERE y.firm_id = pg_temp.id('zenith')),
+      'a member of a firm that shows everyone everything reads a colleague''s ' || t || ', and only their firm''s');
+    PERFORM pg_temp.is(pg_temp.rows_seen('platform_admin', t), 0::bigint, 'a platform admin who is no member reads none');
+    PERFORM pg_temp.is(pg_temp.rows_seen('acme_removed', t), 0::bigint, 'nor a former member');
+  END LOOP;
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.attempt('SELECT count(*) FROM public.renewals'), '42501', 'a signed-out caller is refused');
+  RESET ROLE;
+END $$;
