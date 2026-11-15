@@ -165,6 +165,7 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
 
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -634,7 +635,8 @@ BEGIN
   PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"state","op":"any_of","value":["ZZ"]}]')$q$, '22023', 'state codes', 'a state that does not exist is refused');
   PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"states_of_operation","op":"any_of","value":["Oregon"]}]')$q$, '22023', 'state codes', 'a state is its code');
   PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"source","op":"any_of","value":["bogus"]}]')$q$, '22023', 'isn''t one of the field''s values', 'a source that does not exist is refused');
-  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"status","op":"any_of","value":["former_client"]}]')$q$, '22023', 'isn''t one of the field''s values', 'a former client arrives with the placement record (D-197)');
+  PERFORM pg_temp.is(jsonb_array_length(pg_temp.q('[{"field":"status","op":"any_of","value":["former_client"]}]') -> 'rows'), 0, 'a former client is a status the table takes (CRM-A2.4a, D-451): none here has ended every placement');
+  PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"status","op":"any_of","value":["lapsed"]}]')$q$, '22023', 'isn''t one of the field''s values', 'a status outside the list is refused');
   PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"opportunity_stage","op":"any_of","value":["won"]}]')$q$, '22023', 'isn''t one of the field''s values', 'an open opportunity is never won or lost');
   PERFORM pg_temp.refused($q$SELECT pg_temp.q('[{"field":"owner","op":"is","value":"x"}]')$q$, '22023', 'A person field can''t be filtered with "is"', 'a person has any of, me and my team');
   PERFORM pg_temp.refused($q$SELECT pg_temp.q('{"field":"name","op":"is_empty"}')$q$, '22023', 'Filters are a list', 'filters that are not a list are refused');

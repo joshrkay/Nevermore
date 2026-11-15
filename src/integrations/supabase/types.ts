@@ -1029,6 +1029,19 @@ export type Database = {
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      // An account's renewals (20261120110000): the list answers {count, can_add, can_change, archived, rows} (null for an account the caller may not see); add, save and
+      // link answer {record}; save a conflict as {conflict: true, ...}; delete {deleted, placement_deleted} (PT409 for a renewal a win made).
+      account_renewals: { Args: { p_firm_id: string | null; p_account_id: string; p_time_zone?: string }; Returns: Json }
+      renewal_add: {
+        Args: { p_account_id: string; p_kind: string; p_with_whom: string; p_renews_on: string; p_start_date?: string | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      renewal_update: {
+        Args: { p_renewal_id: string; p_with_whom: string; p_renews_on: string; p_not_renewed_on?: string | null; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
+      }
+      renewal_delete: { Args: { p_renewal_id: string; p_firm_id?: string | null }; Returns: Json }
+      renewal_link_opportunity: { Args: { p_renewal_id: string; p_opportunity_id: string; p_firm_id?: string | null }; Returns: Json }
       accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
       change_account_owner: {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }

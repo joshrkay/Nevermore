@@ -11,7 +11,8 @@ import type { TableFields, TableFilter, TablePage, TableSort, ViewCount } from "
 /**
  * The accounts table's fields a filter or a sort may name, with the kind of each. The database holds the same list (accounts_field_kind's `accounts_fields`
  * block; src/lib/accountsApi.test.ts compares them) and refuses any other name. The main contact is not here: it is shown, never filtered or sorted.
- * Renewal and custom fields are later stories' (D-186, CRM-X3.1). `labels` is the firm's own words on an account (D-198); a filter names them as text.
+ * `renewal_on` is the date of the nearest renewal not done, and `renewal_days_away` its days from today (negative once overdue): "Renewing in 120 days" filters by
+ * renewal_days_away less than 121 (D-450). Custom fields are a later story's (CRM-X3.1). `labels` is the firm's own words on an account (D-198); a filter names them as text.
  */
 export const ACCOUNT_FIELDS = {
   name: "text",
@@ -25,10 +26,12 @@ export const ACCOUNT_FIELDS = {
   open_opportunities: "number",
   quote_requests_sent: "number",
   quotes_received: "number",
+  renewal_days_away: "number",
   created_at: "date",
   last_activity_at: "date",
   target_start: "date",
   earliest_quote_expires_on: "date",
+  renewal_on: "date",
   state: "choice",
   source: "choice",
   status: "choice",
@@ -46,8 +49,8 @@ export type AccountSort = TableSort<AccountField>;
 
 /** Where an account came from (D-211), in the order the database lists them. Set by the product, never edited. */
 export const ACCOUNT_SOURCES = ["employer_intake", "added_by_hand", "new_quote", "lead", "import"] as const;
-/** An account's status (D-197), worked out and never stored. A former client arrives with the placement record (Epic 4). */
-export const ACCOUNT_STATUSES = ["prospect", "client"] as const;
+/** An account's status (D-197, D-451), worked out and never stored: a client while it has a placement not ended, a former client when every placement has ended. */
+export const ACCOUNT_STATUSES = ["prospect", "client", "former_client"] as const;
 /** The stages an open opportunity is at (D-206): the Opportunity column shows the open one with the nearest target start, so it is never won or lost. */
 export const ACCOUNT_OPEN_STAGES = ["qualifying", "intake_under_way", "ready_to_send", "in_market", "quoted"] as const;
 
@@ -95,6 +98,8 @@ export interface AccountRow {
   last_activity_at: string;
   /** The firm's own words on the account (D-198), alphabetically ignoring case. */
   labels: string[];
+  /** The date of the account's nearest renewal not done, overdue included (D-450); null when it has none. The Renewal column shows it with its days away. */
+  renewal_on: string | null;
 }
 
 // The row's columns in the database's order (accounts_row; src/lib/accountsApi.test.ts compares them): a column the type gains is a compile error here.
@@ -103,7 +108,7 @@ const ROW_COLUMNS: Record<keyof AccountRow, true> = {
   current_provider: true, source: true, status: true, archived: true, archived_at: true, created_at: true, owner: true, owner_name: true,
   main_contact_id: true, main_contact_name: true, main_contact_email: true, main_contact_phone: true, opportunity_id: true, opportunity_name: true,
   opportunity_stage: true, target_start: true, open_opportunities: true, quote_requests_sent: true, quotes_received: true, waiting_on_peo: true,
-  earliest_quote_expires_on: true, last_activity_at: true, labels: true,
+  earliest_quote_expires_on: true, last_activity_at: true, labels: true, renewal_on: true,
 };
 export const ACCOUNT_ROW_KEYS = Object.keys(ROW_COLUMNS) as (keyof AccountRow)[];
 
@@ -119,7 +124,7 @@ const rowSchema = z.object({
   owner: maybeText, owner_name: maybeText, main_contact_id: maybeText, main_contact_name: maybeText, main_contact_email: maybeText, main_contact_phone: maybeText,
   opportunity_id: maybeText, opportunity_name: maybeText, opportunity_stage: z.enum(ACCOUNT_OPEN_STAGES).nullable(), target_start: maybeText,
   open_opportunities: count, quote_requests_sent: count, quotes_received: count, waiting_on_peo: z.boolean(), earliest_quote_expires_on: maybeText,
-  last_activity_at: text, labels: z.array(text),
+  last_activity_at: text, labels: z.array(text), renewal_on: maybeText,
 });
 const pageSchema = z.object({ rows: z.array(rowSchema), total: count, page: z.number().int().min(1), page_size: z.number().int().min(1) });
 // A count the database sends as text (a big number) is a number here.

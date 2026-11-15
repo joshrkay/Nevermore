@@ -5,7 +5,7 @@ import { QUOTE_REQUEST_LABELS, type QuoteRequestStatus } from "./quoteRequests";
 // The words an account's page says (story CRM-A2.1b): what each status, stage and source is called, how a location, a date and a history entry read, and the
 // form's two conversions between what a person types and what the database holds. Words only: who may see or change an account is the database's.
 
-export const STATUS_LABELS: Record<AccountStatus, string> = { prospect: "Prospect", client: "Client" };
+export const STATUS_LABELS: Record<AccountStatus, string> = { prospect: "Prospect", client: "Client", former_client: "Former client" };
 
 /** An opportunity's stage as D-206 words it. */
 export const STAGE_LABELS: Record<OpportunityStage, string> = {
