@@ -27,6 +27,9 @@ vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@
 const listAccountOwners = vi.fn();
 vi.mock("@/lib/accountCreateApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountCreateApi")), listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
 
+const search = { noteRecentRecord: vi.fn() };
+vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
+
 const { default: ContactPage } = await import("./ContactPage");
 const { ContactError } = await import("@/lib/contactApi");
 
@@ -86,6 +89,31 @@ beforeEach(() => {
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
   activity.getActivityOptions.mockResolvedValue({ contacts: [{ id: "c1", name: "Elena Marsh", title: null }], opportunities: [], people: [{ id: "u1", name: "Dana Reyes" }] });
+});
+
+describe("ContactPage: the menu's recent records", () => {
+  // Catches: a record that never reaches the search box's "last five opened" because no page notes it (CRM-S1.2a).
+  it("notes the contact as opened once its page has loaded, once", async () => {
+    search.noteRecentRecord.mockReset().mockResolvedValue(true);
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await waitFor(() => expect(search.noteRecentRecord).toHaveBeenCalledWith("f1", "contact", "c1"));
+    expect(search.noteRecentRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("notes nothing for a page that isn't there, and shows the page whatever the note does", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    client.getContactPage.mockResolvedValue(null);
+    renderPage();
+    await screen.findByText(/isn.t available|not available|couldn.t find|can.t be found/i);
+    expect(search.noteRecentRecord).not.toHaveBeenCalled();
+  });
+
+  it("is not stopped by a failing note", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
+  });
 });
 
 describe("ContactPage: the header", () => {

@@ -25,6 +25,9 @@ vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts:
 const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn() };
 vi.mock("@/lib/advisorApi", () => advisor);
 
+const search = { noteRecentRecord: vi.fn() };
+vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
+
 const { default: AccountPage } = await import("./AccountPage");
 const { AccountError } = await import("@/lib/accountPageApi");
 
@@ -100,6 +103,31 @@ beforeEach(() => {
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getAccountPage.mockResolvedValue(page());
+});
+
+describe("AccountPage: the menu's recent records", () => {
+  // Catches: a record that never reaches the search box's "last five opened" because no page notes it (CRM-S1.2a).
+  it("notes the account as opened once its page has loaded, once", async () => {
+    search.noteRecentRecord.mockReset().mockResolvedValue(true);
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await waitFor(() => expect(search.noteRecentRecord).toHaveBeenCalledWith("f1", "account", "a1"));
+    expect(search.noteRecentRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("notes nothing for a page that isn't there, and shows the page whatever the note does", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    client.getAccountPage.mockResolvedValue(null);
+    renderPage();
+    await screen.findByText(/isn.t available|not available|couldn.t find|can.t be found/i);
+    expect(search.noteRecentRecord).not.toHaveBeenCalled();
+  });
+
+  it("is not stopped by a failing note", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
+  });
 });
 
 describe("AccountPage: from one account to another", () => {
