@@ -69,8 +69,8 @@ export const activityColumns: Column<ActivityRow>[] = [
 
 
 /**
- * What a list with nothing in it says, in the story's words. An action that does not exist yet (Add a contact is CRM-A2.2's, New opportunity and New quote
- * are later) is left out and its words kept: "No contacts yet." never "No contacts yet. Add a contact", which would point at nothing.
+ * What a list with nothing in it says, in the story's words. An action that does not exist yet (New opportunity and New quote are later) is left out and its words
+ * kept. "Add a contact" (CRM-A2.2) is drawn beside "No contacts yet." by `ContactsEmpty`, where a contact can be added.
  */
 export const EMPTY_WORDS = {
   contacts: "No contacts yet.",

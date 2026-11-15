@@ -43,6 +43,18 @@ describe("logging", () => {
     expect((await logActivity("f1", { kind: "call", accountId: "a1", outcome: "spoke" })).followUp).toBeNull();
   });
 
+  // Catches: a call or task pointed at a contact that has just moved to another account (the database's foreign key says so with a raw 23503) shown as "check your
+  // connection" (found in review of CRM-A2.2: moving a contact is what makes the key fail).
+  it("says in words that the contact has just moved when the key to it fails", async () => {
+    rpc.mockResolvedValue(refused("23503", 'insert or update on table "activities" violates foreign key constraint "activities_contact_fkey"'));
+    const e = (await caught(() => updateActivity("f1", "x1", { contactId: "c1", opportunityId: null, at: null, outcome: "spoke", body: "", title: "", dueOn: null, forId: null }))) as InstanceType<typeof ActivityError>;
+    expect(e).toBeInstanceOf(ActivityError);
+    expect(e.kind).toBe("invalid");
+    expect(e.message).toBe("That contact has just moved to another account. Refresh and try again.");
+    rpc.mockResolvedValue(refused("23503", "insert or update on table \"activities\" violates foreign key constraint \"activities_opportunity_fkey\""));
+    expect(((await caught(() => logActivity("f1", { kind: "note", accountId: "a1", body: "x" }))) as Error).message).toBe("That contact or opportunity has just moved to another account. Refresh and try again.");
+  });
+
   // Catches: the database's words replaced by the app's own, so the form and the rule can disagree; each SQLSTATE read as the wrong kind.
   it("keeps the database's words for what it refuses, and sorts each refusal by kind", async () => {
     for (const [code, kind] of [["22023", "invalid"], ["42501", "notAllowed"], ["PT404", "notFound"], ["PT423", "readOnly"], ["XX000", "failed"]] as const) {

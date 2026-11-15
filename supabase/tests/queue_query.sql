@@ -440,6 +440,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
 

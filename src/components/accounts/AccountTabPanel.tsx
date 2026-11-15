@@ -4,6 +4,7 @@ import { PanelFailed, RefreshFailed } from "@/components/workspace/states";
 import { ACTIVITY_FILTERS_SHOWN } from "@/data/accountPage";
 import type { AccountFile, ActivityFilter, AccountListTab, AccountPage, AccountTabRows, TabRows } from "@/lib/accountPageApi";
 import { AccountFiles } from "./AccountFiles";
+import { AddContactButton, ContactsEmpty } from "./ActivityEntry";
 import { activityColumns, contactColumns, EMPTY_WORDS, opportunityColumns, quoteColumns, TAB_LABELS } from "./accountColumns";
 import { EmptyLine, ListPanel, ListRowsLoading, Rows } from "./accountLists";
 import { useAccountTabQuery } from "./useAccountQueries";
@@ -71,7 +72,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
 
   if (!data) {
     return (
-      <ListPanel id={id} heading={heading} headingRef={headingRef}>
+      <ListPanel id={id} heading={heading} headingRef={headingRef} seeAll={tab === "contacts" ? <AddContactButton /> : undefined}>
         {filters}
         {query.isError ? (
           <PanelFailed what={NOUNS[tab]} error={query.error as Error} onRetry={() => void query.refetch()} />
@@ -85,7 +86,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   }
 
   return (
-    <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef}>
+    <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef} seeAll={tab === "contacts" ? <AddContactButton /> : undefined}>
       {query.isError && <RefreshFailed what={NOUNS[tab]} onRetry={() => void query.refetch()} retrying={query.isFetching} />}
       {filters}
       {contactNote && <p role="status" className="mb-3 text-sm text-muted-foreground">{contactNote}</p>}
@@ -114,7 +115,7 @@ function emptyWords(tab: AccountListTab | "files", page: AccountPage, filter: Ac
 
 /** The tab's rows as its own table, or the tab's one line when it has none (after the Activity filter, too). */
 function tabBody(tab: AccountListTab | "files", data: TabRows<unknown>, contactId: string | null, empty: string) {
-  if (data.rows.length === 0) return <EmptyLine>{empty}</EmptyLine>;
+  if (data.rows.length === 0) return tab === "contacts" ? <ContactsEmpty words={empty} /> : <EmptyLine>{empty}</EmptyLine>;
   switch (tab) {
     case "activity":
       return <Rows caption="The account's activity" columns={activityColumns} rows={(data as TabRows<AccountTabRows["activity"]>).rows} rowKey={(r) => r.entryKey} />;

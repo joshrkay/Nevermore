@@ -156,6 +156,7 @@
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
 SET client_min_messages = notice;
@@ -511,6 +512,8 @@ BEGIN
     ('restore an account', 'agent_a', format($q$SELECT public.restore_account(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('delete an account', 'agent_a', format($q$SELECT public.delete_account(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('change an accounts owner', 'agent_a', format($q$SELECT public.change_account_owner(%L, NULL, false, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
+    ('add a contact', 'agent_a', format($q$SELECT public.add_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
+    ('move a contact', 'agent_a', format($q$SELECT public.move_contact(%L, %L, false, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('change accounts in bulk', 'agent_a', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('preview a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('undo a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
@@ -1305,7 +1308,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'add_contact', 'move_contact', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session'];
   -- Not a member's change to a firm's data, with why.

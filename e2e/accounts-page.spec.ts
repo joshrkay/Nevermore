@@ -170,4 +170,54 @@ test("Accounts opens from the menu, narrows by employees across a reload, and an
     await expect(result).toContainText("3 accounts are back as they were.");
     expect((await labelled()).rows[0].n).toBe(0);
   });
+
+  await test.step("Add contact on the new account: words for what is missing, one main contact that takes over, and Move to another account", async () => {
+    await page.getByRole("button", { name: "Add contact" }).first().click();
+    const form = page.getByRole("dialog", { name: "Add a contact" });
+    await expect(form.getByText("On Harborview Dental East")).toBeVisible();
+    await form.getByRole("button", { name: "Save contact" }).click();
+    await expect(form.getByText("Enter the contact's last name.")).toBeVisible();
+    await form.getByLabel("First name").fill("Owen");
+    await form.getByLabel("Last name").fill("Park");
+    await form.getByRole("button", { name: "Save contact" }).click();
+    await expect(form.getByText("Enter an email or a phone number.").first()).toBeVisible();
+    await form.getByLabel("Email", { exact: true }).fill("owen@harborviewdental.example");
+    await form.getByLabel("Main contact for this account").check();
+    await form.getByRole("button", { name: "Save and add another" }).click();
+    // The form stays open, empty, for the next one; this one takes over as the main contact and the form says so before it is saved.
+    await expect(form.getByLabel("Last name")).toHaveValue("");
+    await form.getByLabel("First name").fill("Priya");
+    await form.getByLabel("Last name").fill("Nair");
+    await form.getByLabel("Phone", { exact: true }).fill("(503) 555-0150");
+    await form.getByLabel("Main contact for this account").check();
+    await expect(form.getByText("Owen Park is the main contact now. Saving makes this contact the main contact instead.")).toBeVisible();
+    await form.getByRole("button", { name: "Save contact" }).click();
+    await expect(form).toHaveCount(0);
+    const contacts = await withDb((client) => client.query(
+      "SELECT c.first_name, c.is_main FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE a.name = 'Harborview Dental East' ORDER BY c.created_at"));
+    expect(contacts.rows).toEqual([{ first_name: "Owen", is_main: false }, { first_name: "Priya", is_main: true }]);
+    await page.getByRole("tab", { name: /^Contacts/ }).click();
+    const table = page.getByRole("table", { name: "The account's contacts" });
+    await expect(table.getByRole("link", { name: "Priya Nair" })).toBeVisible();
+    // Move Owen to Harborview Dental Group.
+    await table.getByRole("button", { name: "Move Owen Park to another account" }).click();
+    const move = page.getByRole("dialog", { name: "Move Owen Park" });
+    await move.getByRole("radio", { name: "Harborview Dental Group" }).check();
+    await move.getByRole("button", { name: "Move contact" }).click();
+    await expect(move).toHaveCount(0);
+    await expect(table.getByRole("link", { name: "Owen Park" })).toHaveCount(0);
+    const moved = await withDb((client) => client.query("SELECT a.name FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE c.first_name = 'Owen' AND c.last_name = 'Park'"));
+    expect(moved.rows).toEqual([{ name: "Harborview Dental Group" }]);
+  });
+
+  await test.step("Save and add a contact on New account opens the new account with the contact form open", async () => {
+    await page.goto(`${firmUrl(FIRM)}/accounts`);
+    await page.getByRole("button", { name: "New account" }).click();
+    const form = page.getByRole("dialog", { name: "New account" });
+    await form.getByLabel("Account name").fill("Lakeside Clinic");
+    await form.getByRole("button", { name: "Save and add a contact" }).click();
+    await expect(page).toHaveURL(/\/accounts\/[0-9a-f-]{36}$/);
+    const contactForm = page.getByRole("dialog", { name: "Add a contact" });
+    await expect(contactForm.getByText("On Lakeside Clinic")).toBeVisible();
+  });
 });

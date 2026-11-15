@@ -220,7 +220,7 @@ const AccountsPage = () => {
             firmId={firmId}
             person={workspace?.person ?? ""}
             onClose={() => setMaking(false)}
-            onCreated={(account) => navigate(`/accounts/${account.id}`)}
+            onCreated={(account, thenContact) => navigate(thenContact ? `/accounts/${account.id}?addContact=1` : `/accounts/${account.id}`)}
           />
         )}
       </main>
