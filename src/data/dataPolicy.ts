@@ -463,6 +463,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "By the firm, when the later stories that delete a record ship (an account's record owner or a firm owner may delete one with no opportunity or email, D-204, D-219). Closing a firm (CRM-P1.7) deletes all of them with the firm's other data. A person who is deleted leaves the records they owned with no owner, for a firm owner to assign.",
   },
   {
+    id: "leads",
+    label: "A firm's leads",
+    sensitivity: "confidential",
+    examples: "People and their businesses a firm is not quoting yet (CRM-L1.x): the person's name, title, email and phone; the business's name, state, city, employees and current provider; a note; where the lead came from, its status (New, Working, Converted, Not a fit with its reason) and its record owner; when it was converted and the account, contact and opportunity it made; the calls, notes and tasks logged on it (held with the firm's other calls, notes and tasks) and the labels on it. Never a tax ID, a census or anything about an employee.",
+    stored: { tables: ["leads", "lead_labels"], buckets: [], elsewhere: [] },
+    retention: "Kept by the firm until it deletes the lead. A deleted lead waits in the bin for 30 days, where a firm owner can restore it, and is then removed with its calls, notes, tasks and labels (D-806). A converted lead can't be deleted. Its history is kept with it.",
+    deletion: "By the firm, through the bin (CRM-L1.1). Closing a firm (CRM-P1.7) deletes all of them with its other data. A person who is deleted leaves the leads they owned with no owner, for a firm owner to assign.",
+  },
+  {
     id: "recent_records",
     label: "The records a person opened last",
     sensitivity: "internal",
