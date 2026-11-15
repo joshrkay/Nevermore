@@ -69,7 +69,7 @@ AS $$
   SELECT lower(p_text)
 $$;
 
-REVOKE ALL ON FUNCTION public.search_lower(text) FROM PUBLIC, anon, authenticated, service_role;
+-- Not revoked: an index function runs as whoever writes the row, and intakes and quote requests are written by the people of the firm. It reads nothing.
 
 -- What a search reads of an account, in lower case, one field to a line and the phone's digits last. The index and the query both call this, so they agree.
 CREATE FUNCTION public.account_search_text(p_name text, p_trade_name text, p_web_domain text, p_phone text)

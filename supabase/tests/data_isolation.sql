@@ -1192,6 +1192,7 @@ INSERT INTO callable VALUES
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
+  ('search_lower(p_text text)', 'anyone', NULL, 'pure: a text in lower case, for the search''s trigram indexes (an index function runs as the writer of the row); reads nothing'),
   ('record_member_activity(p_kind text, p_record_type text, p_record_id text)', 'own', NULL, 'a browser reporting a file downloaded or built there, or a sign-in, as the caller, about a record of a firm they belong to and only the pairs of kind and record that can happen; refuses anyone else (supabase/tests/firm_activity.sql)'),
   ('open_submission(p_session_id uuid)', 'own', NULL, 'hands a submission to a current member of its firm (the table policy''s own rule) and writes the opening in the firm''s record as the caller; no row and no entry for anyone else (supabase/tests/firm_activity.sql)'),
   ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_before_at timestamp with time zone, p_before_key uuid, p_nevermore boolean)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included; a platform admin''s entry reads as Nevermore with no id or email, and neither the admin''s id nor anything else finds it but the Nevermore filter (supabase/tests/firm_activity.sql)'),
@@ -3835,7 +3836,7 @@ SELECT unnest(ARRAY[
   'intake_consent_version', 'intake_deletion_max_attempts', 'intake_draft_retention', 'intake_missing_required', 'intake_required_items',
   'is_prospect_visible_status', 'is_reviewable_field', 'is_source_code', 'is_us_state_code', 'is_valid_phone', 'membership_is_current',
   'ops_alert_rules', 'ops_clean_code', 'ops_event_retention', 'ops_redact', 'provenance_entry_status', 'provenance_source_is_valid',
-  'second_factor_rule_met', 'submitted_record_retention'
+  'search_lower', 'second_factor_rule_met', 'submitted_record_retention'
 ]), 'public', 'a constant or a pure check of what it is given; reads no one''s data';
 
 INSERT INTO fn_class (fn, class, why)
