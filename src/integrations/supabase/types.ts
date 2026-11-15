@@ -989,6 +989,27 @@ export type Database = {
         }
         Returns: Json
       }
+      // Adding a contact to an account and moving one (20261119170000): add_contact answers {record, previous_main}; move_contact {record, from, to, was_main,
+      // activities_moved, opportunity_links_dropped, main_contact_cleared} (PT409 asks for p_confirm); the choices are the accounts it may go to; the context is what the form needs.
+      add_contact: {
+        Args: {
+          p_account_id: string
+          p_first_name: string | null
+          p_last_name: string | null
+          p_title: string | null
+          p_email: string | null
+          p_phone: string | null
+          p_mobile: string | null
+          p_owner_id?: string | null
+          p_is_main?: boolean
+          p_do_not_email?: boolean
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      move_contact: { Args: { p_contact_id: string; p_to_account_id: string; p_confirm?: boolean; p_firm_id?: string | null }; Returns: Json }
+      contact_move_choices: { Args: { p_firm_id: string | null; p_contact_id: string; p_search?: string }; Returns: { id: string; name: string }[] }
+      add_contact_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
       // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
       // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }

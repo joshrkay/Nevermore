@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { activityWords, contactName, formatDay, formatWhen, KIND_LABELS, today } from "@/data/accountPage";
 import { OUTCOME_LABELS, type ActivityItem } from "@/lib/activityApi";
@@ -81,6 +82,30 @@ export function ContactActions({ contact }: { contact: ContactRow }) {
     <span className="flex flex-wrap gap-x-3">
       <button type="button" className={button} onClick={() => actions.log("call", contact.id)}>Log a call<span className="sr-only"> with {name}</span></button>
       <button type="button" className={button} onClick={() => actions.log("note", contact.id)}>Add a note<span className="sr-only"> on {name}</span></button>
+      {actions.canMove && <button type="button" className={button} onClick={() => actions.move(contact)}>Move<span className="sr-only"> {name} to another account</span></button>}
     </span>
+  );
+}
+
+/** "Add contact" over an account's contacts (CRM-A2.2, screen 24). Nothing without actions (a Nevermore support session, an archived account). */
+export function AddContactButton() {
+  const actions = useAccountActions();
+  if (!actions?.canAdd) return null;
+  return <Button type="button" size="sm" onClick={actions.addContact}>Add contact</Button>;
+}
+
+/** The empty Contacts list: "No contacts yet." and, where a contact can be added (not in a Nevermore support session, not on an archived account), "Add a contact". */
+export function ContactsEmpty({ words }: { words: string }) {
+  const actions = useAccountActions();
+  return (
+    <p className="text-sm text-muted-foreground py-2">
+      {words}
+      {actions?.canAdd && (
+        <>
+          {" "}
+          <button type="button" className="min-h-9 text-primary underline underline-offset-2 hover:text-primary/90" onClick={actions.addContact}>Add a contact</button>
+        </>
+      )}
+    </p>
   );
 }

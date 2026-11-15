@@ -529,15 +529,23 @@ The rows a person has ticked on the accounts table (CRM-S3.6), shown in a bar of
 _Avoid_: checked rows, bulk selection
 
 **Contact**:
-A person at an account, on exactly one account, with a name and an email or a phone. Seen by whoever may see its account. An account has at most one main contact. The prospect of a submission becomes one when its chain is made: the contact keeps a link to that prospect so they are never added twice to that account (the same prospect can be a contact on two accounts, one each), and their name, email and phone are copied once and not kept in step, because the contact is the firm's record and the profile is the person's.
+A person at an account, on exactly one account, with a name and an email or a phone. Seen by whoever may see its account. An account has at most one main contact (**Adding a contact**, **Moving a contact**). The prospect of a submission becomes one when its chain is made: the contact keeps a link to that prospect so they are never added twice to that account (the same prospect can be a contact on two accounts, one each), and their name, email and phone are copied once and not kept in step, because the contact is the firm's record and the profile is the person's.
 _Avoid_: PEO contact (a person at a PEO), prospect (the person who certifies; a prospect becomes a contact and the two stay separate records), lead
+
+**Adding a contact** (code: `add_contact`; story CRM-A2.2, screen 24):
+Add contact on an account's Contacts panel or tab, and "Save and add a contact" on New account, for anyone who may see the account (D-209) and never on an archived account, for Nevermore support or in a closing firm. The account is filled in. A contact needs a last name and an email, a phone or a mobile; the phone and the mobile follow the same rule as an account's **Phone**. The **Record owner** of the contact is the person who added it unless they choose another, by the same level rule as **Making an account by hand**. "Save and add another" saves and starts an empty form on the same account. An email already on another contact is a warning (CRM-S4.2), never a refusal.
+_Avoid_: create a contact, new contact
+
+**Moving a contact** (code: `move_contact`; story CRM-A2.2, D-209, D-233):
+Move on a contact of an account, to another account of the same firm. It takes three yeses by the level rule: the contact (its record owner's level), the account it leaves and the account it joins, each also one the person may see; an archived account cannot be joined. The contact's calls, notes and tasks go with it in the same step. A call, note or task that also names an opportunity of the account the contact leaves cannot stay on both accounts: it goes with the contact and loses its link to that opportunity, and a contact that was an opportunity's main contact stops being it. The person is asked first, in words that count them, and nothing changes until they agree. A main contact arrives as nobody's main contact: it never takes the place of the main contact of the account it joins. Its history has one entry for the move.
+_Avoid_: transfer, reassign (that is changing a record owner)
 
 **Opportunity**:
 One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known. It holds at most one intake; next year's renewal is a new opportunity on the same account. Until CRM-O1.2 its stage is worked out from its submission's pipeline stage, never stored: Intake under way (draft, submitted, under review, information requested), Ready to send (ready for market), In market (sent to PEOs), Quoted, Won, and Lost (lost or archived). It is open until it is won or lost (D-206).
 _Avoid_: deal, search (on its own), case
 
 **Main contact**:
-The one contact of an account that is the person to deal with first; an account has at most one, by a constraint (D-29), and an opportunity's main contact is a contact on the same account. An account made from a submission starts with its prospect as its main contact (D-214).
+The one contact of an account that is the person to deal with first; an account has at most one, by a constraint (D-29), and an opportunity's main contact is a contact on the same account. Making a new contact the main contact makes it the only one: the old main contact is unticked in the same step, and the person is told who it was. An account made from a submission starts with its prospect as its main contact (D-214).
 _Avoid_: primary contact, lead contact
 
 **Account status** (code: `account_status(account)`; story CRM-Q1.1a, CRM-A1.3, D-197):

@@ -207,6 +207,7 @@
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
 \i supabase/migrations/20261119230000_search_everywhere.sql
@@ -1370,6 +1371,14 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
+  ('add_contact(p_account_id uuid, p_first_name text, p_last_name text, p_title text, p_email text, p_phone text, p_mobile text, p_owner_id uuid, p_is_main boolean, p_do_not_email boolean, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the account, adds a contact to it (owned by its maker or, by the level rule, by someone they may choose), taking over as the account''s one main contact when asked; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field or an owner the rules refuse'),
+  ('move_contact(p_contact_id uuid, p_to_account_id uuid, p_confirm boolean, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for moves a contact, with its calls, notes and tasks, to another account of the firm when the level rule gives them the contact, the account it leaves and the account it joins; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a contact or an account the caller may not see, the same as for one that is not there'),
+  ('contact_move_choices(p_firm_id uuid, p_contact_id uuid, p_search text)', 'own', NULL,
+   'the accounts of the firm a contact could be moved to by those rules (seen and changeable, live, not where it is), at most 25, to a member of that firm who may see the contact; 42501 for anyone else, PT404 for a contact the caller may not see'),
+  ('add_contact_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
+   'an account''s name, whether it is archived and its main contact, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see'),
   ('account_owner_choices(p_firm_id uuid)', 'own', NULL,
    'the firm''s current people the caller may make an account for, by the level rule (an agent themselves, a lead their teams, an owner everyone), by id and name, to a member of that firm; 42501 for anyone else'),
   ('archive_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
@@ -1991,6 +2000,19 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('account_owner_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.account_owner_choices({firm})$$);
 
+-- CRM-A2.2: adding a contact and moving one ({acontact} is a contact of the firm's {acct}). The move is probed onto the account it is already on, so the member
+-- gets past the firm and the sight of both rows and meets the same-account refusal (22023) and the call changes nothing; every other caller is refused as not
+-- there. What a move does is add_contact.sql's.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('add_contact', 'advisor', 'by_id',
+   $$SELECT public.add_contact({acct}, 'Probe', 'Probe', NULL, 'probe@example.test', NULL, NULL, NULL, false, false, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_name": "Probe"'),
+  ('move_contact', 'advisor', 'by_id',
+   $$SELECT public.move_contact({acontact}, {acct}, false, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('contact_move_choices', 'advisor', 'by_id',
+   $$SELECT count(*)::text FROM public.contact_move_choices({firm}, {acontact}, '')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:'),
+  ('add_contact_context', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.add_contact_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+
 -- CRM-E1.5: calls, notes and tasks ({anote} is a note on the firm's account, {atask} a task on it, both written by the superuser as fixtures). The member
 -- is the owner of that account, who may change anything on it.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -2018,6 +2040,10 @@ BEGIN
   UPDATE public.chamber_certifications SET recorded_at = recorded_at - interval '30 years';
 END $$;
 
+-- CRM-A2.2: the fixture contacts of an owned account are the account owner's, so the member the probes run as may move one (the picker refuses a person who may
+-- not, in words); no other probe reads a contact's owner.
+UPDATE public.contacts c SET owner_id = a.owner_id FROM public.accounts a WHERE a.id = c.account_id AND a.owner_id IS NOT NULL;
+
 DO $$
 DECLARE
   f text;
@@ -2040,6 +2066,7 @@ BEGIN
                                  AND x.ended_at IS NULL ORDER BY x.id LIMIT 1), gen_random_uuid()::text)),
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1)),
       (f, 'acct', (SELECT a.id::text FROM public.accounts a WHERE a.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1)),
+      (f, 'acontact', (SELECT c.id::text FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
@@ -2245,7 +2272,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|anote|atask)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3755,12 +3782,17 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('create_account', 'firm_scoped', 'a current member of the firm the call acts for makes an account of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
+  ('add_contact', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, adds a contact to it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
+  ('move_contact', 'firm_scoped', 'a current member of the firm the call acts for moves a contact to another account of that firm by the level rule; another firm''s contact or account is as not there (4e)'),
+  ('contact_move_choices', 'firm_scoped', 'the firm''s accounts a contact may be moved to, to a member of that firm who may see the contact (4e)'),
+  ('add_contact_context', 'firm_scoped', 'an account''s name, archived state and main contact, to a member of the firm who may see the account (4e)'),
   ('account_owner_choices', 'firm_scoped', 'the firm''s current people the caller may make an account for, by the level rule, to a member of that firm (4e)'),
   ('archive_account', 'firm_scoped', 'a current member of the firm the call acts for archives an account by the level rule; refused for another firm''s account as for one that is not there (4e)'),
   ('restore_account', 'firm_scoped', 'the same for restoring an archived account (4e)'),
   ('delete_account', 'firm_scoped', 'the same for deleting an account that has no opportunity, with its contacts, calls, notes and tasks (4e)'),
   ('change_account_owner', 'firm_scoped', 'the same for giving an account, and when asked its open opportunities the caller may change, to another current member (4e)'),
   ('accounts_can_change', 'firm_scoped', 'a current member of the firm the call acts for is told which of the given accounts they may change, by the level rule; another firm''s account is never named (4e)'),
+  ('contact_leave_error', 'service_only', 'the first two of move_contact''s three yeses, in words: the contact''s own level and the account it is on; asked by move_contact and contact_move_choices, no API role can call it'),
   ('bulk_accounts_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what a bulk change would do to the accounts of that firm they may see; another firm''s account is just not available (4e)'),
   ('bulk_accounts_change', 'firm_scoped', 'the same for doing it, to the accounts the level rule gives the caller, all or none; another firm''s account is just not available (4e)'),
   ('bulk_accounts_undo', 'firm_scoped', 'the member who made a bulk change of their firm puts it back within ten minutes; as not there for anyone else''s and another firm''s (4e)'),
