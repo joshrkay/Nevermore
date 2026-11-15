@@ -679,3 +679,67 @@ BEGIN
   -- a placement a win made is never deleted by deleting a renewal of it (D-452: the win can only be reopened)
   PERFORM pg_temp.is((SELECT count(*) FROM public.placements WHERE id = pg_temp.id('wr_p')), 1::bigint, 'a win''s placement is still there');
 END $$;
+
+
+-- ---------- history and version (D-453) ----------
+-- Break caught: a renewal's or placement's changes are not written (a person can't see who moved a date); its history is read by someone who may not see the
+-- account, or by another firm; the history of a deleted renewal or placement is kept after it (the history is kept as long as the record is, D-45) or
+-- deleted while the record is still there; the history domain does not know the two tables; the opportunity link or the placement a product sets is written
+-- as the person's own field.
+DO $$
+DECLARE acme uuid := pg_temp.id('acme'); r1 text := pg_temp.id('r1')::text; p1 text := pg_temp.id('p1')::text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is((SELECT string_agg(kind || ':' || COALESCE(field, ''), ',' ORDER BY kind DESC, field) FROM public.record_history_list(acme, 'renewals', r1)),
+    'created:,changed:renews_on,changed:renews_on,changed:with_whom', 'a renewal''s history: its making, and each field changed (the date twice: the first edit, then the owner''s)');
+  PERFORM pg_temp.is((SELECT to_value FROM public.record_history_list(acme, 'renewals', r1) WHERE field = 'with_whom'), '"Justworks PEO"'::jsonb, 'with the value it was changed to');
+  PERFORM pg_temp.is((SELECT string_agg(kind || ':' || COALESCE(field, ''), ',' ORDER BY kind DESC, field) FROM public.record_history_list(acme, 'placements', p1)),
+    'created:,changed:peo_name', 'a placement''s: its making and the PEO changed with the renewal''s');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history_list(acme, 'renewals', pg_temp.id('wr')::text)) > 0, true, 'a renewal a win would make has one too');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'renewals', %L)$q$, acme, r1)), 'PT404', 'another agent may not read a renewal''s history');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'placements', %L)$q$, acme, p1)), 'PT404', 'nor a placement''s');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history_list(acme, 'renewals', r1)) > 0, true, 'an owner of the firm reads it');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'renewals', %L)$q$, acme, pg_temp.id('zr1')::text)), 'PT404', 'but not another firm''s renewal, asked for under their own firm');
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'renewals', %L)$q$, acme, r1)), 'PT404', 'another firm''s owner is refused');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'renewals', %L)$q$, pg_temp.id('zenith'), r1)), 'PT404', 'and asking under their own firm finds nothing');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history_list(pg_temp.id('zenith'), 'renewals', pg_temp.id('zr1')::text)) > 0, true, 'a firm''s own owner reads its renewal''s');
+  RESET ROLE;
+
+  -- kept while the record is, gone with it
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'renewals' AND h.record_key = r1) > 0, true, 'the history is stored');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'renewals' AND h.record_key = pg_temp.id('r2')::text), 0::bigint, 'a deleted renewal''s history went with it');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'placements' AND h.record_key = pg_temp.id('p4')::text), 0::bigint, 'and a deleted placement''s');
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'renewals', r1), true, 'the history asks, and a renewal that is there exists');
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'renewals', pg_temp.id('r2')::text), false, 'one that was deleted does not');
+  PERFORM pg_temp.is(public.record_history_record_exists(acme, 'placements', p1), true, 'nor a placement that is there');
+  PERFORM pg_temp.is(public.record_history_record_exists(pg_temp.id('zenith'), 'placements', p1), false, 'it is not in another firm');
+  PERFORM pg_temp.is(public.record_history_can_see(acme, 'renewals', r1) IS NOT NULL, true, 'the visibility question is asked');
+
+  -- the links the product sets are not the person's fields; a renewal's working opportunity is
+  PERFORM pg_temp.opportunity('lk_o', 'a1', 'acme_agent1');
+  UPDATE public.placements SET opportunity_id = pg_temp.id('lk_o') WHERE id = pg_temp.id('p1b');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'placements' AND h.record_key = pg_temp.id('p1b')::text AND h.kind = 'changed'), 0::bigint, 'a placement''s opportunity is not a tracked field');
+  PERFORM pg_temp.is((SELECT version FROM public.placements WHERE id = pg_temp.id('p1b')), 1, 'and does not move its version');
+  UPDATE public.placements SET opportunity_id = NULL WHERE id = pg_temp.id('p1b');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('lk_o') WHERE id = pg_temp.id('r1b');
+  PERFORM pg_temp.is((SELECT string_agg(field, ',') FROM public.record_history h WHERE h.table_name = 'renewals' AND h.record_key = pg_temp.id('r1b')::text AND h.kind = 'changed'), 'opportunity_id', 'a renewal''s working opportunity is');
+  PERFORM pg_temp.is((SELECT version FROM public.renewals WHERE id = pg_temp.id('r1b')), 2, 'and moves its version');
+  UPDATE public.renewals SET opportunity_id = NULL WHERE id = pg_temp.id('r1b');
+END $$;
+
+-- ---------- closing a firm (D-407) ----------
+-- Break caught: the closing's list lacks either table (a firm that closes keeps its renewals); deletes the placements before the renewals or either one after
+-- the opportunities and accounts they stand on, so the closing fails on a foreign key; or drops a line it had.
+DO $$
+BEGIN
+  PERFORM pg_temp.is((SELECT action FROM public.firm_closing_plan() WHERE src = 'public.renewals'), 'delete', 'closing a firm deletes its renewals');
+  PERFORM pg_temp.is((SELECT action FROM public.firm_closing_plan() WHERE src = 'public.placements'), 'delete', 'and its placements');
+  PERFORM pg_temp.is((SELECT firm_column FROM public.firm_closing_plan() WHERE src = 'public.placements'), 'firm_id', 'by the firm');
+  PERFORM pg_temp.is((SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.renewals') < (SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.placements'), true, 'the renewals first');
+  PERFORM pg_temp.is((SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.placements') < (SELECT min(ord) FROM public.firm_closing_plan() WHERE src IN ('public.opportunities', 'public.contacts', 'public.accounts')), true, 'both before the records they stand on');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src IN ('public.accounts', 'public.contacts', 'public.opportunities', 'public.activities', 'public.record_history', 'public.referral_partners')), 6::bigint, 'and every line it had is kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'with every kept table');
+END $$;
