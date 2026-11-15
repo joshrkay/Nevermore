@@ -10,8 +10,8 @@ import { WorkspaceContext, type Workspace } from "./workspaceContext";
 // (supabase/tests/search_everywhere.sql); here the client answers and the box draws it.
 
 vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-const auth = vi.hoisted(() => ({ signOut: vi.fn() }));
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut: auth.signOut }) }));
+const auth = vi.hoisted(() => ({ signOut: vi.fn(), userId: "u1" }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: auth.userId, email: "dana@example.com" }, signOut: auth.signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { searchRecords: vi.fn(), myRecentRecords: vi.fn() };
@@ -37,8 +37,8 @@ const Where = () => {
   const l = useLocation();
   return <span data-testid="where">{l.pathname + l.search}</span>;
 };
-const renderBox = (over: Partial<Workspace> = {}) => render(
-  <QueryClientProvider client={new QueryClient()}>
+const renderBox = (over: Partial<Workspace> = {}, queries = new QueryClient()) => render(
+  <QueryClientProvider client={queries}>
     <WorkspaceContext.Provider value={{ ...workspace, ...over }}>
       <MemoryRouter initialEntries={["/accounts"]}>
         <SidebarProvider>
@@ -57,6 +57,7 @@ beforeEach(() => {
   client.myRecentRecords.mockReset().mockResolvedValue([]);
   create.createAccount.mockReset();
   auth.signOut.mockReset();
+  auth.userId = "u1";
   create.listAccountOwners.mockReset().mockResolvedValue([]);
 });
 afterEach(() => cleanup());
@@ -291,5 +292,38 @@ describe("the menu's search box: review fixes", () => {
     await pause();
     await waitFor(() => expect(client.searchRecords).toHaveBeenCalledWith("f1", "h".repeat(200)));
     expect(await within(results()).findByText("Harborview Dental Group")).toBeInTheDocument();
+  });
+});
+
+describe("the menu's search box: who is signed in", () => {
+  it("never shows one person's recent records or results to the next person in the same tab (the cache is kept per person)", async () => {
+    const queries = new QueryClient();
+    client.myRecentRecords.mockResolvedValue([{ ...account, openedAt: "2026-11-13T10:00:00Z" }]);
+    const first = userEvent.setup();
+    const one = renderBox({}, queries);
+    await first.click(box());
+    await within(results()).findByText("Harborview Dental Group");
+    one.unmount();
+
+    auth.userId = "u2";
+    let release: (rows: object[]) => void = () => {};
+    client.myRecentRecords.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const second = userEvent.setup();
+    renderBox({}, queries);
+    await second.click(box());
+    expect(within(results()).queryByText("Harborview Dental Group")).not.toBeInTheDocument();
+    release([]);
+    await within(results()).findByText(/nothing opened yet/i);
+  });
+
+  it("counts an emoji as one character, as the database does", async () => {
+    const user = userEvent.setup();
+    renderBox();
+    await user.type(box(), "\u{1F600}");
+    await pause();
+    expect(client.searchRecords).not.toHaveBeenCalled();
+    await user.type(box(), "\u{1F600}");
+    await pause();
+    await waitFor(() => expect(client.searchRecords).toHaveBeenCalledWith("f1", "\u{1F600}\u{1F600}"));
   });
 });

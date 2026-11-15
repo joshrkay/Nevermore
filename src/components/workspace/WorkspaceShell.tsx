@@ -52,7 +52,9 @@ const MenuBody = () => {
   const { pathname, search } = useLocation();
   const params = new URLSearchParams(search);
   const { signOut } = useAuth();
-  const { firm, role, isPlatformAdmin, person } = useWorkspace();
+  const { firm, role, isPlatformAdmin, person, supportEndsAt } = useWorkspace();
+  // The search box goes with the page when the support hour ends (as in Frame): it would otherwise go on showing results after the session is over.
+  const supportOver = useSupportOver(supportEndsAt);
   const counts = useMenuCounts();
   return (
     <>
@@ -68,7 +70,7 @@ const MenuBody = () => {
           </span>
         </Link>
       </SidebarHeader>
-      <MenuSearch />
+      {!supportOver && <MenuSearch />}
       <SidebarContent>
         <SidebarGroup className="flex-1">
           <nav aria-label="Workspace" className="flex h-full flex-col">

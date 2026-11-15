@@ -5,6 +5,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
+import ClearCacheOnUserChange from "@/components/ClearCacheOnUserChange";
 import ErrorBoundary from "./components/ErrorBoundary";
 import AuthRedirectGate from "./components/AuthRedirectGate";
 import PageMeta from "./components/PageMeta";
@@ -119,6 +120,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
+        <ClearCacheOnUserChange />
         <FirmAddressProvider>
         <RouterProvider router={router} />
         </FirmAddressProvider>
