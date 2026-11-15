@@ -739,7 +739,7 @@ BEGIN
     INSERT INTO public.labels (firm_id, name) VALUES (fid, 'Fixture label');
     INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT fid, acc1, l.id FROM public.labels l WHERE l.firm_id = fid;
     INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES (fid, 'archive', now() + interval '10 minutes');
-    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, record_id, before, after)
+    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after)
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
   END LOOP;
 END $$;
@@ -3070,7 +3070,7 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
    $m$INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
-   $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, record_id, before, after) SELECT c.id, c.firm_id, 'account', gen_random_uuid(), '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = {firm} ORDER BY c.made_at, c.id LIMIT 1 RETURNING ctid::text$m$, false,
+   $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} ORDER BY c.made_at, c.id, a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',

@@ -96,6 +96,9 @@ CREATE TABLE public.bulk_changes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   firm_id uuid NOT NULL REFERENCES public.firms (id),
   actor_id uuid REFERENCES auth.users (id) ON DELETE SET NULL,
+  -- The maker's membership when they made it (an undo is theirs only while that membership is still current: a person made an agent since, or removed, holds
+  -- a new one, and the level they had then is not theirs now, D-209).
+  actor_membership_id bigint,
   action text NOT NULL CONSTRAINT bulk_changes_action_check CHECK (action IN ('owner', 'archive', 'field', 'label_add', 'label_remove')),
   -- The action's own details, as checked (the owner, the field and value, the label), for the record.
   detail jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -108,16 +111,24 @@ CREATE TABLE public.bulk_changes (
 
 CREATE INDEX bulk_changes_firm_made_idx ON public.bulk_changes (firm_id, made_at);
 
+-- One record a change changed. It stands on the record it is about by a foreign key, so deleting an account (or an opportunity) deletes its rows here at
+-- once: the names and old values kept for an undo never outlive the record they describe. `record_id` is whichever of the two ids is set.
 CREATE TABLE public.bulk_change_records (
   change_id uuid NOT NULL,
   firm_id uuid NOT NULL,
   record_type text NOT NULL CONSTRAINT bulk_change_records_type_check CHECK (record_type IN ('account', 'opportunity')),
-  record_id uuid NOT NULL,
-  -- The account's name when it was changed, so an undo can name one it can no longer find or the person can no longer see.
+  account_id uuid,
+  opportunity_id uuid REFERENCES public.opportunities (id) ON DELETE CASCADE,
+  record_id uuid GENERATED ALWAYS AS (COALESCE(account_id, opportunity_id)) STORED NOT NULL,
+  -- The account's name when it was changed, so an undo can name one the person can no longer see.
   record_name text,
   before jsonb NOT NULL,
   after jsonb NOT NULL,
+  -- The newest history entry of the record when the change had finished with it: an entry after it (by anyone) is a change made since (D-202).
+  history_mark bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (change_id, record_type, record_id),
+  CONSTRAINT bulk_change_records_one_record CHECK ((record_type = 'account') = (account_id IS NOT NULL) AND (record_type = 'opportunity') = (opportunity_id IS NOT NULL)),
+  CONSTRAINT bulk_change_records_account_fkey FOREIGN KEY (firm_id, account_id) REFERENCES public.accounts (firm_id, id) ON DELETE CASCADE,
   CONSTRAINT bulk_change_records_change_fkey FOREIGN KEY (firm_id, change_id) REFERENCES public.bulk_changes (firm_id, id) ON DELETE CASCADE
 );
 
@@ -770,6 +781,8 @@ DECLARE
   opp_change integer := 0;
   opp_skip integer := 0;
   undo_by timestamptz := now() + interval '10 minutes';
+  maker bigint;
+  mark bigint;
   row_before jsonb;
   row_after jsonb;
   al_id uuid;
@@ -779,6 +792,7 @@ BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
   params := public.bulk_params_checked(p_action, p_params);
+  SELECT m.id INTO maker FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = auth.uid() AND public.membership_is_current(m.valid_from, m.valid_until);
   SELECT * INTO sel FROM public.bulk_accounts_resolve(firm, p_filters, p_ids);
   IF sel.too_many THEN
     RAISE EXCEPTION 'That is % accounts. A bulk change takes at most 1,000: narrow the selection and try again.', sel.selected USING ERRCODE = 'PT413';
@@ -818,8 +832,8 @@ BEGIN
     n_change := n_change + 1;
     allowed := allowed || a.id;
     IF NOT made THEN
-      INSERT INTO public.bulk_changes (id, firm_id, actor_id, action, detail, made_at, undo_until)
-      VALUES (chg, firm, auth.uid(), p_action, params, now(), undo_by);
+      INSERT INTO public.bulk_changes (id, firm_id, actor_id, actor_membership_id, action, detail, made_at, undo_until)
+      VALUES (chg, firm, auth.uid(), maker, p_action, params, now(), undo_by);
       made := true;
     END IF;
 
@@ -842,6 +856,9 @@ BEGIN
         ON CONFLICT (firm_id, lower(name)) DO NOTHING RETURNING id INTO lbl;
         IF lbl IS NULL THEN
           SELECT l.id INTO lbl FROM public.labels l WHERE l.firm_id = firm AND lower(l.name) = lower(params ->> 'name');
+        ELSE
+          -- This change made the word, so its undo, when no account is left carrying it, takes the word out of the firm's list again.
+          UPDATE public.bulk_changes SET detail = detail || jsonb_build_object('label_id', lbl, 'label_created', true) WHERE id = chg;
         END IF;
       END IF;
       INSERT INTO public.account_labels (firm_id, account_id, label_id, added_by) VALUES (firm, a.id, lbl, auth.uid()) RETURNING id INTO al_id;
@@ -852,8 +869,9 @@ BEGIN
       row_before := jsonb_build_object('label_id', lbl, 'present', true, 'added_by', old_al.added_by, 'added_at', old_al.added_at);
       row_after := jsonb_build_object('label_id', lbl, 'present', false);
     END IF;
-    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, record_id, record_name, before, after)
-    VALUES (chg, firm, 'account', a.id, a.name, row_before, row_after);
+    SELECT COALESCE(max(h.id), 0) INTO mark FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'accounts' AND h.record_key = a.id::text;
+    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, record_name, before, after, history_mark)
+    VALUES (chg, firm, 'account', a.id, a.name, row_before, row_after, mark);
   END LOOP;
 
   -- 3. Their open opportunities, when asked (the same rule as the single change: the accounts the caller may change, those already the new owner's too).
@@ -862,12 +880,13 @@ BEGIN
       IF g.changed THEN
         opp_change := opp_change + 1;
         IF NOT made THEN
-          INSERT INTO public.bulk_changes (id, firm_id, actor_id, action, detail, made_at, undo_until)
-          VALUES (chg, firm, auth.uid(), p_action, params, now(), undo_by);
+          INSERT INTO public.bulk_changes (id, firm_id, actor_id, actor_membership_id, action, detail, made_at, undo_until)
+          VALUES (chg, firm, auth.uid(), maker, p_action, params, now(), undo_by);
           made := true;
         END IF;
-        INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, record_id, before, after)
-        VALUES (chg, firm, 'opportunity', g.opportunity_id, jsonb_build_object('owner_id', g.from_owner), jsonb_build_object('owner_id', new_owner));
+        INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, opportunity_id, before, after, history_mark)
+        VALUES (chg, firm, 'opportunity', g.opportunity_id, jsonb_build_object('owner_id', g.from_owner), jsonb_build_object('owner_id', new_owner),
+          (SELECT COALESCE(max(h.id), 0) FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'opportunities' AND h.record_key = g.opportunity_id::text));
       ELSE
         opp_skip := opp_skip + 1;
       END IF;
@@ -921,11 +940,18 @@ DECLARE
   lid uuid;
   current_value jsonb;
   why text;
+  since boolean;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
   SELECT * INTO ch FROM public.bulk_changes c WHERE c.id = p_change_id AND c.firm_id = firm FOR UPDATE;
   IF ch.id IS NULL OR ch.actor_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'That change isn''t available to undo' USING ERRCODE = 'PT404';
+  END IF;
+  -- Theirs only while the membership they made it under is still current: one who has since been removed, or made another role under a new membership, holds
+  -- the level they hold now (D-209), and a change they could no longer make is not theirs to put back. (Giving accounts away does not end it.)
+  IF ch.actor_membership_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM public.firm_memberships m WHERE m.id = ch.actor_membership_id AND m.firm_id = firm AND m.user_id = auth.uid() AND public.membership_is_current(m.valid_from, m.valid_until)) THEN
     RAISE EXCEPTION 'That change isn''t available to undo' USING ERRCODE = 'PT404';
   END IF;
   IF ch.undone_at IS NOT NULL THEN
@@ -954,7 +980,13 @@ BEGIN
       skipped := skipped || jsonb_build_object('id', rec.record_id, 'name', rec.record_name, 'code', 'gone', 'reason', 'It no longer exists.');
       CONTINUE;
     END IF;
-    IF ch.action = 'owner' THEN
+    -- Changed since: the record's history has an entry for this field after the change finished with it (a value put back to what it was is a change too,
+    -- D-202), whoever made it; the value is looked at as well.
+    since := EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'accounts' AND h.record_key = a.id::text AND h.id > rec.history_mark
+      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' WHEN 'archive' THEN 'archived_at' WHEN 'field' THEN rec.after ->> 'field' ELSE 'labels' END);
+    IF since THEN
+      why := 'It has been changed since.';
+    ELSIF ch.action = 'owner' THEN
       prev := (rec.before ->> 'owner_id')::uuid;
       IF a.owner_id IS DISTINCT FROM (rec.after ->> 'owner_id')::uuid THEN
         why := 'Its owner has changed since.';
@@ -1007,7 +1039,9 @@ BEGIN
   FOR rec IN SELECT r.* FROM public.bulk_change_records r WHERE r.change_id = ch.id AND r.record_type = 'opportunity' ORDER BY r.record_id LOOP
     SELECT * INTO o FROM public.opportunities x WHERE x.id = rec.record_id AND x.firm_id = firm;
     prev := (rec.before ->> 'owner_id')::uuid;
-    IF o.id IS NULL OR o.owner_id IS DISTINCT FROM (rec.after ->> 'owner_id')::uuid OR (prev IS NOT NULL AND NOT public.crm_is_current_member(firm, prev)) THEN
+    IF o.id IS NULL OR o.owner_id IS DISTINCT FROM (rec.after ->> 'owner_id')::uuid
+       OR EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'opportunities' AND h.record_key = o.id::text AND h.field = 'owner_id' AND h.id > rec.history_mark)
+       OR (prev IS NOT NULL AND NOT public.crm_is_current_member(firm, prev)) THEN
       opp_skipped := opp_skipped + 1;
     ELSE
       UPDATE public.opportunities SET owner_id = prev WHERE id = o.id;
@@ -1015,6 +1049,15 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- A label this change made, which no account carries any more, goes out of the firm's list: nobody can delete one until Settings (Epic 9). The label is held
+  -- first, so an account that is just being given it by another change is waited for and seen (and its row is not taken with the label).
+  IF ch.action = 'label_add' AND ch.detail ->> 'label_created' = 'true' THEN
+    lid := (ch.detail ->> 'label_id')::uuid;
+    PERFORM 1 FROM public.labels l WHERE l.id = lid AND l.firm_id = firm FOR UPDATE;
+    IF FOUND AND NOT EXISTS (SELECT 1 FROM public.account_labels al WHERE al.label_id = lid) THEN
+      DELETE FROM public.labels WHERE id = lid AND firm_id = firm;
+    END IF;
+  END IF;
   UPDATE public.bulk_changes SET undone_at = now() WHERE id = ch.id;
   RETURN jsonb_build_object('action', ch.action, 'restored', restored, 'skipped', skipped,
     'opportunities', jsonb_build_object('restored', opp_restored, 'skipped', opp_skipped));
@@ -1113,8 +1156,8 @@ $$;
 -- The accounts query learns the word: a row carries its labels (alphabetical, ignoring case), and "labels" is a field to filter and sort by. As the states of
 -- operation it is a "choices" field: any of, none of, is empty, each by the label's name ignoring case; the values a filter takes are the firm's own words, so
 -- the filter takes any text of 1 to 200 characters (a word the firm does not have matches nothing). Sorting is by the labels in the row, as a line of text.
--- Four of 20261119130000's functions are restated below with every rule they had; the lines this story adds are the labels'. (They carry no sync markers:
--- CRM-S3.7a, which puts the column on screen, adds the field to the page's list and its test then reads the newest definition.) The export's columns are
+-- Four of 20261119130000's functions are restated below with every rule they had; the lines this story adds are the labels'. (The field list keeps its sync
+-- markers: the page's test reads the newest definition and allows `labels` as the one extra until CRM-S3.7a, which puts the column on screen, adds it.) The export's columns are
 -- unchanged: a Labels column in a file comes when a story asks for one (CRM-S3.8's).
 ALTER TYPE public.accounts_row ADD ATTRIBUTE labels text[];
 
@@ -1126,6 +1169,7 @@ IMMUTABLE
 SET search_path = public, pg_temp
 AS $$
   SELECT CASE p_field
+    -- sync:begin accounts_fields
     WHEN 'name' THEN 'text'
     WHEN 'trade_name' THEN 'text'
     WHEN 'website' THEN 'text'
@@ -1150,6 +1194,7 @@ AS $$
     WHEN 'archived' THEN 'yes_no'
     WHEN 'waiting_on_peo' THEN 'yes_no'
     WHEN 'owner' THEN 'person'
+    -- sync:end accounts_fields
   END
 $$;
 -- accounts_row_filters_pass: one row against the checked filters; one new line.

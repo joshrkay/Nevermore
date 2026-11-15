@@ -815,7 +815,7 @@ CREATE FUNCTION pg_temp.as_claims(who text) RETURNS text LANGUAGE sql AS $$
   SELECT format('SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L', jsonb_build_object('sub', pg_temp.id(who), 'role', 'authenticated', 'is_anonymous', false, 'email', who || '@example.test')::text)
 $$;
 
-CREATE FUNCTION pg_temp.race_two(a1 text, a2 text, b1 text) RETURNS text LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.race_two(a1 text, a2 text, b1 text, a_as text DEFAULT 'acme_owner') RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
   dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'), split_part(current_setting('unix_socket_directories'), ',', 1));
   b_pid integer; tries integer := 0; waited boolean := false; ra2 text; rb text;
@@ -826,7 +826,7 @@ BEGIN
   PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
   SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
   PERFORM race.dblink_exec('ra', 'BEGIN');
-  PERFORM race.dblink_exec('ra', pg_temp.as_claims('acme_owner'));
+  IF a_as IS NOT NULL THEN PERFORM race.dblink_exec('ra', pg_temp.as_claims(a_as)); END IF;
   PERFORM race.dblink_exec('rb', 'BEGIN');
   PERFORM race.dblink_exec('rb', pg_temp.as_claims('acme_owner'));
   PERFORM * FROM race.dblink('ra', a1) AS t(r text);
@@ -921,4 +921,129 @@ BEGIN
   r := pg_temp.bulk('preview', 'acme_owner', 'field', '{"field":"city","value":"Oslo"}', NULL, 'acme', '{"filters":[{"field":"labels","op":"any_of","value":["east"]}]}')::jsonb;
   PERFORM pg_temp.is((r ->> 'selected')::int, 2, 'the bulk selection by a label filter is the table''s');
   RAISE NOTICE 'bulk_changes: label column and filter passed';
+END $$;
+
+
+-- ---------- the undo's locks (D-32) ----------
+-- Break caught, one for each lock the undo takes: without the change's row held, two undos of one change at once both put it back; without the accounts held, an
+-- undo overwrites a change another person is making to the same account; without the previous owners' memberships held (FOR SHARE), an undo gives an account back
+-- to a person whose removal has not committed; without the opportunities held, it overwrites an opportunity's owner being changed. Each is seen WAITING (a
+-- pg_blocking_pids barrier) and then answering as if the other had come first. The changes below are made, and committed, before each race.
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.new_user('acme_prev'); PERFORM pg_temp.new_user('acme_other');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('acme_prev'), 'agent'), (pg_temp.id('acme'), pg_temp.id('acme_other'), 'agent');
+  PERFORM pg_temp.account('k1', 'acme', 'acme_prev'); PERFORM pg_temp.account('k2', 'acme', 'acme_agent1'); PERFORM pg_temp.account('k3', 'acme', 'acme_agent1');
+  PERFORM pg_temp.account('k4', 'acme', 'acme_agent1');
+  PERFORM pg_temp.opportunity('ko4', 'k4', 'acme_agent1');
+END $$;
+DO $$
+BEGIN
+  RESET ROLE;
+  CREATE TEMP TABLE kc (n text PRIMARY KEY, id text);
+  INSERT INTO kc VALUES
+    ('prev', pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3'), ARRAY['k1'])::jsonb ->> 'change_id'),
+    ('other', pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3'), ARRAY['k2'])::jsonb ->> 'change_id'),
+    ('twice', pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3'), ARRAY['k3'])::jsonb ->> 'change_id'),
+    ('opp', pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3', true), ARRAY['k4'])::jsonb ->> 'change_id');
+  GRANT SELECT ON kc TO PUBLIC;
+END $$;
+-- (the change's rows are committed by now: the DO blocks above ended)
+CREATE TEMP TABLE kc2 AS SELECT * FROM kc;
+
+DO $$
+DECLARE r text; firm uuid := pg_temp.id('acme'); u text;
+BEGIN
+  RESET ROLE;
+  -- The previous owner's removal not yet committed.
+  u := format($q$SELECT public.bulk_accounts_undo(%L, %L)::text$q$, (SELECT id FROM kc2 WHERE n = 'prev'), firm);
+  r := pg_temp.race_two(format($q$SELECT public.remove_member(%L, %L)::text$q$, firm, pg_temp.id('acme_prev')), 'SELECT 1', u);
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the undo waits for the removal of the previous owner');
+  PERFORM pg_temp.is(split_part(r, '|', 3) LIKE '%"restored": 0%' AND split_part(r, '|', 3) LIKE '%owner_left%', true, 'and, once it has committed, names the account and gives it back to no one');
+  PERFORM pg_temp.is(pg_temp.owner_of('accounts', 'k1'), 'acme_agent3', 'the account is not handed to a former member');
+  -- Another change to the same account, not yet committed.
+  u := format($q$SELECT public.bulk_accounts_undo(%L, %L)::text$q$, (SELECT id FROM kc2 WHERE n = 'other'), firm);
+  r := pg_temp.race_two(format($q$SELECT public.change_account_owner(%L, %L, false, %L)::text$q$, pg_temp.id('k2'), pg_temp.id('acme_other'), firm), 'SELECT 1', u);
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the undo waits for a change to the same account');
+  PERFORM pg_temp.is(split_part(r, '|', 3) LIKE '%"restored": 0%' AND split_part(r, '|', 3) LIKE '%changed_since%', true, 'and names the account: the later change is not undone');
+  PERFORM pg_temp.is(pg_temp.owner_of('accounts', 'k2'), 'acme_other', 'the other change stands');
+  -- A second undo of one change, while the first is not committed.
+  u := format($q$SELECT public.bulk_accounts_undo(%L, %L)::text$q$, (SELECT id FROM kc2 WHERE n = 'twice'), firm);
+  r := pg_temp.race_two(u, 'SELECT 1', u);
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'a second undo waits for the first');
+  PERFORM pg_temp.is(split_part(r, '|', 3), 'PT409', 'and is told it was already undone');
+  PERFORM pg_temp.is(pg_temp.owner_of('accounts', 'k3'), 'acme_agent1', 'the first put the account back, once');
+  -- An opportunity's owner being changed, not yet committed (by the superuser: no function changes one alone).
+  u := format($q$SELECT public.bulk_accounts_undo(%L, %L)::text$q$, (SELECT id FROM kc2 WHERE n = 'opp'), firm);
+  r := pg_temp.race_two(format($q$WITH x AS (UPDATE public.opportunities SET owner_id = %L WHERE id = %L RETURNING 1) SELECT count(*)::text FROM x$q$, pg_temp.id('acme_other'), pg_temp.id('ko4')),
+    'SELECT 1', u, NULL);
+  PERFORM pg_temp.is(split_part(r, '|', 1), 'waited', 'the undo waits for a change to an opportunity it would put back');
+  PERFORM pg_temp.is(split_part(r, '|', 3) LIKE '%"opportunities": {"skipped": 1, "restored": 0}%', true, 'and leaves it, counted');
+  PERFORM pg_temp.is(pg_temp.owner_of('opportunities', 'ko4'), 'acme_other', 'the later change to the opportunity stands');
+  RAISE NOTICE 'bulk_changes: undo locks passed';
+END $$;
+
+-- ---------- review fixes ----------
+-- Break caught: "changed since" judged by value alone (B to C and back to B is put back over); an undo by someone no longer at the level they made the change at;
+-- a label an undone change made left in the firm's list (or taken from under another account that carries it); a deleted account's names and old values kept.
+DO $$
+DECLARE r jsonb; u jsonb; c text;
+BEGIN
+  RESET ROLE;
+  -- B to C to B.
+  PERFORM pg_temp.account('h1', 'acme', 'acme_agent1'); PERFORM pg_temp.account('h2', 'acme', 'acme_agent1');
+  r := pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3'), ARRAY['h1', 'h2'])::jsonb;
+  UPDATE public.accounts SET owner_id = pg_temp.id('acme_lead') WHERE id = pg_temp.id('h1');
+  UPDATE public.accounts SET owner_id = pg_temp.id('acme_agent3') WHERE id = pg_temp.id('h1');
+  u := pg_temp.undo('acme_owner', r ->> 'change_id')::jsonb;
+  PERFORM pg_temp.is((u ->> 'restored')::int || '/' || pg_temp.names_of(u -> 'skipped'), '1/h1', 'an owner changed and put back since is skipped and named, not put back over');
+  PERFORM pg_temp.is(pg_temp.owner_of('accounts', 'h1') || '/' || pg_temp.owner_of('accounts', 'h2'), 'acme_agent3/acme_agent1', 'the other is back');
+  -- A field set, changed and put back.
+  r := pg_temp.bulk('change', 'acme_owner', 'field', '{"field":"industry","value":"Retail"}', ARRAY['h1', 'h2'])::jsonb;
+  UPDATE public.accounts SET industry = 'Mining' WHERE id = pg_temp.id('h2');
+  UPDATE public.accounts SET industry = 'Retail' WHERE id = pg_temp.id('h2');
+  u := pg_temp.undo('acme_owner', r ->> 'change_id')::jsonb;
+  PERFORM pg_temp.is((u ->> 'restored')::int || '/' || pg_temp.names_of(u -> 'skipped'), '1/h2', 'the same for a field');
+  -- The maker's level: made an agent since, with a new membership.
+  PERFORM pg_temp.new_user('acme_boss');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('acme_boss'), 'owner');
+  r := pg_temp.bulk('change', 'acme_boss', 'archive', '{}', ARRAY['h1'])::jsonb;
+  c := r ->> 'change_id';
+  UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('acme_boss');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from) VALUES (pg_temp.id('acme'), pg_temp.id('acme_boss'), 'agent', now());
+  PERFORM pg_temp.is(pg_temp.undo('acme_boss', c), 'PT404: That change isn''t available to undo', 'someone made an agent since can not undo what they did as an owner');
+  PERFORM pg_temp.is((SELECT archived_at IS NOT NULL FROM public.accounts WHERE id = pg_temp.id('h1')), true, 'and the account stays archived');
+  PERFORM pg_temp.is(pg_temp.run('acme_boss', format('SELECT public.restore_account(%L, %L)::text', pg_temp.id('h1'), pg_temp.id('acme'))), 'PT404: That account isn''t available', 'as the single restore refuses them too');
+  -- An agent who gave their accounts away keeps the right to undo it (they made it at the level they still hold).
+  PERFORM pg_temp.account('h3', 'acme', 'acme_agent2');
+  r := pg_temp.bulk('change', 'acme_agent2', 'owner', pg_temp.owner_p('acme_agent3'), ARRAY['h3'])::jsonb;
+  u := pg_temp.undo('acme_agent2', r ->> 'change_id')::jsonb;
+  PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'an agent who gave an account away can still undo it');
+  -- A label an undone change made.
+  PERFORM pg_temp.account('h4', 'acme', 'acme_agent1'); PERFORM pg_temp.account('h5', 'acme', 'acme_agent1');
+  r := pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Brand new"}', ARRAY['h4', 'h5'])::jsonb;
+  PERFORM pg_temp.undo('acme_owner', r ->> 'change_id');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.labels WHERE firm_id = pg_temp.id('acme') AND name = 'Brand new'), 0::bigint, 'undoing the change that made a label takes it out of the list');
+  PERFORM pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Old word"}', ARRAY['h4']);
+  r := pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Old word"}', ARRAY['h5'])::jsonb;
+  PERFORM pg_temp.undo('acme_owner', r ->> 'change_id');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.labels WHERE firm_id = pg_temp.id('acme') AND name = 'Old word'), 1::bigint, 'a label that was already there stays');
+  r := pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Made here"}', ARRAY['h4'])::jsonb;
+  PERFORM pg_temp.bulk('change', 'acme_owner', 'label_add', '{"name":"Made here"}', ARRAY['h5']);
+  PERFORM pg_temp.undo('acme_owner', r ->> 'change_id');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.labels WHERE firm_id = pg_temp.id('acme') AND name = 'Made here'), 1::bigint, 'and so does one another account carries');
+  PERFORM pg_temp.is(pg_temp.labels_of('h5'), 'Made here', 'with its account');
+  -- Deleting an account deletes what the changes kept of it.
+  PERFORM pg_temp.account('h6', 'acme', 'acme_agent1');
+  PERFORM pg_temp.bulk('change', 'acme_owner', 'field', '{"field":"city","value":"Reno"}', ARRAY['h6']);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.bulk_change_records WHERE account_id = pg_temp.id('h6')), 1::bigint, 'set-up: a record of the change');
+  DELETE FROM public.accounts WHERE id = pg_temp.id('h6');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.bulk_change_records WHERE record_id = pg_temp.id('h6')), 0::bigint, 'deleting the account takes its rows with it');
+  PERFORM pg_temp.opportunity('ho7', 'h4', 'acme_agent1');
+  PERFORM pg_temp.bulk('change', 'acme_owner', 'owner', pg_temp.owner_p('acme_agent3', true), ARRAY['h4']);
+  PERFORM pg_temp.is((SELECT count(*) FROM public.bulk_change_records WHERE opportunity_id = pg_temp.id('ho7')), 1::bigint, 'set-up: a record of an opportunity handed over');
+  DELETE FROM public.opportunities WHERE id = pg_temp.id('ho7');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.bulk_change_records WHERE opportunity_id = pg_temp.id('ho7')), 0::bigint, 'and deleting the opportunity takes its row');
+  RAISE NOTICE 'bulk_changes: review fixes passed';
 END $$;

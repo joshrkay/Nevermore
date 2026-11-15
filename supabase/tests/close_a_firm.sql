@@ -323,7 +323,7 @@ BEGIN
     (fa, '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a6'), (fb, '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000b6');
   INSERT INTO public.bulk_changes (id, firm_id, action, undo_until) VALUES
     ('00000000-0000-4000-8000-0000000000a7', fa, 'archive', now()), ('00000000-0000-4000-8000-0000000000b7', fb, 'archive', now());
-  INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, record_id, before, after) VALUES
+  INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) VALUES
     ('00000000-0000-4000-8000-0000000000a7', fa, 'account', '00000000-0000-4000-8000-0000000000a1', '{}', '{}'), ('00000000-0000-4000-8000-0000000000b7', fb, 'account', '00000000-0000-4000-8000-0000000000b1', '{}', '{}');
   INSERT INTO public.firm_organisations (firm_id, provider, org_id, label) VALUES (fa, 'google', 'alpha.example', 'Alpha'), (fb, 'google', 'beta.example', 'Beta');
   INSERT INTO public.join_requests (firm_id, user_id, provider, org_id, org_label) VALUES (fa, pg_temp.id('joiner'), 'google', 'alpha.example', 'Alpha');
