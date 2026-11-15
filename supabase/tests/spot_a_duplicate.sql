@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh spot_a_duplicate
 -- Spotting a duplicate while creating an account or adding a contact (story CRM-S4.2; docs/BROKER_CRM_BUILD.md D-193, D-209, D-219, D-226, D-238, D-600 to D-604;
--- 20261120120000_spot_a_duplicate.sql). duplicate_account_check and duplicate_contact_check: the match is the chain's own rule (D-193), a record the person may see is shown
+-- 20261121090000_spot_a_duplicate.sql). duplicate_account_check and duplicate_contact_check: the match is the chain's own rule (D-193), a record the person may see is shown
 -- in full, one they may not is only a mask that says one exists and whom to ask, the firm is the caller's own, and nothing is written. Two firms: Acme sees by level,
 -- Zenith shows everyone everything. Every migration is loaded, in filename order (D-105), this story's last.
 \set ON_ERROR_STOP 1
@@ -162,7 +162,7 @@
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
-\i supabase/migrations/20261120120000_spot_a_duplicate.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

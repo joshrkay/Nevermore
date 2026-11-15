@@ -1024,7 +1024,7 @@ export type Database = {
       move_contact: { Args: { p_contact_id: string; p_to_account_id: string; p_confirm?: boolean; p_firm_id?: string | null }; Returns: Json }
       contact_move_choices: { Args: { p_firm_id: string | null; p_contact_id: string; p_search?: string }; Returns: { id: string; name: string }[] }
       add_contact_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
-      // Spotting a duplicate while typing (20261120120000): {matches, more}; a match the person may see in full, one they may not as a mask.
+      // Spotting a duplicate while typing (20261121090000): {matches, more}; a match the person may see in full, one they may not as a mask.
       duplicate_account_check: { Args: { p_firm_id: string | null; p_name: string; p_website: string; p_state: string }; Returns: Json }
       duplicate_contact_check: { Args: { p_firm_id: string | null; p_email: string }; Returns: Json }
       // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}

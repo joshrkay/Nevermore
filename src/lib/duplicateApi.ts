@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 
-// What the New account and Add a contact forms ask the database while a person types (story CRM-S4.2; 20261120120000_spot_a_duplicate.sql): which of the firm's records
+// What the New account and Add a contact forms ask the database while a person types (story CRM-S4.2; 20261121090000_spot_a_duplicate.sql): which of the firm's records
 // may be the same as the one being made, by the one rule the chain at certification uses (D-193). The database decides what the person may see: a record they may see
 // comes in full, one they may not comes as a mask that says only that one exists and whom to ask. This only checks the answer is that shape and drops anything else, so
 // a mask can never carry a record's name or id on to the screen. A check is advice and never stops a save, so a failed one is an error the form ignores.
