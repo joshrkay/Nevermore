@@ -82,7 +82,9 @@ CREATE TABLE public.renewals (
 
 CREATE UNIQUE INDEX renewals_one_per_opportunity ON public.renewals (opportunity_id) WHERE opportunity_id IS NOT NULL;
 CREATE INDEX renewals_firm_account_idx ON public.renewals (firm_id, account_id);
-CREATE INDEX renewals_placement_idx ON public.renewals (placement_id) WHERE placement_id IS NOT NULL;
+-- A placement has one renewal (D-529): the renewal that came from it, so "Didn't renew" on that renewal is the one thing that ends it. The next renewal
+-- of a won renewal comes from the placement the next win makes.
+CREATE UNIQUE INDEX renewals_one_per_placement ON public.renewals (placement_id) WHERE placement_id IS NOT NULL;
 
 COMMENT ON TABLE public.renewals IS 'What renews, with whom and when (glossary: Renewal). Done is worked out by renewal_is_done(), never stored. Seen by whoever may see its account.';
 
@@ -774,6 +776,29 @@ $$;
 
 REVOKE ALL ON FUNCTION public.renewal_to_change(uuid, uuid, boolean) FROM PUBLIC, anon, authenticated, service_role;
 
+-- ---------- 12a. The renewal's opportunity's pipeline row, held first (D-530) ----------
+-- Whether a renewal is renewed is read from its opportunity's stage, which is its submission's pipeline row. set_submission_status takes that row FOR UPDATE
+-- before it moves the stage, so a save that reads the stage and then writes "Didn't renew" must hold the same row first, in the same order (pipeline row,
+-- then the renewal), or a win could commit between the check and the write and leave a renewal marked "Didn't renew" with its placement ended although its
+-- opportunity is won. CRM-O1.3a, which writes the win, takes the pipeline row first (as set_submission_status does) and only then the renewal and the
+-- placement; it settles a renewal marked "Didn't renew" whose opportunity it wins by clearing the mark and the placement's end date in the same transaction,
+-- so a won renewal is never left ended. No row: an opportunity with no intake has no pipeline row to hold. Internal.
+CREATE FUNCTION public.renewal_hold_stage(p_opportunity_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF p_opportunity_id IS NULL THEN
+    RETURN;
+  END IF;
+  PERFORM 1 FROM public.submission_workflow w JOIN public.opportunities o ON o.intake_id = w.session_id WHERE o.id = p_opportunity_id FOR UPDATE OF w;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.renewal_hold_stage(uuid) FROM PUBLIC, anon, authenticated, service_role;
+
 -- ---------- 12. Editing a renewal, and "Didn't renew" (D-451, D-452) ----------
 -- Saves with whom, the date and the "Didn't renew" date (every one is sent; a blank date clears it: Undo) from the version the person started from. What
 -- renews (the kind) is not edited: remove the renewal and add another. "Didn't renew" ends the placement the renewal came from on that date, and clearing
@@ -797,6 +822,7 @@ DECLARE
   cur public.renewals;
   pl public.placements;
   changed public.renewals;
+  pre_opp uuid;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
@@ -808,7 +834,13 @@ BEGIN
     RAISE EXCEPTION 'This save did not say which version of the renewal it started from, so it was refused. Reload the page and try again.'
       USING ERRCODE = '22023';
   END IF;
+  -- The opportunity's pipeline row first, then the renewal (D-530); if the renewal was linked to another opportunity meanwhile, that one's row too.
+  SELECT x.opportunity_id INTO pre_opp FROM public.renewals x WHERE x.id = p_renewal_id AND x.firm_id = firm;
+  PERFORM public.renewal_hold_stage(pre_opp);
   cur := public.renewal_to_change(firm, p_renewal_id, true);
+  IF cur.opportunity_id IS DISTINCT FROM pre_opp THEN
+    PERFORM public.renewal_hold_stage(cur.opportunity_id);
+  END IF;
   IF cur.placement_id IS NOT NULL THEN
     SELECT * INTO pl FROM public.placements x WHERE x.id = cur.placement_id FOR NO KEY UPDATE;
   END IF;
@@ -909,7 +941,7 @@ BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
   cur := public.renewal_to_change(firm, p_renewal_id, false);
-  SELECT * INTO op FROM public.opportunities o WHERE o.id = p_opportunity_id AND o.firm_id = firm AND o.account_id = cur.account_id FOR SHARE;
+  SELECT * INTO op FROM public.opportunities o WHERE o.id = p_opportunity_id AND o.firm_id = firm AND o.account_id = cur.account_id FOR UPDATE;
   IF op.id IS NULL THEN
     RAISE EXCEPTION 'Choose an opportunity of this account.' USING ERRCODE = '22023';
   END IF;
@@ -926,7 +958,13 @@ BEGIN
   IF at_state = 'working' THEN
     RAISE EXCEPTION 'This renewal is being worked by %.', (SELECT w.name FROM public.opportunities w WHERE w.id = cur.opportunity_id) USING ERRCODE = '22023';
   END IF;
-  UPDATE public.renewals SET opportunity_id = op.id WHERE id = cur.id RETURNING * INTO changed;
+  -- The opportunity is held FOR UPDATE above, so two links of one opportunity are ordered and the second sees the first in the check; the unique index
+  -- is the last word, and its violation is said in the same words (D-531).
+  BEGIN
+    UPDATE public.renewals SET opportunity_id = op.id WHERE id = cur.id RETURNING * INTO changed;
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'That opportunity already works another renewal.' USING ERRCODE = '22023';
+  END;
   RETURN jsonb_build_object('record', public.crm_renewal_fields(changed));
 END;
 $$;
@@ -965,6 +1003,25 @@ $$;
 REVOKE ALL ON FUNCTION public.delete_account(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_account(uuid, uuid) TO authenticated;
 
+
+-- ---------- 15a. The words an export holds for a status (D-532) ----------
+-- 20261119130000's accounts_words, restated with every word it had and Former client, so a file never holds a blank status for a former client.
+CREATE OR REPLACE FUNCTION public.accounts_words(p_kind text, p_code text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE p_kind
+    WHEN 'status' THEN CASE p_code WHEN 'prospect' THEN 'Prospect' WHEN 'client' THEN 'Client' WHEN 'former_client' THEN 'Former client' END
+    WHEN 'stage' THEN CASE p_code WHEN 'qualifying' THEN 'Qualifying' WHEN 'intake_under_way' THEN 'Intake under way' WHEN 'ready_to_send' THEN 'Ready to send'
+      WHEN 'in_market' THEN 'In market' WHEN 'quoted' THEN 'Quoted' WHEN 'won' THEN 'Won' WHEN 'lost' THEN 'Lost' END
+    WHEN 'source' THEN CASE p_code WHEN 'employer_intake' THEN 'Employer''s intake' WHEN 'added_by_hand' THEN 'Added by hand' WHEN 'new_quote' THEN 'New quote'
+      WHEN 'lead' THEN 'Lead' WHEN 'import' THEN 'Import' END
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.accounts_words(text, text) FROM PUBLIC, anon, authenticated, service_role;
 
 -- ---------- 16. Closing a firm deletes them ----------
 -- The closing's one list (20261119100000, restated in 20261119180000, 20261119210000 and 20261119230000), restated with every line it had and the renewals and

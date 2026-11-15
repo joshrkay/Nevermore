@@ -883,3 +883,139 @@ BEGIN
   PERFORM pg_temp.is((SELECT max(p.ord) FROM public.firm_closing_plan() p WHERE p.src IN ('public.renewals', 'public.placements')) < (SELECT p.ord FROM public.firm_closing_plan() p WHERE p.src = 'public.accounts'), true, 'and before the accounts');
   RAISE NOTICE 'placements_renewals: passed';
 END $$;
+
+-- ---------- Review: one renewal for a placement (D-529) ----------
+-- Break caught: two renewals stand on one placement, so saving the one that is not marked "Didn't renew" would put back a placement the other one ended.
+DO $$
+DECLARE pl uuid; r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner');
+  r := public.renewal_add(pg_temp.id('a_owner'), 'peo_placement', 'Twice PEO', pg_temp.d(500), NULL, pg_temp.id('acme'));
+  pl := (r ->> 'placement_id')::uuid;
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES (%L, %L, 'peo_placement', 'Twice PEO', current_date + 600, %L)$q$,
+    pg_temp.id('acme'), pg_temp.id('a_owner'), pl)), '23505', 'a placement has one renewal');
+END $$;
+
+-- ---------- Review: an export holds the words for Former client (D-532) ----------
+-- Break caught: the file's Status is blank for a former client (the words had only Prospect and Client).
+DO $$
+BEGIN
+  PERFORM pg_temp.read_as('acme');
+  PERFORM pg_temp.is((SELECT j ->> 'status' FROM public.export_source_accounts(pg_temp.id('acme'), '{}', NULL, 500) j WHERE j ->> 'name' = 'Former'), 'Former client', 'a former client is exported as Former client');
+  PERFORM pg_temp.is((SELECT j ->> 'status' FROM public.export_source_accounts(pg_temp.id('acme'), '{}', NULL, 500) j WHERE j ->> 'name' = 'Client'), 'Client', 'and a client as Client');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- Review: two sessions (D-530, D-531) ----------
+CREATE SCHEMA IF NOT EXISTS race;
+CREATE EXTENSION IF NOT EXISTS dblink SCHEMA race;
+
+-- The records the two sessions below need, committed first so they can see them.
+DO $$
+DECLARE i uuid; o uuid; r1 uuid; ra uuid; rb uuid; o2 uuid;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.account('race_acct', 'acme', 'acme_owner');
+  i := pg_temp.intake('race_i', 'acme');
+  o := pg_temp.opportunity('race_o', 'race_acct', 'acme_owner', 'race_i');
+  INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, opportunity_id)
+    VALUES (pg_temp.id('acme'), pg_temp.id('race_acct'), 'current_plan', 'Race renewal', pg_temp.d(40), o) RETURNING id INTO r1;
+  INSERT INTO fx VALUES ('race_r1', r1);
+  o2 := pg_temp.opportunity('race_o2', 'race_acct', 'acme_owner');
+  INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (pg_temp.id('acme'), pg_temp.id('race_acct'), 'current_plan', 'Race A', pg_temp.d(50)) RETURNING id INTO ra;
+  INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) VALUES (pg_temp.id('acme'), pg_temp.id('race_acct'), 'current_plan', 'Race B', pg_temp.d(60)) RETURNING id INTO rb;
+  INSERT INTO fx VALUES ('race_ra', ra), ('race_rb', rb);
+END $$;
+
+-- A win lands while "Didn't renew" is being saved. The win holds the pipeline row (as set_submission_status does) and commits after the save has started:
+-- the save must wait for the row, then read the stage as Won and refuse, leaving the renewal and its placement as they were.
+-- Break caught: the save reads the stage without holding the pipeline row, so it goes through and a won renewal is marked "Didn't renew".
+DO $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  i uuid := pg_temp.id('race_i'); r uuid := pg_temp.id('race_r1'); a_pid integer; b_pid integer; tries integer := 0; got text := 'no error'; msg text;
+BEGIN
+  PERFORM race.dblink_connect('qa', dsn);
+  PERFORM race.dblink_connect('qb', dsn);
+  SELECT pid INTO a_pid FROM race.dblink('qa', 'SELECT pg_backend_pid()') AS t(pid integer);
+  SELECT pid INTO b_pid FROM race.dblink('qb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('qb', 'BEGIN');
+  PERFORM race.dblink_exec('qb', format('UPDATE public.submission_workflow SET status = %L WHERE session_id = %L', 'won', i));
+  PERFORM race.dblink_exec('qa', 'BEGIN');
+  PERFORM race.dblink_exec('qa', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('qa', format('SET LOCAL request.jwt.claims = %L', jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated',
+    'is_anonymous', false, 'email', 'acme_owner@example.test')::text));
+  PERFORM race.dblink_exec('qa', format('SET LOCAL request.headers = %L', jsonb_build_object('x-firm-address', 'acme-brokers')::text));
+  PERFORM race.dblink_send_query('qa', format($q$SELECT public.renewal_update(%L, 'Race renewal', %L, %L, %L, 1)::text$q$, r, pg_temp.d(40), pg_temp.d(41), pg_temp.id('acme')));
+  WHILE tries < 100 AND NOT (b_pid = ANY (pg_blocking_pids(a_pid))) LOOP
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM pg_temp.is(b_pid = ANY (pg_blocking_pids(a_pid)), true, 'the save waits for the pipeline row the win holds');
+  PERFORM race.dblink_exec('qb', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS got = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+  END;
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_exec('qa', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('qa');
+  PERFORM race.dblink_disconnect('qb');
+  PERFORM pg_temp.is(got, '22023', 'once the win has landed the save is refused');
+  PERFORM pg_temp.is(msg, 'This renewal was won, so it can''t be marked as not renewed.', 'in words');
+  PERFORM pg_temp.is((SELECT not_renewed_on FROM public.renewals WHERE id = r), NULL::date, 'and the renewal is not marked');
+END $$;
+
+-- Two renewals are linked to one opportunity at the same moment. The first holds the opportunity; the second waits and is then told in the same words as
+-- when it asks later, not by the unique index's own error.
+-- Break caught: the check passes for both (the opportunity is only held FOR SHARE) and the loser gets 23505 from the index.
+DO $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  o uuid := pg_temp.id('race_o2'); ra uuid := pg_temp.id('race_ra'); rb uuid := pg_temp.id('race_rb'); a_pid integer; b_pid integer; tries integer := 0; got text := 'no error'; msg text;
+  claims text := jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_owner@example.test')::text;
+BEGIN
+  PERFORM race.dblink_connect('qa', dsn);
+  PERFORM race.dblink_connect('qb', dsn);
+  SELECT pid INTO a_pid FROM race.dblink('qa', 'SELECT pg_backend_pid()') AS t(pid integer);
+  SELECT pid INTO b_pid FROM race.dblink('qb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('qa', 'BEGIN');
+  PERFORM race.dblink_exec('qa', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('qa', format('SET LOCAL request.jwt.claims = %L', claims));
+  PERFORM race.dblink_exec('qa', format('SET LOCAL request.headers = %L', jsonb_build_object('x-firm-address', 'acme-brokers')::text));
+  PERFORM * FROM race.dblink('qa', format($q$SELECT public.renewal_link_opportunity(%L, %L, %L)::text$q$, ra, o, pg_temp.id('acme'))) AS t(r text);
+  PERFORM race.dblink_exec('qb', 'BEGIN');
+  PERFORM race.dblink_exec('qb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('qb', format('SET LOCAL request.jwt.claims = %L', claims));
+  PERFORM race.dblink_exec('qb', format('SET LOCAL request.headers = %L', jsonb_build_object('x-firm-address', 'acme-brokers')::text));
+  PERFORM race.dblink_send_query('qb', format($q$SELECT public.renewal_link_opportunity(%L, %L, %L)::text$q$, rb, o, pg_temp.id('acme')));
+  WHILE tries < 100 AND NOT (a_pid = ANY (pg_blocking_pids(b_pid))) LOOP
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM pg_temp.is(a_pid = ANY (pg_blocking_pids(b_pid)), true, 'the second link waits for the first');
+  PERFORM race.dblink_exec('qa', 'COMMIT');
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('qb') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS got = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+  END;
+  BEGIN
+    PERFORM * FROM race.dblink_get_result('qb') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  PERFORM race.dblink_exec('qb', 'ROLLBACK');
+  PERFORM race.dblink_disconnect('qa');
+  PERFORM race.dblink_disconnect('qb');
+  PERFORM pg_temp.is(got, '22023', 'the second link is refused in words, not by the index');
+  PERFORM pg_temp.is(msg, 'That opportunity already works another renewal.', 'the words of the check');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.renewals WHERE opportunity_id = o), 1::bigint, 'and one renewal works it');
+  RAISE NOTICE 'placements_renewals: review fixes passed';
+END $$;

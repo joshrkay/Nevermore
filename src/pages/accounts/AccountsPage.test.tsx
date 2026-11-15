@@ -109,6 +109,18 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the Accounts page: the table", () => {
+  // Catches: a former client marked like nobody (it reads as a prospect), or a prospect marked as a client or a former one.
+  it("marks a former client with its own words, as a client is marked, and a prospect with none", async () => {
+    listAccounts.mockResolvedValue({ rows: [row(), row({ id: "a3", name: "Lapsed Logistics", status: "former_client" })], total: 2 });
+    renderAt();
+    await screen.findByRole("link", { name: "Lapsed Logistics" });
+    const [prospect, former] = within(body()).getAllByRole("row");
+    expect(within(former).getByText("Former client")).toBeInTheDocument();
+    expect(within(prospect).queryByText("Former client")).not.toBeInTheDocument();
+    expect(within(prospect).queryByText("Client")).not.toBeInTheDocument();
+    expect(within(prospect).queryByText("Prospect")).not.toBeInTheDocument();
+  });
+
   // Catches: a table that asks the wrong firm, drops the table's own order, or says how many in all wrongly.
   it("asks for the firm's first page, newest activity first, and says which rows these are", async () => {
     renderAt();

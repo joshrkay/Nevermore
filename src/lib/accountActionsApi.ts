@@ -17,8 +17,8 @@ function refusal(error: DbError, fallback: string): Error {
     case "PT423": return new AccountError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "22023": return new AccountError("invalid", error.message || fallback, error.code);
     case "42501": return new AccountError("notAllowed", error.message || "You can't change this account.", error.code);
-    // The account has an opportunity: the database's words say to archive it instead.
-    case "PT409": return new AccountError("hasOpportunities", error.message || "This account has opportunities. Archive it instead.", error.code);
+    // The account has an opportunity, a renewal or a placement: the database's words say which, and to archive it instead. (The kind keeps its name.)
+    case "PT409": return new AccountError("hasOpportunities", error.message || "This account has opportunities, renewals or placements. Archive it instead.", error.code);
     default: return new AccountError("failed", fallback, error.code);
   }
 }
@@ -51,7 +51,7 @@ export async function restoreAccount(firmId: string, accountId: string): Promise
   return { changed: parsed.data.changed };
 }
 
-/** Deletes an account that has no opportunity, with its contacts, calls, notes and tasks. One that has an opportunity is refused (kind "hasOpportunities"): it can only be archived. */
+/** Deletes an account that has no opportunity, renewal or placement, with its contacts, calls, notes and tasks. One that has any is refused (kind "hasOpportunities"): it can only be archived. */
 export async function deleteAccount(firmId: string, accountId: string): Promise<{ name: string }> {
   const { data, error } = await supabase.rpc("delete_account", { p_account_id: accountId, p_firm_id: firmId });
   if (error) throw refusal(error, "Couldn't delete the account. Try again.");
