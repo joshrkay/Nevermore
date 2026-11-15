@@ -154,8 +154,9 @@ GRANT EXECUTE ON FUNCTION public.contact_activity(uuid, uuid, text, integer, int
 -- then change. The account is not edited here: moving a contact is move_contact's.
 -- "Main contact" makes this one the account's only main contact: the one that was is unticked in the same transaction and named in the answer, and taking
 -- over needs the level rule on that old main contact (D-238, 42501 in words otherwise). Unticking the main contact leaves the account with none.
--- Refused, in this order and before the version is looked at: not a member of the firm (42501), a closing firm or Nevermore support (PT423), what is wrong with
--- the fields (22023), no version (22023), a contact whose account the caller may not see or that is not there (PT404, one answer for both), a contact the level
+-- Refused, in this order and before the version is looked at: not a member of the firm (42501), a closing firm or Nevermore support (PT423), a contact whose
+-- account the caller may not see or that is not there (PT404, one answer for both, before any field is judged), what is wrong with the fields (22023), no
+-- version (22023), a contact the level
 -- rule does not give the caller (42501; a contact with no owner can be changed only by an owner of the firm), an owner who is not a current member (22023) or one
 -- the level rule does not let the caller choose (42501), the old main contact's level (42501), a version the contact never had (22023). The version then
 -- orders two saves: the row is held, so a save from an older version changes nothing at all (the old main contact included) and answers the conflict.
@@ -188,8 +189,14 @@ DECLARE
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   PERFORM public.assert_firm_writable(firm);
+  -- The contact's account is seen first: the stored values below (what an email, a phone or a mobile was) are read only for a contact the caller may see, so how a
+  -- field is judged tells nothing about one they may not (a right guess at a stored value is no different from a wrong one: both are PT404).
   SELECT * INTO cur FROM public.contacts x WHERE x.id = p_contact_id AND x.firm_id = firm;
-  seen := cur.account_id;
+  SELECT * INTO a FROM public.accounts x WHERE x.id = cur.account_id AND x.firm_id = firm;
+  IF cur.id IS NULL OR a.id IS NULL OR NOT public.can_see_firm_record(a.firm_id, a.owner_id) THEN
+    RAISE EXCEPTION 'That contact isn''t available' USING ERRCODE = 'PT404';
+  END IF;
+  seen := a.id;
   -- The look of an email, a phone or a mobile is judged only when it was changed from what the contact holds now (compared trimmed).
   problem := public.contact_update_error(
     first_in, last_in, title_in, email_in, phone_in, mobile_in,
@@ -200,9 +207,6 @@ BEGIN
   IF p_version IS NULL OR p_version < 1 THEN
     RAISE EXCEPTION 'This save did not say which version of the contact it started from, so it was refused. Reload the page and try again.'
       USING ERRCODE = '22023';
-  END IF;
-  IF seen IS NULL THEN
-    RAISE EXCEPTION 'That contact isn''t available' USING ERRCODE = 'PT404';
   END IF;
   IF takes_main AND NOT cur.is_main THEN
     SELECT * INTO a FROM public.accounts x WHERE x.id = seen AND x.firm_id = firm FOR NO KEY UPDATE;

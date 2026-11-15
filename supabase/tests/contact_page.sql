@@ -578,7 +578,9 @@ END $$;
 DO $$
 DECLARE r text;
 BEGIN
-  PERFORM pg_temp.is(pg_temp.code(pg_temp.save('acme_agent3', 'e1', 1, 'F', '', '', 'elena@harborview.example', '', '', 'acme_agent3')), '22023', 'a field is asked before the contact is looked at, so it says nothing of it');
+  -- Nothing about a contact the caller may not see is told by how a field is judged: the stored values are read only after the account is seen, so a bad field
+  -- and a good one are the same PT404.
+  PERFORM pg_temp.is(left(pg_temp.save('acme_agent3', 'e1', 1, 'F', '', '', 'elena@harborview.example', '', '', 'acme_agent3'), 5), 'PT404', 'a bad field on a contact that is not seen is as not there');
   r := pg_temp.save('acme_agent3', 'e1', 1, 'First e1', 'Last e1', '', 'elena@harborview.example', '', '');
   PERFORM pg_temp.is(left(r, 5), 'PT404', 'a contact whose account the caller may not see is as not there');
   r := pg_temp.save('zenith_owner', 'e1', 1, 'First e1', 'Last e1', '', 'elena@harborview.example', '', '');
@@ -653,7 +655,8 @@ BEGIN
 END $$;
 
 -- ---------- a contact that moved ----------
--- Break caught: a save that waited for a move lands on the contact's old account, or a contact's calls do not follow it so its page loses them.
+-- Break caught: a contact's calls, notes and tasks do not follow it, so its page loses them, or its page keeps naming the first account. (A save that waits for a
+-- move is the two-session test "a save and a move" below.)
 DO $$
 DECLARE r text;
 BEGIN
@@ -669,6 +672,192 @@ END $$;
 DO $$
 BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'contacts' AND h.record_key = pg_temp.id('e2')::text AND h.actor_id = pg_temp.id('acme_agent1') AND h.field = 'last_name'), 1::bigint, 'the history carries the person who saved');
+END $$;
+
+-- ---------- a guess at what a contact holds (a contact the caller may not see) ----------
+-- Break caught: the "judged only when changed" comparison reads the stored contact before the account is seen, so a member who may not see the contact learns whether a
+-- guess at its non-conforming email or phone is right (right: PT404; wrong: 22023 in words).
+DO $$
+DECLARE right_guess text; wrong_guess text;
+BEGIN
+  PERFORM pg_temp.contact('e_guess', 'a2', 'acme_agent2', 'pat@harborview', 'ask for Pat');
+  -- agent1 does not see a2 (agent2's). A right guess at the stored email and phone, and a wrong one, are one answer.
+  right_guess := pg_temp.save('acme_agent1', 'e_guess', 1, 'F', 'L', '', 'pat@harborview', 'ask for Pat', '', 'acme_agent1');
+  wrong_guess := pg_temp.save('acme_agent1', 'e_guess', 1, 'F', 'L', '', 'pat@harborview.', 'ask for Sam', '', 'acme_agent1');
+  PERFORM pg_temp.is(right_guess, 'PT404: That contact isn''t available', 'a right guess is not available');
+  PERFORM pg_temp.is(wrong_guess, right_guess, 'and a wrong one is the same answer');
+  PERFORM pg_temp.is((SELECT version FROM public.contacts WHERE id = pg_temp.id('e_guess')), 1, 'nothing was saved');
+END $$;
+
+-- ---------- a Nevermore support session ----------
+-- Break caught: support, which reads, may change a contact (D-209: it changes nothing, ADR 0024), or is told it can, or cannot read the page.
+DO $$
+DECLARE j jsonb; r text; v0 integer := (SELECT version FROM public.contacts WHERE id = pg_temp.id('e2'));
+BEGIN
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.start_support_session(pg_temp.id('acme'), 'Customer asked for help with a contact');
+  RESET ROLE;
+  j := pg_temp.page('platform_admin', 'e2')::jsonb;
+  PERFORM pg_temp.is(j IS NOT NULL, true, 'a support session reads the contact''s page');
+  PERFORM pg_temp.is(j -> 'contact' ->> 'last_name', 'Reyes', 'and what it holds');
+  PERFORM pg_temp.is(j ->> 'can_change', 'false', 'it may not change it');
+  PERFORM pg_temp.is(j ->> 'can_move', 'false', 'nor move it');
+  PERFORM pg_temp.is(pg_temp.acts('platform_admin', 'e2', 'all')::jsonb ->> 'count', '1', 'it reads the contact''s calls, notes and tasks');
+  r := pg_temp.save('platform_admin', 'e2', v0, 'Sam', 'Reyes', 'Owner', 'sam@harborview.example', '', '(503) 555-0199', 'acme_agent1');
+  PERFORM pg_temp.is(left(r, 5), 'PT423', 'its save is refused: ' || r);
+  PERFORM pg_temp.is((SELECT version FROM public.contacts WHERE id = pg_temp.id('e2')), v0, 'and nothing was saved');
+END $$;
+
+-- ---------- two sessions ----------
+-- update_contact holds the account (FOR SHARE) and then the contact (FOR NO KEY UPDATE), and an owner's membership (FOR SHARE). Each test shows a session WAITING for
+-- the one it races (so the lock is what orders them), and then what it gets. Break caught, one lock removed at a time:
+--   the contact's lock: a second save from the same version reads the row as it was before the first and answers a "conflict" with the fields all null;
+--   the moved-contact check: a save that waited for a move to an account the saver cannot see answers the contact's fields and its new account;
+--   the membership lock: a contact is given to a member whose removal is in flight.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+CREATE FUNCTION race.try(stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text; s text; m text;
+BEGIN
+  EXECUTE stmt INTO r;
+  RETURN COALESCE(r, '');
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+  RETURN s || ': ' || m;
+END $$;
+GRANT USAGE ON SCHEMA race TO authenticated;
+
+CREATE FUNCTION pg_temp.race(first_stmt text, b_who text, b_stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  b_pid integer; tries integer := 0; waited boolean := false; rb text;
+BEGIN
+  PERFORM race.dblink_connect('ra', dsn);
+  PERFORM race.dblink_connect('rb', dsn);
+  PERFORM race.dblink_exec('ra', 'SET lock_timeout = ''20s''');
+  PERFORM race.dblink_exec('rb', 'SET lock_timeout = ''20s''');
+  SELECT pid INTO b_pid FROM race.dblink('rb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  PERFORM race.dblink_exec('ra', 'BEGIN');
+  PERFORM race.dblink_exec('ra', first_stmt);
+  PERFORM race.dblink_exec('rb', 'BEGIN');
+  PERFORM race.dblink_exec('rb', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('rb', format('SET LOCAL request.jwt.claims = %L',
+    jsonb_build_object('sub', pg_temp.id(b_who), 'role', 'authenticated', 'is_anonymous', false, 'email', b_who || '@example.test')::text));
+  PERFORM race.dblink_send_query('rb', b_stmt);
+  WHILE tries < 80 LOOP
+    IF cardinality(pg_blocking_pids(b_pid)) > 0 THEN waited := true; EXIT; END IF;
+    IF race.dblink_is_busy('rb') = 0 THEN EXIT; END IF;
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('ra', 'COMMIT');
+  BEGIN
+    SELECT r INTO rb FROM race.dblink_get_result('rb') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS rb = RETURNED_SQLSTATE;
+  END;
+  BEGIN
+    PERFORM r FROM race.dblink_get_result('rb') AS t(r text);
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  BEGIN PERFORM race.dblink_exec('rb', 'COMMIT'); EXCEPTION WHEN OTHERS THEN NULL; END;
+  PERFORM race.dblink_disconnect('ra');
+  PERFORM race.dblink_disconnect('rb');
+  RETURN CASE WHEN waited THEN 'waited' ELSE 'did not wait' END || '|' || COALESCE(rb, '<null>');
+END $$;
+
+-- The call of update_contact for a contact of the race fixtures (every field is sent; the email is the contact's own).
+CREATE FUNCTION pg_temp.call_save(c text, v integer, title text, owner text) RETURNS text LANGUAGE sql AS $$
+  SELECT format('public.update_contact(%L, ''First'', ''Last'', %L, %L, NULL, NULL, %L, false, false, %L, %s)', pg_temp.id(c), title, c || '@e.example', pg_temp.id(owner), pg_temp.id('acme'), v)
+$$;
+-- A statement run in the first session as a person, left open.
+CREATE FUNCTION pg_temp.as_first(who text, body text) RETURNS text LANGUAGE sql AS $$
+  SELECT format($q$SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = %L; DO $d$ BEGIN PERFORM %s; END $d$ $q$,
+    jsonb_build_object('sub', pg_temp.id(who), 'role', 'authenticated', 'is_anonymous', false, 'email', who || '@example.test')::text, body)
+$$;
+CREATE FUNCTION pg_temp.second(call text) RETURNS text LANGUAGE sql AS $$ SELECT format('SELECT race.try(%L)', 'SELECT ' || call || '::text') $$;
+CREATE FUNCTION pg_temp.rest(r text) RETURNS text LANGUAGE sql AS $$ SELECT substr(r, position('|' in r) + 1) $$;
+CREATE FUNCTION pg_temp.step(r text) RETURNS text LANGUAGE sql AS $$ SELECT split_part(r, '|', 1) $$;
+
+DO $$
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('q1', 'acme', 'acme_agent1', 'Race one');
+  PERFORM pg_temp.account('q2', 'acme', 'acme_agent2', 'Race two');
+  PERFORM pg_temp.contact('qa', 'q1', 'acme_agent1', 'qa@e.example');
+  PERFORM pg_temp.contact('qb', 'q1', 'acme_agent1', 'qb@e.example');
+  PERFORM pg_temp.contact('qc', 'q1', 'acme_agent1', 'qc@e.example');
+  PERFORM pg_temp.contact('qd', 'q1', 'acme_agent1', 'qd@e.example');
+  PERFORM pg_temp.contact('qe', 'q1', 'acme_agent1', 'qe@e.example');
+END $$;
+
+-- Two saves from the same version: the second waits for the first and is told someone saved first, with the first's values.
+DO $$
+DECLARE r text; j jsonb;
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(pg_temp.as_first('acme_agent1', pg_temp.call_save('qa', 1, 'First save', 'acme_agent1')), 'acme_agent1',
+    pg_temp.second(pg_temp.call_save('qa', 1, 'Second save', 'acme_agent1')));
+  PERFORM pg_temp.is(pg_temp.step(r), 'waited', 'the second save waits for the first');
+  j := pg_temp.rest(r)::jsonb;
+  PERFORM pg_temp.is(j ->> 'conflict', 'true', 'and is told someone saved first: ' || r);
+  PERFORM pg_temp.is(j ->> 'currentVersion', '2', 'at the first''s version');
+  PERFORM pg_temp.is(j -> 'current' ->> 'title', 'First save', 'with the first save''s values');
+  PERFORM pg_temp.is((SELECT title FROM public.contacts WHERE id = pg_temp.id('qa')), 'First save', 'and the first save stands');
+END $$;
+
+-- A save and a move, the move first: the save waits for the move and is refused in words, with nothing of the account the contact went to (which the saver may not see).
+DO $$
+DECLARE r text;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.is(pg_temp.page('acme_agent1', 'qb') IS NOT NULL, true, 'the saver sees the contact where it is');
+  r := pg_temp.race(pg_temp.as_first('acme_owner', format('public.move_contact(%L, %L, false, %L)', pg_temp.id('qb'), pg_temp.id('q2'), pg_temp.id('acme'))), 'acme_agent1',
+    pg_temp.second(pg_temp.call_save('qb', 1, 'Late save', 'acme_agent1')));
+  PERFORM pg_temp.is(pg_temp.step(r), 'waited', 'the save waits for the move in flight');
+  PERFORM pg_temp.is(pg_temp.rest(r), '40001: That contact was moved while you were working. Try again.', 'and is then refused in words');
+  PERFORM pg_temp.is(pg_temp.rest(r) LIKE '%' || pg_temp.id('q2')::text || '%', false, 'with nothing of the new account');
+  PERFORM pg_temp.is((SELECT account_id FROM public.contacts WHERE id = pg_temp.id('qb')), pg_temp.id('q2'), 'the contact moved');
+  PERFORM pg_temp.is((SELECT title FROM public.contacts WHERE id = pg_temp.id('qb')), NULL, 'and the late save changed nothing');
+END $$;
+
+-- A save and a move, the save first: the move waits for the save, then goes ahead and takes the saved values with the contact.
+DO $$
+DECLARE r text;
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(pg_temp.as_first('acme_agent1', pg_temp.call_save('qc', 1, 'Saved first', 'acme_agent1')), 'acme_owner',
+    pg_temp.second(format('public.move_contact(%L, %L, false, %L)', pg_temp.id('qc'), pg_temp.id('q2'), pg_temp.id('acme'))));
+  PERFORM pg_temp.is(pg_temp.step(r), 'waited', 'the move waits for the save');
+  PERFORM pg_temp.is(pg_temp.rest(r) LIKE '{%', true, 'and is then served: ' || pg_temp.rest(r));
+  PERFORM pg_temp.is((SELECT account_id FROM public.contacts WHERE id = pg_temp.id('qc')), pg_temp.id('q2'), 'the contact moved');
+  PERFORM pg_temp.is((SELECT title FROM public.contacts WHERE id = pg_temp.id('qc')), 'Saved first', 'with what was saved');
+END $$;
+
+-- An owner change and the removal of that member, the removal first: the save waits for it and is refused, the member being no longer one.
+DO $$
+DECLARE r text;
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(pg_temp.as_first('acme_owner', format('public.remove_member(%L, %L)', pg_temp.id('acme'), pg_temp.id('acme_agent3'))), 'acme_owner',
+    pg_temp.second(pg_temp.call_save('qd', 1, 'To a leaver', 'acme_agent3')));
+  PERFORM pg_temp.is(pg_temp.step(r), 'waited', 'giving a contact to a member waits for their removal in flight');
+  PERFORM pg_temp.is(pg_temp.rest(r), '22023: Choose one of the firm''s people as the owner.', 'and is then refused');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.contacts WHERE id = pg_temp.id('qd')), pg_temp.id('acme_agent1'), 'the contact keeps its owner');
+END $$;
+
+-- The owner change first: the removal of that member waits for it, so a contact is never left with an owner who left a moment before.
+DO $$
+DECLARE r text;
+BEGIN
+  RESET ROLE;
+  r := pg_temp.race(pg_temp.as_first('acme_owner', pg_temp.call_save('qe', 1, 'To a member', 'acme_west')), 'acme_owner',
+    pg_temp.second(format('public.remove_member(%L, %L)', pg_temp.id('acme'), pg_temp.id('acme_west'))));
+  PERFORM pg_temp.is(pg_temp.step(r), 'waited', 'the removal waits for a contact being given to that member');
+  PERFORM pg_temp.is((SELECT owner_id FROM public.contacts WHERE id = pg_temp.id('qe')), pg_temp.id('acme_west'), 'the contact was given to them');
+  -- (valid_until is the removing session's own clock; this block's transaction began before it, so "current" is not asked here.)
+  PERFORM pg_temp.is((SELECT valid_until IS NOT NULL FROM public.firm_memberships WHERE user_id = pg_temp.id('acme_west') AND firm_id = pg_temp.id('acme')), true, 'and then the removal went through');
 END $$;
 
 SELECT 'contact_page: ok' AS result;
