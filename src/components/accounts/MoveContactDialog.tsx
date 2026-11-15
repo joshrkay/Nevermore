@@ -17,7 +17,7 @@ const SEARCH_WAIT_MS = 250;
 const plural = (n: number) => `${n} call${n === 1 ? "" : "s"}, note${n === 1 ? "" : "s"} and task${n === 1 ? "" : "s"}`;
 
 /** What a move did, in words: where the contact went, what went with it, and an account left with no main contact. */
-export const movedWords = (name: string, m: MovedContact): string => {
+const movedWords = (name: string, m: MovedContact): string => {
   const along = m.activitiesMoved === 0 ? "" : m.activitiesMoved === 1 ? ", with 1 call, note or task" : `, with ${plural(m.activitiesMoved)}`;
   const main = m.wasMain ? ` ${m.from.name} has no main contact now.` : "";
   return `${name} moved to ${m.to.name}${along}.${main}`;
