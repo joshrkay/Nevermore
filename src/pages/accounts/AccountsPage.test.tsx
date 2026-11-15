@@ -584,6 +584,20 @@ describe("the Accounts page: each row's actions (story CRM-A1.1c)", () => {
     expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
   });
 
+  // Catches: the checkbox column and the actions column getting in each other's way: a selected row losing its menu, or the menu's click changing the selection.
+  it("keeps a row's menu working beside its checkbox", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    await user.click(screen.getByRole("checkbox", { name: "Select Kestrel Software" }));
+    const menu = await screen.findByRole("button", { name: "Actions for Kestrel Software" });
+    await user.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("checkbox", { name: "Select Kestrel Software" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Harborview Dental Group" })).not.toBeChecked();
+  });
+
   // Catches: opening an account when its action menu is clicked.
   it("does not open the account when a row's menu is used", async () => {
     const user = userEvent.setup();
