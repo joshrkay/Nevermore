@@ -55,6 +55,14 @@ describe("logging", () => {
     expect(((await caught(() => logActivity("f1", { kind: "note", accountId: "a1", body: "x" }))) as Error).message).toBe("That contact or opportunity has just moved to another account. Refresh and try again.");
   });
 
+  // Catches: a call logged on an account a merge has just removed (CRM-S4.3b: the key to the account fails after the merge commits) told it is about a contact.
+  it("says in words that the account has just been merged or deleted when the key to it fails", async () => {
+    rpc.mockResolvedValue(refused("23503", 'insert or update on table "activities" violates foreign key constraint "activities_account_fkey"'));
+    const e = (await caught(() => logActivity("f1", { kind: "note", accountId: "a1", body: "x" }))) as InstanceType<typeof ActivityError>;
+    expect(e.kind).toBe("invalid");
+    expect(e.message).toBe("That account has just been merged into another or deleted. Refresh and try again.");
+  });
+
   // Catches: the database's words replaced by the app's own, so the form and the rule can disagree; each SQLSTATE read as the wrong kind.
   it("keeps the database's words for what it refuses, and sorts each refusal by kind", async () => {
     for (const [code, kind] of [["22023", "invalid"], ["42501", "notAllowed"], ["PT404", "notFound"], ["PT423", "readOnly"], ["XX000", "failed"]] as const) {

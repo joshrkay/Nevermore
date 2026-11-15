@@ -52,7 +52,7 @@ const page = {
     contacts: { count: 7, rows: [{ id: "c1", first_name: "Elena", last_name: "Marsh", title: "Practice Manager", email: "elena@x.example", phone: null, mobile: null, is_main: true, do_not_email: false }] },
     opportunities: { count: 2, rows: [{ id: "o1", name: "January 2027 PEO search", stage: "in_market", target_start: "2027-01-01", submission_id: "i1" }, { id: "o2", name: "A search", stage: "qualifying", target_start: null, submission_id: null }] },
     quotes: { count: 1, rows: [{ id: 12, submission_id: "i1", opportunity_id: "o1", opportunity_name: "January 2027 PEO search", peo_name: "PEO A", status: "quoted", sent_on: "2026-10-29", quote_received_on: "2026-11-03", quote_expires_on: "2026-12-05" }] },
-    activity: { count: 1, rows: [{ type: "change", entry_key: "e1", at: "2026-11-01T10:00:00+00:00", change_id: "ch1", kind: "changed", who: "dana@x.example", who_kind: "member", field: "employees", from_value: 40, to_value: 45, record_table: "accounts", record_id: "a1", record_name: "Harborview Dental Group" }] },
+    activity: { count: 1, rows: [{ type: "change", entry_key: "e1", at: "2026-11-01T10:00:00+00:00", change_id: "ch1", kind: "changed", who: "dana@x.example", who_kind: "member", field: "employees", from_value: 40, to_value: 45, record_table: "accounts", record_id: "a1", record_name: "Harborview Dental Group", merged_from: "Harborview East" }] },
     files: { count: 1, rows: [file] },
   },
 };
@@ -105,7 +105,7 @@ describe("getAccountPage", () => {
     });
     expect(got.tabs.activity.rows[0]).toEqual({
       type: "change", entryKey: "e1", at: "2026-11-01T10:00:00+00:00", changeId: "ch1", kind: "changed", who: "dana@x.example", whoKind: "member", field: "employees", from: 40, to: 45,
-      recordTable: "accounts", recordId: "a1", recordName: "Harborview Dental Group",
+      recordTable: "accounts", recordId: "a1", recordName: "Harborview Dental Group", mergedFrom: "Harborview East",
     });
     expect(got.tabs.files).toEqual({
       count: 1,

@@ -109,9 +109,11 @@ function refusal(error: DbError, fallback: string): Error {
     case "22023": return new ActivityError("invalid", error.message || fallback, error.code);
     case "42501": return new ActivityError("notAllowed", error.message || "You can't change this.", error.code);
     // The key to a contact or an opportunity of the account fails when that contact (CRM-A2.2's Move) or opportunity moved to another account a moment ago.
-    case "23503": return new ActivityError("invalid", /activities_contact_fkey/.test(error.message ?? "")
-      ? "That contact has just moved to another account. Refresh and try again."
-      : "That contact or opportunity has just moved to another account. Refresh and try again.", error.code);
+    case "23503": return new ActivityError("invalid", /activities_account_fkey/.test(error.message ?? "")
+      ? "That account has just been merged into another or deleted. Refresh and try again."
+      : /activities_contact_fkey/.test(error.message ?? "")
+        ? "That contact has just moved to another account. Refresh and try again."
+        : "That contact or opportunity has just moved to another account. Refresh and try again.", error.code);
     default: return new ActivityError("failed", fallback, error.code);
   }
 }

@@ -24,6 +24,8 @@ export type RecordHistoryEntry = {
   /** The value as it was: a JSON string, number or boolean. A date is its ISO text. Null when there was no value. */
   from: Json | null;
   to: Json | null;
+  /** The name of the record this entry came from when a merge moved it here (CRM-S4.3b); null for the record's own entries. The merge itself is the entry whose field is "merged". */
+  mergedFrom: string | null;
 };
 
 export class RecordHistoryError extends Error {}
@@ -66,6 +68,7 @@ export async function listRecordHistory(
     field: row.field,
     from: row.from_value,
     to: row.to_value,
+    mergedFrom: row.merged_from ?? null,
   }));
   const last = entries[entries.length - 1];
   return { entries, next: entries.length === limit && last ? { at: last.at, entryKey: last.entryKey } : null };

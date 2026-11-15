@@ -628,8 +628,20 @@ A mark on an account that the duplicate match found may be a business the firm a
 _Avoid_: duplicate (on its own: it is a question, not a finding)
 
 **Merge**:
-Two accounts, two contacts or two leads made one. For each field that differs the person picks the value to keep; everything attached to the one removed moves to the one kept; the one removed is deleted, its history moves to the kept record marked as from the merged record, its old address leads to the kept record, and the merge is recorded on the kept record. Anyone allowed to change both can merge them. There is no unmerge. Two accounts that each hold an intake can be merged: both intakes stay, each on its own opportunity.
+Two accounts, two contacts or two leads made one. For each field that differs the person picks the value to keep; everything attached to the one removed moves to the one kept; the one removed is deleted, its history moves to the kept record marked as from the merged record, its old address leads to the kept record, and the merge is recorded on the kept record. Anyone allowed to change both can merge them. There is no unmerge. Two accounts that each hold an intake can be merged: both intakes stay, each on its own opportunity. In the database (CRM-S4.3b) a merge is all or none, asks the level rule of both records (of the two accounts for accounts, of each contact's own owner for contacts) and refuses a closing firm, Nevermore support and an archived account to merge onto. It is started from the versions the person looked at, and one made after is refused. What moves: contacts (a main contact stays main only where the kept account has none), opportunities (each with its intake, so its quotes and files), calls, notes and tasks (including those on the account alone), labels (the kept account carries every label either had) and history. A "Do not email" on either contact is kept. The accounts that were marked a possible duplicate of the one removed are marked a possible duplicate of the one kept.
 _Avoid_: combine, dedupe
+
+**Merged from**:
+The mark on a history entry that a merge moved to the record kept: the name the record removed had. The merge itself is one entry of the kept record, field "merged", whose value is that name. An entry that came from a record merged earlier keeps its first mark.
+_Avoid_: imported, copied
+
+**Old address**:
+The link to a record that was merged away. The database remembers which record it became (`merged_records`), so following it leads to the record kept, for anyone who may see that one; for anyone else, and for an id of another firm or one never made, it is the same "not available". A record merged again carries its old addresses with it, so each is one step from the record kept. Deleting the record kept deletes them.
+_Avoid_: redirect, alias
+
+**Keep separate**:
+What a person says of an account marked a possible duplicate when it is not one: the mark is cleared, and nothing else changes. It is allowed to whoever may change that account. Nothing is remembered to stop the pair being suggested again: only an account's making sets the mark.
+_Avoid_: dismiss, ignore
 
 **Label**:
 A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records). The same word in other letters is the same label (the first spelling stays); a label is at most 40 characters. It is made the first time a bulk change puts it on an account, and an archived account takes no new one. Putting one on or taking one off is one entry in the account's history ("Labels changed from nothing to VIP"). Renaming or deleting a label is Settings' (Epic 9). The Accounts table shows each account's labels and can be filtered and sorted by them.

@@ -1019,6 +1019,22 @@ export type Database = {
       }
       bulk_accounts_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
       firm_labels: { Args: { p_firm_id?: string | null }; Returns: Json }
+      // Merging (20261119220000): the previews answer {keep, remove, fields: [{field, keep, remove}], moves}; a merge {record, merged_from: {id, name}, moved};
+      // keep separate {changed, record}; the banner {other: {id, name, archived} | null, can_merge, can_keep_separate} or null; following an old address
+      // {merged, kind, id, account_id, name, from_name, merged_at}. src/lib/mergeApi.ts reads them.
+      merge_accounts_preview: { Args: { p_firm_id: string; p_keep_id: string; p_remove_id: string }; Returns: Json }
+      merge_accounts: {
+        Args: { p_firm_id: string; p_keep_id: string; p_remove_id: string; p_take?: string[]; p_keep_version?: number | null; p_remove_version?: number | null }
+        Returns: Json
+      }
+      merge_contacts_preview: { Args: { p_firm_id: string; p_keep_id: string; p_remove_id: string }; Returns: Json }
+      merge_contacts: {
+        Args: { p_firm_id: string; p_keep_id: string; p_remove_id: string; p_take?: string[]; p_keep_version?: number | null; p_remove_version?: number | null }
+        Returns: Json
+      }
+      keep_accounts_separate: { Args: { p_firm_id: string; p_account_id: string }; Returns: Json }
+      account_duplicate_mark: { Args: { p_firm_id: string; p_account_id: string }; Returns: Json }
+      follow_merged_record: { Args: { p_firm_id: string; p_kind: string; p_id: string }; Returns: Json }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {
@@ -1460,6 +1476,8 @@ export type Database = {
           from_value: Json | null
           // 'created' (no field, no values) or 'changed' (one field).
           kind: string
+          // The name of the record this entry came from, when a merge moved it here (CRM-S4.3b); null for the record's own.
+          merged_from: string | null
           to_value: Json | null
           who: string
           // 'member', 'nevermore' or 'system'.

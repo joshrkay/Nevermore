@@ -107,6 +107,8 @@ export interface ChangeRow {
   recordTable: "accounts" | "contacts";
   recordId: string;
   recordName: string | null;
+  /** The name of the account or contact this entry came from when a merge moved it here (CRM-S4.3b), else null. The merge itself is the entry whose field is "merged". */
+  mergedFrom?: string | null;
 }
 
 /** One entry of the Activity tab (D-212): a change in the record's history, or a call, a note or a task (CRM-E1.5), newest first. `type` tells which. */
@@ -287,7 +289,7 @@ const quoteSchema = z.object({
 const changeSchema = z.object({
   type: z.literal("change"), entry_key: z.string().min(1), at: z.string().min(1), change_id: z.string().min(1), kind: z.enum(["created", "changed"]), who: z.string(),
   who_kind: z.enum(["member", "nevermore", "system"]), field: nullableText, from_value: jsonValue, to_value: jsonValue,
-  record_table: z.enum(["accounts", "contacts"]), record_id: z.string().min(1), record_name: nullableText,
+  record_table: z.enum(["accounts", "contacts"]), record_id: z.string().min(1), record_name: nullableText, merged_from: nullableText.optional(),
 });
 const activitySchema = z.union([changeSchema, activityItemSchema]);
 const fileSchema = z.object({
@@ -353,7 +355,7 @@ const quoteOf = (q: z.infer<typeof quoteSchema>): QuoteRow => ({
 const activityOf = (a: z.infer<typeof activitySchema>): ActivityRow => (a.type === "change" ? changeOf(a) : activityItemOf(a));
 const changeOf = (a: z.infer<typeof changeSchema>): ChangeRow => ({
   type: a.type, entryKey: a.entry_key, at: a.at, changeId: a.change_id, kind: a.kind, who: a.who, whoKind: a.who_kind, field: a.field,
-  from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name,
+  from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name, mergedFrom: a.merged_from ?? null,
 });
 
 const FALLBACK = "Couldn't load the account. Try again.";
