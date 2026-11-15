@@ -139,10 +139,10 @@ COMMENT ON TABLE public.merged_records IS 'Where a merged-away account or contac
 
 -- Closing a firm deletes it, with the firm's other working data.
 CREATE OR REPLACE FUNCTION public.firm_closing_plan()
-RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
-LANGUAGE sql
-IMMUTABLE
-SET search_path = public, pg_temp
+ RETURNS TABLE(ord integer, src text, action text, firm_column text, why text)
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_temp'
 AS $$
   SELECT * FROM (VALUES
     -- Deleted: the firm's own working data.
@@ -159,8 +159,8 @@ AS $$
     (60, 'public.referral_partners', 'delete', 'firm_id', 'referral partners'),
     (58, 'public.activities', 'delete', 'firm_id', 'calls, notes and tasks on the firm''s accounts and contacts; before the opportunities, contacts and accounts they stand on'),
     (59, 'public.account_labels', 'delete', 'firm_id', 'the labels on the firm''s accounts; before the accounts they stand on'),
-    (59, 'public.renewals', 'delete', 'firm_id', 'renewals (what renews, with whom and when); before the placements, opportunities and accounts they stand on'),
-    (60, 'public.placements', 'delete', 'firm_id', 'placements (what was won, with the commission expected); before the opportunities and accounts they stand on'),
+    (56, 'public.renewals', 'delete', 'firm_id', 'renewals (the dates an account''s cover comes up); before the placements they come from and the opportunities working them'),
+    (57, 'public.placements', 'delete', 'firm_id', 'placements (what the firm placed for its accounts); before the opportunities and accounts they stand on'),
     (61, 'public.opportunities', 'delete', 'firm_id', 'opportunities (each is one search for one account); before the contacts and accounts they stand on'),
     (62, 'public.contacts', 'delete', 'firm_id', 'contacts, the people at the firm''s accounts'),
     (63, 'public.accounts', 'delete', 'firm_id', 'accounts, the businesses the firm quotes for; the intakes on their opportunities stay with their employers (below)'),

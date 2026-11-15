@@ -1,5 +1,5 @@
 // What merging says (story CRM-S4.3b; docs/BROKER_CRM_BUILD.md D-203, D-210, D-640 to D-649). Words and the lists of fields a person can choose between only: who may
-// merge, what moves and what is refused are the database's (20261120140000_merge_records.sql). The screens that use these are CRM-S4.3a's.
+// merge, what moves and what is refused are the database's (20261121100000_merge_records.sql). The screens that use these are CRM-S4.3a's.
 
 export const MERGE_KINDS = ["account", "contact"] as const;
 export type MergeKind = (typeof MERGE_KINDS)[number];

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ACCOUNT_MERGE_FIELDS, CONTACT_MERGE_FIELDS, MERGE_FIELD_LABELS, mergeChoiceWords, mergedEntryWords, mergedFromWords, mergeWarning } from "@/data/merge";
 
-const migration = readFileSync("supabase/migrations/20261120140000_merge_records.sql", "utf8");
+const migration = readFileSync("supabase/migrations/20261121100000_merge_records.sql", "utf8");
 
 // The fields a merge may be told about are the database's list (merge_accounts and merge_contacts refuse any other): one list in two places drifts.
 const allowedIn = (fn: string): string[] => {

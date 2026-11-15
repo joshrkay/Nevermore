@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { classifyApiError } from "@/lib/advisorApi";
 import type { AccountMergeField, ContactMergeField, MergeChoices, MergeKind } from "@/data/merge";
 
-// What merging asks the database (story CRM-S4.3b; 20261120140000_merge_records.sql). Five calls: the preview a person chooses from, merging two accounts, merging two
+// What merging asks the database (story CRM-S4.3b; 20261121100000_merge_records.sql). Five calls: the preview a person chooses from, merging two accounts, merging two
 // contacts of one account, "keep separate", and where a merged-away record's old address leads. The database decides every rule (who may see and who may change both,
 // a closing firm, Nevermore support, an archived account, the versions chosen from); this puts its answers and refusals into the page's shape and words and checks
 // that an answer is exactly the agreed shape. The screens are CRM-S4.3a's.

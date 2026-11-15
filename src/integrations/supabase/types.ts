@@ -1506,7 +1506,7 @@ export type Database = {
           field: string | null
           // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
           from_value: Json | null
-          // 'created' (no field, no values), 'changed' (one field), 'stage_changed' (an opportunity's stage, field 'stage') or 'merged' (the record absorbed another, 20261120140000).
+          // 'created' (no field, no values), 'changed' (one field), 'stage_changed' (an opportunity's stage, field 'stage') or 'merged' (the record absorbed another, 20261121100000).
           kind: string
           // The name of the merged-away record an entry came from (copied in by a merge, or the 'merged' entry itself); null for every other entry.
           merged_from: string | null

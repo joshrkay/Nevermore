@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh merge_records
--- Merging in the database (story CRM-S4.3b; docs/BROKER_CRM_BUILD.md D-203, D-209, D-210, D-193, D-640 to D-649; 20261120140000_merge_records.sql).
+-- Merging in the database (story CRM-S4.3b; docs/BROKER_CRM_BUILD.md D-203, D-209, D-210, D-193, D-640 to D-649; 20261121100000_merge_records.sql).
 -- Two accounts (their contacts, opportunities with their intakes and quotes, calls, notes, tasks, labels, placements, renewals, history), two contacts of one account,
 -- "keep separate", the level rule, the kept record's old address, the recent records, and the refusals. Two firms are used throughout.
 -- Every migration is loaded, in filename order (D-105), this story's last.
@@ -162,7 +162,9 @@
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
-\i supabase/migrations/20261120140000_merge_records.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121100000_merge_records.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
