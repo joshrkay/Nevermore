@@ -162,6 +162,7 @@
 \i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119220000_merge_records.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

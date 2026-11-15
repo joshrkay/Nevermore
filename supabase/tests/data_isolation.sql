@@ -210,6 +210,7 @@
 \i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119220000_merge_records.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -739,6 +740,8 @@ BEGIN
     -- CRM-S3.7b: a label on the owned account, and a bulk change with its record.
     INSERT INTO public.labels (firm_id, name) VALUES (fid, 'Fixture label');
     INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT fid, acc1, l.id FROM public.labels l WHERE l.firm_id = fid;
+    -- CRM-S4.3b: the old address of an account merged away, on the owned account.
+    INSERT INTO public.merged_records (kind, from_id, firm_id, into_account_id, from_name) VALUES ('account', gen_random_uuid(), fid, acc1, 'Fixture old');
     INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES (fid, 'archive', now() + interval '10 minutes');
     INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after)
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
@@ -899,6 +902,11 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
+
+-- ---- CRM-S4.3b: the old addresses of merged records (20261119220000) ----
+-- Closed to the API: followed through follow_merged_record only (supabase/tests/merge_records.sql); each firm has one.
+INSERT INTO matrix VALUES
+  ('public.merged_records',                             '{}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -1391,7 +1399,22 @@ INSERT INTO callable VALUES
   ('bulk_accounts_undo(p_change_id uuid, p_firm_id uuid)', 'own', NULL,
    'the member who made a bulk change undoes it within ten minutes, once, putting back every record nobody has changed since; PT404 for anyone else and for a change of another firm, as for one that is not there; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
   ('firm_labels(p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm');
+   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm'),
+  -- CRM-S4.3b (20261119220000_merge_records.sql; supabase/tests/merge_records.sql): merging two accounts or two contacts, keeping them separate, and the old address of a merged record.
+  ('merge_accounts_preview(p_firm_id uuid, p_keep_id uuid, p_remove_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for is told what merging two accounts would do (the fields that differ and what moves) when they may see and change both by the level rule; changes nothing; 42501 for anyone who is no member of that firm or may not change both, PT423 for a closing firm and a support session, PT404 for an account they may not see, the same as for one that is not there'),
+  ('merge_accounts(p_firm_id uuid, p_keep_id uuid, p_remove_id uuid, p_take text[], p_keep_version integer, p_remove_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see and change both accounts by the level rule, makes two accounts one: everything attached moves, the one removed is deleted, all or none; 42501 for anyone who is no member of that firm or may not change both, PT423 for a closing firm and a support session, PT404 for an account they may not see, PT409 for a version that moved, 55000 for an archived account kept'),
+  ('merge_contacts_preview(p_firm_id uuid, p_keep_id uuid, p_remove_id uuid)', 'own', NULL,
+   'the same preview for two contacts of one account, asked of each contact''s own owner''s level; 22023 for contacts of two accounts'),
+  ('merge_contacts(p_firm_id uuid, p_keep_id uuid, p_remove_id uuid, p_take text[], p_keep_version integer, p_remove_version integer)', 'own', NULL,
+   'the same for two contacts of one account: the calls, notes and tasks and the opportunities'' main contact of the one removed go to the one kept, and it is deleted; 42501 for anyone who is no member of that firm or may not change both contacts, PT423 for a closing firm and a support session, PT404 for a contact whose account they may not see'),
+  ('keep_accounts_separate(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may change the account by the level rule, clears its possible-duplicate mark; 42501 for anyone who is no member of that firm or may not change it, PT423 for a closing firm and a support session, PT404 for an account they may not see'),
+  ('account_duplicate_mark(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for is told which account an account they may see is marked a possible duplicate of (named only when they may see that one) and whether they may merge or keep them separate; nothing for an account they may not see; 42501 for anyone who is no member of that firm'),
+  ('follow_merged_record(p_firm_id uuid, p_kind text, p_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session, which reads) follows the id of an account or contact merged away to the record kept, when they may see that one; PT404, the one answer, for another firm''s id, one never made, and a record they may not see; 42501 for anyone who is no member of that firm');
 -- CRM-E1.5 (20261119180000_calls_notes_tasks.sql; supabase/tests/calls_notes_tasks.sql): calls, notes and tasks on an account.
 INSERT INTO callable VALUES
   ('log_activity(p_kind text, p_account_id uuid, p_contact_id uuid, p_opportunity_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
@@ -1980,7 +2003,16 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT NULLIF(public.bulk_accounts_change({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'changed', '0')$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:1$'),
   ('bulk_accounts_undo', 'advisor', 'by_id',
    $$SELECT public.bulk_accounts_undo((public.bulk_accounts_change({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'change_id')::uuid, {firm}) ->> 'restored'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$'),
-  ('firm_labels', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.firm_labels({firm}))::text WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$');
+  ('firm_labels', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.firm_labels({firm}))::text WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$'),
+  -- CRM-S4.3b: the account is probed against itself, so the member gets past the firm and the guard and meets the refusal for two accounts that are one (22023); every
+  -- other caller is refused as not a member or as not there. What a merge does is merge_records.sql's.
+  ('merge_accounts_preview', 'advisor', 'by_id', $$SELECT public.merge_accounts_preview({firm}, {acct}, {acct})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('merge_accounts', 'advisor', 'by_id', $$SELECT public.merge_accounts({firm}, {acct}, {acct}, '{}', 1, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('merge_contacts_preview', 'advisor', 'by_id', $$SELECT public.merge_contacts_preview({firm}, {acontact}, {acontact})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('merge_contacts', 'advisor', 'by_id', $$SELECT public.merge_contacts({firm}, {acontact}, {acontact}, '{}', 1, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('keep_accounts_separate', 'advisor', 'by_id', $$SELECT public.keep_accounts_separate({firm}, {acct})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"changed": false'),
+  ('account_duplicate_mark', 'advisor', 'by_id', $$SELECT coalesce(public.account_duplicate_mark({firm}, {acct})::text, 'none')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:none$'),
+  ('follow_merged_record', 'advisor', 'by_id', $$SELECT public.follow_merged_record({firm}, 'account', {acct}) ->> 'merged'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:false$');
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('account_owner_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.account_owner_choices({firm})$$);
 
@@ -3098,6 +3130,9 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
    'firm_id = {firm}'),
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
    $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.merged_records', 'firm', 'its own firm_id and an account of that firm it leads to; closed to the API, followed through a function',
+   $m$INSERT INTO public.merged_records (kind, from_id, firm_id, into_account_id, from_name) SELECT 'account', gen_random_uuid(), a.firm_id, a.id, 'Probe {tag}' FROM public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
@@ -3130,6 +3165,7 @@ UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_message
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.bulk_change_records';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.merged_records (kind, from_id, firm_id, into_account_id, from_name) SELECT 'account', gen_random_uuid(), a.firm_id, a.id, 'Foreign' FROM public.accounts a WHERE a.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.merged_records';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT a.firm_id, a.id, l.id FROM public.accounts a JOIN public.labels l ON l.firm_id = a.firm_id WHERE a.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.account_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
   WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
@@ -3772,6 +3808,16 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_set_field', 'service_only', 'writes one optional standard field of an account for a bulk change or its undo, after the checks; no API role can call it'),
   ('member_to_own', 'service_only', 'the chosen new owner must be a current member of the firm, held to the end of the transaction (FOR SHARE); a single and a bulk owner change both ask it; no API role can call it'),
   ('give_open_opportunities', 'service_only', 'gives an account''s open opportunities the caller may change by the level rule to a new owner, counting the rest; a single and a bulk owner change both call it; no API role can call it'),
+  ('merge_accounts_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what merging two accounts of that firm they may see and change would do; another firm''s account is just not available (4e)'),
+  ('merge_accounts', 'firm_scoped', 'the same for making two accounts one, all or none; another firm''s account is just not available (4e)'),
+  ('merge_contacts_preview', 'firm_scoped', 'the same for two contacts of one account of the firm, asked of each contact''s own owner''s level (4e)'),
+  ('merge_contacts', 'firm_scoped', 'the same for making two contacts one (4e)'),
+  ('keep_accounts_separate', 'firm_scoped', 'a current member of the firm the call acts for, who may change the account, clears its possible-duplicate mark; another firm''s account is just not available (4e)'),
+  ('account_duplicate_mark', 'firm_scoped', 'a current member of the firm the call acts for reads which account an account they may see is marked a possible duplicate of, naming only one they may see (4e)'),
+  ('follow_merged_record', 'firm_scoped', 'a current member of the firm the call acts for follows the id of a record merged away to the record kept, which they may see; the same refusal for another firm''s id as for one never made (4e)'),
+  ('account_merge_pair', 'service_only', 'the two accounts of a merge, checked (seen, changeable, the one kept not archived) and held in one statement in id order; no API role can call it'),
+  ('contact_merge_pair', 'service_only', 'the two contacts of a merge, checked (one account, seen, not archived, each changeable) and held in id order; no API role can call it'),
+  ('record_history_move', 'service_only', 'moves a merged record''s history to the record kept, owned by the merging role, only for a merge already recorded; no API role can call it'),
   ('account_labels_history', 'trigger', 'writes one history entry for an account when a label is put on or taken off, inside the write that did it; not executable through the API'),
   ('account_to_change', 'service_only', 'the one start of those four: the firm''s account, held, after the may-see and level-rule questions; no API role can call it'),
   ('can_change_firm_record', 'service_only', 'the level rule for changes (D-209): may the caller change a record of this firm that this person owns; the write functions ask it, and the page answers it as can_change; no API role can call it');

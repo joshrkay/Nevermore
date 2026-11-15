@@ -157,6 +157,7 @@
 \i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119220000_merge_records.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -580,7 +581,7 @@ BEGIN
       SELECT x.v, lead(x.v) OVER (ORDER BY x.ord) AS next FROM jsonb_array_elements(p #> '{tabs,activity,rows}') WITH ORDINALITY AS x (v, ord)) e WHERE e.next IS NOT NULL), true, 'newest first');
   PERFORM pg_temp.is((SELECT string_agg(DISTINCT v ->> 'type', ',') FROM jsonb_array_elements(p #> '{tabs,activity,rows}') v), 'change', 'every row is a change (calls, notes and tasks come with CRM-E1.5)');
   PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(p #> '{tabs,activity,rows,0}') k),
-    'at,change_id,entry_key,field,from_value,kind,record_id,record_name,record_table,to_value,type,who,who_kind', 'an entry, as the history gives it, with the record it is about');
+    'at,change_id,entry_key,field,from_value,kind,merged_from,record_id,record_name,record_table,to_value,type,who,who_kind', 'an entry, as the history gives it, with the record it is about and, for one a merge moved here, the record it came from (CRM-S4.3b)');
   RAISE NOTICE 'account_page: the page passed';
 END $$;
 
