@@ -217,6 +217,7 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
