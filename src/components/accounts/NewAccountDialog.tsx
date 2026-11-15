@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { useRef } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
@@ -15,8 +17,9 @@ import { AccountError, type AccountFields } from "@/lib/accountPageApi";
 // decides who may make an account and for whom (the level rule, D-209), the closing firm, Nevermore support and every field (D-29); this form says what it can
 // itself and shows the database's own words for the rest. The owner is the person making it unless they choose another (D-214).
 //
-// Not here, and where it goes: "Save and add a contact" (CRM-A2.2, which builds the contact form), the warning that an account with the same website or name
-// exists (CRM-S4.2), the renewal date and the firm's own fields (D-186, CRM-X3.1).
+// "Save and add a contact" (CRM-A1.2, built with CRM-A2.2) saves the same way and then opens the new account with the Add a contact form already open on it.
+//
+// Not here, and where it goes: the warning that an account with the same website or name exists (CRM-S4.2), the renewal date and the firm's own fields (D-186, CRM-X3.1).
 
 const schema = accountFieldsSchema.extend({ owner: z.string() });
 
@@ -29,8 +32,11 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
   /** The person's own name, for the owner choice until the firm's people have loaded. */
   person: string;
   onClose: () => void;
-  onCreated: (account: AccountFields) => void;
+  /** `thenContact` is true after "Save and add a contact": the page of the new account opens with the contact form open on it. */
+  onCreated: (account: AccountFields, thenContact: boolean) => void;
 }) {
+  // Set by "Save and add a contact" and read by the save that follows (any other save leaves it false).
+  const thenContact = useRef(false);
   const { user } = useAuth();
   const me = user?.id ?? "";
   const members = useQuery({ queryKey: ["new-account", firmId, me, "owners"], queryFn: () => listAccountOwners(firmId), enabled: me !== "", retry: false, staleTime: 60_000 });
@@ -44,8 +50,10 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
     defaultValues: { ...EMPTY, owner: me },
     save: async (values) => {
       const v = values as typeof EMPTY & { owner: string };
+      const andContact = thenContact.current;
+      thenContact.current = false;
       try {
-        return await createAccount(firmId, {
+        return { andContact, account: await createAccount(firmId, {
           name: v.name,
           tradeName: v.trade_name,
           website: v.website,
@@ -59,15 +67,15 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
           statesOfOperation: statesOf(v.states_of_operation),
           currentProvider: v.current_provider,
           ownerId: v.owner || null,
-        });
+        }) };
       } catch (e) {
         if (e instanceof AccountError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? "owner" : e.code === "22003" ? "employees" : undefined);
         throw e;
       }
     },
-    onSaved: (account) => {
+    onSaved: ({ account, andContact }) => {
       toast.success("Account created");
-      onCreated(account);
+      onCreated(account, andContact);
     },
     failureMessage: "Couldn't save the account. Check your connection and try again.",
     onCancel: onClose,
@@ -78,7 +86,30 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogTitle className="font-display text-xl font-bold">New account</DialogTitle>
         <DialogDescription className="sr-only">Add a business you quote for.</DialogDescription>
-        <WorkspaceForm api={api} aria-label="New account" actions={<FormActions submitLabel="Save account" savingLabel="Saving…" />}>
+        <WorkspaceForm
+          api={api}
+          aria-label="New account"
+          actions={(
+            <div onClickCapture={(e) => { if ((e.target as HTMLElement).closest("button[type=submit]")) thenContact.current = false; }}>
+              <FormActions
+                submitLabel="Save account"
+                savingLabel="Saving…"
+                between={(
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-md"
+                    disabled={api.saving}
+                    aria-disabled={api.offline || undefined}
+                    onClick={() => { if (api.offline) return; thenContact.current = true; void api.submit(); }}
+                  >
+                    Save and add a contact
+                  </Button>
+                )}
+              />
+            </div>
+          )}
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             <Field name="name" label="Account name" required>{(field) => <Input {...field} autoFocus />}</Field>
             <Field name="trade_name" label="Trade name">{(field) => <Input {...field} />}</Field>

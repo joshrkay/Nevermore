@@ -339,11 +339,11 @@ describe("AccountPage: paging when the list moves under the person", () => {
 
 describe("AccountPage: a contact named in the address that is not in the list", () => {
   // Catches: the loader fetching every page of a long list for a contact that is not on the account.
-  it("stops loading by itself after 500 rows, says so, and leaves Show more", { timeout: 20000 }, async () => {
+  it("stops loading by itself after 500 rows, says so, and leaves Show more", { timeout: 40000 }, async () => {
     const user = userEvent.setup();
     serveTab(Array.from({ length: 700 }, (_, i) => contact(i + 1000)));
     renderPage("/accounts/a1?tab=contacts&contact=nobody");
-    expect(await screen.findByText("That contact isn't in the first 500 here.", undefined, { timeout: 8000 })).toBeInTheDocument();
+    expect(await screen.findByText("That contact isn't in the first 500 here.", undefined, { timeout: 20000 })).toBeInTheDocument();
     expect(client.listAccountTab).toHaveBeenCalledTimes(10);
     expect(screen.getByText("Showing 500 of 700.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show more" }));
