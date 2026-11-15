@@ -666,6 +666,74 @@ N-3.4. Builds as Epic 4 rows 4 (database) and 8 (screens).
 | D-472 | The banner (CRM-O1.1's "Won or lost" state). "Won · <PEO> · from <start> · renews <date>", with the commission line. Or "Lost · <reason>". Either has Reopen for those allowed (D-462) |
 | D-473 | Won, lost, the quote taken, the reason and each reopening are in the opportunity's history with who (D-413) |
 
+## Epics 6, 7 and 8 decisions (founder, 2026-11-15)
+
+Grilled 2026-11-15 against `main` at Epic 4's merge (#180, #178). The founder took every recommended answer. What
+exists: the receiving side of PEO mail (M-2.5, M-3.1 to M-3.6, the holding list), the broker's mailbox (M-4.1 to
+M-4.3), the bundle (L-3.1 to L-3.4), accounts, contacts, opportunities, calls, notes and tasks (`activities`, which
+requires an account), the level rule, bulk change and its Undo, labels on accounts, and export. What does not:
+Epic 5 (New quote, the employer authorizing each PEO, M-1.1), any `leads` table, custom fields (Epic 9).
+
+| # | Decision |
+|---|---|
+| D-800 | **Order, amending D-3.** Epic 5 is not built, and every send to a PEO (M-2.1 to M-2.4, Q-2.x, CRM-Q2.6) needs M-1.1. So what needs nothing from Epic 5 is built first: Epic 8 (Leads), then Epic 6's contact half (CRM-E1.1 to E1.4), then Epic 7's reading and quote work (N-1.x, N-2.x, N-3.x). The PEO half of Epic 6 and the screens of Epic 7 that sit on the quote's page (CRM-Q3.3, CRM-Q4.2) wait for Epic 5 |
+| D-801 | **Branches, amending D-2 and D-3** for this line of work. The build line is the session branch `claude/admiring-keller-dd7w1a`: one commit (or a short run of commits) per slice, one draft pull request to `main`, as Epic 4's builds landed (#180) |
+| D-802 | **Where slices live.** The decisions and build orders are on this page; each slice is also a GitHub issue labelled `ready-for-agent`, with its blockers. Decision numbers: Epic 6 D-600 onward, Epic 7 D-700 onward, Epic 8 D-800 onward |
+| D-803 | **A lead is its own record**, the `leads` table: one row holding the person and the business (name, title, business, email, phone, state, employees, current provider, source, owner, status). A lead is not in the chain (CRM-Q1.1): it has no account, contact or opportunity until it is converted, which copies it into them. It carries its firm, row security, its two-firm probe (D-28), its line in `firm_closing_plan()` and `record_track` (history and version, D-45, D-46). Every write refuses a closing firm (ADR 0023) and a support session (ADR 0024) |
+| D-804 | **Where a lead comes from** (CRM-L1.2): the source is one of Added by hand, Import, Referral partner, Firm's link. Epic 8 builds the hand form and, as its last slice, the firm's public link's "contact me" for a visitor who starts no intake. Import arrives with CRM-X4.1 (Epic 9). A linked CRM is left out: no story builds the link. A referral partner's link fills the source only where D-101 offers a link (the default firm) |
+| D-805 | **Labels and custom fields on leads.** Labels are built now, from the firm's one label list (**Label**). Custom fields wait for CRM-X3.1 (Epic 9), as D-186 did for accounts; the pull request lists them as deferred |
+| D-806 | **The lead bin** (CRM-L1.1). Deleting sets `leads.deleted_at`; a deleted lead is in no view but Deleted, which owners see, with Restore. A nightly `pg_cron` job removes leads deleted more than 30 days ago, with their calls, notes and tasks. A converted lead can't be deleted. Deleting from the lead's page uses the same bin |
+| D-807 | **Calls, notes and tasks on a lead.** `activities` gains `lead_id`; a row belongs to exactly one of an account or a lead (a check). Converting moves a lead's rows onto the new account (and contact) in the same transaction. Added to, nothing replaced (ADR 0007) |
+| D-808 | **When a lead becomes Working** (CRM-L1.3). The first logged call, the first saved change to its fields, or an agent setting it. A note or a task is not counted. Emailing a lead joins the rule in CRM-E1.2. Every lead starts New, whoever made it. Converted is set only by converting. Every status change is one history entry |
+| D-809 | **Who sees and changes a lead**: the level rule as for accounts (D-209). An agent their own, a lead (role) their teams', an owner everyone's; "everyone sees everything" lets every member read. Nevermore support reads only. A lead with no owner, or whose owner has left, is changed by owners only |
+| D-810 | **Converting** (CRM-L2.2). Possible matches use the duplicate match (D-193), among accounts the agent may see. A contact needs a name and an email or a phone; the agent fills one in on the form or unticks the contact. The opportunity is ticked by default, named "<Business> – PEO search", with no target start unless entered. A Not a fit lead is reopened before it can be converted. "Convert and start a quote" waits for New quote (Epic 5; D-402, no dead buttons). Custom-field values move with Epic 9. One database function does all of it or none, locking the lead row, so converting twice makes one chain |
+| D-811 | **Bulk on leads** (CRM-L1.1) reuses **Bulk change** as it is: change owner, change status (New or Working), Not a fit (one reason), set a field, label, delete (to the bin; its Undo restores) and export through the existing export |
+| D-812 | **Depth.** Epics 6 and 7 are split into slices now; their design questions (one message store for PEO and contact mail, the conversation's reply address, how the reply-reading model is called) are grilled just before each epic is built, after Epic 8 lands |
+| D-813 | **N-1.2 moves from Epic 5 to Epic 7** (its database part: `acknowledged` and `question_open` and their moves), so N-1.1's suggestions can be accepted without Epic 5. Epic 5's CRM-Q3.1 builds on it |
+
+### Epic 8 build order
+
+Migrations sort after `20261120090000`.
+
+| # | Slice | What it covers | Needs | Migration |
+|---|---|---|---|---|
+| 8.1 | CRM-L1.3a | The `leads` table: statuses and Not a fit reasons, history, the level rule, the two-firm probe, the closing line, `deleted_at`; `activities.lead_id` | none | `20261121090000` |
+| 8.2 | CRM-L1.2a | Create a lead: the function and the form (screen 21), with Save and add another | 8.1 | `20261121100000` |
+| 8.3 | CRM-L1.1a | The leads table: query, views, filters, search, columns, page states | 8.1 | `20261121110000` |
+| 8.4 | CRM-L1.1b | Bulk actions with Undo, the bin with Restore, the 30-day nightly removal | 8.3 | `20261121120000` |
+| 8.5 | CRM-L2.1 | The lead's page: header, status bar, details edited in place, calls, notes and tasks, banners, Reopen | 8.1 | `20261121130000` |
+| 8.6 | CRM-L2.2 | Convert: one all-or-none function and the dialog (screen 22) | 8.5 | `20261121140000` |
+| 8.7 | CRM-L1.2b | A visitor on the firm's public link who asks to be contacted becomes a lead | 8.2 | `20261121150000` |
+
+### Epic 6 build order
+
+| # | Slice | What it covers | Needs |
+|---|---|---|---|
+| 6.1 | CRM-E1.1 | Connect a mailbox from every place to write, Settings and the first send; the Reconnect state | none |
+| 6.2 | CRM-E1.2a | Conversations with contacts and leads: the table, a reply address per conversation, sending through the agent's mailbox by the outbox | 6.1 |
+| 6.3 | CRM-E1.2b | The place to write on a contact, a lead, an account and an opportunity; attachments by the file rules; Do not email; a lead becomes Working | 6.2, 8.5 |
+| 6.4 | CRM-E1.3 | Replies join their conversation; a new sender is offered as a contact; one message shown on every record it belongs to | 6.2 |
+| 6.5 | CRM-E1.4 | The inbox | 6.4 |
+| 6.6 | M-2.1 | Send to a PEO | Epic 5 (M-1.1) |
+| 6.7 | M-2.2 with CRM-Q2.6 | Send to several PEOs; New quote's step 5 | 6.6 |
+| 6.8 | M-2.3 | Send an update | 6.6 |
+| 6.9 | M-2.4 | Follow up and withdraw | 6.6 |
+| 6.10 | Q-2.1, Q-2.2 | The registration record; the warning about a second submission, which records whether to block | 6.6 |
+
+### Epic 7 build order
+
+| # | Slice | What it covers | Needs |
+|---|---|---|---|
+| 7.0 | N-1.2 | Acknowledged and Question open (D-813) | none |
+| 7.1 | N-1.4 | A decline keeps its reason | none |
+| 7.2 | N-2.1 | A quote holds the whole offer, estimate or firm offer | none |
+| 7.3 | N-2.2, N-2.4 | Keep the quote document; a revised quote | 7.2 |
+| 7.4 | N-1.1 | Suggest what a reply means: the message is data, outcomes recorded without content | 7.0 |
+| 7.5 | N-1.3 | An underwriter's question becomes an information request | 7.4 |
+| 7.6 | N-2.3 | Read the quote document | 7.2, 7.3 |
+| 7.7 | N-3.1, N-3.2 | The broker's comparison and its notes | 7.2 |
+| 7.8 | CRM-Q3.3, CRM-Q4.2 | Record a quote and Compare quotes on screen | Epic 5 (CRM-Q3.2) |
+
 ## Rules for building one story
 
 1. **Branch.** `crm/<epic number>/<story id in lower case>` (for example `crm/01/crm-p1.2`), cut from the epic's
