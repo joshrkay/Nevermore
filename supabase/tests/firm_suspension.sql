@@ -148,6 +148,7 @@
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
@@ -497,6 +498,7 @@ DO $$
 DECLARE fa uuid := pg_temp.id('alpha'); s uuid := pg_temp.id('intake_a'); q bigint; m_thread bigint; m_held bigint; m_nobody bigint; agent uuid := pg_temp.id('agent_a');
   admin uuid := pg_temp.id('platform_admin');
 BEGIN
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity; -- the fixture puts a quote request on a draft that sits on no opportunity (CRM-Q1.3)
   RESET ROLE;
   INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (s, 'Probe PEO', 'sent') RETURNING id INTO q;
   INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
@@ -540,6 +542,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.plan_mail_move(%s, %s, %L)$q$, m_held, q, admin)), 'rows:1', 'and held mail can be assigned again');
   RESET ROLE;
   RAISE NOTICE 'firm_suspension: mailbox and held mail cases passed';
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
 END $$;
 
 -- ---------- the admin's page: every firm, its state, and whether it is suspended ----------

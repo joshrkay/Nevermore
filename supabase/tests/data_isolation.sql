@@ -201,6 +201,7 @@
 \i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
@@ -496,6 +497,11 @@ BEGIN
   RESET ROLE;
   -- The two certifications above made their chains (CRM-Q1.1b), in the default firm. An intake that holds an opportunity cannot be moved to another firm
   -- (20261119100000), and the CRM fixture below makes its own records, with known owners and counts: so these go first.
+  -- CRM-Q1.3 refuses a submission with no opportunity, the deletion of its opportunity and a quote request on it; the fixture leaves the two certified intakes
+  -- with none on purpose until the CRM fixture below gives them theirs, so the rule's three triggers are off until the end of this block.
+  ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_keep_intake_delete;
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER chamber_sessions_has_opportunity;
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity;
   DELETE FROM public.opportunities;
   DELETE FROM public.contacts;
   DELETE FROM public.accounts;
@@ -672,6 +678,10 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM public.chamber_sessions WHERE intake_consent_id IS NULL) <> 0 THEN RAISE EXCEPTION 'setup: an intake has no consent recorded'; END IF;
   IF (SELECT count(*) FROM public.chamber_certifications) <> 2 THEN RAISE EXCEPTION 'setup: expected two certifications'; END IF;
+  -- The rule is back on; the next fixture's inserts give the two certified intakes their opportunities.
+  ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_keep_intake_delete;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER chamber_sessions_has_opportunity;
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
 END $$;
 
 -- ---- CRM-S3.1b with S3.4b: column choices and saved views (20261117120000) ----
@@ -3046,7 +3056,10 @@ BEGIN
     UPDATE public.chamber_sessions SET firm_id = fid WHERE id = s;
   END IF;
   IF need LIKE '%{qr}%' OR need LIKE '%{msg}%' THEN
+    -- A probe's quote request sits on a draft with no opportunity, which CRM-Q1.3 refuses: the rule's trigger is off for this one statement.
+    ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity;
     INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (s, 'Probe PEO', 'sent') RETURNING id INTO q;
+    ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
   END IF;
   IF need LIKE '%{msg}%' THEN
     INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
@@ -3578,6 +3591,12 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('make_intake_chain', 'service_only', 'makes the account, contact and opportunity of one certified intake, in that intake''s firm, or answers the ones that are there; runs for any intake by id, so no API role can call it: the certification''s trigger and the bringing in of existing submissions (CRM-Q1.3) do'),
   ('find_duplicate_account', 'service_only', 'the firm''s earliest account that may be the same business (D-193), by id of the firm; reads every account of the firm whoever may see it, so no API role can call it: a caller decides what to show'),
   ('chain_at_certification', 'trigger', 'after an intake is certified, in the same transaction, makes its chain: not executable through the API');
+
+-- CRM-Q1.3 (20261119120000_bring_submissions_in.sql; supabase/tests/bring_submissions_in.sql): the existing submissions brought in, and the rule that every submission and quote request sits on an opportunity.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('bring_submissions_in', 'service_only', 'makes the chain of every certified intake that has none, in each intake''s own firm, by the same step as a first certification; runs for every firm, so no API role can call it: the migration does, and the superuser if it is run again'),
+  ('require_opportunity_for_intake', 'service_only', 'refuses (23514) an intake that is a submission or holds a quote request and sits on no opportunity; answers for any intake by id, so no API role can call it: the rule''s triggers ask it'),
+  ('enforce_opportunity_rule', 'trigger', 'the rule''s constraint triggers on chamber_sessions, opportunities and quote_requests ask it: not executable through the API');
 
 -- CRM-A2.1a (20261119140000_account_page.sql; supabase/tests/account_page.sql): an account's page, the level rule for changes and the save of an account's own fields.
 INSERT INTO fn_class (fn, class, why) VALUES
