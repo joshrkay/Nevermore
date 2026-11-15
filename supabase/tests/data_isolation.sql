@@ -3070,7 +3070,7 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
    $m$INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
-   $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} ORDER BY c.made_at, c.id, a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
@@ -3102,6 +3102,7 @@ UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_message
   VALUES ('x-{tag}', {qr}, {intake}, 'received', 'probe@example.test')$m$ WHERE src = 'public.quote_request_messages';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.bulk_change_records';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT a.firm_id, a.id, l.id FROM public.accounts a JOIN public.labels l ON l.firm_id = a.firm_id WHERE a.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.account_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
   WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
