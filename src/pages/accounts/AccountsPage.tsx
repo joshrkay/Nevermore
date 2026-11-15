@@ -137,7 +137,6 @@ const AccountsPage = () => {
         {making && firmId && (
           <NewAccountDialog
             firmId={firmId}
-            role={workspace?.role ?? null}
             person={workspace?.person ?? ""}
             onClose={() => setMaking(false)}
             onCreated={(account) => navigate(`/accounts/${account.id}`)}

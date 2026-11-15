@@ -950,6 +950,11 @@ export type Database = {
         }
         Returns: Json
       }
+      // The firm's current people the caller may make an account for, by the level rule (20261119150000), for the New account form's Owner choice.
+      account_owner_choices: {
+        Args: { p_firm_id: string | null }
+        Returns: { user_id: string; name: string }[]
+      }
       // Makes an account by hand (20261119150000): the made account's own fields (the same shape as a save's `record`). The owner is the caller unless one is named.
       create_account: {
         Args: {

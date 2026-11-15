@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { createAccount } = await import("./accountCreateApi");
+const { createAccount, listAccountOwners } = await import("./accountCreateApi");
 const { AccountError } = await import("./accountPageApi");
 type NewAccount = import("./accountCreateApi").NewAccount;
 
@@ -28,6 +28,20 @@ const caught = async (call: () => Promise<unknown>) => {
 };
 
 beforeEach(() => rpc.mockReset());
+
+describe("listAccountOwners", () => {
+  it("asks the database for the people the person may make an account for, in this firm, by id and name", async () => {
+    rpc.mockResolvedValue({ data: [{ user_id: "u1", name: "Dana Reyes" }, { user_id: "u2", name: "Marcus Hale" }], error: null });
+    expect(await listAccountOwners("f1")).toEqual([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
+    expect(rpc).toHaveBeenCalledWith("account_owner_choices", { p_firm_id: "f1" });
+  });
+  it("fails in words when the database refuses or answers another shape", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "no" } });
+    await expect(listAccountOwners("f1")).rejects.toThrow("Couldn't load the firm's people.");
+    rpc.mockResolvedValue({ data: [{ id: "u1" }], error: null });
+    await expect(listAccountOwners("f1")).rejects.toThrow("Couldn't load the firm's people.");
+  });
+});
 
 describe("createAccount", () => {
   it("sends every field with the firm and the owner chosen, and answers the made account", async () => {

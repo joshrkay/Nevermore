@@ -8,8 +8,7 @@ import { US_STATE_CODES } from "@/data/chamberValidation";
 import { accountFieldsSchema } from "@/data/accountFields";
 import { statesOf } from "@/data/accountPage";
 import { useAuth } from "@/hooks/useAuth";
-import { listFirmMembers } from "@/lib/accountsApi";
-import { createAccount } from "@/lib/accountCreateApi";
+import { createAccount, listAccountOwners } from "@/lib/accountCreateApi";
 import { AccountError, type AccountFields } from "@/lib/accountPageApi";
 
 // New account (story CRM-A1.2, screen 23): a form over the Accounts page. Saving makes the account and hands it to the page, which opens it. The database
@@ -25,10 +24,8 @@ const EMPTY = {
   name: "", trade_name: "", website: "", phone: "", street: "", city: "", state: "", postal_code: "", industry: "", employees: "", states_of_operation: "", current_provider: "",
 };
 
-export function NewAccountDialog({ firmId, role, person, onClose, onCreated }: {
+export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
   firmId: string;
-  /** What the person is in the firm: an agent can give an account to nobody but themselves (D-209), so an agent is offered no one else. */
-  role: string | null;
   /** The person's own name, for the owner choice until the firm's people have loaded. */
   person: string;
   onClose: () => void;
@@ -36,10 +33,11 @@ export function NewAccountDialog({ firmId, role, person, onClose, onCreated }: {
 }) {
   const { user } = useAuth();
   const me = user?.id ?? "";
-  const members = useQuery({ queryKey: ["new-account", firmId, "members"], queryFn: () => listFirmMembers(firmId), retry: false, staleTime: 60_000 });
+  const members = useQuery({ queryKey: ["new-account", firmId, "owners"], queryFn: () => listAccountOwners(firmId), retry: false, staleTime: 60_000 });
   const yourself = { value: me, label: members.data?.find((m) => m.value === me)?.label ?? person };
-  // Everyone in the firm, the person first. A person who gave the account to someone they may not is told so by the database, beside Owner.
-  const owners = role === "Agent" || !members.data ? [yourself] : [yourself, ...members.data.filter((m) => m.value !== me)];
+  // The people the database lets this person give an account to (the level rule, D-209: an agent themselves, a lead their teams, an owner anyone), the person
+  // first. Until they load, or if they can't, the person themselves: that is always allowed.
+  const owners = !members.data ? [yourself] : [yourself, ...members.data.filter((m) => m.value !== me)];
 
   const api = useWorkspaceForm({
     schema,
@@ -96,7 +94,7 @@ export function NewAccountDialog({ firmId, role, person, onClose, onCreated }: {
                 </SelectInput>
               )}
             </Field>
-            <Field name="postal_code" label="Postal code">{(field) => <Input {...field} />}</Field>
+            <Field name="postal_code" label="ZIP">{(field) => <Input {...field} />}</Field>
             <Field name="industry" label="Industry">{(field) => <Input {...field} />}</Field>
             <Field name="employees" label="Employees">{(field) => <Input {...field} inputMode="numeric" />}</Field>
             <Field name="states_of_operation" label="States of operation" help="Two-letter state codes, separated by commas, like OR, WA.">{(field) => <Input {...field} />}</Field>

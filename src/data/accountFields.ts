@@ -12,11 +12,12 @@ const text = z.string().trim();
 export const statesOfOperationRule = () =>
   text.refine((v) => statesOf(v).every((s) => US_STATE_CODES.includes(s)), "Use two-letter state codes from the list, like OR, WA.");
 
-export const accountFieldsSchema = z.object({
+/** The rules as a form applies them. `keptPhone` is the account's phone when the form began: left as it was, it is not judged again (the database's rule too). */
+export const accountFieldsSchemaFor = (keptPhone?: string | null) => z.object({
   name: nameRule("Enter the account's name.", 200),
   trade_name: text,
   website: text,
-  phone: phoneRule(),
+  phone: phoneRule(keptPhone),
   street: text,
   city: text,
   state: stateRule(),
@@ -26,3 +27,5 @@ export const accountFieldsSchema = z.object({
   states_of_operation: statesOfOperationRule(),
   current_provider: text,
 });
+
+export const accountFieldsSchema = accountFieldsSchemaFor();

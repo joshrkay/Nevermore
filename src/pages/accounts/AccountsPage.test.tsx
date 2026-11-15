@@ -39,7 +39,8 @@ vi.mock("@/lib/tableSettingsApi", () => ({
   setMyColumns: (...a: unknown[]) => setMyColumns(...a),
 }));
 const createAccount = vi.fn();
-vi.mock("@/lib/accountCreateApi", () => ({ createAccount: (...a: unknown[]) => createAccount(...a) }));
+const listAccountOwners = vi.fn();
+vi.mock("@/lib/accountCreateApi", () => ({ createAccount: (...a: unknown[]) => createAccount(...a), listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
 const exportRows = vi.fn();
 vi.mock("@/lib/exportApi", async () => ({ ...(await vi.importActual<object>("@/lib/exportApi")), exportRows: (...a: unknown[]) => exportRows(...a) }));
 const downloadBlob = vi.fn();
@@ -88,10 +89,11 @@ const headers = () => within(screen.getByRole("table")).getAllByRole("columnhead
 const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; filters: unknown[]; sort: unknown; page: number; search: string };
 
 beforeEach(() => {
-  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
+  for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, exportRows, downloadBlob, signOut, mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
   countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
+  listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   fetchMyColumns.mockResolvedValue({ columns: null, source: "none" });
   setMyColumns.mockResolvedValue(undefined);
   saveView.mockResolvedValue("v1");
@@ -547,7 +549,7 @@ describe("the Accounts page: New account", () => {
   // firm's own fields shown before their stories (D-186), or the maker not the owner by default (D-214).
   it("opens the form with the story's fields, the person as the owner, and no button for what is not built", async () => {
     const { dialog } = await open();
-    for (const label of ["Account name", "Trade name", "Website", "Phone", "Street", "City", "State", "Postal code", "Industry", "Employees", "States of operation", "Current PEO or payroll provider", "Owner"]) {
+    for (const label of ["Account name", "Trade name", "Website", "Phone", "Street", "City", "State", "ZIP", "Industry", "Employees", "States of operation", "Current PEO or payroll provider", "Owner"]) {
       expect(within(dialog).getByLabelText(label)).toBeInTheDocument();
     }
     expect(within(dialog).getByText("Required")).toBeInTheDocument();
@@ -566,7 +568,7 @@ describe("the Accounts page: New account", () => {
     await user.type(text(dialog, "Employees"), "forty");
     await user.click(within(dialog).getByRole("button", { name: "Save account" }));
     expect(await within(dialog).findByText("Enter the account's name.")).toBeInTheDocument();
-    expect(within(dialog).getByText("Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
     expect(within(dialog).getByText("Enter a whole number, like 45.")).toBeInTheDocument();
     expect(createAccount).not.toHaveBeenCalled();
   });
@@ -604,19 +606,37 @@ describe("the Accounts page: New account", () => {
     });
   });
 
-  // Catches: the maker not being the owner when nobody chose, and an agent offered other people (the database refuses them: D-209).
-  it("makes the person the owner by default, and offers an agent only themselves", async () => {
+  // Catches: the maker not being the owner when nobody chose.
+  it("makes the person the owner by default", async () => {
     createAccount.mockResolvedValue(made);
-    const { user, dialog } = await open(workspace({ role: "Agent" }));
+    const { user, dialog } = await open();
     await user.type(text(dialog, "Account name"), "Name only");
     await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
-    expect(within(dialog).queryByRole("option", { name: "Marcus Hale" })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Save account" }));
     await waitFor(() => expect(createAccount).toHaveBeenCalled());
     expect(createAccount.mock.calls[0][1]).toMatchObject({ name: "Name only", ownerId: "u1" });
   });
 
-  it("offers a firm's owner everyone in the firm", async () => {
+  // Catches: the Owner choice offering a person the database will refuse (an agent anyone but themselves, a lead anyone outside their teams), as it did when it
+  // listed every member. The choices are the database's own (account_owner_choices), asked for this firm.
+  it("offers as owner only the people the database lists for the person, and nobody else of the firm", async () => {
+    listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
+    const { dialog } = await open(workspace({ role: "Lead" }));
+    await waitFor(() => expect(listAccountOwners).toHaveBeenCalledWith("f1"));
+    expect(await within(dialog).findByRole("option", { name: "Dana Reyes" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("option", { name: "Marcus Hale" })).not.toBeInTheDocument();
+  });
+
+  // Catches: the form being unusable when the choices can't be loaded: the person can still make an account for themselves.
+  it("offers the person themselves when the choices could not be loaded", async () => {
+    listAccountOwners.mockRejectedValue(new Error("Couldn't load the firm's people."));
+    const { dialog } = await open(workspace({ role: "Lead" }));
+    await waitFor(() => expect(text(dialog, "Owner")).toHaveValue("u1"));
+    expect(within(dialog).getAllByRole("option", { name: /Dana Reyes/ })).toHaveLength(1);
+    expect(within(dialog).queryByRole("option", { name: "Marcus Hale" })).not.toBeInTheDocument();
+  });
+
+  it("offers a firm's owner everyone the database lists", async () => {
     const { dialog } = await open(workspace({ role: "Owner", isOwner: true }));
     expect(await within(dialog).findByRole("option", { name: "Marcus Hale" })).toBeInTheDocument();
   });

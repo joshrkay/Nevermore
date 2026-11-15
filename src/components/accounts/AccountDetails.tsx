@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { US_STATE_CODES } from "@/data/chamberValidation";
-import { accountFieldsSchema as schema } from "@/data/accountFields";
+import { accountFieldsSchemaFor } from "@/data/accountFields";
 import { addressLines, editOf, formOf, NOT_GIVEN, sourceWords, valueWords, type AccountForm } from "@/data/accountPage";
 import { updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
 
@@ -21,7 +21,7 @@ const CONFLICT_FIELDS = {
   street: { label: "Street" },
   city: { label: "City" },
   state: { label: "State" },
-  postal_code: { label: "Postal code" },
+  postal_code: { label: "ZIP" },
   industry: { label: "Industry" },
   employees: { label: "Employees" },
   states_of_operation: { label: "States of operation", format: (v: unknown) => (Array.isArray(v) ? valueWords(v as string[]) : String(v)) },
@@ -54,6 +54,10 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
     }
   }, [focusEdit, editing]);
 
+  // The phone as it was when the edit began: left as it was, it is not judged again, so an older-format phone never blocks a save of another field.
+  const [phoneAtStart, setPhoneAtStart] = useState<string | null>(account.phone);
+  const schema = useMemo(() => accountFieldsSchemaFor(phoneAtStart), [phoneAtStart]);
+
   const api = useWorkspaceForm({
     schema,
     defaultValues: formOf(account),
@@ -84,6 +88,7 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
 
   const startEditing = () => {
     api.begin(formOf(account), account.version);
+    setPhoneAtStart(account.phone);
     setEditing(true);
   };
 
@@ -116,7 +121,7 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
               )}
             </Field>
           </div>
-          <Field name="postal_code" label="Postal code">{(field) => <Input {...field} />}</Field>
+          <Field name="postal_code" label="ZIP">{(field) => <Input {...field} />}</Field>
           <Field name="industry" label="Industry">{(field) => <Input {...field} />}</Field>
           <Field name="employees" label="Employees">{(field) => <Input {...field} inputMode="numeric" />}</Field>
           <Field name="states_of_operation" label="States of operation" help="Two-letter state codes, separated by commas, like OR, WA.">{(field) => <Input {...field} />}</Field>

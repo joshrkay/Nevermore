@@ -4,15 +4,22 @@ import { dateRule, phoneRule, stateRule, wholeNumberRule } from "./fieldRules";
 const message = (result: { success: boolean; error?: { issues: { message: string }[] } }) => (result.success ? null : result.error?.issues[0].message);
 
 describe("phoneRule", () => {
-  const PHONE_WORDS = "Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.";
-  it.each(["(503) 555-0142", "503-555-0142", "503.555.0142", "+1 503 555 0142", "5035550142", "503 555 0142 x12", "503 555 0142 ext. 345", "+44 20 7946 0958"])(
+  const PHONE_WORDS = "Enter a phone number like (503) 555-0142. An extension can follow, like x12.";
+  it.each(["(503) 555-0142", "503-555-0142", "503.555.0142", "+1 503 555 0142", "5035550142", "503 555 0142 x12", "503 555 0142 ext. 345", "+44 20 7946 0958", "555-0142", "5550142", "123456789012345", "503" + " ".repeat(40) + "5550142"])(
     "takes %s",
     (typed) => expect(phoneRule().safeParse(typed).success).toBe(true),
   );
-  it.each(["call me", "555-0142", "12345678901234567", "503+555+0142", "(503) 555-0142 ext", "503-555-0142 x1234567", "++15035550142"])(
+  it.each(["call me", "555014", "1234567890123456", "503" + " ".repeat(41) + "5550142", "503+555+0142", "(503) 555-0142 ext", "503-555-0142 x1234567", "++15035550142"])(
     "refuses %s in words",
     (typed) => expect(message(phoneRule().safeParse(typed))).toBe(PHONE_WORDS),
   );
+  // Catches: a phone the person did not touch being judged again, so an account with an older-format phone could not save another field.
+  it("takes the phone the record already had, whatever it looks like, and judges a different one", () => {
+    expect(phoneRule("call me").safeParse("call me").success).toBe(true);
+    expect(phoneRule("call me").safeParse(" call me ").success).toBe(true);
+    expect(message(phoneRule("call me").safeParse("call us"))).toBe(PHONE_WORDS);
+    expect(phoneRule("call me").safeParse("555-0142").success).toBe(true);
+  });
   it("may be left empty, and trims what is typed", () => {
     expect(phoneRule().parse("")).toBe("");
     expect(phoneRule().parse("   ")).toBe("");

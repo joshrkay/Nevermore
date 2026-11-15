@@ -35,18 +35,21 @@ export const choiceRule = <T extends string>(allowed: readonly T[], missing: str
   z.string().refine((v): v is T => (allowed as readonly string[]).includes(v), missing);
 
 /**
- * A phone number that may be left empty: 10 to 15 digits (a US number with its area code, or an international one with its country code) with only spaces,
- * brackets, dots and dashes between them, a plus only at the start, and an optional extension ("x12", "ext. 345"). The database asks the same rule
- * (`crm_phone_ok`, 20261119150000), so a number the form takes is a number the database takes.
+ * A phone number that may be left empty. It is the repository's own rule (`is_valid_phone`, 20261027090000): 7 to 15 digits with only spaces, brackets, dots
+ * and dashes between them, a plus only at the start, an optional extension ("x12", "ext. 345"), at most 50 characters. A phone is judged only when it is
+ * changed (as `validate_profile_phone` and the account's trigger do): pass `kept`, the phone the record had when the edit began, and typing it again is taken
+ * whatever it looks like, so a record with an older phone can still save its other fields.
  */
-export const phoneRule = () =>
+export const PHONE_WORDS = "Enter a phone number like (503) 555-0142. An extension can follow, like x12.";
+export const phoneRule = (kept?: string | null) =>
   z
     .string()
     .trim()
-    .refine((v) => v === "" || PHONE_SHAPE.test(v) && digitsBeforeExtension(v) >= 10 && digitsBeforeExtension(v) <= 15, "Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.");
+    .refine((v) => v === "" || v === (kept ?? "").trim() || isValidPhone(v), PHONE_WORDS);
 
 const PHONE_SHAPE = /^\+?[0-9 ().-]+(\s*(x|ext\.?)\s*[0-9]{1,6})?$/i;
 const digitsBeforeExtension = (v: string) => v.replace(/\s*(x|ext\.?)\s*[0-9]{1,6}$/i, "").replace(/[^0-9]/g, "").length;
+const isValidPhone = (v: string) => v.length <= 50 && PHONE_SHAPE.test(v) && digitsBeforeExtension(v) >= 7 && digitsBeforeExtension(v) <= 15;
 
 /** A state that may be left empty: one of the state codes, in either case, kept in capitals. */
 export const stateRule = () =>

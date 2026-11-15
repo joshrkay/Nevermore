@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { AccountError, fieldsOf, fieldsSchema, refusal, SAVE_FALLBACK, type AccountFields } from "@/lib/accountPageApi";
 
@@ -49,4 +50,19 @@ export async function createAccount(firmId: string, account: NewAccount): Promis
   const parsed = fieldsSchema.safeParse(data);
   if (!parsed.success) throw new AccountError("failed", SAVE_FALLBACK);
   return fieldsOf(parsed.data);
+}
+
+const ownersSchema = z.array(z.object({ user_id: z.string().min(1), name: z.string().refine((n) => n.trim() !== "") }));
+const OWNERS_FAILED = "Couldn't load the firm's people.";
+
+/**
+ * The people the person may give a new account to, by the level rule (D-209): an agent themselves, a lead the members of their teams, an owner anyone in the
+ * firm. The database answers it, so the form never offers what `createAccount` would refuse.
+ */
+export async function listAccountOwners(firmId: string): Promise<{ value: string; label: string }[]> {
+  const { data, error } = await supabase.rpc("account_owner_choices", { p_firm_id: firmId });
+  if (error) throw new AccountError("failed", OWNERS_FAILED);
+  const answer = ownersSchema.safeParse(data);
+  if (!answer.success) throw new AccountError("failed", OWNERS_FAILED);
+  return answer.data.map((m) => ({ value: m.user_id, label: m.name }));
 }

@@ -521,8 +521,28 @@ describe("AccountPage: where focus goes", () => {
     await user.clear(states);
     await user.type(states, "OR, XX");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Enter a phone number like (503) 555-0142, with its area code. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
     expect(screen.getByText("Use two-letter state codes from the list, like OR, WA.")).toBeInTheDocument();
+  });
+
+  // Catches: the edit form refusing to save another field because the phone it kept is not in the current format (the phone is judged only when it changes).
+  it("saves another field of an account whose phone is in an older format, and still judges a phone that is changed", async () => {
+    const user = userEvent.setup();
+    client.getAccountPage.mockResolvedValue(page({ account: { ...account, phone: "call me" } }));
+    client.updateAccount.mockResolvedValue({ conflict: false, account: { ...account, phone: "call me", industry: "Dentistry", version: 2 } });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    const industry = screen.getByLabelText("Industry");
+    await user.clear(industry);
+    await user.type(industry, "Dentistry");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.updateAccount).toHaveBeenCalledTimes(1));
+    expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ phone: "call me", industry: "Dentistry" });
+    await user.click(await screen.findByRole("button", { name: /^Edit/ }));
+    await user.type(screen.getByLabelText("Phone"), "!");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter a phone number like (503) 555-0142. An extension can follow, like x12.")).toBeInTheDocument();
+    expect(client.updateAccount).toHaveBeenCalledTimes(1);
   });
 
   // Catches: each arrow key in the tab list adding a history entry, so Back steps through every tab the arrows passed.
