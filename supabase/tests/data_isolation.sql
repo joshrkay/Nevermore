@@ -213,6 +213,7 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -739,6 +740,10 @@ BEGIN
     -- CRM-E1.5: a note on each account and a task on the owned one.
     INSERT INTO public.activities (firm_id, account_id, kind, body) VALUES (fid, acc1, 'note', 'Fixture note'), (fid, acc2, 'note', 'Fixture note');
     INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, assignee_id) VALUES (fid, acc1, 'task', 'Fixture task', current_date, agent);
+    -- CRM-A2.4a: a placement on the owned account, and the renewal that comes from it.
+    INSERT INTO public.placements (firm_id, account_id, peo_name, broker_of_record) VALUES (fid, acc1, 'Fixture PEO', 'Fixture brokers');
+    INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id)
+    SELECT fid, acc1, 'peo_placement', 'Fixture PEO', current_date + 90, p.id FROM public.placements p WHERE p.firm_id = fid;
     -- CRM-S3.7b: a label on the owned account, and a bulk change with its record.
     INSERT INTO public.labels (firm_id, name) VALUES (fid, 'Fixture label');
     INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT fid, acc1, l.id FROM public.labels l WHERE l.firm_id = fid;
@@ -896,6 +901,13 @@ INSERT INTO matrix VALUES
 -- task on the owned one: the first firm's members see all three, the second's agent the two on the owned account.
 INSERT INTO matrix VALUES
   ('public.activities',                                 '{"agent_b":2}', '{"A":3,"B":3}');
+
+-- ---- CRM-A2.4a: placements and renewals (20261120110000) ----
+-- Read by whoever may see their account (supabase/tests/placements_renewals.sql); written by nobody through the API. Each firm has one of each on the owned account:
+-- the first firm's members see them, the second's agent (who owns the account) too.
+INSERT INTO matrix VALUES
+  ('public.placements',                                 '{"agent_b":1}', '{"A":1,"B":1}'),
+  ('public.renewals',                                   '{"agent_b":1}', '{"A":1,"B":1}');
 
 -- ---- CRM-S3.7b: labels and bulk changes (20261119210000) ----
 -- Closed to the API: a member reaches them through the bulk functions only (supabase/tests/bulk_changes.sql); each firm has one of each.
@@ -1422,6 +1434,18 @@ INSERT INTO callable VALUES
    'a current member of the firm who may see the task''s account marks it done or open again; refused as log_activity is'),
   ('account_activity_options(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the contacts and opportunities of an account and the firm''s current members, for the log form, to someone who may see the account; NULL for anyone else');
+-- CRM-A2.4a (20261120110000_placements_renewals.sql; supabase/tests/placements_renewals.sql): an account's renewals, added, edited and deleted by hand, and linked to the opportunity working them.
+INSERT INTO callable VALUES
+  ('account_renewals(p_firm_id uuid, p_account_id uuid, p_time_zone text)', 'own', NULL,
+   'a current member of the firm the call acts for reads the renewals of an account they may see, with the days away; NULL, the same as for an account that is not there, for one they may not see; 42501 for anyone who is no member of that firm'),
+  ('renewal_add(p_account_id uuid, p_kind text, p_with_whom text, p_renews_on date, p_start_date date, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the account, adds a renewal to it, and for a PEO placement the placement it comes from; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account'),
+  ('renewal_update(p_renewal_id uuid, p_with_whom text, p_renews_on date, p_not_renewed_on date, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for saves a renewal of an account they may change by the level rule, from the version they started from, marking it "Didn''t renew" ends or brings back its placement; 42501 for anyone who is no member of that firm or may not change the account, PT423 for a closing firm and a support session, PT404 for a renewal the caller may not see, the same as for one that is not there'),
+  ('renewal_delete(p_renewal_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for deletes a renewal of an account they may change by the level rule, and the placement it made by hand; PT409 for a renewal a win made; 42501 for anyone who is no member of that firm or may not change the account, PT423 for a closing firm and a support session, PT404 for a renewal the caller may not see, the same as for one that is not there'),
+  ('renewal_link_opportunity(p_renewal_id uuid, p_opportunity_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the account, names the open opportunity of that account that works a renewal nobody is working; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a renewal the caller may not see, the same as for one that is not there');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2085,7 +2109,9 @@ BEGIN
       (f, 'acct', (SELECT a.id::text FROM public.accounts a WHERE a.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1)),
       (f, 'acontact', (SELECT c.id::text FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
-      (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1));
+      (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1)),
+      (f, 'renewal', (SELECT r.id::text FROM public.renewals r WHERE r.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY r.created_at, r.id LIMIT 1)),
+      (f, 'opp', (SELECT o.id::text FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id WHERE o.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2108,6 +2134,14 @@ SELECT CASE v.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END,
        CASE v.name WHEN 'Agent view' THEN 'view' WHEN 'Owner view' THEN 'oview' ELSE 'sview' END, v.id::text
 FROM public.saved_views v
 WHERE v.name IN ('Agent view', 'Owner view', 'Shared view');
+
+-- CRM-A2.4a: an account's renewals and the writes on them, asked for the firm under test ({renewal} is the firm's renewal on its owned account, {opp} that account's opportunity).
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('account_renewals', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_renewals({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('renewal_add', 'advisor', 'by_id', $$SELECT public.renewal_add({acct}, 'current_plan', 'Probe', current_date + 5, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"with_whom": "Probe"'),
+  ('renewal_update', 'advisor', 'by_id', $$SELECT public.renewal_update({renewal}, 'Probe', current_date + 400, NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false'),
+  ('renewal_delete', 'advisor', 'by_id', $$SELECT public.renewal_delete({renewal}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true'),
+  ('renewal_link_opportunity', 'advisor', 'by_id', $$SELECT public.renewal_link_opportunity({renewal}, {opp}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"opportunity_id"');
 
 DO $$
 DECLARE
@@ -2289,7 +2323,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|renewal|opp)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3134,6 +3168,12 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.activities', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account, written by no API role',
    $m$INSERT INTO public.activities (firm_id, account_id, kind, body) SELECT a.firm_id, a.id, 'note', 'Probe {tag}' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
+  ('public.placements', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account, written by no API role',
+   $m$INSERT INTO public.placements (firm_id, account_id, peo_name, broker_of_record) SELECT a.firm_id, a.id, 'Probe {tag}', 'Probe' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.renewals', 'firm', 'its own firm_id, and an account of that firm; read by whoever may see the account, written by no API role',
+   $m$INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on) SELECT a.firm_id, a.id, 'current_plan', 'Probe {tag}', current_date FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
   ('public.labels', 'firm', 'its own firm_id; closed to the API, written only by the bulk change',
    $m$INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Probe {tag}') RETURNING ctid::text$m$, false,
    'firm_id = {firm}'),
@@ -3768,6 +3808,14 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('submission_status_history_stamp_staff', 'trigger', 'stamps each new status history row with whether the person who made the move acted as Nevermore staff, decided when the row is written (D-33); no API role can run it or write the table');
 
+-- CRM-A2.4a (20261120110000_placements_renewals.sql; supabase/tests/placements_renewals.sql): placements and renewals.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('account_renewals', 'firm_scoped', 'a current member of the firm the call acts for reads the renewals of an account they may see, with the days away; nothing for anyone else (4e)'),
+  ('renewal_add', 'firm_scoped', 'a current member who may see the account adds a renewal to it; another firm''s account is as not there (4e)'),
+  ('renewal_update', 'firm_scoped', 'a current member who may change the renewal''s account saves it from a version; another firm''s renewal is as not there (4e)'),
+  ('renewal_delete', 'firm_scoped', 'a current member who may change the renewal''s account deletes it; another firm''s renewal is as not there (4e)'),
+  ('renewal_link_opportunity', 'firm_scoped', 'a current member who may see the renewal''s account names the opportunity working it; another firm''s renewal is as not there (4e)'),
+  ('renewal_to_change', 'service_only', 'the firm''s renewal, held and checked (seen, not archived, and for an edit the level rule) for the renewal functions that call it; no API role can call it');
 -- CRM-Q1.1a (20261119100000_crm_records.sql; supabase/tests/crm_records.sql): an account's status and an opportunity's stage, worked out.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
