@@ -804,3 +804,84 @@ BEGIN
   PERFORM pg_temp.as_owner();
   RAISE NOTICE 'opportunity_stage: grants passed';
 END $$;
+
+-- ---------- Who made a move is decided when it is made (D-33, review of #179) ----------
+-- Break caught: whether a stage change was made by Nevermore staff is worked out from today's roles and memberships each time the history is read, so a
+-- member who later becomes an admin and leaves the firm turns their old moves into "Nevermore"; a new status row is written without its stamp.
+DO $$
+DECLARE o uuid := pg_temp.id('o_quote1'); kinds text;
+BEGIN
+  PERFORM pg_temp.is((SELECT bool_and(h.actor_is_staff IS NOT NULL) FROM public.submission_status_history h), true, 'every status row has its staff stamp');
+  -- acme_agent recorded quote1's quote as a member. Later they become an admin and their membership ends.
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('acme_agent'), 'admin') ON CONFLICT DO NOTHING;
+  UPDATE public.firm_memberships SET valid_until = now()
+  WHERE user_id = pg_temp.id('acme_agent') AND firm_id = (SELECT firm_id FROM public.opportunities WHERE id = o) AND valid_until IS NULL;
+  PERFORM pg_temp.is(public.firm_actor_is_staff(pg_temp.id('acme_agent'), (SELECT firm_id FROM public.opportunities WHERE id = o)), true,
+    'today acme_agent would count as staff');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  SELECT string_agg(l.who_kind, ',' ORDER BY l.at) INTO kinds
+  FROM public.record_history_list((SELECT firm_id FROM public.opportunities WHERE id = o), 'opportunities', o::text, 100) l
+  WHERE l.kind = 'stage_changed' AND l.cause = 'quote_recorded';
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(kinds, 'member,member', 'both quotes'' moves are still the member''s, as it was when it was made');
+  RAISE NOTICE 'opportunity_stage: who made a move is kept passed';
+END $$;
+
+-- ---------- Recording a quote takes the locks in the same order as a won, lost or archived move (review of #179) ----------
+-- Break caught: advisor_update_quote_request locks the quote request before the submission's pipeline row while set_submission_status locks the
+-- pipeline row and then closes the quote requests, so the two at once on one submission deadlock (each holds one row and waits for the other).
+-- Shown with two sessions: while the second holds the pipeline row, the first's quote waits before it takes the quote request, so the second can still
+-- take the quote request within two seconds.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+-- The submission and its sent quote request, committed first, so the two other sessions below can see them.
+DO $$
+DECLARE i uuid;
+BEGIN
+  i := pg_temp.ready('lock1', 'acme');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM public.advisor_record_quote_send(i, 'Insperity', NULL);
+  PERFORM pg_temp.as_owner();
+END $$;
+DO $$
+DECLARE
+  dsn text := format('dbname=%s user=%s port=%s host=%s', current_database(), session_user, current_setting('port'),
+    split_part(current_setting('unix_socket_directories'), ',', 1));
+  i uuid := pg_temp.id('lock1'); q bigint := pg_temp.qid('lock1', 'Insperity'); a_pid integer; b_pid integer; tries integer := 0; got text;
+BEGIN
+  PERFORM race.dblink_connect('qa', dsn);
+  PERFORM race.dblink_connect('qb', dsn);
+  SELECT pid INTO a_pid FROM race.dblink('qa', 'SELECT pg_backend_pid()') AS t(pid integer);
+  SELECT pid INTO b_pid FROM race.dblink('qb', 'SELECT pg_backend_pid()') AS t(pid integer);
+  -- The second holds the pipeline row, as set_submission_status does before it closes the quote requests.
+  PERFORM race.dblink_exec('qb', 'BEGIN');
+  PERFORM race.dblink_exec('qb', format('DO $do$ BEGIN PERFORM 1 FROM public.submission_workflow WHERE session_id = %L FOR UPDATE; END $do$', i));
+  -- The first records a quote as a member.
+  PERFORM race.dblink_exec('qa', 'BEGIN');
+  PERFORM race.dblink_exec('qa', 'SET LOCAL ROLE authenticated');
+  PERFORM race.dblink_exec('qa', format('SET LOCAL request.jwt.claims = %L', jsonb_build_object('sub', pg_temp.id('acme_owner'), 'role', 'authenticated',
+    'is_anonymous', false, 'email', 'acme_owner@example.test')::text));
+  PERFORM race.dblink_exec('qa', format('SET LOCAL request.headers = %L', jsonb_build_object('x-firm-address', 'acme-brokers')::text));
+  PERFORM race.dblink_send_query('qa', format($q$SELECT public.advisor_update_quote_request(%s, 'quoted', '2026-11-15', '2026-12-15', '2027-04-01', 120, NULL)::text$q$, q));
+  WHILE tries < 100 AND NOT (b_pid = ANY (pg_blocking_pids(a_pid))) LOOP
+    tries := tries + 1;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM pg_temp.is(b_pid = ANY (pg_blocking_pids(a_pid)), true, 'the quote waits on the pipeline row');
+  -- While the quote waits, the second can still take the quote request: the quote has not taken it first.
+  BEGIN
+    PERFORM race.dblink_exec('qb', format('SET LOCAL lock_timeout = %L; DO $do$ BEGIN PERFORM 1 FROM public.quote_requests WHERE id = %s FOR UPDATE; END $do$', '2s', q));
+    got := 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  PERFORM race.dblink_exec('qb', 'ROLLBACK');
+  PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+  PERFORM * FROM race.dblink_get_result('qa') AS t(r text);
+  PERFORM race.dblink_exec('qa', 'COMMIT');
+  PERFORM race.dblink_disconnect('qa');
+  PERFORM race.dblink_disconnect('qb');
+  PERFORM pg_temp.is(got, 'ok', 'the quote request was free while the quote waited: the locks are taken pipeline row first');
+  PERFORM pg_temp.is(pg_temp.pipeline('lock1'), 'quoted', 'and the quote then went through and moved the submission');
+  RAISE NOTICE 'opportunity_stage: lock order passed';
+END $$;

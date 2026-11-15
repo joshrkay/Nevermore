@@ -3646,6 +3646,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_history_who', 'service_only', 'how a history names who made a change (a member''s email, "Nevermore", "System"): the reading function and a conflict ask it, so they cannot disagree; no API role can call it (D-33, D-156)'),
   ('record_version_changes', 'service_only', 'the fields that differ from what a person started from, and who changed each: a record''s save function asks it after its own firm checks, for a record the caller may see; no API role can call it (D-155)'),
   ('firm_actor_is_staff', 'service_only', 'whether an actor was Nevermore''s own person acting on a firm they were not a member of (D-33): the firm''s record and the history of a record stamp it; no API role can call it');
+-- CRM-O1.2 (20261120090000_opportunity_stage.sql; supabase/tests/opportunity_stage.sql).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('submission_status_history_stamp_staff', 'trigger', 'stamps each new status history row with whether the person who made the move acted as Nevermore staff, decided when the row is written (D-33); no API role can run it or write the table');
 
 -- CRM-Q1.1a (20261119100000_crm_records.sql; supabase/tests/crm_records.sql): an account's status and an opportunity's stage, worked out.
 INSERT INTO fn_class (fn, class, why) VALUES

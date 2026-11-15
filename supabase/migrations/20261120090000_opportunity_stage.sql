@@ -87,6 +87,35 @@ ALTER TABLE public.submission_status_history
 COMMENT ON COLUMN public.submission_status_history.cause IS 'Why the submission moved when no person chose the move: quote_send (a send recorded at Ready for market) or quote_recorded (a quote recorded at Sent to PEOs), ADR 0026. Null for a person''s own move.';
 COMMENT ON COLUMN public.submission_status_history.cause_quote_request_id IS 'The quote request whose send or quote caused the move. No foreign key: this history outlives the intake''s rows.';
 
+-- Whether the person who made a move acted as Nevermore staff (D-33), decided when the row is written and never again, as record_history and
+-- firm_activity already keep it: reading it later from today's roles and memberships would change an old entry's author when someone becomes an
+-- admin or leaves the firm. Set by a trigger on every insert, whichever function writes the row. Rows written before this migration are stamped once
+-- here from the roles and memberships of today, the best record there is; the append-only trigger is held off for that one statement only.
+ALTER TABLE public.submission_status_history ADD COLUMN actor_is_staff boolean;
+ALTER TABLE public.submission_status_history DISABLE TRIGGER submission_status_history_append_only;
+UPDATE public.submission_status_history h
+SET actor_is_staff = public.firm_actor_is_staff(h.changed_by, (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = h.session_id));
+ALTER TABLE public.submission_status_history ENABLE TRIGGER submission_status_history_append_only;
+ALTER TABLE public.submission_status_history ALTER COLUMN actor_is_staff SET DEFAULT false,
+  ALTER COLUMN actor_is_staff SET NOT NULL;
+
+CREATE FUNCTION public.submission_status_history_stamp_staff()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.actor_is_staff := COALESCE(public.firm_actor_is_staff(NEW.changed_by, (SELECT s.firm_id FROM public.chamber_sessions s WHERE s.id = NEW.session_id)), false);
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.submission_status_history_stamp_staff() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER submission_status_history_stamp_staff BEFORE INSERT ON public.submission_status_history
+  FOR EACH ROW EXECUTE FUNCTION public.submission_status_history_stamp_staff();
+
 -- ---------- 3. A send and a quote move the pipeline stage (D-411, ADR 0026) ----------
 -- The one move, for the two writers below: the submission at exactly p_from goes to p_to, by the person acting, with its cause and quote request, in
 -- the caller's transaction. Does nothing at any other stage (never backward, never past). Internal: no API role runs it, and it checks nothing the
@@ -168,7 +197,7 @@ END;
 $function$;
 
 -- 20261118110000's advisor_update_quote_request, with every rule it had, and now the move to Quoted when the answer is a quote recorded while the
--- submission is Sent to PEOs. The submission's row is held first, so the stage it is moved from is the stage it was at when the quote was recorded.
+-- submission is Sent to PEOs. The submission's pipeline row is locked first, before the quote request, so the stage it is moved from is the stage it was at when the quote was recorded and the lock order matches set_submission_status's.
 CREATE OR REPLACE FUNCTION public.advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date DEFAULT NULL::date, p_expires_on date DEFAULT NULL::date, p_start_on date DEFAULT NULL::date, p_admin_fee_pepm numeric DEFAULT NULL::numeric, p_note text DEFAULT NULL::text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -185,6 +214,12 @@ BEGIN
     RAISE EXCEPTION 'A PEO''s answer is quoted, declined or closed, not %. Record a send to send it again', COALESCE(p_status, 'nothing')
       USING ERRCODE = '22023';
   END IF;
+  -- Lock order: the submission's pipeline row first, then the quote request, as set_submission_status and advisor_record_quote_send do, so recording a
+  -- quote while someone marks the submission won, lost or archived waits instead of deadlocking (each would hold one row and wait for the other).
+  -- A quote request never changes submission, so the row looked up here is the one locked.
+  PERFORM 1 FROM public.submission_workflow w
+  WHERE w.session_id = (SELECT q.session_id FROM public.quote_requests q WHERE q.id = p_quote_request_id AND public.quote_request_in_my_firm(q.id))
+  FOR UPDATE;
   SELECT * INTO req FROM public.quote_requests WHERE id = p_quote_request_id AND public.quote_request_in_my_firm(id) FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Quote request not found' USING ERRCODE = 'PT404';
@@ -267,12 +302,12 @@ BEGIN
       WHERE h.firm_id = p_firm_id AND h.table_name = t AND h.record_key = p_key
       UNION ALL
       SELECT md5('submission_status_history:' || s.id)::uuid, s.changed_at, md5('submission_status_history:' || s.id)::uuid, 'stage_changed',
-             public.record_history_who(s.changed_by, public.firm_actor_is_staff(s.changed_by, p_firm_id)),
-             CASE WHEN public.firm_actor_is_staff(s.changed_by, p_firm_id) THEN 'nevermore' WHEN s.changed_by IS NULL THEN 'system' ELSE 'member' END,
+             public.record_history_who(s.changed_by, s.actor_is_staff),
+             CASE WHEN s.actor_is_staff THEN 'nevermore' WHEN s.changed_by IS NULL THEN 'system' ELSE 'member' END,
              'stage', to_jsonb(s.stage_before), to_jsonb(s.stage_after), s.cause,
              (SELECT q.peo_name FROM public.quote_requests q WHERE q.id = s.cause_quote_request_id AND q.session_id = s.session_id)
       FROM (
-        SELECT h.id, h.session_id, h.changed_at, h.changed_by, h.cause, h.cause_quote_request_id,
+        SELECT h.id, h.session_id, h.changed_at, h.changed_by, h.actor_is_staff, h.cause, h.cause_quote_request_id,
                CASE WHEN h.from_status = 'archived' THEN
                       CASE WHEN (SELECT x.from_status FROM public.submission_status_history x
                                  WHERE x.session_id = h.session_id AND x.to_status = 'archived' AND x.from_status IS DISTINCT FROM 'archived' AND x.id < h.id
