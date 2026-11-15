@@ -690,7 +690,7 @@ N-3.4. Builds as Epic 4 rows 4 (database) and 8 (screens).
 3. **Test-driven** (the `tdd` skill): one failing test, then only the code that passes it, at the seams in D-13.
    Name the break each test catches. Mutate what you changed before you finish.
 4. **The gate**, all green before the pull request is opened:
-   `npm run lint && npm run typecheck:functions && npm test && npm run build`, then
+   `npm run lint && npm run typecheck:functions && npm run typecheck:app && npm test && npm run build`, then
    `PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh`, and
    `npm run test:e2e` when the story touches a flow in `e2e/`.
 5. **Database.** A new migration file per story, never an edit to an old one. Every new table carries its firm

@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 jobs:
-  # The front end: the same four commands as
-  # `npm run lint && npm run typecheck:functions && npm test && npm run build`.
+  # The front end: the same five commands as
+  # `npm run lint && npm run typecheck:functions && npm run typecheck:app && npm test && npm run build`.
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
