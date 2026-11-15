@@ -250,16 +250,16 @@ describe("AccountPage: every name opens its record", () => {
     expect(within(screen.getByRole("region", { name: /Quotes/ })).getByRole("link", { name: "PEO 1" })).toHaveAttribute("href", "/advisor/submissions/i1");
   });
 
-  // Catches: a contact's name that opens nothing, or the Contacts tab with the contact somewhere out of view (a contact's own page is CRM-C1.1's).
-  it("opens the Contacts tab with that contact in view, until a contact has a page of its own", async () => {
+  // Catches: a contact's name that opens nothing, or still opens the Contacts tab instead of the contact's own page (CRM-C1.1).
+  it("opens the contact's own page from a contact's name, on the Overview and on the Contacts tab", async () => {
     const user = userEvent.setup();
     client.listAccountTab.mockResolvedValue(tabOf([contact(1), contact(2)], 2));
     const router = renderPage();
     await user.click(await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" }));
-    expect(router.state.location.search).toBe("?tab=contacts&contact=c2");
-    const row = (await screen.findByRole("cell", { name: "Person2 Abel" })).closest("tr") as HTMLElement;
-    expect(row).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("link", { name: /Elena Marsh/ }).closest("tr")).not.toHaveAttribute("aria-current");
+    expect(router.state.location.pathname).toBe("/contacts/c2");
+    await act(async () => { await router.navigate("/accounts/a1?tab=contacts"); });
+    await user.click(await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" }));
+    expect(router.state.location.pathname).toBe("/contacts/c2");
   });
 
   // Catches: a contact further down than the first fifty never coming into view, or one past row 100 never coming (a page asked for from row 0 with a longer
@@ -341,6 +341,8 @@ describe("AccountPage: a contact named in the address that is not in the list", 
   // Catches: the loader fetching every page of a long list for a contact that is not on the account.
   it("stops loading by itself after 500 rows, says so, and leaves Show more", { timeout: 20000 }, async () => {
     const user = userEvent.setup();
+    // As someone who may not change the account: a Move button on each of 500 rows costs about 3 s in jsdom and this test is about the loader, not the buttons.
+    client.getAccountPage.mockResolvedValue(page({ canChange: false }));
     serveTab(Array.from({ length: 700 }, (_, i) => contact(i + 1000)));
     renderPage("/accounts/a1?tab=contacts&contact=nobody");
     expect(await screen.findByText("That contact isn't in the first 500 here.", undefined, { timeout: 8000 })).toBeInTheDocument();
@@ -461,19 +463,6 @@ describe("AccountPage: the tabs' own lists", () => {
 });
 
 describe("AccountPage: where focus goes", () => {
-  // Catches: Enter on a link that opens another view leaving focus on the page's body.
-  it("puts focus on the contact's name when a contact's name opens the Contacts tab", async () => {
-    const user = userEvent.setup();
-    serveTab([contact(1), contact(2)]);
-    renderPage();
-    const link = await within(await screen.findByRole("region", { name: /Contacts/ })).findByRole("link", { name: "Person2 Abel" });
-    link.focus();
-    await user.keyboard("{Enter}");
-    const named = await screen.findByRole("link", { name: "Person2 Abel" });
-    await waitFor(() => expect(named.closest("tr")).toHaveAttribute("aria-current", "true"));
-    await waitFor(() => expect(screen.getByRole("link", { name: "Person2 Abel" })).toHaveFocus());
-  });
-
   it("does not take focus back from Show more when more rows of the same contact's list load", async () => {
     const user = userEvent.setup();
     serveTab(Array.from({ length: 80 }, (_, i) => contact(i === 0 ? 2 : i + 1000)));
@@ -626,14 +615,14 @@ describe("AccountPage: the states", () => {
     expectStatusesOutsideBusy();
   });
 
-  // Catches: an empty list that is blank, or one that points at an action that does not exist yet.
+  // Catches: an empty list that is blank, or one that points at an action that does not exist yet. Add a contact exists since CRM-A2.2 (AccountContacts.test.tsx).
   it("says a new account's lists in one line each, with no action that does not exist yet", async () => {
     client.getAccountPage.mockResolvedValue(page({}, { contacts: tabOf([]), opportunities: tabOf([]), quotes: tabOf([]), files: tabOf([]), activity: tabOf([change(2, { kind: "created", field: null, from: null, to: null })], 1) }));
     renderPage();
     expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
     expect(screen.getByText("No opportunities yet.")).toBeInTheDocument();
     expect(screen.getByText("No quotes yet.")).toBeInTheDocument();
-    for (const gone of [/Add a contact/, /New opportunity/, /New quote/]) {
+    for (const gone of [/New opportunity/, /New quote/]) {
       expect(screen.queryByRole("button", { name: gone })).toBeNull();
       expect(screen.queryByRole("link", { name: gone })).toBeNull();
     }

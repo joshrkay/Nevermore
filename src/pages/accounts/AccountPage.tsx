@@ -26,7 +26,8 @@ const isTab = (v: string | null): v is TabId => (TAB_IDS as readonly string[]).i
  */
 const AccountPage = () => {
   const { id = "" } = useParams();
-  const { firm, isSupport } = useWorkspace();
+  const workspace = useWorkspace();
+  const { firm, isSupport } = workspace;
   const { user } = useAuth();
   const firmId = firm?.id ?? null;
   const [params, setParams] = useSearchParams();
@@ -123,7 +124,17 @@ const AccountPage = () => {
   );
   return (
     <Frame>
-      {canAct ? <AccountActionsProvider firmId={firmId} accountId={id} accountName={account.name} userId={user?.id ?? null} canAdd={!archived}>{body}</AccountActionsProvider> : body}
+      {canAct ? <AccountActionsProvider
+          firmId={firmId}
+          accountId={id}
+          accountName={account.name}
+          userId={user?.id ?? null}
+          person={workspace.person}
+          canAdd={!archived}
+          canMove={page.canChange}
+          startWithContactForm={params.get("addContact") === "1"}
+          onStarted={() => setParams((p) => { const next = new URLSearchParams(p); next.delete("addContact"); return next; }, { replace: true })}
+        >{body}</AccountActionsProvider> : body}
     </Frame>
   );
 };

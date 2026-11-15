@@ -6,6 +6,8 @@ import { accountsTableWords } from "@/data/accountsPage";
 import { countAccountsViews, exportColumnsFor, fetchAccountsPage, useAccountsTable } from "@/components/accounts/accountsTable";
 import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
 import { AccountMenu } from "@/components/accounts/AccountMenu";
+import { BulkChangeDialog, type BulkKind, type BulkMade } from "@/components/accounts/BulkChangeDialog";
+import { BulkResultBar } from "@/components/accounts/BulkResultBar";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
@@ -16,6 +18,7 @@ import type { Json } from "@/integrations/supabase/types";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { browserTimeZone } from "@/lib/accountsApi";
 import { accountsCanChange } from "@/lib/accountActionsApi";
+import type { BulkSelection } from "@/lib/bulkChangeApi";
 
 // The Accounts page (story CRM-A1.1a, screen 16): the businesses a firm quotes for, on the workspace's table frame as the submissions queue is
 // (src/pages/advisor/AdvisorDashboardPage.tsx). The address holds the page, sort, filters, view and search; the database cuts the pages (D-44) and decides
@@ -68,10 +71,22 @@ const AccountsPage = () => {
   const hasRows = rowsSettled && !data.error && !!data.page && data.page.total > 0;
 
   // Selecting rows (CRM-S3.6). The selection is of the question on screen and ends when the view, a filter or the search changes. The bar offers only what works
-  // today (Export); the database's bulk changes and their screens are CRM-S3.7b and CRM-S3.7a.
+  // today: Export, and the bulk changes of CRM-S3.7a (Change owner, Set a field, Label, Archive), which Nevermore support is not offered (D-24, ADR 0024).
   const selection = useRowSelection(table, address, data.page, (row) => row.name);
   // Every row that matches goes to a later bulk action as the filters in `exportFilters` (the question), never as a list of ids; a chosen list goes as its ids.
   const selectedFilters: Record<string, Json> = selection.all ? exportFilters : { time_zone: timeZone };
+
+  // Bulk changes (CRM-S3.7a). The dialog is given what was selected when it opened (the ids, or the filters in force for "all that match", never both) and the
+  // database counts again. After a change the selection is cleared: those rows are done, and Undo is the way back, so a second change never lands on them by
+  // accident; the line over the table says what happened.
+  const [asking, setAsking] = useState<{ kind: BulkKind; selected: BulkSelection; count: number } | null>(null);
+  const [made, setMade] = useState<{ seq: number; made: BulkMade } | null>(null);
+  const canBulk = !!firmId && !workspace?.isSupport;
+  const ask = (kind: BulkKind) => setAsking({
+    kind,
+    count: selection.count,
+    selected: selection.all ? { filters: exportFilters as unknown as Extract<BulkSelection, { filters: unknown }>["filters"] } : { ids: selection.ids },
+  });
 
   const toolbar = ({ loading, slowLine }: { loading: boolean; slowLine: ReactNode }) => (
     <>
@@ -88,6 +103,11 @@ const AccountsPage = () => {
         )}
       </div>
       <SelectionBar selection={selection} noun={table.noun}>
+        {canBulk && (["owner", "field", "label", "archive"] as const).map((kind) => (
+          <button key={kind} type="button" onClick={() => ask(kind)} className="min-h-11 rounded-md border border-border bg-background px-4 text-sm hover:bg-muted">
+            {{ owner: "Change owner", field: "Set a field", label: "Label", archive: "Archive" }[kind]}
+          </button>
+        ))}
         {firmId && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={selectedFilters} {...(selection.all ? {} : { ids: selection.ids })} />}
       </SelectionBar>
       {selection.count === 0 && (<>
@@ -149,6 +169,16 @@ const AccountsPage = () => {
   return (
     <div className="bg-background">
       <main className="container mx-auto px-6 py-8">
+        {made && firmId && (
+          <BulkResultBar
+            key={made.seq}
+            firmId={firmId}
+            made={made.made}
+            extra={(made.made.action.action === "label_add" || made.made.action.action === "label_remove") && !columns.some((c) => c.id === "labels") ? "Show the Label column from Columns to see the labels." : undefined}
+            onUndone={refresh}
+            onDismiss={() => setMade(null)}
+          />
+        )}
         <TableFrame
           table={table}
           location={location}
@@ -170,12 +200,27 @@ const AccountsPage = () => {
             />
           ) : undefined}
         />
+        {asking && firmId && (
+          <BulkChangeDialog
+            firmId={firmId}
+            kind={asking.kind}
+            selection={asking.selected}
+            count={asking.count}
+            onClose={() => setAsking(null)}
+            onMade={(m) => {
+              setAsking(null);
+              setMade((previous) => ({ seq: (previous?.seq ?? 0) + 1, made: m }));
+              selection.clear();
+              refresh();
+            }}
+          />
+        )}
         {making && firmId && (
           <NewAccountDialog
             firmId={firmId}
             person={workspace?.person ?? ""}
             onClose={() => setMaking(false)}
-            onCreated={(account) => navigate(`/accounts/${account.id}`)}
+            onCreated={(account, thenContact) => navigate(thenContact ? `/accounts/${account.id}?addContact=1` : `/accounts/${account.id}`)}
           />
         )}
       </main>
