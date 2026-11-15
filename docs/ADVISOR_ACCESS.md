@@ -211,9 +211,12 @@ lets the product do and that it never reads a mailbox. The prospect's sign-in pa
   - `set_submission_status(session, status, note, won_quote_request_id)`: moving to `won` names one of the
     submission's `quoted` requests (22023 otherwise), kept in `submission_workflow.won_quote_request_id`. `won`,
     `lost` and `archived` close every request still `sent` or `quoted` (except the winner), logged like any
-    change; a decline stays a decline. The stage itself is still moved by hand: after a first send at
-    `ready_for_market` or a first quote at `sent_to_carrier`, the Quote requests panel offers the next step as
-    one click, and declining it changes nothing.
+    change; a decline stays a decline. Two moves of the stage are made by recording something (ADR 0026,
+    `20261120090000`): a send recorded at `ready_for_market` moves the submission to `sent_to_carrier`, and a quote
+    recorded at `sent_to_carrier` moves it to `quoted`, in the same transaction, by the person who recorded it, written
+    to `submission_status_history` with its `cause` (`quote_send` or `quote_recorded`) and `cause_quote_request_id`.
+    A send or a quote recorded at any other stage moves nothing; every other move is still made by hand, and the
+    Quote requests panel no longer offers a one-click step.
 - Review the evidence as certified. Certifying stamps a copy of the transcript and of the document
   list (name, category, size, storage path, SHA-256) into the submission; the detail page shows that
   transcript (and says if the prospect's conversation changed since) and marks documents removed,
