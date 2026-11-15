@@ -26,8 +26,10 @@ const EMPTY = {
   name: "", trade_name: "", website: "", phone: "", street: "", city: "", state: "", postal_code: "", industry: "", employees: "", states_of_operation: "", current_provider: "",
 };
 
-export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
+export function NewAccountDialog({ firmId, person, initialName = "", onClose, onCreated }: {
   firmId: string;
+  /** The name the form opens with (the menu's search offers New account with what was typed). */
+  initialName?: string;
   /** The person's own name, for the owner choice until the firm's people have loaded. */
   person: string;
   onClose: () => void;
@@ -46,7 +48,7 @@ export function NewAccountDialog({ firmId, person, onClose, onCreated }: {
 
   const api = useWorkspaceForm({
     schema,
-    defaultValues: { ...EMPTY, owner: me },
+    defaultValues: { ...EMPTY, name: initialName, owner: me },
     save: async (values) => {
       const v = values as typeof EMPTY & { owner: string };
       const andContact = thenContact.current;

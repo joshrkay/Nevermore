@@ -10,6 +10,7 @@ import { ContactActivity, ContactOpportunities } from "@/components/contacts/Con
 import { contactKey, useContactPageQuery } from "@/components/contacts/useContactQueries";
 import { LoadFailed, NotAvailable, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useAuth } from "@/hooks/useAuth";
 import type { ContactFields, ContactPage as Page } from "@/lib/contactPageApi";
 
@@ -29,6 +30,8 @@ const ContactPage = () => {
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
+  // The contact is now among the menu search's recent records (CRM-S1.2a): noted once its page has loaded.
+  useNoteOpened(firmId, "contact", id, query.data?.contact.id === id);
 
   // The saved fields go on the page at once (the reload that follows confirms them); every list of the contact is asked again, since a save adds to its history, and
   // the account's lists too, since a contact's main mark and name are on them.
