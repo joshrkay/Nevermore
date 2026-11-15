@@ -903,9 +903,9 @@ INSERT INTO matrix VALUES
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
--- Each person's last opened records. Closed to the API, a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
+-- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
-  ('public.recent_records',                             '{}', NULL);
+  ('public.recent_records',                             '{"service":0}', NULL);
 
 CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
   SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
@@ -943,7 +943,7 @@ BEGIN
         ELSE expect ->> who
       END;
       want := CASE
-        WHEN who = 'service' THEN total  -- the service role bypasses row security
+        WHEN who = 'service' THEN COALESCE((expect ->> 'service')::bigint, total)  -- the service role bypasses row security, unless the table is not granted to it (then the matrix says "service":0)
         WHEN token = 'all' THEN total
         WHEN token IN ('A', 'B') THEN (m.firm_rows ->> token)::bigint
         ELSE COALESCE(token::bigint, 0)

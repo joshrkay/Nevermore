@@ -370,7 +370,6 @@ DECLARE
   cnt_o integer[] := '{}';
   cnt_p integer[] := '{}';
   plain boolean;
-  arch boolean;
   rec record;
   qr record;
   own record;
@@ -387,6 +386,9 @@ DECLARE
   con text[] := '{}';
   opp text[] := '{}';
   qts text[] := '{}';
+  con_arch text[] := '{}';
+  opp_arch text[] := '{}';
+  qts_arch text[] := '{}';
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   IF char_length(regexp_replace(q, '\s', '', 'g')) >= 2 THEN
@@ -403,6 +405,11 @@ BEGIN
     -- else the word; and its digits.
     FOR k IN 1..cardinality(pats) LOOP
       grp := ARRAY(SELECT x FROM unnest(ARRAY[COALESCE(doms[k], pats[k]), digs[k]]) AS x WHERE x IS NOT NULL);
+      -- A word under three letters has no trigram for the index to find it by: it is counted as common, without a look.
+      IF NOT EXISTS (SELECT 1 FROM unnest(grp) AS x WHERE char_length(btrim(x, '%')) >= 3) THEN
+        cnt_a[k] := 300; cnt_c[k] := 300; cnt_o[k] := 300; cnt_ac[k] := 300; cnt_ao[k] := 300; cnt_p[k] := 300;
+        CONTINUE;
+      END IF;
       cnt_a[k] := (SELECT count(*) FROM (SELECT 1 FROM public.accounts a WHERE a.firm_id = firm
                                         AND public.account_search_text(a.name, a.trade_name, a.web_domain, a.phone) LIKE ANY (grp) LIMIT 300) z);
       cnt_c[k] := (SELECT count(*) FROM (SELECT 1 FROM public.contacts c WHERE c.firm_id = firm
@@ -495,33 +502,32 @@ BEGIN
         ORDER BY x.archived, x.last_name COLLATE "und-x-icu", x.first_name COLLATE "und-x-icu", x.key
         LIMIT 6);
     ELSE
-      FOREACH arch IN ARRAY ARRAY[false, true] LOOP
-        EXIT WHEN cardinality(con) >= 6;
-        k_name := ''; k_name2 := ''; k_id := '00000000-0000-0000-0000-000000000000';
+      -- One walk finds both the live ones and (up to six) the archived ones, which follow the live ones if there are fewer than six of those.
+      k_name := ''; k_name2 := ''; k_id := '00000000-0000-0000-0000-000000000000';
+      LOOP
+        batch := 0;
+        FOR rec IN
+          SELECT c.id, c.account_id, c.first_name, c.last_name, c.email, c.phone, c.mobile,
+                 lower(c.last_name) COLLATE "und-x-icu" AS ln, lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu" AS fn
+          FROM public.contacts c
+          WHERE c.firm_id = firm AND (lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id) > (k_name, k_name2, k_id)
+          ORDER BY lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id
+          LIMIT 100
         LOOP
-          batch := 0;
-          FOR rec IN
-            SELECT c.id, c.account_id, c.first_name, c.last_name, c.email, c.phone, c.mobile,
-                   lower(c.last_name) COLLATE "und-x-icu" AS ln, lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu" AS fn
-            FROM public.contacts c
-            WHERE c.firm_id = firm AND (lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id) > (k_name, k_name2, k_id)
-            ORDER BY lower(c.last_name) COLLATE "und-x-icu", lower(COALESCE(c.first_name, '')) COLLATE "und-x-icu", c.id
-            LIMIT 100
-          LOOP
-            batch := batch + 1; k_name := rec.ln; k_name2 := rec.fn; k_id := rec.id;
-            SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
-            IF FOUND AND own.archived = arch AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) THEN
-              t := public.contact_search_text(rec.first_name, rec.last_name, rec.email, rec.phone, rec.mobile) || E'\n'
-                   || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
-              IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
-                con := con || rec.id::text;
-                EXIT WHEN cardinality(con) >= 6;
-              END IF;
+          batch := batch + 1; k_name := rec.ln; k_name2 := rec.fn; k_id := rec.id;
+          SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
+          IF FOUND AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) AND (NOT own.archived OR cardinality(con_arch) < 6) THEN
+            t := public.contact_search_text(rec.first_name, rec.last_name, rec.email, rec.phone, rec.mobile) || E'\n'
+                 || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
+            IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+              IF own.archived THEN con_arch := con_arch || rec.id::text; ELSE con := con || rec.id::text; END IF;
+              EXIT WHEN cardinality(con) >= 6;
             END IF;
-          END LOOP;
-          EXIT WHEN batch < 100 OR cardinality(con) >= 6;
+          END IF;
         END LOOP;
+        EXIT WHEN batch < 100 OR cardinality(con) >= 6;
       END LOOP;
+      con := (con || con_arch)[1:6];
     END IF;
 
     IF cnt_o[bo] + cnt_ao[bo] + cnt_p[bo] < 300 THEN
@@ -546,33 +552,31 @@ BEGIN
         ORDER BY x.archived, x.created_at DESC, x.key DESC
         LIMIT 6);
     ELSE
-      FOREACH arch IN ARRAY ARRAY[false, true] LOOP
-        EXIT WHEN cardinality(opp) >= 6;
-        k_at := 'infinity'; k_id := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+      k_at := 'infinity'; k_id := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+      LOOP
+        batch := 0;
+        FOR rec IN
+          SELECT o.id, o.name, o.account_id, o.intake_id, o.created_at
+          FROM public.opportunities o
+          WHERE o.firm_id = firm AND (o.created_at, o.id) < (k_at, k_id)
+          ORDER BY o.created_at DESC, o.id DESC
+          LIMIT 100
         LOOP
-          batch := 0;
-          FOR rec IN
-            SELECT o.id, o.name, o.account_id, o.intake_id, o.created_at
-            FROM public.opportunities o
-            WHERE o.firm_id = firm AND (o.created_at, o.id) < (k_at, k_id)
-            ORDER BY o.created_at DESC, o.id DESC
-            LIMIT 100
-          LOOP
-            batch := batch + 1; k_at := rec.created_at; k_id := rec.id;
-            SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
-            IF FOUND AND own.archived = arch AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) THEN
-              t := lower(rec.name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = rec.intake_id), '') || E'\n'
-                   || COALESCE((SELECT lower(string_agg(p.peo_name, E'\n')) FROM public.quote_requests p WHERE p.session_id = rec.intake_id), '') || E'\n'
-                   || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
-              IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
-                opp := opp || rec.id::text;
-                EXIT WHEN cardinality(opp) >= 6;
-              END IF;
+          batch := batch + 1; k_at := rec.created_at; k_id := rec.id;
+          SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
+          IF FOUND AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) AND (NOT own.archived OR cardinality(opp_arch) < 6) THEN
+            t := lower(rec.name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = rec.intake_id), '') || E'\n'
+                 || COALESCE((SELECT lower(string_agg(p.peo_name, E'\n')) FROM public.quote_requests p WHERE p.session_id = rec.intake_id), '') || E'\n'
+                 || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
+            IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+              IF own.archived THEN opp_arch := opp_arch || rec.id::text; ELSE opp := opp || rec.id::text; END IF;
+              EXIT WHEN cardinality(opp) >= 6;
             END IF;
-          END LOOP;
-          EXIT WHEN batch < 100 OR cardinality(opp) >= 6;
+          END IF;
         END LOOP;
+        EXIT WHEN batch < 100 OR cardinality(opp) >= 6;
       END LOOP;
+      opp := (opp || opp_arch)[1:6];
     END IF;
 
     IF cnt_o[bo] + cnt_ao[bo] + cnt_p[bo] < 300 THEN
@@ -599,35 +603,33 @@ BEGIN
         ORDER BY x.archived, x.created_at DESC, x.okey DESC, x.key DESC
         LIMIT 6);
     ELSE
-      FOREACH arch IN ARRAY ARRAY[false, true] LOOP
-        EXIT WHEN cardinality(qts) >= 6;
-        k_at := 'infinity'; k_id := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+      k_at := 'infinity'; k_id := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+      LOOP
+        batch := 0;
+        FOR rec IN
+          SELECT o.id, o.name, o.account_id, o.intake_id, o.created_at
+          FROM public.opportunities o
+          WHERE o.firm_id = firm AND o.intake_id IS NOT NULL AND (o.created_at, o.id) < (k_at, k_id)
+          ORDER BY o.created_at DESC, o.id DESC
+          LIMIT 100
         LOOP
-          batch := 0;
-          FOR rec IN
-            SELECT o.id, o.name, o.account_id, o.intake_id, o.created_at
-            FROM public.opportunities o
-            WHERE o.firm_id = firm AND o.intake_id IS NOT NULL AND (o.created_at, o.id) < (k_at, k_id)
-            ORDER BY o.created_at DESC, o.id DESC
-            LIMIT 100
-          LOOP
-            batch := batch + 1; k_at := rec.created_at; k_id := rec.id;
-            SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
-            IF FOUND AND own.archived = arch AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) THEN
-              FOR qr IN SELECT z.id, z.peo_name FROM public.quote_requests z WHERE z.session_id = rec.intake_id ORDER BY z.id DESC LOOP
-                t := lower(qr.peo_name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = rec.intake_id), '') || E'\n'
-                     || lower(rec.name) || E'\n' || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
-                IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
-                  qts := qts || qr.id::text;
-                  EXIT WHEN cardinality(qts) >= 6;
-                END IF;
-              END LOOP;
-              EXIT WHEN cardinality(qts) >= 6;
-            END IF;
-          END LOOP;
-          EXIT WHEN batch < 100 OR cardinality(qts) >= 6;
+          batch := batch + 1; k_at := rec.created_at; k_id := rec.id;
+          SELECT a.name, a.trade_name, a.web_domain, a.phone, a.owner_id, (a.archived_at IS NOT NULL) AS archived INTO own FROM public.accounts a WHERE a.id = rec.account_id;
+          IF FOUND AND (own.owner_id = ANY (owners) OR (own.owner_id IS NULL AND unowned)) AND (NOT own.archived OR cardinality(qts_arch) < 6) THEN
+            FOR qr IN SELECT z.id, z.peo_name FROM public.quote_requests z WHERE z.session_id = rec.intake_id ORDER BY z.id DESC LOOP
+              t := lower(qr.peo_name) || E'\n' || COALESCE((SELECT lower(s.file_id) FROM public.chamber_sessions s WHERE s.id = rec.intake_id), '') || E'\n'
+                   || lower(rec.name) || E'\n' || public.account_search_text(own.name, own.trade_name, own.web_domain, own.phone);
+              IF (CASE WHEN plain THEN t LIKE ALL (pats) ELSE public.crm_terms_found(t, pats, doms, digs) END) THEN
+                IF own.archived THEN qts_arch := qts_arch || qr.id::text; ELSE qts := qts || qr.id::text; END IF;
+                EXIT WHEN cardinality(qts) >= 6;
+              END IF;
+            END LOOP;
+            EXIT WHEN cardinality(qts) >= 6;
+          END IF;
         END LOOP;
+        EXIT WHEN batch < 100 OR cardinality(qts) >= 6;
       END LOOP;
+      qts := (qts || qts_arch)[1:6];
     END IF;
   END IF;
 
