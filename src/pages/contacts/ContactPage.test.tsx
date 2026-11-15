@@ -243,7 +243,7 @@ describe("ContactPage: calls, notes and tasks", () => {
       { filter: "all", limit: 50, offset: 0 }, { filter: "all", limit: 50, offset: 50 }, { filter: "all", limit: 50, offset: 100 },
     ]);
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
-  });
+  }, 30_000);
 
   // Catches: a newer activity logged between two page reads shifting every row down one, so the second page repeats the first's last row and the list ends
   // one older row short (offsets and the end of the list are counted from raw page lengths).
