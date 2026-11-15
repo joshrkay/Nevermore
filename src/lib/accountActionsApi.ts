@@ -51,7 +51,7 @@ export async function restoreAccount(firmId: string, accountId: string): Promise
   return { changed: parsed.data.changed };
 }
 
-/** Deletes an account that has no opportunity, with its contacts, calls, notes and tasks. One that has an opportunity is refused (kind "hasOpportunities"): it can only be archived. */
+/** Deletes an account that has no opportunity, with its contacts, calls, notes, tasks, placements and renewals. One that has an opportunity is refused (kind "hasOpportunities"): it can only be archived. */
 export async function deleteAccount(firmId: string, accountId: string): Promise<{ name: string }> {
   const { data, error } = await supabase.rpc("delete_account", { p_account_id: accountId, p_firm_id: firmId });
   if (error) throw refusal(error, "Couldn't delete the account. Try again.");

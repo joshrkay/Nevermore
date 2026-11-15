@@ -65,7 +65,7 @@ const row = (over: Partial<AccountRow> = {}): AccountRow => ({
   created_at: "2026-10-28T10:00:00Z", owner: "u1", owner_name: "Dana Reyes", main_contact_id: "c1", main_contact_name: "Elena Marsh",
   main_contact_email: "elena@harborviewdental.example", main_contact_phone: "(503) 555-0142", opportunity_id: "o1", opportunity_name: "January 2027 PEO search",
   opportunity_stage: "in_market", target_start: "2027-01-01", open_opportunities: 1, quote_requests_sent: 3, quotes_received: 1, waiting_on_peo: true,
-  earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", labels: [], ...over,
+  earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", labels: [], renewal_date: null, ...over,
 });
 const second = row({
   id: "a2", name: "Kestrel Software", city: "Seattle", state: "WA", status: "client", employees: 64, owner: "u2", owner_name: "Marcus Hale", main_contact_name: "Imani Cole",
@@ -421,6 +421,20 @@ describe("the Accounts page: the Label column and filter (D-198)", () => {
     await user.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(asked().filters).toEqual([{ field: "labels", op: "any_of", value: ["Hot lead"] }]));
     expect(await screen.findByRole("button", { name: /Remove filter: Label.*Hot lead/ })).toBeInTheDocument();
+  });
+});
+
+describe("the Accounts page: nothing a later story ships appears early", () => {
+  // Catches (D-402, review of #181): the renewal's fields offered by "Add filter" before the screens that show renewals exist (CRM-A2.4b), so a person could
+  // filter by a column the table does not have.
+  it("does not offer the renewal's fields in Add filter", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("button", { name: "Add filter" }));
+    expect(await screen.findByRole("button", { name: "Label" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Renewal date" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Renewing in 120 days" })).not.toBeInTheDocument();
   });
 });
 
