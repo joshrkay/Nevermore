@@ -1070,7 +1070,7 @@ DECLARE
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
-    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
+    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
@@ -1143,7 +1143,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'create_lead', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.

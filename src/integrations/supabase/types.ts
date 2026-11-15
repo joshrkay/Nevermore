@@ -1003,6 +1003,24 @@ export type Database = {
         }
         Returns: Json
       }
+      // Making a lead by hand (20261121100000): answers the lead's own fields (crm_lead_fields).
+      create_lead: {
+        Args: {
+          p_name: string
+          p_title?: string | null
+          p_business?: string | null
+          p_email?: string | null
+          p_phone?: string | null
+          p_city?: string | null
+          p_state?: string | null
+          p_employees?: number | null
+          p_current_provider?: string | null
+          p_note?: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // Adding a contact to an account and moving one (20261119170000): add_contact answers {record, previous_main}; move_contact {record, from, to, was_main,
       // activities_moved, opportunity_links_dropped, main_contact_cleared} (PT409 asks for p_confirm); the choices are the accounts it may go to; the context is what the form needs.
       add_contact: {
