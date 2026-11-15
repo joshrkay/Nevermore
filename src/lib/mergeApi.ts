@@ -69,6 +69,8 @@ export async function previewMerge(firmId: string, kind: MergeKind, keptId: stri
   return parsed.data as MergePreview;
 }
 
+// zod reads an object's keys as optional when the app is not compiled strictly; the schema has already required both.
+const named = (r: { id?: string; name?: string }): { id: string; name: string } => ({ id: r.id ?? "", name: r.name ?? "" });
 const removedSchema = z.object({ id: z.string().min(1), name: z.string() });
 
 export interface AccountMerged {
@@ -105,7 +107,7 @@ export async function mergeAccounts(
   if (!parsed.success) throw new MergeError("failed", FAILED);
   const d = parsed.data;
   return {
-    record: d.record as AccountMerged["record"], removed: d.removed,
+    record: d.record as AccountMerged["record"], removed: named(d.removed),
     moved: {
       contacts: d.moved.contacts, contactsMerged: d.moved.contacts_merged, opportunities: d.moved.opportunities, activities: d.moved.activities,
       placements: d.moved.placements, renewals: d.moved.renewals, labels: d.moved.labels,
@@ -136,7 +138,7 @@ export async function mergeContacts(
   const parsed = contactMergedSchema.safeParse(data);
   if (!parsed.success) throw new MergeError("failed", FAILED);
   const d = parsed.data;
-  return { record: d.record as ContactMerged["record"], removed: d.removed, moved: { activities: d.moved.activities_moved, opportunities: d.moved.opportunities_repointed } };
+  return { record: d.record as ContactMerged["record"], removed: named(d.removed), moved: { activities: d.moved.activities_moved, opportunities: d.moved.opportunities_repointed } };
 }
 
 const separateSchema = z.object({ record: sideSchema, was_duplicate_of: person });
@@ -147,7 +149,7 @@ export async function keepAccountSeparate(firmId: string, accountId: string): Pr
   if (error) throw refusal(error, "Couldn't keep these separate. Try again.");
   const parsed = separateSchema.safeParse(data);
   if (!parsed.success) throw new MergeError("failed", "Couldn't keep these separate. Try again.");
-  return { record: parsed.data.record as Record<string, unknown> & { id: string; version: number }, wasDuplicateOf: parsed.data.was_duplicate_of };
+  return { record: parsed.data.record as Record<string, unknown> & { id: string; version: number }, wasDuplicateOf: parsed.data.was_duplicate_of ? named(parsed.data.was_duplicate_of) : null };
 }
 
 const resolvedSchema = z.object({ kind: z.enum(["account", "contact"]), id: z.string().min(1), name: z.string(), account_id: z.string().optional() });
