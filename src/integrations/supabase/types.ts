@@ -1612,6 +1612,20 @@ export type Database = {
         Returns: undefined
       }
       // ---- end CRM-S3.1b with S3.4b ----
+      // ---- CRM-S1.2b (20261119230000_search_everywhere.sql) ----
+      search_records: {
+        Args: { p_firm_id: string; p_query?: string | null }
+        Returns: Json
+      }
+      note_recent_record: {
+        Args: { p_kind: string; p_id: string; p_firm_id?: string | null }
+        Returns: boolean
+      }
+      my_recent_records: {
+        Args: { p_firm_id?: string | null; p_limit?: number }
+        Returns: Json
+      }
+      // ---- end CRM-S1.2b ----
     }
     Enums: {
       app_role: "advisor" | "admin"
