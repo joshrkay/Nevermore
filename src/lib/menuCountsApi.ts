@@ -4,10 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 // address names (D-40): supabase/migrations/20261118140000_menu_counts.sql holds what each one means. Later stories add keys to the same
 // answer (leads, others); a caller reads by name, so none of them changes.
 
-/** What the menu shows: open quotes (quote requests sent and not yet answered) and intakes with new PEO mail. */
+/** What the menu shows: open quotes (quote requests sent and not yet answered), intakes with new PEO mail, and open leads (New or Working, CRM-L1.1a). */
 export interface MenuCounts {
   quotes: number;
   inbox: number;
+  /** Absent from a database that has not counted leads yet: the menu then shows no number beside Leads. */
+  leads?: number;
 }
 
 /** The query's key. A thread opened elsewhere invalidates it, so the menu follows the queue's mark at once (CRM-S1.1c). */
@@ -22,6 +24,7 @@ export async function fetchMenuCounts(): Promise<MenuCounts> {
   const answer = (data ?? {}) as Record<string, unknown>;
   const quotes = whole(answer.quotes);
   const inbox = whole(answer.inbox);
-  if (quotes === null || inbox === null) throw new Error("The menu counts came back in a form this page can't read.");
-  return { quotes, inbox };
+  const leads = answer.leads === undefined ? undefined : whole(answer.leads);
+  if (quotes === null || inbox === null || leads === null) throw new Error("The menu counts came back in a form this page can't read.");
+  return leads === undefined ? { quotes, inbox } : { quotes, inbox, leads };
 }

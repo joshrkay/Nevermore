@@ -377,9 +377,9 @@ END $$;
 -- ---------- 1. what the numbers are ----------
 -- Catches: a count that includes quoted or declined requests as open, that counts held or automatic mail as new, or that counts mail already opened.
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":2}'::jsonb, 'firm A: four sent requests (two on s1), two intakes with new mail (s1, s2)');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":2,"leads":0}'::jsonb, 'firm A: four sent requests (two on s1), two intakes with new mail (s1, s2)');
 -- Catches: a count that grew a key a caller does not know, or lost one: later stories add keys; callers read by name.
-SELECT pg_temp.is((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(pg_temp.menu()) k), ARRAY['inbox', 'quotes'], 'the answer holds exactly the counts the menu shows today');
+SELECT pg_temp.is((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(pg_temp.menu()) k), ARRAY['inbox', 'leads', 'quotes'], 'the answer holds exactly the counts the menu shows today');
 -- Catches: the count and the queue's mark drifting apart (the reason the rule is defined once).
 SELECT pg_temp.inbox_agrees();
 SELECT pg_temp.is((SELECT count(*) FROM jsonb_array_elements(public.queue_list_submissions('[]', NULL, 'asc', 1) -> 'rows') r WHERE (r ->> 'has_new_peo_mail')::boolean), 2::bigint, 'the queue marks the same two rows');
@@ -390,42 +390,42 @@ SELECT pg_temp.is((public.queue_list_submissions('[{"field":"waiting_on_peo","op
 -- Catches: opening a thread that leaves the menu counting it; or the menu counting a thread the queue no longer marks.
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
 SELECT public.advisor_open_quote_request_thread(id) FROM public.quote_requests WHERE session_id = pg_temp.id('s2');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 'opening s2''s thread takes it out of the Inbox');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 'opening s2''s thread takes it out of the Inbox');
 SELECT pg_temp.inbox_agrees();
 SELECT public.advisor_open_quote_request_thread(id) FROM public.quote_requests WHERE session_id = pg_temp.id('s1') AND peo_name = 'TriNet';
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 's1 stays: its other request still has unread mail (one intake, counted once)');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 's1 stays: its other request still has unread mail (one intake, counted once)');
 SELECT pg_temp.inbox_agrees();
 SELECT public.advisor_open_quote_request_thread(id) FROM public.quote_requests WHERE session_id = pg_temp.id('s1') AND peo_name = 'Justworks';
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":0}'::jsonb, 'once every thread is opened the Inbox is empty and the quotes stay');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":0,"leads":0}'::jsonb, 'once every thread is opened the Inbox is empty and the quotes stay');
 SELECT pg_temp.inbox_agrees();
 -- New mail arrives again.
 SELECT pg_temp.as_owner();
 INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, recorded_at, firm_id)
 SELECT 's2-again', id, session_id, 'received', 'rep@insperity.test', now() + interval '1 second', pg_temp.id('firm_a') FROM public.quote_requests WHERE session_id = pg_temp.id('s2');
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 'a message after the last opening counts again');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 'a message after the last opening counts again');
 SELECT pg_temp.inbox_agrees();
 
 -- ---------- 3. one firm at a time; membership is the lock ----------
 -- Catches: a member of two firms seeing both firms' numbers at one firm's address, or another firm's numbers leaking.
 SELECT pg_temp.as_user('b1', 'beta-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":1,"inbox":1}'::jsonb, 'firm B''s member counts firm B only');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":1,"inbox":1,"leads":0}'::jsonb, 'firm B''s member counts firm B only');
 SELECT pg_temp.inbox_agrees();
 SELECT pg_temp.as_user('both', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 'a member of both, at A''s address, counts A only');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 'a member of both, at A''s address, counts A only');
 SELECT pg_temp.inbox_agrees();
 SELECT pg_temp.as_user('both', 'beta-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":1,"inbox":1}'::jsonb, 'at B''s address, B only');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":1,"inbox":1,"leads":0}'::jsonb, 'at B''s address, B only');
 SELECT pg_temp.inbox_agrees();
 SELECT pg_temp.as_user('both', 'nowhere-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0}'::jsonb, 'at an address no firm of theirs holds, nothing');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0,"leads":0}'::jsonb, 'at an address no firm of theirs holds, nothing');
 -- Catches: "no firm" answering differently from zero (an error, a null or a missing key) so a caller can tell a firm exists.
 SELECT pg_temp.as_user('outsider');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0}'::jsonb, 'the advisor role with no firm: zeros in the same shape');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0,"leads":0}'::jsonb, 'the advisor role with no firm: zeros in the same shape');
 SELECT pg_temp.as_user('platform_admin', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0}'::jsonb, 'a platform admin with no support session counts nothing (D-16)');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0,"leads":0}'::jsonb, 'a platform admin with no support session counts nothing (D-16)');
 SELECT pg_temp.as_user('former_a', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0}'::jsonb, 'a former member who still holds the advisor role counts nothing, as the queue lists nothing');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0,"leads":0}'::jsonb, 'a former member who still holds the advisor role counts nothing, as the queue lists nothing');
 -- Catches: a caller the console does not let in learning a number.
 SELECT pg_temp.as_user('nobody');
 SELECT pg_temp.expect($$SELECT public.menu_counts()$$, '42501', 'a person with no role and no firm is refused');
@@ -441,13 +441,13 @@ SELECT pg_temp.expect($$SELECT public.menu_counts()$$, '42501', 'a signed-out ca
 SELECT pg_temp.as_user('platform_admin');
 SELECT 1 FROM public.start_support_session(pg_temp.id('firm_a'), 'looking at the menu counts');
 SELECT pg_temp.as_user('platform_admin', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 'a support session at A''s address sees A''s counts');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 'a support session at A''s address sees A''s counts');
 SELECT pg_temp.as_user('platform_admin', 'beta-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0}'::jsonb, 'and nothing at another firm''s address');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":0,"inbox":0,"leads":0}'::jsonb, 'and nothing at another firm''s address');
 -- Catches: a read-only (closing) firm losing its counts: its members still read (ADR 0023).
 SELECT pg_temp.as_user('owner_b', 'beta-brokers');
 SELECT public.request_firm_closure(pg_temp.id('firm_b'), 'Beta Brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":1,"inbox":1}'::jsonb, 'a firm that is closing still shows its counts');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":1,"inbox":1,"leads":0}'::jsonb, 'a firm that is closing still shows its counts');
 -- Catches: the counting function writing (it must stay a read: STABLE, and no row changes).
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT provolatile::text FROM pg_proc WHERE proname = 'menu_counts' AND pronamespace = 'public'::regnamespace), 's', 'menu_counts is declared a read');
@@ -478,13 +478,13 @@ BEGIN
   VALUES ('ghost-new', q, sid, 'received', 'rep@trinet.test', now() - interval '1 hour', pg_temp.id('firm_a'));
 END $$;
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1}'::jsonb, 'the hidden empty draft counts in neither Quotes nor Inbox');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 'the hidden empty draft counts in neither Quotes nor Inbox');
 SELECT pg_temp.inbox_agrees();
 SELECT pg_temp.is((public.queue_list_submissions('[{"field":"waiting_on_peo","op":"is","value":true}]') ->> 'total')::bigint, 3::bigint, 'and the queue does not list it as waiting on a PEO either');
 -- A prospect who then does something with it (a PEO chosen) makes it a real row: the queue shows it, and so do both counts.
 SELECT pg_temp.as_owner();
 UPDATE public.chamber_sessions SET chosen_peo = 'TriNet' WHERE id = pg_temp.id('ghost');
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":5,"inbox":2}'::jsonb, 'once the draft holds something, both counts include it');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":5,"inbox":2,"leads":0}'::jsonb, 'once the draft holds something, both counts include it');
 SELECT pg_temp.inbox_agrees();
 SELECT 'menu_counts: all passed' AS result;

@@ -387,3 +387,56 @@ GRANT EXECUTE ON FUNCTION public.leads_view_counts(uuid, jsonb, text, text) TO a
 -- The leads table keeps them as the queue and the accounts table do (CRM-S3.1, CRM-S3.4).
 ALTER DOMAIN public.workspace_table DROP CONSTRAINT workspace_table_known;
 ALTER DOMAIN public.workspace_table ADD CONSTRAINT workspace_table_known CHECK (VALUE IN ('submissions', 'accounts', 'leads'));
+
+-- ---------- 4. The menu's count of open leads (CRM-S1.1) ----------
+-- menu_counts (20261118140500), restated with every count it had, and `leads`: the open leads (New or Working) the caller may see, the bin left out.
+CREATE OR REPLACE FUNCTION public.menu_counts()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  quotes bigint;
+  inbox bigint;
+  leads bigint;
+BEGIN
+  PERFORM public.require_advisor();
+  -- The firms to look in: those the caller has a membership or an open support session for. This only narrows where to look;
+  -- is_firm_member is the lock (current member, this address's firm, not suspended, past the second factor, or support's read).
+  -- The rows are the queue's: an intake with its workflow row that the queue does not hide (queue_hides_empty_guest_draft).
+  WITH mine AS (
+    SELECT m.firm_id FROM public.firm_memberships m WHERE m.user_id = auth.uid()
+    UNION
+    SELECT s.firm_id FROM public.support_sessions s WHERE s.admin_id = auth.uid() AND s.ended_at IS NULL
+  ), allowed AS MATERIALIZED (
+    SELECT t.firm_id FROM mine t WHERE public.is_firm_member(t.firm_id)
+  ), requests AS MATERIALIZED (
+    SELECT q.id, q.session_id, q.status
+    FROM public.chamber_sessions s
+    JOIN public.submission_workflow w ON w.session_id = s.id
+    JOIN public.quote_requests q ON q.session_id = s.id
+    WHERE s.firm_id IN (SELECT a.firm_id FROM allowed a)
+      -- The guest flag is read one session at a time, by key: joining the whole user table to the firm's sessions was a scan of every user.
+      AND NOT public.queue_hides_empty_guest_draft(s.id, (SELECT u.is_anonymous FROM auth.users u WHERE u.id = s.user_id),
+                                                  s.chamber_data, s.field_provenance, s.transcript, s.chosen_peo)
+  )
+  SELECT
+    count(*) FILTER (WHERE r.status = 'sent'),
+    count(DISTINCT r.session_id) FILTER (WHERE EXISTS (SELECT 1 FROM public.quote_requests_with_new_peo_mail() n WHERE n.quote_request_id = r.id))
+  INTO quotes, inbox
+  FROM requests r;
+  -- Open leads (New or Working) the caller may see by the level rule, the bin left out (CRM-S1.1, CRM-L1.1a), in the same firms.
+  SELECT count(*) INTO leads
+  FROM public.leads l
+  WHERE l.firm_id IN (
+      SELECT m.firm_id FROM public.firm_memberships m WHERE m.user_id = auth.uid()
+      UNION
+      SELECT s.firm_id FROM public.support_sessions s WHERE s.admin_id = auth.uid() AND s.ended_at IS NULL)
+    AND public.is_firm_member(l.firm_id)
+    AND l.status IN ('new', 'working') AND l.deleted_at IS NULL
+    AND public.can_see_firm_record(l.firm_id, l.owner_id);
+  RETURN jsonb_build_object('quotes', quotes, 'inbox', inbox, 'leads', leads);
+END;
+$$;

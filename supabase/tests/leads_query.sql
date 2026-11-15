@@ -476,4 +476,22 @@ BEGIN
   PERFORM pg_temp.as_owner();
 END $$;
 
+-- ---------- 10. The menu counts the open leads the caller may see (CRM-S1.1) ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  -- Theirs: a1 (New) and a2 (Working); the binned one is not counted.
+  PERFORM pg_temp.is((public.menu_counts() ->> 'leads')::int, 2, 'an agent''s open leads');
+  PERFORM pg_temp.as_owner();
+  UPDATE public.leads SET status = 'not_fit', not_fit_reason = 'too_small' WHERE id = pg_temp.id('a2');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is((public.menu_counts() ->> 'leads')::int, 1, 'Not a fit is not open');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is((public.menu_counts() ->> 'leads')::int, 3, 'an owner counts every open lead of the firm');
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is((public.menu_counts() ->> 'leads')::int, 1, 'and only their own firm''s');
+  PERFORM pg_temp.is(public.menu_counts() ? 'quotes' AND public.menu_counts() ? 'inbox', true, 'the other counts are still there');
+  PERFORM pg_temp.as_owner();
+END $$;
+
 SELECT 'leads_query: all passed';
