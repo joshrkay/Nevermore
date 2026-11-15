@@ -1,7 +1,7 @@
-import { BarChart3, Building2, FileText, Mail, Settings, type LucideIcon } from "lucide-react";
+import { BarChart3, Building2, FileText, Mail, Settings, UserPlus, type LucideIcon } from "lucide-react";
 
 // The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: the sections not built yet (New quote,
-// Home, Leads) are not listed until the stories that build them (CRM-Q2.1, CRM-H1, CRM-L1.1), so the menu has no dead buttons.
+// Home) are not listed until the stories that build them (CRM-Q2.1, CRM-H1), so the menu has no dead buttons. Leads arrived with CRM-L1.1a.
 
 /** The numbers the menu shows beside an item (story CRM-S1.1c, D-39). Leads has none until CRM-L1.1. */
 export type MenuCountKey = "quotes" | "inbox";
@@ -13,7 +13,7 @@ export const MENU_COUNT_CAP = 99;
 export const badgeText = (n: number): string | null => (n <= 0 ? null : n > MENU_COUNT_CAP ? `${MENU_COUNT_CAP}+` : String(n));
 
 export interface MenuItem {
-  key: "quotes" | "inbox" | "accounts" | "reports" | "settings";
+  key: "quotes" | "inbox" | "leads" | "accounts" | "reports" | "settings";
   label: string;
   /** Where it opens, path and query, until its own epic ships. */
   to: string;
@@ -65,6 +65,8 @@ export const MENU_ITEMS: MenuItem[] = [
     isCurrent: (pathname, search) => (isQueue(pathname) && !isInbox(pathname, search)) || pathname.startsWith("/advisor/submissions/"),
   },
   { key: "inbox", label: "Inbox", to: `${QUEUE}?${INBOX_PARAM.name}=${INBOX_PARAM.value}`, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: isInbox },
+  // The leads table and, with slice 8.5, a lead's page (CRM-L1.1a). Its count of open leads is CRM-S1.1's.
+  { key: "leads", label: "Leads", to: "/leads", icon: UserPlus, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/leads" || pathname.startsWith("/leads/") },
   // The accounts page and an account's page (CRM-A1.1a, CRM-A2.1b). The number beside it (screen 16) is not built yet.
   { key: "accounts", label: "Accounts", to: "/accounts", icon: Building2, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/accounts" || pathname.startsWith("/accounts/") },
   { key: "reports", label: "Reports", to: "/advisor/funnel", icon: BarChart3, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/advisor/funnel" },

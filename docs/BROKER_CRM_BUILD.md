@@ -690,6 +690,7 @@ Epic 5 (New quote, the employer authorizing each PEO, M-1.1), any `leads` table,
 | D-811 | **Bulk on leads** (CRM-L1.1) reuses **Bulk change** as it is: change owner, change status (New or Working), Not a fit (one reason), set a field, label, delete (to the bin; its Undo restores) and export through the existing export |
 | D-812 | **Depth.** Epics 6 and 7 are split into slices now; their design questions (one message store for PEO and contact mail, the conversation's reply address, how the reply-reading model is called) are grilled just before each epic is built, after Epic 8 lands |
 | D-813 | **N-1.2 moves from Epic 5 to Epic 7** (its database part: `acknowledged` and `question_open` and their moves), so N-1.1's suggestions can be accepted without Epic 5. Epic 5's CRM-Q3.1 builds on it |
+| D-814 | **A lead's last activity** (CRM-L1.1a, slice 8.3). The newest moment of its calls, notes and tasks (`activities.activity_at`), or when it was made when it has none. It orders the leads table by default, newest first, as an account's last activity orders the accounts table (D-201). A change to the lead's own fields is not activity |
 
 ### Epic 8 build order
 

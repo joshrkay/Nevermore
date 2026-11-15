@@ -855,6 +855,23 @@ export type Database = {
         Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
       }
+      // The leads table's query (20261121110000): {rows, total, page, page_size}; src/lib/leadsApi.ts reads it.
+      leads_list: {
+        Args: {
+          p_firm_id: string | null
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      leads_view_counts: {
+        Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
       // The firm's current members by id and name, for the Owner filter (20261119130000).
       firm_member_choices: {
         Args: { p_firm_id: string | null }
