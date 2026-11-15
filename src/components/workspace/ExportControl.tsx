@@ -33,6 +33,10 @@ interface Props {
    * address only when the person has to sign in again from the sign-in page.
    */
   address?: Record<string, string>;
+  /** The records selected (CRM-S3.6), to export only them (the database takes at most 1,000). Left out, every row that matches `filters`. */
+  ids?: string[];
+  /** The button's words; "Export" by default. */
+  label?: string;
 }
 
 /**
@@ -42,7 +46,7 @@ interface Props {
  * page (the authenticator's code, or signing in again on this device), and the export is asked again with the same filters.
  * Nevermore support is offered no download (ADR 0024): where the button was, one plain line says so, and nothing is asked of the database.
  */
-export function ExportControl({ firmId, table, columns, filters = {}, address = {} }: Props) {
+export function ExportControl({ firmId, table, columns, filters = {}, address = {}, ids, label = "Export" }: Props) {
   const off = useDownloadsOff();
   const { signOut } = useAuth();
   const [, setParams] = useSearchParams();
@@ -51,19 +55,19 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
   const running = useRef(false);
   const mounted = useRef(true);
   // The filters of the export that was refused for its sign-in, so the one that follows asks for the same rows, whatever the page shows by then.
-  const asked = useRef<Record<string, Json>>(filters);
+  const asked = useRef<{ filters: Record<string, Json>; ids?: string[] }>({ filters, ids });
   useEffect(() => () => { mounted.current = false; }, []);
 
   if (off) return <DownloadsOffNotice />;
 
-  const run = async (asking: Record<string, Json>) => {
+  const run = async (asking: { filters: Record<string, Json>; ids?: string[] }) => {
     if (running.current) return;
     running.current = true;
     asked.current = asking;
     setOutcome({ kind: "busy" });
     let next: Outcome;
     try {
-      const result = await exportRows({ firmId, table, filters: asking });
+      const result = await exportRows({ firmId, table, filters: asking.filters, ...(asking.ids ? { ids: asking.ids } : {}) });
       const { blob, name } = exportFile(result, columns);
       downloadBlob(blob, name);
       next = { kind: "done", table: result.table, count: result.count };
@@ -116,13 +120,13 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
       )}
       <button
         type="button"
-        onClick={() => void run(filters)}
+        onClick={() => void run({ filters, ids })}
         disabled={busy}
         aria-disabled={busy || undefined}
         className="min-h-11 flex items-center gap-2 border border-border text-sm px-4 rounded-md hover:bg-muted disabled:opacity-50"
       >
         {busy && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-        {busy ? "Exporting…" : "Export"}
+        {busy ? "Exporting…" : label}
       </button>
     </div>
   );

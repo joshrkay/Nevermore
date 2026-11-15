@@ -4,7 +4,7 @@ import { ANON_KEY, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs
 import { totpCode } from "./stack/totp.mjs";
 
 // The Accounts page on the table frame (story CRM-A1.1a, screen 16). A member of a firm with three accounts finds Accounts in the menu, sees them with
-// their columns, narrows them by employees (the chip stays across a reload), and opens one, whose page says "Accounts / name" and goes back to the list.
+// their columns, narrows them by employees (the chip stays across a reload), selects a row, and opens one, whose page says "Accounts / name" and goes back to the list.
 
 const PASSWORD = "correct-horse-battery-staple";
 const stamp = Date.now();
@@ -83,6 +83,18 @@ test("Accounts opens from the menu, narrows by employees across a reload, and an
     await page.reload();
     await expect(page.getByRole("row")).toHaveCount(2);
     await expect(page.getByRole("link", { name: "Northline Logistics" })).toBeVisible();
+  });
+
+  await test.step("a row can be selected, the bar shows, the selection survives a reload and Clear empties it", async () => {
+    await page.getByRole("checkbox", { name: "Select Northline Logistics" }).check();
+    const bar = page.getByRole("region", { name: "Selected rows" });
+    await expect(bar).toContainText("1 selected");
+    await page.reload();
+    await expect(page.getByRole("checkbox", { name: "Select Northline Logistics" })).toBeChecked();
+    await expect(bar).toContainText("1 selected");
+    await bar.getByRole("button", { name: "Clear" }).click();
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: "Select Northline Logistics" })).not.toBeChecked();
   });
 
   await test.step("an account's name opens its page, 'Accounts' goes back to the list", async () => {
