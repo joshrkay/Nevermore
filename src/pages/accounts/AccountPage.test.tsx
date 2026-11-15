@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setSignedInUser } from "@/lib/signedInUser";
 import { toast } from "sonner";
 import type { AccountConflict, AccountPage as Page } from "@/lib/accountPageApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
@@ -99,6 +100,8 @@ const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
+  // The app's identity boundary says who is signed in; these pages render without it.
+  setSignedInUser("u1");
   for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();

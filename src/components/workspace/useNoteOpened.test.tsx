@@ -12,6 +12,7 @@ const search = vi.hoisted(() => ({ noteRecentRecord: vi.fn() }));
 vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
 
 const { useNoteOpened, RECENT_RECORDS_KEY } = await import("./useNoteOpened");
+const { setSignedInUser } = await import("@/lib/signedInUser");
 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 let queries: QueryClient;
@@ -19,6 +20,7 @@ const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider 
 
 beforeEach(() => {
   auth.userId = "u1";
+  setSignedInUser("u1");
   queries = new QueryClient();
   search.noteRecentRecord.mockReset().mockResolvedValue(true);
 });
@@ -52,11 +54,29 @@ describe("useNoteOpened", () => {
     first.unmount();
     second.unmount();
     auth.userId = "u2";
+    setSignedInUser("u2");
     const next = renderHook(() => useNoteOpened("f1", "account", "a2", true), { wrapper });
     finishFirst(true);
     await settle();
 
     expect(search.noteRecentRecord.mock.calls.map((c) => c.slice(1))).toEqual([["account", "a1"], ["account", "a2"]]);
     next.unmount();
+  });
+
+  it("drops a waiting note even when the next person opens no record page (who is signed in comes from the app's boundary, not the pages)", async () => {
+    let finishFirst: (noted: boolean) => void = () => {};
+    search.noteRecentRecord.mockReturnValueOnce(new Promise<boolean>((resolve) => { finishFirst = resolve; }));
+    const first = renderHook(() => useNoteOpened("f1", "account", "a1", true), { wrapper });
+    const second = renderHook(() => useNoteOpened("f1", "contact", "c1", true), { wrapper });
+    await settle();
+    first.unmount();
+    second.unmount();
+    // The person signs out and another signs in; no page that notes records is open.
+    setSignedInUser(null);
+    setSignedInUser("u2");
+    finishFirst(true);
+    await settle();
+
+    expect(search.noteRecentRecord.mock.calls.map((c) => c.slice(1))).toEqual([["account", "a1"]]);
   });
 });
