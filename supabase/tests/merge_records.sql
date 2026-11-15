@@ -774,4 +774,77 @@ BEGIN
   ALTER TABLE public.opportunities DROP CONSTRAINT tx_fail;
 END $$;
 
+-- ---------- 11. The removed record's copied history is not the kept record's "someone saved first" ----------
+-- Break caught: record_version_changes (the conflict dialog's "what changed") picks history by the version a change was made at; a copied entry carrying the removed
+-- record's own version number would be reported as a change to the kept record that never happened (its phone said to have become the removed account's).
+DO $$
+DECLARE r text; j jsonb; v_open integer; c jsonb;
+BEGIN
+  PERFORM pg_temp.account('vc_k', 'acme', 'acme_owner', 'Version Keep'); PERFORM pg_temp.account('vc_r', 'acme', 'acme_owner', 'Version Remove');
+  UPDATE public.accounts SET phone = '(503) 555-0100' WHERE id = pg_temp.id('vc_k');
+  UPDATE public.accounts SET phone = '(503) 555-0111' WHERE id = pg_temp.id('vc_r');
+  UPDATE public.accounts SET phone = '(503) 555-0122' WHERE id = pg_temp.id('vc_r');
+  PERFORM pg_temp.contact('vc_ck', 'vc_k', 'acme_owner', 'ck@example.test'); PERFORM pg_temp.contact('vc_cr', 'vc_k', 'acme_owner', 'cr@example.test');
+  UPDATE public.contacts SET phone = '(503) 555-0133' WHERE id = pg_temp.id('vc_cr');
+  UPDATE public.contacts SET phone = '(503) 555-0144' WHERE id = pg_temp.id('vc_cr');
+  r := pg_temp.merge_a('acme_owner', 'vc_k', 'vc_r', '{"phone": "kept"}');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'merged: ' || r);
+  v_open := pg_temp.ver('accounts', 'vc_k');
+  -- Someone else saves the name; a person who opened the account before that saves from the version they opened.
+  r := pg_temp.as_call('acme_owner', format($q$SELECT public.update_account(%L, 'Version Keep Inc', NULL, NULL, '(503) 555-0100', NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, %s)::text$q$,
+    pg_temp.id('vc_k'), pg_temp.id('acme'), v_open));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the first save: ' || r);
+  r := pg_temp.as_call('acme_owner', format($q$SELECT public.update_account(%L, 'Version Keep Ltd', NULL, NULL, '(503) 555-0100', NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, %L, %s)::text$q$,
+    pg_temp.id('vc_k'), pg_temp.id('acme'), v_open));
+  j := r::jsonb;
+  PERFORM pg_temp.is(j ->> 'conflict', 'true', 'the second save, from the version it opened, is a conflict');
+  PERFORM pg_temp.is((SELECT string_agg(e ->> 'field', ',' ORDER BY e ->> 'field') FROM jsonb_array_elements(j -> 'changed') e), 'name',
+    'and is told only that the name changed, not the phone the removed account had changed to');
+  -- The same for a contact: nothing the removed contact changed is reported against the kept one.
+  r := pg_temp.merge_c('acme_owner', 'vc_ck', 'vc_cr', '{"phone": "kept"}');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'contacts merged: ' || r);
+  c := public.record_version_changes(pg_temp.id('acme'), 'contacts', pg_temp.id('vc_ck')::text, 0, 1000);
+  PERFORM pg_temp.is(c, '[]'::jsonb, 'no change of the removed contact is reported as a change of the kept one');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.record_history WHERE table_name = 'contacts' AND record_key = pg_temp.id('vc_ck')::text AND merged_from_name IS NOT NULL AND kind = 'changed'), 2::bigint,
+    'while its history still lists them, marked as from it');
+END $$;
+
+-- ---------- 12. Choosing the removed record's owner follows the owner writers' rules ----------
+-- Break caught: "owner: removed" giving the kept record a person who has left the firm, or no owner at all, which change_account_owner and update_contact refuse.
+DO $$
+DECLARE r text; c0 text;
+BEGIN
+  PERFORM pg_temp.new_user('gone_owner');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id, valid_from, valid_until)
+  VALUES (pg_temp.id('acme'), pg_temp.id('gone_owner'), 'agent', NULL, now() - interval '3 days', now() - interval '1 day');
+  PERFORM pg_temp.account('ow_k', 'acme', 'acme_owner'); PERFORM pg_temp.account('ow_r', 'acme', 'gone_owner'); PERFORM pg_temp.account('ow_n', 'acme', 'acme_owner');
+  UPDATE public.accounts SET owner_id = NULL WHERE id = pg_temp.id('ow_n');
+  c0 := pg_temp.census();
+  r := pg_temp.merge_a('acme_owner', 'ow_k', 'ow_r', '{"owner": "removed"}');
+  PERFORM pg_temp.is(r, '22023: Choose a current member of the firm.', 'a departed owner can''t be chosen for the kept account, in change_account_owner''s words');
+  r := pg_temp.merge_a('acme_owner', 'ow_k', 'ow_n', '{"owner": "removed"}');
+  PERFORM pg_temp.is(r, '22023: Choose who will own this account.', 'nor no owner at all');
+  PERFORM pg_temp.is(c0, pg_temp.census(), 'and nothing was merged');
+  r := pg_temp.merge_a('acme_owner', 'ow_k', 'ow_r');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'merging without choosing it goes through: ' || r);
+  PERFORM pg_temp.is((SELECT owner_id FROM public.accounts WHERE id = pg_temp.id('ow_k')), pg_temp.id('acme_owner'), 'and the kept account keeps its own owner');
+  -- Contacts
+  PERFORM pg_temp.account('ow_a', 'acme', 'acme_owner');
+  PERFORM pg_temp.contact('ow_ck', 'ow_a', 'acme_owner', 'k@example.test'); PERFORM pg_temp.contact('ow_cr', 'ow_a', 'gone_owner', 'r@example.test'); PERFORM pg_temp.contact('ow_cn', 'ow_a', NULL, 'n@example.test');
+  c0 := pg_temp.census();
+  r := pg_temp.merge_c('acme_owner', 'ow_ck', 'ow_cr', '{"owner": "removed"}');
+  PERFORM pg_temp.is(r, '22023: Choose one of the firm''s people as the owner.', 'a departed owner can''t be chosen for the kept contact, in update_contact''s words');
+  r := pg_temp.merge_c('acme_owner', 'ow_ck', 'ow_cn', '{"owner": "removed"}');
+  PERFORM pg_temp.is(r, '22023: Choose one of the firm''s people as the owner.', 'nor no owner at all');
+  PERFORM pg_temp.is(c0, pg_temp.census(), 'and nothing was merged');
+  r := pg_temp.merge_c('acme_owner', 'ow_ck', 'ow_cr', '{"owner": "kept"}');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'keeping the kept contact''s owner goes through: ' || r);
+  -- A current member is fine.
+  PERFORM pg_temp.account('ow_k2', 'acme', 'acme_owner'); PERFORM pg_temp.account('ow_r2', 'acme', 'acme_owner');
+  UPDATE public.accounts SET owner_id = pg_temp.id('acme_agent1') WHERE id = pg_temp.id('ow_r2');
+  r := pg_temp.merge_a('acme_owner', 'ow_k2', 'ow_r2', '{"owner": "removed"}');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a current member can: ' || r);
+  PERFORM pg_temp.is((SELECT owner_id FROM public.accounts WHERE id = pg_temp.id('ow_k2')), pg_temp.id('acme_agent1'), 'and becomes the owner');
+END $$;
+
 SELECT 'All merge_records checks passed' AS result;
