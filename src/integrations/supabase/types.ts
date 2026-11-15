@@ -846,6 +846,20 @@ export type Database = {
           subject_user_id: string | null
         }[]
       }
+      // The accounts table's query (20261119130000): one page, {rows, total, page, page_size}; src/lib/accountsApi.ts reads it. A null firm is the firm at the address.
+      accounts_list: {
+        Args: { p_firm_id: string | null; p_filters?: Json; p_sort?: string | null; p_direction?: string; p_page?: number; p_search?: string | null; p_time_zone?: string }
+        Returns: Json
+      }
+      accounts_view_counts: {
+        Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
+      // The firm's current members by id and name, for the Owner filter (20261119130000).
+      firm_member_choices: {
+        Args: { p_firm_id: string | null }
+        Returns: { user_id: string; name: string }[]
+      }
       // An account's page (20261119140000): {account, can_change, tabs: {contacts, opportunities, quotes, activity, files}}, each tab {count, rows} with its first five
       // rows; null, the same as for an account that is not there, for anyone who may not see the account. src/lib/accountPageApi.ts reads it.
       account_page: {
@@ -855,6 +869,59 @@ export type Database = {
       // An account's files that passed the virus check: {count, rows}, a page of at most 100; null for anyone who may not see the account.
       account_files: {
         Args: { p_firm_id: string; p_account_id: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // A page of one tab of an account's page (contacts, opportunities, quotes, activity (or activity_calls, activity_notes, activity_tasks, activity_changes) or files): {count, rows}; null for anyone who may not see the account.
+      account_tab: {
+        Args: { p_firm_id: string; p_account_id: string; p_tab: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
+      // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
+      log_activity: {
+        Args: {
+          p_kind: string
+          p_account_id: string
+          p_contact_id?: string | null
+          p_opportunity_id?: string | null
+          p_at?: string | null
+          p_outcome?: string | null
+          p_body?: string | null
+          p_title?: string | null
+          p_due_on?: string | null
+          p_for?: string | null
+          p_follow_up_title?: string | null
+          p_follow_up_due_on?: string | null
+          p_follow_up_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      update_activity: {
+        Args: {
+          p_activity_id: string
+          p_contact_id?: string | null
+          p_opportunity_id?: string | null
+          p_at?: string | null
+          p_outcome?: string | null
+          p_body?: string | null
+          p_title?: string | null
+          p_due_on?: string | null
+          p_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      add_to_note: {
+        Args: { p_activity_id: string; p_text: string; p_firm_id?: string | null }
+        Returns: Json
+      }
+      set_task_done: {
+        Args: { p_activity_id: string; p_done: boolean; p_firm_id?: string | null }
+        Returns: Json
+      }
+      account_activity_options: {
+        Args: { p_firm_id: string; p_account_id: string }
         Returns: Json
       }
       // The id and name of the account that holds a submission, for someone who may see that account; null for anyone else.
@@ -881,6 +948,41 @@ export type Database = {
           p_firm_id?: string | null
           p_version?: number | null
         }
+        Returns: Json
+      }
+      // The firm's current people the caller may make an account for, by the level rule (20261119150000), for the New account form's Owner choice.
+      account_owner_choices: {
+        Args: { p_firm_id: string | null }
+        Returns: { user_id: string; name: string }[]
+      }
+      // Makes an account by hand (20261119150000): the made account's own fields (the same shape as a save's `record`). The owner is the caller unless one is named.
+      create_account: {
+        Args: {
+          p_name: string
+          p_trade_name: string | null
+          p_website: string | null
+          p_phone: string | null
+          p_street: string | null
+          p_city: string | null
+          p_state: string | null
+          p_postal_code: string | null
+          p_industry: string | null
+          p_employees: number | null
+          p_states_of_operation: string[]
+          p_current_provider: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
+      // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
+      archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
+      change_account_owner: {
+        Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
         Returns: Json
       }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.

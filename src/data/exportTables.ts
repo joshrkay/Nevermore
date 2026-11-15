@@ -14,6 +14,7 @@ interface ExportTableWords {
 const WORDS: Record<ExportTable, ExportTableWords> = {
   referral_partners: { one: "referral partner", many: "referral partners", file: "referral-partners" },
   firm_activity: { one: "entry in the firm's record", many: "entries in the firm's record", file: "firm-record" },
+  accounts: { one: "account", many: "accounts", file: "accounts" },
 };
 
 const known = (table: string): table is ExportTable => Object.prototype.hasOwnProperty.call(WORDS, table);
@@ -25,6 +26,12 @@ const known = (table: string): table is ExportTable => Object.prototype.hasOwnPr
 export const exportedWords = (table: string, count: number): string => {
   const noun = known(table) ? (count === 1 ? WORDS[table].one : WORDS[table].many) : `rows of ${table}`;
   return `Exported ${count.toLocaleString("en-US")} ${noun}`;
+};
+
+/** What is said of selected records the export left out (deleted, or no longer the person's to see): "1 selected account is no longer available." */
+export const skippedWords = (table: string, count: number): string => {
+  const noun = known(table) ? (count === 1 ? WORDS[table].one : WORDS[table].many) : "rows";
+  return count === 1 ? `1 selected ${noun} is no longer available.` : `${count.toLocaleString("en-US")} selected ${noun} are no longer available.`;
 };
 
 /** The name of the file an export of `table` is saved as, on the day it was made ("referral-partners-2026-11-19.csv"). */

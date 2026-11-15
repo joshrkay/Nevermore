@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
+import type { Json } from "@/integrations/supabase/types";
 import { DownloadsOffNotice, useDownloadsOff } from "@/components/workspace/downloadsOff";
 import { StepUpDialog } from "@/components/workspace/StepUpDialog";
-import { exportedWords } from "@/data/exportTables";
+import { exportedWords, skippedWords } from "@/data/exportTables";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadBlob } from "@/lib/downloadFile";
 import { exportRows, ExportError, type ExportTable } from "@/lib/exportApi";
@@ -13,7 +14,7 @@ import { stepUpWay, type StepUp } from "@/lib/stepUp";
 type Outcome =
   | { kind: "none" }
   | { kind: "busy" }
-  | { kind: "done"; table: ExportTable; count: number }
+  | { kind: "done"; table: ExportTable; count: number; skipped: number }
   /** The last sign-in is too old for a whole table: the person proves who they are again, in place, and the export goes on. */
   | { kind: "step_up"; way: StepUp }
   | { kind: "refused"; message: string };
@@ -25,13 +26,15 @@ interface Props {
   table: ExportTable;
   /** The columns the page shows, in the order it shows them, each with its heading and how the page writes its value: the file holds these and no other. */
   columns: readonly ShownColumn[];
-  /** The table's own filters as the page shows them now (`{}` for none), exactly as `exportRows` takes them: the file holds the rows that match. */
-  filters?: Record<string, string>;
+  /** The table's own filters as the page shows them now (`{}` for none), exactly as `exportRows` takes them: the file holds the rows that match. Most tables take text; the accounts table takes its own filters as a list (`filters`), its `search` and `time_zone`. */
+  filters?: Record<string, Json>;
   /**
    * What the page keeps in its own state that the address must carry for the page to open the same way after a sign-in again (the filters). It is put in the
    * address only when the person has to sign in again from the sign-in page.
    */
   address?: Record<string, string>;
+  /** The records selected (CRM-S3.6), to export only them (the database takes at most 1,000). Left out, every row that matches `filters`. */
+  ids?: string[];
 }
 
 /**
@@ -41,7 +44,7 @@ interface Props {
  * page (the authenticator's code, or signing in again on this device), and the export is asked again with the same filters.
  * Nevermore support is offered no download (ADR 0024): where the button was, one plain line says so, and nothing is asked of the database.
  */
-export function ExportControl({ firmId, table, columns, filters = {}, address = {} }: Props) {
+export function ExportControl({ firmId, table, columns, filters = {}, address = {}, ids }: Props) {
   const off = useDownloadsOff();
   const { signOut } = useAuth();
   const [, setParams] = useSearchParams();
@@ -50,22 +53,22 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
   const running = useRef(false);
   const mounted = useRef(true);
   // The filters of the export that was refused for its sign-in, so the one that follows asks for the same rows, whatever the page shows by then.
-  const asked = useRef<Record<string, string>>(filters);
+  const asked = useRef<{ filters: Record<string, Json>; ids?: string[] }>({ filters, ids });
   useEffect(() => () => { mounted.current = false; }, []);
 
   if (off) return <DownloadsOffNotice />;
 
-  const run = async (asking: Record<string, string>) => {
+  const run = async (asking: { filters: Record<string, Json>; ids?: string[] }) => {
     if (running.current) return;
     running.current = true;
     asked.current = asking;
     setOutcome({ kind: "busy" });
     let next: Outcome;
     try {
-      const result = await exportRows({ firmId, table, filters: asking });
+      const result = await exportRows({ firmId, table, filters: asking.filters, ...(asking.ids ? { ids: asking.ids } : {}) });
       const { blob, name } = exportFile(result, columns);
       downloadBlob(blob, name);
-      next = { kind: "done", table: result.table, count: result.count };
+      next = { kind: "done", table: result.table, count: result.count, skipped: result.skipped };
     } catch (error) {
       if (error instanceof ExportError && error.kind === "signInAgain") {
         try {
@@ -102,6 +105,7 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
       {outcome.kind === "done" && (
         <p role="status" className="text-sm text-muted-foreground">
           {outcome.count === 0 ? "Nothing matched, so the file holds only the headings." : `${exportedWords(outcome.table, outcome.count)}.`}
+          {outcome.skipped > 0 && ` ${skippedWords(outcome.table, outcome.skipped)}`}
         </p>
       )}
       {outcome.kind === "refused" && <p role="alert" className="text-sm text-destructive">{outcome.message}</p>}
@@ -115,7 +119,7 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
       )}
       <button
         type="button"
-        onClick={() => void run(filters)}
+        onClick={() => void run({ filters, ids })}
         disabled={busy}
         aria-disabled={busy || undefined}
         className="min-h-11 flex items-center gap-2 border border-border text-sm px-4 rounded-md hover:bg-muted disabled:opacity-50"

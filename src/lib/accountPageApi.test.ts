@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { getAccountPage, listAccountFiles, updateAccount, getSubmissionAccount, AccountError, ACCOUNT_FILES_PAGE_SIZE } = await import("./accountPageApi");
+const { getAccountPage, listAccountFiles, listAccountTab, updateAccount, getSubmissionAccount, AccountError, ACCOUNT_FILES_PAGE_SIZE } = await import("./accountPageApi");
 const { AdvisorApiError } = await import("./advisorApi");
 type AccountEdit = import("./accountPageApi").AccountEdit;
 
@@ -189,6 +189,46 @@ describe("listAccountFiles", () => {
   it("puts a page the database refuses into its words", async () => {
     rpc.mockResolvedValue(refused("22023", "A page is 0 to 100 rows, from a place that is not before the first"));
     expect(await caught(() => listAccountFiles("f1", "a1", { limit: 500 }))).toMatchObject({ kind: "invalid", message: "A page is 0 to 100 rows, from a place that is not before the first" });
+  });
+});
+
+describe("listAccountTab", () => {
+  it("asks for a tab of the account by its name, in pages of fifty unless told otherwise", async () => {
+    rpc.mockResolvedValue({ data: page.tabs.contacts, error: null });
+    await listAccountTab("f1", "a1", "contacts");
+    expect(rpc).toHaveBeenLastCalledWith("account_tab", { p_firm_id: "f1", p_account_id: "a1", p_tab: "contacts", p_limit: 50, p_offset: 0 });
+    await listAccountTab("f1", "a1", "contacts", { limit: 100, offset: 5 });
+    expect(rpc).toHaveBeenLastCalledWith("account_tab", { p_firm_id: "f1", p_account_id: "a1", p_tab: "contacts", p_limit: 100, p_offset: 5 });
+  });
+
+  it("gives each tab's rows in the page's own shape", async () => {
+    rpc.mockResolvedValue({ data: page.tabs.contacts, error: null });
+    expect(await listAccountTab("f1", "a1", "contacts")).toEqual({
+      count: 7,
+      rows: [{ id: "c1", firstName: "Elena", lastName: "Marsh", title: "Practice Manager", email: "elena@x.example", phone: null, mobile: null, isMain: true, doNotEmail: false }],
+    });
+    rpc.mockResolvedValue({ data: page.tabs.opportunities, error: null });
+    expect((await listAccountTab("f1", "a1", "opportunities"))?.rows[1]).toEqual({ id: "o2", name: "A search", stage: "qualifying", targetStart: null, submissionId: null });
+    rpc.mockResolvedValue({ data: page.tabs.quotes, error: null });
+    expect((await listAccountTab("f1", "a1", "quotes"))?.rows[0]).toMatchObject({ id: 12, submissionId: "i1", peoName: "PEO A", status: "quoted", quoteExpiresOn: "2026-12-05" });
+    rpc.mockResolvedValue({ data: page.tabs.activity, error: null });
+    expect((await listAccountTab("f1", "a1", "activity"))?.rows[0]).toMatchObject({ type: "change", who: "dana@x.example", field: "employees", from: 40, to: 45, recordTable: "accounts" });
+  });
+
+  it("answers null for an account the person may not see, and fails on rows that are not the agreed shape, or of another tab", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    expect(await listAccountTab("f1", "a1", "contacts")).toBeNull();
+    rpc.mockResolvedValue({ data: { count: 1, rows: [{ ...page.tabs.contacts.rows[0], last_name: undefined }] }, error: null });
+    expect(await caught(() => listAccountTab("f1", "a1", "contacts"))).toMatchObject({ kind: "failed", message: "Couldn't load the list. Try again." });
+    rpc.mockResolvedValue({ data: page.tabs.opportunities, error: null });
+    expect(await caught(() => listAccountTab("f1", "a1", "contacts"))).toMatchObject({ kind: "failed" });
+  });
+
+  it("puts a refusal into its kind: a page the database refuses, a session that ended", async () => {
+    rpc.mockResolvedValue(refused("22023", "A page is 0 to 100 rows, from a place that is not before the first"));
+    expect(await caught(() => listAccountTab("f1", "a1", "contacts", { limit: 500 }))).toMatchObject({ kind: "invalid" });
+    rpc.mockResolvedValue(refused("PGRST301", "JWT expired"));
+    expect(await caught(() => listAccountTab("f1", "a1", "contacts"))).toMatchObject({ unauthenticated: true });
   });
 });
 

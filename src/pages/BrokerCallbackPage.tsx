@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
-import { brokerNext, finishBrokerSignIn } from "@/lib/brokerAuth";
+import { brokerNext, finishBrokerSignIn, namesABrokerPage } from "@/lib/brokerAuth";
 
 /**
  * Where Google or Microsoft sends a broker back (story M-4.1). It redeems the code it brought, which signs the broker
@@ -16,6 +16,7 @@ const BrokerCallbackPage = () => {
   const code = params.get("code");
   const refused = params.get("error") !== null || params.get("error_description") !== null || params.get("error_code") !== null;
   const next = brokerNext(params.get("next"));
+  const named = namesABrokerPage(params.get("next"));
   const [failed, setFailed] = useState(refused || !code);
   const started = useRef(false);
 
@@ -25,12 +26,13 @@ const BrokerCallbackPage = () => {
     started.current = true;
     finishBrokerSignIn(code)
       .then((result) => {
-        // A mailbox that couldn't be connected is explained where it can be tried again, not lost on a reload.
-        if (result.ok) window.location.assign(result.mailbox === "failed" ? "/advisor/mailbox?connect=failed" : next);
+        // A mailbox that couldn't be connected is told on the page the sign-in was for (that page, and its filters and firm, are kept: a step-up for an
+        // export must come back to it), with the way to try again; a sign-in for no page in particular goes to the mailbox page itself.
+        if (result.ok) window.location.assign(result.mailbox !== "failed" ? next : !named ? "/advisor/mailbox?connect=failed" : `${next}${next.includes("?") ? "&" : "?"}connect=failed`);
         else setFailed(true);
       })
       .catch(() => setFailed(true));
-  }, [code, refused, next]);
+  }, [code, refused, next, named]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-6">

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { classifyApiError } from "@/lib/advisorApi";
+import { activityItemOf, activityItemSchema, type ActivityItem } from "@/lib/activityApi";
 import { readSaveAnswer, type ChangedField, type RecordConflict, type Saved } from "@/lib/recordVersion";
 
 // What an account's page asks the database (story CRM-A2.1a; 20261119140000_account_page.sql). Four calls: the page (the account and each tab's count and
@@ -89,8 +90,8 @@ export interface QuoteRow {
   quoteExpiresOn: string | null;
 }
 
-/** One entry of the Activity tab. Every row is a change for now (`type`); calls, notes and tasks arrive with CRM-E1.5 under their own type. */
-export interface ActivityRow {
+/** One entry of the record history on the Activity tab (`type` "change"): a creation or a change of a field of the account or one of its contacts. */
+export interface ChangeRow {
   type: "change";
   entryKey: string;
   at: string;
@@ -107,6 +108,9 @@ export interface ActivityRow {
   recordId: string;
   recordName: string | null;
 }
+
+/** One entry of the Activity tab (D-212): a change in the record's history, or a call, a note or a task (CRM-E1.5), newest first. `type` tells which. */
+export type ActivityRow = ChangeRow | ActivityItem;
 
 export interface AccountFile {
   id: string;
@@ -183,7 +187,7 @@ export interface AccountConflict {
 export type AccountSaved = { conflict: false; account: AccountFields };
 
 /** Why a call did not give an answer. The message is in words, the database's own where it says what to do. */
-export type AccountFailure = "invalid" | "notAllowed" | "notFound" | "readOnly" | "failed";
+export type AccountFailure = "invalid" | "notAllowed" | "notFound" | "readOnly" | "hasOpportunities" | "failed";
 
 export class AccountError extends Error {
   constructor(readonly kind: AccountFailure, message: string, readonly code?: string) {
@@ -192,7 +196,7 @@ export class AccountError extends Error {
 }
 
 /** The account's own fields as the database gives them (its column names). */
-type FieldsRow = {
+export type FieldsRow = {
   id: string;
   version: number;
   name: string;
@@ -244,7 +248,7 @@ const fieldsShape = z.object({
   updated_at: z.string().min(1),
 });
 
-const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
+export const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
 
 const detailsSchema = fieldsShape.extend({
   status: z.enum(["prospect", "client"]),
@@ -280,11 +284,12 @@ const quoteSchema = z.object({
   id: z.number().int(), submission_id: z.string().min(1), opportunity_id: z.string().min(1), opportunity_name: z.string(), peo_name: z.string(), status: z.string(),
   sent_on: nullableText, quote_received_on: nullableText, quote_expires_on: nullableText,
 });
-const activitySchema = z.object({
+const changeSchema = z.object({
   type: z.literal("change"), entry_key: z.string().min(1), at: z.string().min(1), change_id: z.string().min(1), kind: z.enum(["created", "changed"]), who: z.string(),
   who_kind: z.enum(["member", "nevermore", "system"]), field: nullableText, from_value: jsonValue, to_value: jsonValue,
   record_table: z.enum(["accounts", "contacts"]), record_id: z.string().min(1), record_name: nullableText,
 });
+const activitySchema = z.union([changeSchema, activityItemSchema]);
 const fileSchema = z.object({
   id: z.string().min(1), file_name: z.string(), mime_type: nullableText, size_bytes: nullableNumber, category: z.string(), created_at: z.string().min(1),
   submission_id: z.string().min(1), storage_path: z.string().min(1),
@@ -304,7 +309,7 @@ const pageSchema = z.object({
   }),
 });
 
-const fieldsOf = (f: FieldsRow): AccountFields => ({
+export const fieldsOf = (f: FieldsRow): AccountFields => ({
   id: f.id,
   version: f.version,
   name: f.name,
@@ -337,19 +342,36 @@ const fileOf = (f: z.infer<typeof fileSchema>): AccountFile => ({
   storagePath: f.storage_path,
 });
 
-const FALLBACK = "Couldn't load the account. Try again.";
-const SAVE_FALLBACK = "Couldn't save the account. Try again.";
+const contactOf = (c: z.infer<typeof contactSchema>): ContactRow => ({
+  id: c.id, firstName: c.first_name, lastName: c.last_name, title: c.title, email: c.email, phone: c.phone, mobile: c.mobile, isMain: c.is_main, doNotEmail: c.do_not_email,
+});
+const opportunityOf = (o: z.infer<typeof opportunitySchema>): OpportunityRow => ({ id: o.id, name: o.name, stage: o.stage, targetStart: o.target_start, submissionId: o.submission_id });
+const quoteOf = (q: z.infer<typeof quoteSchema>): QuoteRow => ({
+  id: q.id, submissionId: q.submission_id, opportunityId: q.opportunity_id, opportunityName: q.opportunity_name, peoName: q.peo_name, status: q.status,
+  sentOn: q.sent_on, quoteReceivedOn: q.quote_received_on, quoteExpiresOn: q.quote_expires_on,
+});
+const activityOf = (a: z.infer<typeof activitySchema>): ActivityRow => (a.type === "change" ? changeOf(a) : activityItemOf(a));
+const changeOf = (a: z.infer<typeof changeSchema>): ChangeRow => ({
+  type: a.type, entryKey: a.entry_key, at: a.at, changeId: a.change_id, kind: a.kind, who: a.who, whoKind: a.who_kind, field: a.field,
+  from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name,
+});
 
-type DbError = { code?: string; message?: string };
+const FALLBACK = "Couldn't load the account. Try again.";
+const LIST_FALLBACK = "Couldn't load the list. Try again.";
+export const SAVE_FALLBACK = "Couldn't save the account. Try again.";
+
+export type DbError = { code?: string; message?: string };
 
 /** An ended session is said in its own words (and signs the person out); the database's refusals keep their plain words; anything else is a failure to try again. */
-function refusal(error: DbError, fallback: string): Error {
+export function refusal(error: DbError, fallback: string): Error {
   const ended = classifyApiError({ message: error.message ?? "", code: error.code }, "");
   if (ended.unauthenticated) return ended;
   switch (error.code) {
     case "PT404": return new AccountError("notFound", "This account isn't available.", error.code);
     case "PT423": return new AccountError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "22023": return new AccountError("invalid", error.message || fallback, error.code);
+    // A count the database's integer can't hold (the form's own rule says it first; this is for any other way in).
+    case "22003": return new AccountError("invalid", "Enter a number up to 2,147,483,647.", error.code);
     case "42501": return new AccountError("notAllowed", error.message || "You can't change this account.", error.code);
     default: return new AccountError("failed", fallback, error.code);
   }
@@ -371,30 +393,10 @@ export async function getAccountPage(firmId: string, accountId: string): Promise
     account: { ...fieldsOf(account as FieldsRow), status: account.status, owner: account.owner as { id: string; name: string } | null, sourcePartner: account.source_partner },
     canChange,
     tabs: {
-      contacts: {
-        count: tabs.contacts.count,
-        rows: tabs.contacts.rows.map((c) => ({
-          id: c.id, firstName: c.first_name, lastName: c.last_name, title: c.title, email: c.email, phone: c.phone, mobile: c.mobile, isMain: c.is_main, doNotEmail: c.do_not_email,
-        })),
-      },
-      opportunities: {
-        count: tabs.opportunities.count,
-        rows: tabs.opportunities.rows.map((o) => ({ id: o.id, name: o.name, stage: o.stage, targetStart: o.target_start, submissionId: o.submission_id })),
-      },
-      quotes: {
-        count: tabs.quotes.count,
-        rows: tabs.quotes.rows.map((q) => ({
-          id: q.id, submissionId: q.submission_id, opportunityId: q.opportunity_id, opportunityName: q.opportunity_name, peoName: q.peo_name, status: q.status,
-          sentOn: q.sent_on, quoteReceivedOn: q.quote_received_on, quoteExpiresOn: q.quote_expires_on,
-        })),
-      },
-      activity: {
-        count: tabs.activity.count,
-        rows: tabs.activity.rows.map((a) => ({
-          type: a.type, entryKey: a.entry_key, at: a.at, changeId: a.change_id, kind: a.kind, who: a.who, whoKind: a.who_kind, field: a.field,
-          from: a.from_value as Json | null, to: a.to_value as Json | null, recordTable: a.record_table, recordId: a.record_id, recordName: a.record_name,
-        })),
-      },
+      contacts: { count: tabs.contacts.count, rows: tabs.contacts.rows.map(contactOf) },
+      opportunities: { count: tabs.opportunities.count, rows: tabs.opportunities.rows.map(opportunityOf) },
+      quotes: { count: tabs.quotes.count, rows: tabs.quotes.rows.map(quoteOf) },
+      activity: { count: tabs.activity.count, rows: tabs.activity.rows.map(activityOf) },
       files: { count: tabs.files.count, rows: tabs.files.rows.map(fileOf) },
     },
   };
@@ -402,6 +404,8 @@ export async function getAccountPage(firmId: string, accountId: string): Promise
 
 /** How many files a page of the Files list holds when the caller does not say. The database allows 100 at most. */
 export const ACCOUNT_FILES_PAGE_SIZE = 50;
+/** How many rows a page of a tab holds when the caller does not say. The database allows 100 at most. */
+export const ACCOUNT_TAB_PAGE_SIZE = 50;
 
 /**
  * An account's files that passed the virus check, newest first: a page of them and how many there are in all. Null when the person may not see the account.
@@ -423,6 +427,51 @@ export async function listAccountFiles(
   const parsed = tab(fileSchema).safeParse(data);
   if (!parsed.success) throw new AccountError("failed", "Couldn't load the files. Try again.");
   return { count: parsed.data.count, rows: parsed.data.rows.map(fileOf) };
+}
+
+/** The tabs that list more than the page's first five rows through `listAccountTab`. Files has `listAccountFiles`. */
+export interface AccountTabRows {
+  contacts: ContactRow;
+  opportunities: OpportunityRow;
+  quotes: QuoteRow;
+  activity: ActivityRow;
+}
+export type AccountListTab = keyof AccountTabRows;
+
+/** What the Activity tab is narrowed to: everything, or only calls, notes, tasks or the record's changes. The database narrows it, so counts and pages are of what is shown. */
+export const ACTIVITY_FILTERS = ["all", "calls", "notes", "tasks", "changes"] as const;
+export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number];
+
+const tabShapes = {
+  contacts: [tab(contactSchema), contactOf],
+  opportunities: [tab(opportunitySchema), opportunityOf],
+  quotes: [tab(quoteSchema), quoteOf],
+  activity: [tab(activitySchema), activityOf],
+} as const;
+
+/**
+ * A page of one tab of an account's page, from the first row or any later one: the rows the page holds the first five of, and how many the tab holds in all.
+ * Null when the person may not see the account. Rows that are not the agreed shape for the tab are a failure, never a list with something missing.
+ */
+export async function listAccountTab<T extends AccountListTab>(
+  firmId: string,
+  accountId: string,
+  which: T,
+  options: { limit?: number; offset?: number; filter?: ActivityFilter } = {},
+): Promise<TabRows<AccountTabRows[T]> | null> {
+  const { data, error } = await supabase.rpc("account_tab", {
+    p_firm_id: firmId,
+    p_account_id: accountId,
+    p_tab: which === "activity" && options.filter && options.filter !== "all" ? `activity_${options.filter}` : which,
+    p_limit: options.limit ?? ACCOUNT_TAB_PAGE_SIZE,
+    p_offset: options.offset ?? 0,
+  });
+  if (error) throw refusal(error, LIST_FALLBACK);
+  if (data === null) return null;
+  const [shape, rowOf] = tabShapes[which] as unknown as [ReturnType<typeof tab>, (row: unknown) => AccountTabRows[T]];
+  const parsed = shape.safeParse(data);
+  if (!parsed.success) throw new AccountError("failed", LIST_FALLBACK);
+  return { count: parsed.data.count, rows: (parsed.data.rows as unknown[]).map(rowOf) };
 }
 
 /**

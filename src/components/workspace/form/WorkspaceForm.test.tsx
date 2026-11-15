@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { createMemoryRouter, RouterProvider, useNavigate } from "react-router-dom";
@@ -83,6 +83,48 @@ describe("a workspace form in a dialog", () => {
 });
 
 // A new record's form usually goes to the record's page the moment it is saved. That move must not be asked about.
+// Catches: a second submit (Enter in a field while the first save is still out) making a second record, and a form discarded while it saves (the call still
+// lands, and onSaved then moves the page for a form the person closed).
+describe("a workspace form while it is saving", () => {
+  const pending = () => {
+    let done: (v?: unknown) => void = () => {};
+    save.mockReset().mockImplementation(() => new Promise((r) => { done = r; }));
+    return () => done();
+  };
+
+  it("sends one save when it is submitted twice in a row", async () => {
+    const finish = pending();
+    render(<DialogForm />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Account name"), "Harborview");
+    // Two submits in the same breath (a disabled button does not stop Enter, nor a second submit event).
+    fireEvent.submit(screen.getByRole("form", { name: "New account" }));
+    fireEvent.submit(screen.getByRole("form", { name: "New account" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(save).toHaveBeenCalledTimes(1);
+    finish();
+    expect(await screen.findByText("Form closed")).toBeInTheDocument();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays open when Escape, Cancel or the close button is used while the save is out", async () => {
+    const finish = pending();
+    render(<DialogForm />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Account name"), "Harborview");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Form open")).toBeInTheDocument();
+    expect(screen.getByLabelText("Account name")).toHaveValue("Harborview");
+    finish();
+    expect(await screen.findByText("Form closed")).toBeInTheDocument();
+  });
+});
+
 describe("a workspace form that moves on when it is saved", () => {
   const NavigatingForm = () => {
     const navigate = useNavigate();

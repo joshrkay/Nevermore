@@ -315,6 +315,14 @@ export const sameAddress = <K extends TableFields>(table: TableDefinition<K, nev
   return addressToSearch(plain(a)) === addressToSearch(plain(b));
 };
 
+/**
+ * Whether two addresses ask the same QUESTION of the table: the same view, filters and sort (the search and the page are only where in the answer the person is
+ * looking). What finishes late and rewrites the filters and sort in the address (a view saved or kept) is done as long as the person has not changed those,
+ * however they have searched or paged meanwhile.
+ */
+export const sameQuestion = <K extends TableFields>(table: TableDefinition<K, never, never>, a: TableAddress<K>, b: TableAddress<K>): boolean =>
+  sameAddress(table, { ...a, search: "", page: 1 }, { ...b, search: "", page: 1 });
+
 /** What can change in an address: any part but `held`, and, for the filter row, which held filters stay (`heldFilters`, as written in the address). */
 export type AddressChange<K extends TableFields> = Partial<Omit<TableAddress<K>, "held">> & { heldFilters?: string[] };
 

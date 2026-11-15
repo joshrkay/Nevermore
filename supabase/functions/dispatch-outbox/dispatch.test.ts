@@ -1784,6 +1784,26 @@ describe("dispatching the email about a large or repeated export", () => {
     expect(deps.fail).toHaveBeenCalledWith("evt-export", "invalid_payload", null, 1, false);
   });
 
+  // Catches: an alert main's export_table queued (the table by its name, `table`, with no words for it) is marked dead, so the owners are
+  // never told. Two ways one reaches this dispatcher: it was claimed, and its payload read, before 20261118180000 rewrote it into Epic 3's
+  // shape; or this dispatcher was deployed before the migrations, while every alert main queued still had main's shape.
+  it("sends a claimed alert in main's shape, with the table in Epic 3's words, and does not mark it dead", async () => {
+    const { deps, sent } = harness();
+    const mainShape = {
+      member_email: "sam@firm-a.example", firm_name: "Acme Brokers", table: "referral_partners", row_count: 2,
+      exported_at: "2026-11-18T09:15:00Z", large: false, exports_in_hour: 3,
+    };
+    const summary = await dispatchEvents([exportAlertRow({ attempts: 2, payload: mainShape })], deps);
+    expect(summary).toEqual({ sent: 1, retrying: 0, dead: 0, unrecorded: 0, skipped: 0 });
+    expect(deps.fail).not.toHaveBeenCalled();
+    expect(deps.complete).toHaveBeenCalledWith("evt-export", "msg_1");
+    const { message } = sent[0];
+    expect(message.to).toEqual(FIRM_OWNERS);
+    expect(message.subject).toBe("sam@firm-a.example has made 3 exports from Acme Brokers in an hour");
+    expect(message.text).toContain("sam@firm-a.example exported Referral partners (2 rows) from Acme Brokers on 2026-11-18 09:15 UTC.");
+    expect(message.text).toContain("You are told because it is their third export in an hour.");
+  });
+
   // Catches: an event with no firm is looked up by a null id and told to nobody.
   it("gives up on an event that names no firm", async () => {
     const { deps, sent } = harness();

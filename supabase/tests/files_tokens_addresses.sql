@@ -147,10 +147,19 @@
 \i supabase/migrations/20261118170500_export_fixes.sql
 \i supabase/migrations/20261118171000_export_fixes_again.sql
 \i supabase/migrations/20261118180000_epic3_export_supersedes.sql
+\i supabase/migrations/20261118180500_epic3_export_pause.sql
 \i supabase/migrations/20261119090000_export.sql
 \i supabase/migrations/20261119090500_epic3_export_carried.sql
+\i supabase/migrations/20261119090600_epic3_export_pause_end.sql
 \i supabase/migrations/20261119100000_crm_records.sql
+\i supabase/migrations/20261119110000_chain_at_certification.sql
+\i supabase/migrations/20261119120000_bring_submissions_in.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119150000_create_account.sql
+\i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -235,6 +244,7 @@ DECLARE
   sid uuid;
   qid bigint;
 BEGIN
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity; -- the fixture puts a quote request on a draft that sits on no opportunity (CRM-Q1.3)
   FOREACH n IN ARRAY ARRAY['owner_a', 'agent_a', 'owner_b', 'agent_b', 'platform_admin', 'former_a', 'suspended_a', 'prospect_a', 'prospect_b'] LOOP
     PERFORM pg_temp.new_user(n);
   END LOOP;
@@ -260,6 +270,7 @@ BEGIN
     END LOOP;
     UPDATE public.quote_request_addresses SET revoked_at = now() WHERE quote_request_id = (SELECT id FROM fx_qr WHERE name = f || '_old');
   END LOOP;
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
 END $$;
 GRANT SELECT ON fx_qr TO authenticated, service_role;
 
@@ -331,7 +342,9 @@ DECLARE
   qid bigint;
   m bigint;
 BEGIN
+  ALTER TABLE public.quote_requests DISABLE TRIGGER quote_requests_has_opportunity; -- the fixture's intake is a draft with no opportunity (CRM-Q1.3)
   INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (pg_temp.id('intake_a'), 'Harbor PEO second', 'sent') RETURNING id INTO qid;
+  ALTER TABLE public.quote_requests ENABLE TRIGGER quote_requests_has_opportunity;
   PERFORM public.issue_quote_request_address(qid);
   INSERT INTO fx_qr VALUES ('a_live2', qid);
   m := (pg_temp.arrive('m-two-live-a', ARRAY[pg_temp.local_of('a_live'), pg_temp.local_of('a_live2')]) ->> 'message_id')::bigint;
