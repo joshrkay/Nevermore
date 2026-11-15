@@ -214,6 +214,7 @@
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261121090000_leads.sql
+\i supabase/migrations/20261121100000_create_lead.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1393,6 +1394,8 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
+  ('create_lead(p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for makes a lead of that firm, owned by its maker (or, by the level rule, by someone they may choose), New and Added by hand (CRM-L1.2a); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
   ('add_contact(p_account_id uuid, p_first_name text, p_last_name text, p_title text, p_email text, p_phone text, p_mobile text, p_owner_id uuid, p_is_main boolean, p_do_not_email boolean, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the account, adds a contact to it (owned by its maker or, by the level rule, by someone they may choose), taking over as the account''s one main contact when asked; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field or an owner the rules refuse'),
   ('move_contact(p_contact_id uuid, p_to_account_id uuid, p_confirm boolean, p_firm_id uuid)', 'own', NULL,
@@ -2007,6 +2010,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$'),
   ('create_account', 'advisor', 'by_id',
    $$SELECT public.create_account('Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
+  ('create_lead', 'advisor', 'by_id',
+   $$SELECT public.create_lead('Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
   ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
@@ -3826,6 +3831,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('create_account', 'firm_scoped', 'a current member of the firm the call acts for makes an account of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
+  ('create_lead', 'firm_scoped', 'a current member of the firm the call acts for makes a lead of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
   ('add_contact', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, adds a contact to it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
   ('move_contact', 'firm_scoped', 'a current member of the firm the call acts for moves a contact to another account of that firm by the level rule; another firm''s contact or account is as not there (4e)'),
   ('contact_move_choices', 'firm_scoped', 'the firm''s accounts a contact may be moved to, to a member of that firm who may see the contact (4e)'),
