@@ -210,6 +210,7 @@
 \i supabase/migrations/20261119170000_add_contact.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
 \i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261119230000_search_everywhere.sql
 SET client_min_messages = notice;
 
@@ -1357,6 +1358,14 @@ INSERT INTO callable VALUES
    'the count behind each view tab, for the accounts the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
   ('firm_member_choices(p_firm_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) reads the firm''s current members by id and name, for the Owner filter; 42501 for every other caller');
+-- CRM-C1.1 (20261119240000_contact_page.sql; supabase/tests/contact_page.sql): a contact's page, its calls, notes and tasks, and the save of its own fields.
+INSERT INTO callable VALUES
+  ('contact_page(p_firm_id uuid, p_contact_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the contact''s account, by level, reads the contact''s fields, its account, whether they may change or move it, and the opportunities it is the main contact of; NULL, the same as for a contact that is not there, for anyone else: another firm''s member, a platform admin, a former member, an agent whose level does not reach the account'),
+  ('contact_activity(p_firm_id uuid, p_contact_id uuid, p_filter text, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for a page of the contact''s calls, notes and tasks, newest first, narrowed to all, calls, notes or tasks; NULL for anyone who may not see the contact''s account'),
+  ('update_contact(p_contact_id uuid, p_first_name text, p_last_name text, p_title text, p_email text, p_phone text, p_mobile text, p_owner_id uuid, p_is_main boolean, p_do_not_email boolean, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for saves a contact''s own fields from a version, by the level rule on the contact''s own owner (an agent their own, a lead their team''s, an owner the firm''s, a contact with no owner an owner''s), taking over as the account''s one main contact when asked; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a contact whose account the caller may not see, the same as for one that is not there');
 -- CRM-A2.1a (20261119140000_account_page.sql; CRM-A2.1b's account_tab, 20261119145000_account_tab.sql; supabase/tests/account_page.sql): an account's page, its files, a submission's account and the save of an account's own fields.
 INSERT INTO callable VALUES
   ('account_page(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
@@ -1999,6 +2008,13 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('firm_labels', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.firm_labels({firm}))::text WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$');
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('account_owner_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.account_owner_choices({firm})$$);
+
+-- CRM-C1.1: a contact's page, its activity and its save ({acontact} is a contact of the firm's {acct}). The probe's version may be stale (a fixture moved it), which is an answer, not a refusal: the member passes every guard.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('contact_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.contact_page({firm}, {acontact}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('contact_activity', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.contact_activity({firm}, {acontact}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('update_contact', 'advisor', 'by_id',
+   $$SELECT public.update_contact({acontact}, 'Probe', 'Probe', NULL, 'probe@example.test', NULL, NULL, NULL, false, false, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": (false|true)');
 
 -- CRM-A2.2: adding a contact and moving one ({acontact} is a contact of the firm's {acct}). The move is probed onto the account it is already on, so the member
 -- gets past the firm and the sight of both rows and meets the same-account refusal (22023) and the call changes nothing; every other caller is refused as not
@@ -3775,6 +3791,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_activity_options', 'firm_scoped', 'the contacts, opportunities and members the log form offers, for someone who may see the account; nothing for anyone else (4e)'),
   ('activities_guard', 'trigger', 'the note rule (D-200) and the account rule of calls, notes and tasks, held by the table whoever writes: a note''s text only by its writer within a day, additions only appended, an account only by following its contact or opportunity; not executable through the API'),
   ('can_edit_activity', 'service_only', 'whether the caller may change a call, note or task as their own (a note: its writer within a day; else the writer, the person it is for or whoever the level rule gives the account); the reading functions answer it as can_edit; no API role can call it (D-200)');
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('contact_page', 'firm_scoped', 'a current member of the firm who may see the contact''s account (by level) reads its page; the same nothing for another firm''s contact as for one that is not there (4e)'),
+  ('contact_activity', 'firm_scoped', 'the same for a page of the contact''s calls, notes and tasks (4e)'),
+  ('update_contact', 'firm_scoped', 'a current member of the firm the call acts for saves a contact''s own fields from a version, when the level rule gives it them; refused for another firm''s contact as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),

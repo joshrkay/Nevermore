@@ -24,10 +24,12 @@ type Open =
 
 const SAVED_WORDS: Record<ActivityType, string> = { call: "Call logged", note: "Note added", task: "Task added" };
 
-export function AccountActionsProvider({ firmId, accountId, accountName, userId, person, canAdd, canMove, startWithContactForm = false, onStarted, children }: {
+export function AccountActionsProvider({ firmId, accountId, accountName, userId, person, canAdd, canMove, alsoRefresh, startWithContactForm = false, onStarted, children }: {
   firmId: string; accountId: string; accountName: string; userId: string | null; person?: string; canAdd: boolean;
   /** Whether a contact may be offered a move: the person may change the account. */
   canMove: boolean;
+  /** Another key whose queries are asked again with the account's own: a contact's page keeps its lists under the contact (CRM-C1.1), not under the account it is on now. */
+  alsoRefresh?: readonly unknown[];
   /** Opens the Add a contact form as the page arrives ("Save and add a contact" on New account, CRM-A1.2), once; `onStarted` says it has been (the address is cleaned). */
   startWithContactForm?: boolean;
   onStarted?: () => void;
@@ -40,7 +42,12 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
   }, []);
   const queryClient = useQueryClient();
   // Every list of the account is asked again: a new row belongs in the Activity tab, its count and the Overview, and a task's state in each.
-  const refresh = useCallback(() => void queryClient.invalidateQueries({ queryKey: accountKey(firmId, accountId) }), [queryClient, firmId, accountId]);
+  const alsoKey = alsoRefresh?.join("\u0000");
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: accountKey(firmId, accountId) });
+    if (alsoRefresh) void queryClient.invalidateQueries({ queryKey: alsoRefresh });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key's own text stands for it
+  }, [queryClient, firmId, accountId, alsoKey]);
   const actions = useMemo<AccountActions>(() => ({
     canAdd,
     log: (kind, contactId = null) => setOpen({ mode: "log", kind, contactId }),
@@ -86,7 +93,12 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
           firmId={firmId}
           contact={{ id: open.contact.id, name: [open.contact.firstName, open.contact.lastName].filter(Boolean).join(" ") }}
           onClose={close}
-          onMoved={refresh}
+          // The account the contact left and the one it joined both list it (and its calls, notes and tasks): each is asked again, not only the one on screen.
+          onMoved={(moved) => {
+            refresh();
+            void queryClient.invalidateQueries({ queryKey: accountKey(firmId, moved.from.id) });
+            void queryClient.invalidateQueries({ queryKey: accountKey(firmId, moved.to.id) });
+          }}
         />
       )}
       {open?.mode === "add" && (
