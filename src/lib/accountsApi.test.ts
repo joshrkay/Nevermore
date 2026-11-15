@@ -219,21 +219,27 @@ describe("listFirmMembers", () => {
 
 // The database refuses a field it doesn't list, so the browser's list must be the database's (sync blocks in the migration).
 describe("the accounts table's fields agree with the database", () => {
+  const migrations = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort().map((f) => readFileSync(`supabase/migrations/${f}`, "utf8"));
   const sql = readFileSync("supabase/migrations/20261119130000_accounts_table_query.sql", "utf8");
+  // The newest migration that holds the block: a later migration that restates a function (the labels' field, 20261119210000) is the database's list now.
   const block = (name: string) => {
-    const m = sql.match(new RegExp(`--\\s*sync:begin ${name}\\s*\\n([\\s\\S]*?)--\\s*sync:end ${name}\\b`));
-    expect(m, `sync block ${name}`).not.toBeNull();
+    const re = new RegExp(`--\\s*sync:begin ${name}\\s*\\n([\\s\\S]*?)--\\s*sync:end ${name}\\b`);
+    const m = migrations.filter((x) => re.test(x)).map((x) => x.match(re)!).at(-1);
+    expect(m, `sync block ${name}`).toBeDefined();
     return m![1];
   };
+  // Until CRM-S3.7a puts the Label column and filter on the page, `labels` is the one field and column the database has that the page does not.
+  const NOT_ON_THE_PAGE_YET = ["labels"];
 
   it("names the same fields with the same kinds", () => {
     const server = Object.fromEntries([...block("accounts_fields").matchAll(/WHEN '(\w+)' THEN '(\w+)'/g)].map((m) => [m[1], m[2]]));
+    for (const f of NOT_ON_THE_PAGE_YET) delete server[f];
     expect(server).toEqual(ACCOUNT_FIELDS);
   });
 
   // The main contact is shown and never filtered or sorted (CRM-A1.1), so a field of it would be one the database refuses.
-  it("has no field for the main contact, and none for renewal or labels, which later epics build", () => {
-    expect(Object.keys(ACCOUNT_FIELDS).filter((f) => /contact|renewal|label/.test(f))).toEqual([]);
+  it("has no field for the main contact, and none for renewal, which a later epic builds", () => {
+    expect(Object.keys(ACCOUNT_FIELDS).filter((f) => /contact|renewal/.test(f))).toEqual([]);
   });
 
   it("lists the same sources, statuses and open stages, in the same order", () => {
@@ -247,8 +253,9 @@ describe("the accounts table's fields agree with the database", () => {
   it("has a row of the same columns as the database's, in its order", () => {
     const body = sql.match(/CREATE TYPE public\.accounts_row AS \(([\s\S]*?)\n\);/);
     expect(body).not.toBeNull();
-    const columns = body![1].split("\n").map((l) => l.trim().match(/^(\w+) /)?.[1]).filter((c): c is string => c !== undefined);
-    expect([...ACCOUNT_ROW_KEYS]).toEqual(columns);
+    const created = body![1].split("\n").map((l) => l.trim().match(/^(\w+) /)?.[1]).filter((c): c is string => c !== undefined);
+    const added = migrations.flatMap((x) => [...x.matchAll(/ALTER TYPE public\.accounts_row ADD ATTRIBUTE (\w+)/g)].map((m) => m[1]));
+    expect([...ACCOUNT_ROW_KEYS]).toEqual([...created, ...added].filter((c) => !NOT_ON_THE_PAGE_YET.includes(c)));
   });
 
   // Every filterable field is a column of the row, so a chip is always for something the page has.
