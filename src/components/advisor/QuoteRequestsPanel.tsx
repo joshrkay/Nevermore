@@ -2,8 +2,8 @@ import { useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
-import { failureWords, SaveFailed, useSaveFailure } from "@/components/workspace/form";
-import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
+import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { type PipelineStatus } from "@/data/advisor";
 import { hasNewMail } from "@/data/mailThread";
 import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
@@ -11,11 +11,11 @@ import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import {
   canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote,
-  QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress, stageToOffer,
+  QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
   type QuoteNoteKind,
 } from "@/data/quoteRequests";
 import {
-  addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, setStatus, updateQuoteRequest,
+  addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, updateQuoteRequest,
   type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
@@ -250,8 +250,6 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The send wasn't recorded. Check your connection and try again.");
   const sendButton = useRef<HTMLButtonElement>(null);
-  // The pipeline step offered after a send or a quote, until the advisor takes it or says not now.
-  const [offer, setOffer] = useState<PipelineStatus | null>(null);
   // The quote request whose answer is being recorded.
   const [answering, setAnswering] = useState<number | null>(null);
   // The quote request a note is being added to, and the note being corrected.
@@ -265,17 +263,6 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   const sameName = (a: string, b: string) => a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
   const isCurrentPeo = data.in_peo !== false && Boolean(peo) && Boolean(data.current_peo) && sameName(peo, data.current_peo ?? "");
 
-  const move = async (to: PipelineStatus) => {
-    setOffer(null);
-    try {
-      await setStatus(sessionId, to, "");
-      toast.success(`Status changed to ${PIPELINE_LABELS[to]}.`);
-      onChanged();
-    } catch (err) {
-      toast.error(failureWords(err, "The status wasn't changed. Check your connection and try again."));
-    }
-  };
-
   const send = async () => {
     if (!peo) return;
     setSaving(true);
@@ -283,7 +270,6 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
     try {
       await recordQuoteSend(sessionId, peo, sentOn);
       toast.success(`Recorded the send to ${peo}.`);
-      setOffer(stageToOffer("send", status));
       onChanged();
     } catch (err) {
       failure.failed(err);
@@ -295,15 +281,6 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   return (
     <section aria-labelledby="quote-requests-heading" className="border border-border rounded-xl p-5 space-y-4">
       <h2 id="quote-requests-heading" className="font-display text-lg font-bold">Quote requests</h2>
-      {offer && (
-        <div role="status" className="flex flex-wrap items-center gap-2 text-sm border border-primary/40 rounded-md p-2">
-          <span className="flex-1">Move the submission on?</span>
-          <button onClick={() => move(offer)} className="px-2 py-1 rounded-md bg-primary text-primary-foreground text-xs">
-            Move to {PIPELINE_LABELS[offer]}
-          </button>
-          <button onClick={() => setOffer(null)} className="px-2 py-1 rounded-md border border-border text-xs">Not now</button>
-        </div>
-      )}
       <ul className="space-y-3">
         {requests.map((r) => {
           const quote = r.status === "quoted" ? describeQuote(r) : "";
@@ -349,9 +326,8 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                 <AnswerForm
                   request={r}
                   onCancel={() => setAnswering(null)}
-                  onSaved={(answered) => {
+                  onSaved={() => {
                     setAnswering(null);
-                    setOffer(answered === "quoted" ? stageToOffer("quote", status) : null);
                     onChanged();
                   }}
                 />

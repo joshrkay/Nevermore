@@ -8,22 +8,29 @@ import type { Json } from "@/integrations/supabase/types";
 /** The tables that keep a history. A table is added here when the migration that attaches its trigger adds it to the database's list. */
 export type RecordHistoryTable = "referral_partners" | "accounts" | "contacts" | "opportunities";
 
-/** One entry of a record's history: its creation, or the change of one field. A value that was not there is null. */
+/**
+ * One entry of a record's history: its creation, the change of one field, or (an opportunity's only) a change of its stage, read from its submission's
+ * status history (D-413). A value that was not there is null.
+ */
 export type RecordHistoryEntry = {
   /** Random, never a number shared with other firms; a page starts after the last entry's `at` and `entryKey`. */
   entryKey: string;
   at: string;
   /** The fields changed by one save share this, so a screen can show them as one change. */
   changeId: string;
-  kind: "created" | "changed";
+  kind: "created" | "changed" | "stage_changed";
   /** A member's email, "Nevermore" (who at Nevermore is never shown, D-33) or "System". */
   who: string;
   whoKind: "member" | "nevermore" | "system";
-  /** The field changed; null for the creation. */
+  /** The field changed; "stage" for a stage change; null for the creation. */
   field: string | null;
-  /** The value as it was: a JSON string, number or boolean. A date is its ISO text. Null when there was no value. */
+  /** The value as it was: a JSON string, number or boolean. A date is its ISO text. Null when there was no value. A stage is its code (qualifying, intake_under_way, ready_to_send, in_market, quoted, won, lost). */
   from: Json | null;
   to: Json | null;
+  /** What made a stage change when no person chose it (ADR 0026): a send or a quote recorded. Null for every other entry and for a person's own move. */
+  cause: "quote_send" | "quote_recorded" | null;
+  /** The PEO of the quote request that caused it; null when there is no cause or that quote request is gone. */
+  causePeo: string | null;
 };
 
 export class RecordHistoryError extends Error {}
@@ -66,6 +73,8 @@ export async function listRecordHistory(
     field: row.field,
     from: row.from_value,
     to: row.to_value,
+    cause: row.cause as RecordHistoryEntry["cause"],
+    causePeo: row.cause_peo,
   }));
   const last = entries[entries.length - 1];
   return { entries, next: entries.length === limit && last ? { at: last.at, entryKey: last.entryKey } : null };
