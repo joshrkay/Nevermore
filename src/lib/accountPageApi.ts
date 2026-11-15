@@ -16,7 +16,7 @@ export const OPPORTUNITY_STAGES = ["qualifying", "intake_under_way", "ready_to_s
 export type OpportunityStage = (typeof OPPORTUNITY_STAGES)[number];
 
 /** An account is a prospect account or a client (D-197). */
-export type AccountStatus = "prospect" | "client";
+export type AccountStatus = "prospect" | "client" | "former_client";
 
 /** Where an account came from, set by the product and never edited (D-211). */
 export const ACCOUNT_SOURCES = ["employer_intake", "added_by_hand", "new_quote", "lead", "import"] as const;
@@ -251,7 +251,7 @@ const fieldsShape = z.object({
 export const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
 
 const detailsSchema = fieldsShape.extend({
-  status: z.enum(["prospect", "client"]),
+  status: z.enum(["prospect", "client", "former_client"]),
   owner: z.object({ id: z.string().min(1), name: z.string() }).nullable(),
   source_partner: nullableText,
 });
