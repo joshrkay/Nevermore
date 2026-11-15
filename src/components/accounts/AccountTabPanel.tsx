@@ -87,7 +87,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
 
   return (
     <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef} seeAll={tab === "contacts" ? <AddContactButton /> : undefined}>
-      {query.isError && <RefreshFailed what={NOUNS[tab]} onRetry={() => void query.refetch()} retrying={query.isFetching} />}
+      <RefreshFailed what={NOUNS[tab]} failed={query.isError} onRetry={() => void query.refetch()} retrying={query.isFetching} />
       {filters}
       {contactNote && <p role="status" className="mb-3 text-sm text-muted-foreground">{contactNote}</p>}
       {tabBody(tab, data, contactId, emptyWords(tab, page, filter))}

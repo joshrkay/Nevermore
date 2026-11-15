@@ -11,7 +11,7 @@ import { forget, pressed } from "./retryLanding";
  *
  * `what` is the plural noun with its article ("the submissions"); a page that places this itself gives `retrying` from the query.
  */
-export function RefreshFailed({ what, onRetry, retrying, className }: { what: string; onRetry: () => void; retrying: boolean; className?: string }) {
+export function RefreshFailed({ what, failed, onRetry, retrying }: { what: string; failed: boolean; onRetry: () => void; retrying: boolean }) {
   const button = useRef<HTMLButtonElement>(null);
   const whenGone = useRef<(() => void) | null>(null);
   const [asked, setAsked] = useState(false);
@@ -20,26 +20,36 @@ export function RefreshFailed({ what, onRetry, retrying, className }: { what: st
     if (!retrying) setAsked(false);
   }, [retrying]);
   // If the note goes while its button still had focus (the refresh worked), focus goes to what stays.
+  useEffect(() => {
+    if (!failed) {
+      whenGone.current?.();
+      whenGone.current = null;
+    }
+  }, [failed]);
   useEffect(() => () => whenGone.current?.(), []);
   const trying = asked && retrying;
   return (
-    <div role="status" className={className ?? "mb-3 flex flex-wrap items-center gap-x-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm"}>
-      <span>We couldn't refresh {what}. What's below may be out of date.</span>
-      <button
-        ref={button}
-        type="button"
-        aria-disabled={trying || undefined}
-        onClick={() => {
-          if (trying) return;
-          setAsked(true);
-          whenGone.current = pressed(button.current!, "main", what);
-          onRetry();
-          setTimeout(() => { if (button.current?.isConnected) forget(what); }, 0);
-        }}
-        className="min-h-11 px-2 text-primary underline hover:text-primary/90"
-      >
-        {trying ? "Trying again…" : "Try again"}
-      </button>
+    <div role="status" aria-label="List refresh">
+      {failed && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+          <span>We couldn't refresh {what}. What's below may be out of date.</span>
+          <button
+            ref={button}
+            type="button"
+            aria-disabled={trying || undefined}
+            onClick={() => {
+              if (trying) return;
+              setAsked(true);
+              whenGone.current = pressed(button.current!, "main", what);
+              onRetry();
+              setTimeout(() => { if (button.current?.isConnected) forget(what); }, 0);
+            }}
+            className="min-h-11 px-2 text-primary underline hover:text-primary/90"
+          >
+            {trying ? "Trying again…" : "Try again"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

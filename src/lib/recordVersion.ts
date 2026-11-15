@@ -58,3 +58,9 @@ export function readSaveAnswer<Row extends { version: number }, Current>(
   }
   return null;
 }
+
+/**
+ * Whether a save's answer is the conflict. Reads the `conflict` flag itself and narrows by it, so a form does not have to guess from which other
+ * key is present (the app does not compile with strict null checks, which turns off narrowing on a literal flag).
+ */
+export const isConflict = <Answer extends { conflict: boolean }>(answer: Answer): answer is Extract<Answer, { conflict: true }> => answer.conflict === true;

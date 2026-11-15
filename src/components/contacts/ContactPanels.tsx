@@ -88,7 +88,7 @@ export function ContactActivity({ firmId, contactId }: { firmId: string; contact
   }
   return (
     <ListPanel id="contact-activity" heading={heading} count={data.count} seeAll={addNote}>
-      {query.isError && <RefreshFailed what="the calls, notes and tasks" onRetry={() => void query.refetch()} retrying={query.isFetching} />}
+      <RefreshFailed what="the calls, notes and tasks" failed={query.isError} onRetry={() => void query.refetch()} retrying={query.isFetching} />
       {filters}
       {data.rows.length === 0 ? <EmptyLine>{EMPTY_WORDS[filter]}</EmptyLine> : <Rows caption="The contact's calls, notes and tasks" columns={activityColumns} rows={data.rows} rowKey={(r) => r.entryKey} />}
       {query.hasNextPage && (

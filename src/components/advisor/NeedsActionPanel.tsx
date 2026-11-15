@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { BellRing, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { SaveFailed, useSaveFailure } from "@/components/workspace/form";
+import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { NEEDS_ACTION_LABEL, NEEDS_ACTION_NOTE_MAX } from "@/data/advisor";
 import { setNeedsAction, type NeedsAction } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
@@ -21,6 +21,7 @@ const NeedsActionPanel = ({ sessionId, prospectUserId, needsAction, onChanged }:
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure(`The change wasn't saved. Check your connection and try again. What you typed is still here.`);
+  const offlineSave = useOfflineSave();
   const saveButton = useRef<HTMLButtonElement>(null);
   const on = needsAction.on;
 
@@ -76,9 +77,11 @@ const NeedsActionPanel = ({ sessionId, prospectUserId, needsAction, onChanged }:
         className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
       />
       <SaveFailed message={failure.message} returnFocusTo={saveButton} />
+      {offlineSave.reason}
       <button
         ref={saveButton}
-        onClick={save}
+        onClick={offlineSave.guard(save)}
+        {...offlineSave.buttonProps}
         disabled={saving}
         className={`w-full flex items-center justify-center gap-2 text-sm font-medium py-2 rounded-md disabled:opacity-50 ${
           on ? "border border-border hover:bg-muted" : "bg-warning text-warning-foreground hover:bg-warning/90"
