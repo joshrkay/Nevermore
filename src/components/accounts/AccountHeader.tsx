@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { AccountDetails } from "@/lib/accountPageApi";
 import { useAccountActions } from "./useAccountActions";
 import { employeesWords, initialsOf, locationOf, STATUS_LABELS } from "@/data/accountPage";
@@ -11,7 +12,7 @@ import { TAB_IDS, TAB_LABELS } from "./accountColumns";
  * Email and New opportunity are not shown (D-186). Log a call and Add a task (CRM-E1.5) are offered only where there are actions to take: not in a Nevermore
  * support session (ADR 0024) and not on an archived account, so nothing here is a button that does nothing (D-24).
  */
-export function AccountHeader({ account }: { account: AccountDetails }) {
+export function AccountHeader({ account, menu }: { account: AccountDetails; menu?: ReactNode }) {
   const actions = useAccountActions();
   const facts = [
     account.industry,
@@ -33,6 +34,7 @@ export function AccountHeader({ account }: { account: AccountDetails }) {
           </div>
           <p className="mt-1 text-sm text-muted-foreground break-words">{facts.join(" · ")}</p>
         </div>
+        {menu && <div className="ml-auto shrink-0">{menu}</div>}
       </div>
       {actions?.canAdd && (
         <div data-account-actions className="mt-4 flex flex-wrap gap-2">
