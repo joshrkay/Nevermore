@@ -213,6 +213,7 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120120000_spot_a_duplicate.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1389,6 +1390,10 @@ INSERT INTO callable VALUES
    'the accounts of the firm a contact could be moved to by those rules (seen and changeable, live, not where it is), at most 25, to a member of that firm who may see the contact; 42501 for anyone else, PT404 for a contact the caller may not see'),
   ('add_contact_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'an account''s name, whether it is archived and its main contact, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see'),
+  ('duplicate_account_check(p_firm_id uuid, p_name text, p_website text, p_state text)', 'own', NULL,
+   'the firm''s accounts that may be the same business as the one being typed (D-193), to a member of that firm: those the caller may see by the level rule in full, those they may not as a mask that says only that one exists and whom to ask; 42501 for anyone who is no member of that firm'),
+  ('duplicate_contact_check(p_firm_id uuid, p_email text)', 'own', NULL,
+   'the firm''s contacts with the email being typed, to a member of that firm: those on an account the caller may see in full, the rest as a mask that says only that one exists and whom to ask; 42501 for anyone who is no member of that firm'),
   ('account_owner_choices(p_firm_id uuid)', 'own', NULL,
    'the firm''s current people the caller may make an account for, by the level rule (an agent themselves, a lead their teams, an owner everyone), by id and name, to a member of that firm; 42501 for anyone else'),
   ('archive_account(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
@@ -2028,7 +2033,11 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('contact_move_choices', 'advisor', 'by_id',
    $$SELECT count(*)::text FROM public.contact_move_choices({firm}, {acontact}, '')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:'),
   ('add_contact_context', 'advisor', 'by_id',
-   $$SELECT jsonb_typeof(public.add_contact_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+   $$SELECT jsonb_typeof(public.add_contact_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('duplicate_account_check', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.duplicate_account_check({firm}, 'Probe', NULL, 'OR'))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('duplicate_contact_check', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.duplicate_contact_check({firm}, 'probe@example.test'))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
 
 -- CRM-E1.5: calls, notes and tasks ({anote} is a note on the firm's account, {atask} a task on it, both written by the superuser as fixtures). The member
 -- is the owner of that account, who may change anything on it.
@@ -3777,6 +3786,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('make_intake_chain', 'service_only', 'makes the account, contact and opportunity of one certified intake, in that intake''s firm, or answers the ones that are there; runs for any intake by id, so no API role can call it: the certification''s trigger and the bringing in of existing submissions (CRM-Q1.3) do'),
   ('find_duplicate_account', 'service_only', 'the firm''s earliest account that may be the same business (D-193), by id of the firm; reads every account of the firm whoever may see it, so no API role can call it: a caller decides what to show'),
+  ('duplicates_of_account', 'service_only', 'the firm''s accounts that may be the same business as one described (D-193), each with why, by id of the firm; reads every account of the firm whoever may see it, so no API role can call it: the check and the chain decide what to show'),
+  ('duplicates_of_contact', 'service_only', 'the firm''s contacts with a given email (D-193), by id of the firm; reads every contact of the firm whoever may see it, so no API role can call it: the check decides what to show'),
+  ('duplicate_who_to_ask', 'service_only', 'the names of whom to ask about a record the caller may not see: its owner, or the firm''s owners; answers for any firm by id, so no API role can call it: the check asks it only for a record the caller may not see'),
   ('chain_at_certification', 'trigger', 'after an intake is certified, in the same transaction, makes its chain: not executable through the API');
 
 -- CRM-Q1.3 (20261119120000_bring_submissions_in.sql; supabase/tests/bring_submissions_in.sql): the existing submissions brought in, and the rule that every submission and quote request sits on an opportunity.
@@ -3810,6 +3822,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('move_contact', 'firm_scoped', 'a current member of the firm the call acts for moves a contact to another account of that firm by the level rule; another firm''s contact or account is as not there (4e)'),
   ('contact_move_choices', 'firm_scoped', 'the firm''s accounts a contact may be moved to, to a member of that firm who may see the contact (4e)'),
   ('add_contact_context', 'firm_scoped', 'an account''s name, archived state and main contact, to a member of the firm who may see the account (4e)'),
+  ('duplicate_account_check', 'firm_scoped', 'the firm''s accounts that may be the same business as the one being typed, to a member of the firm the call acts for: those the caller may see in full, the rest as a mask; another firm''s accounts are never matched (4e)'),
+  ('duplicate_contact_check', 'firm_scoped', 'the firm''s contacts with the email being typed, to a member of the firm the call acts for: those on an account the caller may see in full, the rest as a mask (4e)'),
   ('account_owner_choices', 'firm_scoped', 'the firm''s current people the caller may make an account for, by the level rule, to a member of that firm (4e)'),
   ('archive_account', 'firm_scoped', 'a current member of the firm the call acts for archives an account by the level rule; refused for another firm''s account as for one that is not there (4e)'),
   ('restore_account', 'firm_scoped', 'the same for restoring an archived account (4e)'),
