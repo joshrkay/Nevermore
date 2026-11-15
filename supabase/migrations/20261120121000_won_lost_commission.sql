@@ -308,6 +308,22 @@ ALTER TABLE public.opportunities
 COMMENT ON COLUMN public.opportunities.lost_reason IS 'Why the search was lost (glossary: Lost reason), kept while it is lost and cleared by a reopen (the history keeps it): stayed_with_current_provider, price, went_direct, no_decision or other.';
 COMMENT ON COLUMN public.opportunities.lost_note IS 'What the person said about the loss; required for the reason other, at most 500 characters.';
 
+-- History and version: the history's list of tables gets commission_payments added to whatever it holds when this runs. This comes before
+-- anything here that names a table to the history (record_track below): a migration runs as one transaction, and PL/pgSQL keeps a checked
+-- name's domain test for the rest of the transaction, so a name added after the first such call would still be refused.
+DO $$
+DECLARE
+  names text[];
+BEGIN
+  SELECT COALESCE(array_agg(m[1] ORDER BY m[1]), '{}') INTO names
+  FROM pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z0-9_]+)''', 'g') AS m
+  WHERE c.contypid = 'public.record_history_table'::regtype AND c.conname = 'record_history_table_known';
+  IF NOT 'commission_payments' = ANY (names) THEN names := array_append(names, 'commission_payments'); END IF;
+  ALTER DOMAIN public.record_history_table DROP CONSTRAINT record_history_table_known;
+  EXECUTE format('ALTER DOMAIN public.record_history_table ADD CONSTRAINT record_history_table_known CHECK (VALUE IN (%s))',
+    (SELECT string_agg(quote_literal(x), ', ' ORDER BY x) FROM unnest(names) x));
+END $$;
+
 -- Tracked fields (history and version) are added to what the table tracks when this runs, read from its version trigger, so a field another story added to
 -- the list since 20261120090000 is kept and a restated copy of an older list cannot drop it. Calling record_track again replaces its triggers with themselves.
 CREATE FUNCTION pg_temp.track_more(p_table regclass, p_name text, p_more text[]) RETURNS void LANGUAGE plpgsql AS $$
@@ -639,20 +655,7 @@ GRANT SELECT ON public.commission_payments TO authenticated, service_role;
 CREATE POLICY commission_payments_visible ON public.commission_payments FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM public.accounts a WHERE a.id = commission_payments.account_id AND public.can_see_firm_record(a.firm_id, a.owner_id)));
 
--- History and version: the history's list of tables gets the new name added to whatever it holds when this runs.
-DO $$
-DECLARE
-  names text[];
-BEGIN
-  SELECT COALESCE(array_agg(m[1] ORDER BY m[1]), '{}') INTO names
-  FROM pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z0-9_]+)''', 'g') AS m
-  WHERE c.contypid = 'public.record_history_table'::regtype AND c.conname = 'record_history_table_known';
-  IF NOT 'commission_payments' = ANY (names) THEN names := array_append(names, 'commission_payments'); END IF;
-  ALTER DOMAIN public.record_history_table DROP CONSTRAINT record_history_table_known;
-  EXECUTE format('ALTER DOMAIN public.record_history_table ADD CONSTRAINT record_history_table_known CHECK (VALUE IN (%s))',
-    (SELECT string_agg(quote_literal(x), ', ' ORDER BY x) FROM unnest(names) x));
-END $$;
-
+-- (Its name was added to the history's list of tables near the top of this file.)
 SELECT public.record_track('public.commission_payments', 'commission_payments', ARRAY['id'], ARRAY['received_on', 'amount', 'note']);
 
 -- The history's two questions and the closing plan are taught the new table by adding a line to each as it stands when this runs (read with
