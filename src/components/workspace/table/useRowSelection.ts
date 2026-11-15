@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type { TableFields } from "@/lib/tableQuery";
 import { hasHeld, queryFor, type TableAddress } from "./address";
 import type { TableDefinition } from "./columns";
@@ -29,6 +29,8 @@ export interface RowSelection<Row> {
   /** "Select all N that match". */
   selectAllMatching: () => void;
   clear: () => void;
+  /** The header's checkbox, so a control that goes away can hand focus to it. */
+  pageBox: MutableRefObject<HTMLInputElement | null>;
   /** Names a row's checkbox for a screen reader. */
   rowLabel: (row: Row) => string;
 }
@@ -41,29 +43,9 @@ interface Held {
 }
 const NOTHING: Held = { scope: null, all: false, ids: [] };
 
-const storageKey = (firmId: string | null, tableId: string) => `nevermore:selection:${firmId ?? "none"}:${tableId}`;
-
-// A selection survives a refresh of the browser's page, for as long as the tab is open (sessionStorage); where the browser refuses storage it is simply not kept.
-function readStored(key: string): Held {
-  try {
-    const parsed: unknown = JSON.parse(window.sessionStorage.getItem(key) ?? "null");
-    if (parsed && typeof parsed === "object") {
-      const { scope, all, ids } = parsed as Record<string, unknown>;
-      if ((typeof scope === "string" || scope === null) && typeof all === "boolean" && Array.isArray(ids) && ids.every((i) => typeof i === "string")) return { scope: scope as string | null, all, ids: ids as string[] };
-    }
-  } catch { /* nothing kept */ }
-  return NOTHING;
-}
-function writeStored(key: string, held: Held) {
-  try {
-    if (held.all || held.ids.length > 0) window.sessionStorage.setItem(key, JSON.stringify(held));
-    else window.sessionStorage.removeItem(key);
-  } catch { /* not kept */ }
-}
-
 /**
  * The selection of one table's rows (CRM-S3.6). It belongs to the question on screen (the view, the filters and the search) and is ended by changing any of
- * them; sorting, paging and the table's own refreshes leave it alone, so it holds across pages. `rows` are the rows on the page now and `total` how many
+ * them; sorting, paging and the table's own refreshes (D-184) leave it alone, so it holds across pages. `rows` are the rows on the page now and `total` how many
  * match; `rowLabel` is the row's name for a screen reader.
  */
 export function useRowSelection<K extends TableFields, Row, Context>(
@@ -73,11 +55,12 @@ export function useRowSelection<K extends TableFields, Row, Context>(
   rowLabel: (row: Row) => string,
 ): RowSelection<Row> {
   const { firmId } = useFirmReady();
-  const key = storageKey(firmId, table.id);
-  const [held, setHeld] = useState<{ key: string; value: Held }>(() => ({ key, value: readStored(key) }));
-  // The firm becomes known after the first render inside the shell: read what that firm's tab kept.
-  if (held.key !== key) setHeld({ key, value: readStored(key) });
-  const value = held.key === key ? held.value : readStored(key);
+  // Kept in this page's state only (D-43: nothing is kept in the browser's storage): it lasts through sorting, paging and the table's own refreshes, and is gone
+  // when the page is left or reloaded. It belongs to the firm it was made in.
+  const key = firmId ?? "none";
+  const [held, setHeld] = useState<{ key: string; value: Held }>({ key, value: NOTHING });
+  const value = held.key === key ? held.value : NOTHING;
+  const pageBox = useRef<HTMLInputElement | null>(null);
 
   // What the selection is about. Nothing is judged while the address holds what the table can't read yet (its views are still loading): ending a kept selection then would lose it.
   const scope = hasHeld(address) ? null : JSON.stringify([address.view, queryFor(table, address).filters, address.search]);
@@ -88,7 +71,6 @@ export function useRowSelection<K extends TableFields, Row, Context>(
     if (stale) set({ ...NOTHING, scope });
     else if (scope !== null && value.scope === null && (value.all || value.ids.length > 0)) set({ ...value, scope });
   }, [stale, scope, value, set]);
-  useEffect(() => writeStored(key, live), [key, live]);
 
   const rows = useMemo(() => page?.rows ?? [], [page]);
   const total = page?.total ?? 0;
@@ -105,6 +87,7 @@ export function useRowSelection<K extends TableFields, Row, Context>(
     total,
     rowsOnPage: keys.length,
     rowLabel,
+    pageBox,
     isSelected: (row) => live.all || chosen.has(table.rowKey(row)),
     // Leaving one row out of "every row that matches" leaves the rest of the page selected (there is no list of exceptions to carry to the database).
     toggle: (row) => {
@@ -119,6 +102,10 @@ export function useRowSelection<K extends TableFields, Row, Context>(
       else set({ scope: under, all: false, ids: [...live.ids, ...keys.filter((k) => !chosen.has(k))] });
     },
     selectAllMatching: () => set({ scope: under, all: true, ids: [] }),
-    clear: () => set({ scope: under, all: false, ids: [] }),
+    // Clear is a button that goes away with the selection: focus moves to the header's checkbox, which is always there.
+    clear: () => {
+      set({ scope: under, all: false, ids: [] });
+      pageBox.current?.focus();
+    },
   };
 }

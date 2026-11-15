@@ -35,8 +35,6 @@ interface Props {
   address?: Record<string, string>;
   /** The records selected (CRM-S3.6), to export only them (the database takes at most 1,000). Left out, every row that matches `filters`. */
   ids?: string[];
-  /** The button's words; "Export" by default. */
-  label?: string;
 }
 
 /**
@@ -46,7 +44,7 @@ interface Props {
  * page (the authenticator's code, or signing in again on this device), and the export is asked again with the same filters.
  * Nevermore support is offered no download (ADR 0024): where the button was, one plain line says so, and nothing is asked of the database.
  */
-export function ExportControl({ firmId, table, columns, filters = {}, address = {}, ids, label = "Export" }: Props) {
+export function ExportControl({ firmId, table, columns, filters = {}, address = {}, ids }: Props) {
   const off = useDownloadsOff();
   const { signOut } = useAuth();
   const [, setParams] = useSearchParams();
@@ -126,7 +124,7 @@ export function ExportControl({ firmId, table, columns, filters = {}, address = 
         className="min-h-11 flex items-center gap-2 border border-border text-sm px-4 rounded-md hover:bg-muted disabled:opacity-50"
       >
         {busy && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-        {busy ? "Exporting…" : label}
+        {busy ? "Exporting…" : "Export"}
       </button>
     </div>
   );

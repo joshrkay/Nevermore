@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes, useLocation, useParams } from "react-router-dom";
 import type { AccountRow } from "@/lib/accountsApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
-import { blobBytes, blobText } from "@/test/blob";
-import { allStatuses, expectStatusesOutsideBusy } from "@/test/loading";
 // Selecting rows on the Accounts page (story CRM-S3.6, screens 35 and 36): the checkboxes, the page, "Select all N that match" and the bar.
-// filters (Owner, State, Employees), the page's states, the way into an account, the Columns menu and the Export button.
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "dana@example.com", app_metadata: { providers: ["email"] } }, signOut }) }));
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => ({ status: "none" }) }));
@@ -71,7 +68,7 @@ const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
       <WorkspaceContext.Provider value={ws}>
         <MemoryRouter initialEntries={[url]}>
           <Routes>
-            <Route path="/accounts" element={<><AccountsPage /><LocationProbe /></>} />
+            <Route path="/accounts" element={<><AccountsPage /><LocationProbe /><Link to="/accounts?filter=status:any_of:prospect">Other filter</Link></>} />
             <Route path="/accounts/:id" element={<ShowId />} />
           </Routes>
         </MemoryRouter>
@@ -100,7 +97,6 @@ const pageBox = () => screen.getByRole("checkbox", { name: "Select all accounts 
 const bar = () => screen.queryByRole("region", { name: "Selected rows" });
 
 beforeEach(() => {
-  window.sessionStorage.clear();
   listAccounts.mockResolvedValue({ rows: [row(), second, third], total: 375 });
 });
 
@@ -214,16 +210,55 @@ describe("selecting rows on the Accounts page", () => {
     expect(within(bar()!).getByText("1 selected")).toBeInTheDocument();
   });
 
-  // Catches: a selection lost by reloading the browser's page.
-  it("keeps the selection when the page is opened again", async () => {
+  // Catches: the table's own 60-second refresh dropping the selection (D-144, D-184), or the rows coming back unticked.
+  it("keeps the selection through the table's 60-second refresh", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderAt();
+      await screen.findByRole("link", { name: "Kestrel Software" });
+      await user.click(check("Select Kestrel Software"));
+      const asks = listAccounts.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+      await waitFor(() => expect(listAccounts.mock.calls.length).toBeGreaterThan(asks));
+      expect(check("Select Kestrel Software")).toBeChecked();
+      expect(within(bar()!).getByText("1 selected")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Catches: Clear removing the focused button and dropping focus to the page.
+  it("puts focus on the header's checkbox after Clear", async () => {
     const user = userEvent.setup();
     renderAt();
     await screen.findByRole("link", { name: "Kestrel Software" });
     await user.click(check("Select Kestrel Software"));
-    cleanup();
+    await user.click(within(bar()!).getByRole("button", { name: "Clear" }));
+    expect(pageBox()).toHaveFocus();
+  });
+
+  // Catches: "Select all N that match" removing the focused button and dropping focus to the page.
+  it("puts focus on 'Clear selection' after 'Select all 375 that match', and on the header's checkbox after that", async () => {
+    const user = userEvent.setup();
     renderAt();
     await screen.findByRole("link", { name: "Kestrel Software" });
-    expect(check("Select Kestrel Software")).toBeChecked();
+    await user.click(pageBox());
+    await user.click(screen.getByRole("button", { name: "Select all 375 that match" }));
+    expect(screen.getByRole("button", { name: "Clear selection" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(pageBox()).toHaveFocus();
+  });
+
+  // Catches: a status region that arrives with its words (often not announced): it must be on the page before anything is selected.
+  it("keeps one status region on the page, empty until rows are selected", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Kestrel Software" });
+    const status = screen.getAllByRole("status").find((e) => e.classList.contains("sr-only") && !e.textContent && !e.querySelector("button"))!;
+    expect(status).toBeDefined();
+    await user.click(check("Select Kestrel Software"));
+    expect(status).toHaveTextContent("1 selected");
   });
 
   // Catches: a selection that outlives the question it was made for (rows no longer on screen would be changed by a later bulk action).
@@ -237,23 +272,24 @@ describe("selecting rows on the Accounts page", () => {
     expect(check("Select Kestrel Software")).not.toBeChecked();
   });
 
-  it("clears the selection when the filters change in the address", async () => {
+  // Catches: clearing that only works across a remount: the filter is changed inside the app, with the page mounted.
+  it("clears the selection when the filters change, with the page mounted", async () => {
     const user = userEvent.setup();
     renderAt("/accounts?filter=status:any_of:client");
     await screen.findByRole("link", { name: "Kestrel Software" });
     await user.click(check("Select Kestrel Software"));
     expect(bar()).not.toBeNull();
-    cleanup();
-    renderAt("/accounts?filter=status:any_of:prospect");
-    await screen.findByRole("link", { name: "Kestrel Software" });
-    expect(bar()).toBeNull();
+    // The filter row gives way to the bar while rows are selected, so the filter changes as Back or a link changes it: in the address.
+    await user.click(screen.getByRole("link", { name: "Other filter" }));
+    await waitFor(() => expect(where()).toContain("prospect"));
+    await waitFor(() => expect(bar()).toBeNull());
     expect(check("Select Kestrel Software")).not.toBeChecked();
   });
 
   // Catches: Export offered in the bar to Nevermore support, who can look and not take (ADR 0024).
   it("offers Nevermore support no Export in the bar", async () => {
     const user = userEvent.setup();
-    renderAt("/accounts", workspace({ isSupport: true, role: "Support" } as Partial<Workspace>));
+    renderAt("/accounts", workspace({ isSupport: true, role: "Nevermore support" }));
     await screen.findByRole("link", { name: "Kestrel Software" });
     await user.click(check("Select Kestrel Software"));
     expect(within(bar()!).queryByRole("button", { name: "Export" })).toBeNull();

@@ -59,11 +59,10 @@ const AccountsPage = () => {
         </div>
         {firmId && hasRows && selection.count === 0 && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={exportFilters} />}
       </div>
-      {selection.count > 0 ? (
-        <SelectionBar selection={selection} noun={table.noun}>
-          {firmId && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={selectedFilters} {...(selection.all ? {} : { ids: selection.ids })} />}
-        </SelectionBar>
-      ) : (<>
+      <SelectionBar selection={selection} noun={table.noun}>
+        {firmId && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={selectedFilters} {...(selection.all ? {} : { ids: selection.ids })} />}
+      </SelectionBar>
+      {selection.count === 0 && (<>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3 mb-3">
         <SearchBox value={address.search} minChars={table.searchMinChars} placeholder="Search accounts, contacts, emails" onSearch={(term) => change({ search: term })} />
         <div className="flex items-center gap-3">

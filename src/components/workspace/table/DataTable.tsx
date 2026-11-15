@@ -88,12 +88,18 @@ export function DataTable<K extends TableFields, Row, Context>({ table, context,
                     type="checkbox"
                     aria-label={`Select all ${table.noun.plural} on this page`}
                     checked={selection.pageState === "all"}
-                    ref={(el) => { if (el) el.indeterminate = selection.pageState === "some"; }}
-                    disabled={rows.length === 0}
-                    onChange={selection.togglePage}
+                    ref={(el) => {
+                      selection.pageBox.current = el;
+                      if (el) el.indeterminate = selection.pageState === "some";
+                    }}
+                    // With no rows there is nothing to select (D-143): still in the tab order, saying why, and doing nothing.
+                    aria-disabled={rows.length === 0 || undefined}
+                    aria-describedby={rows.length === 0 ? "select-page-unavailable" : undefined}
+                    onChange={rows.length === 0 ? undefined : selection.togglePage}
                     className="h-4 w-4"
                   />
                 </label>
+                {rows.length === 0 && <span id="select-page-unavailable" className="sr-only">Available when the list has rows</span>}
               </th>
             )}
             {columns.map((column, index) => {
