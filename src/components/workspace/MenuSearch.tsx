@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
+import { searchTermFor } from "@/components/workspace/table/address";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { STAGE_LABELS } from "@/data/accountPage";
@@ -73,11 +75,13 @@ const Group = ({ label, group, onChoose, seeAll }: { label: string; group: Searc
     </section>
   );
 
-const squeeze = (typed: string) => typed.trim().replace(/\s+/g, " ");
+/** What is searched: whole characters, at most the 200 the database keeps (D-240), runs of spaces as one. */
+const squeeze = (typed: string) => searchTermFor(typed.replace(/\s+/g, " "), 0);
 
 /** The search box with its results. It sits in the menu, so it is mounted for every workspace page and holds the New account form it offers. */
 export default function MenuSearch() {
-  const { firm, person } = useWorkspace();
+  const { firm, person, isSupport } = useWorkspace();
+  const { signOut } = useAuth();
   const firmId = firm?.id ?? null;
   const navigate = useNavigate();
   const { setOpenMobile } = useSidebar();
@@ -99,11 +103,12 @@ export default function MenuSearch() {
     return () => clearTimeout(timer);
   }, [typed, term]);
 
-  // Going to another page ends the search; so does a click elsewhere or Escape.
+  // Going to another page ends the search; so does a click elsewhere or Escape (D-621): each empties and closes it.
+  const end = () => { setOpen(false); setTyped(""); setTerm(""); };
   useEffect(() => { setOpen(false); setTyped(""); setTerm(""); }, [pathname, here]);
   useEffect(() => {
     if (!open) return;
-    const away = (e: MouseEvent) => { if (root.current && !root.current.contains(e.target as Node)) setOpen(false); };
+    const away = (e: MouseEvent) => { if (root.current && !root.current.contains(e.target as Node)) { setOpen(false); setTyped(""); setTerm(""); } };
     document.addEventListener("mousedown", away);
     return () => document.removeEventListener("mousedown", away);
   }, [open]);
@@ -112,8 +117,13 @@ export default function MenuSearch() {
   const found = useQuery({ queryKey: ["menu-search", firmId, term], queryFn: () => searchRecords(firmId as string, term), enabled: !!firmId && term !== "" && open, retry: false, staleTime: 10_000 });
   const recent = useQuery({ queryKey: [...RECENT_RECORDS_KEY, firmId], queryFn: () => myRecentRecords(firmId as string), enabled: !!firmId && open && !typing, retry: false, staleTime: 0 });
 
+  // A lapsed session signs the person out, as every failed load does (LoadFailed).
+  const lapsed = [found.error, recent.error].some((e) => (e as Partial<SearchError> | null)?.unauthenticated);
+  useEffect(() => { if (lapsed) void signOut("expired"); }, [lapsed, signOut]);
+
   if (!firmId) return null;
-  const finish = () => { setOpen(false); setTyped(""); setTerm(""); };
+  // Choosing a result ends the search and closes the menu sheet at phone width, even when the result is the page already shown.
+  const finish = () => { end(); setOpenMobile(false); };
 
   const result = found.data;
   const waiting = typing && !found.isError && (term !== squeeze(typed) || found.isPending);
@@ -122,7 +132,7 @@ export default function MenuSearch() {
   const failure = typing && found.isError ? (found.error instanceof SearchError ? found.error.message : "Couldn't search just now. Try again.") : null;
 
   return (
-    <div ref={root} className="relative px-3 pb-2" onKeyDown={(e) => { if (e.key === "Escape" && open) setOpen(false); }}>
+    <div ref={root} className="relative px-3 pb-2" onKeyDown={(e) => { if (e.key === "Escape" && open) end(); }}>
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-sidebar-foreground/70" aria-hidden="true" />
         <label htmlFor="menu-search" className="sr-only">Search accounts, contacts, opportunities and quotes</label>
@@ -164,12 +174,12 @@ export default function MenuSearch() {
             <div className="px-2 py-2">
               <p className="text-sm font-medium">Nothing matches</p>
               <p className="pb-2 text-xs text-sidebar-foreground/70">No account, contact, opportunity or quote holds &ldquo;{term}&rdquo;.</p>
-              <Button type="button" size="sm" className="h-9 rounded-md" onClick={() => setMaking(true)}>New account</Button>
+              {!isSupport && <Button type="button" size="sm" className="h-9 rounded-md" onClick={() => setMaking(true)}>New account</Button>}
             </div>
           )}
         </div>
       )}
-      {making && (
+      {making && !isSupport && (
         <NewAccountDialog
           firmId={firmId}
           person={person}

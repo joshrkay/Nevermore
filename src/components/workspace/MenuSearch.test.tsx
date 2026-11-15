@@ -10,7 +10,8 @@ import { WorkspaceContext, type Workspace } from "./workspaceContext";
 // (supabase/tests/search_everywhere.sql); here the client answers and the box draws it.
 
 vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut: vi.fn() }) }));
+const auth = vi.hoisted(() => ({ signOut: vi.fn() }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut: auth.signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { searchRecords: vi.fn(), myRecentRecords: vi.fn() };
@@ -36,9 +37,9 @@ const Where = () => {
   const l = useLocation();
   return <span data-testid="where">{l.pathname + l.search}</span>;
 };
-const renderBox = () => render(
+const renderBox = (over: Partial<Workspace> = {}) => render(
   <QueryClientProvider client={new QueryClient()}>
-    <WorkspaceContext.Provider value={workspace}>
+    <WorkspaceContext.Provider value={{ ...workspace, ...over }}>
       <MemoryRouter initialEntries={["/accounts"]}>
         <SidebarProvider>
           <Routes><Route path="*" element={<><MenuSearch /><Where /></>} /></Routes>
@@ -55,6 +56,7 @@ beforeEach(() => {
   client.searchRecords.mockReset().mockResolvedValue(found());
   client.myRecentRecords.mockReset().mockResolvedValue([]);
   create.createAccount.mockReset();
+  auth.signOut.mockReset();
   create.listAccountOwners.mockReset().mockResolvedValue([]);
 });
 afterEach(() => cleanup());
@@ -236,5 +238,58 @@ describe("the menu's search box: nothing matches", () => {
     await act(async () => answer(found()));
     expect(await within(results()).findByRole("region", { name: "Accounts" })).toBeInTheDocument();
     expect(within(results()).queryByText("Nothing matches")).not.toBeInTheDocument();
+  });
+});
+
+describe("the menu's search box: review fixes", () => {
+  it("Escape empties and closes the search, so focusing again starts afresh", async () => {
+    const user = userEvent.setup();
+    renderBox();
+    await user.type(box(), "harbor");
+    await pause();
+    await within(results()).findByText("Harborview Dental Group");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: "Search results" })).not.toBeInTheDocument();
+    expect(box()).toHaveValue("");
+  });
+
+  it("a click elsewhere empties the search too", async () => {
+    const user = userEvent.setup();
+    renderBox();
+    await user.type(box(), "harbor");
+    await user.click(screen.getByTestId("where"));
+    expect(box()).toHaveValue("");
+  });
+
+  it("offers no New account in a read-only support session", async () => {
+    client.searchRecords.mockResolvedValue(found({ query: "zzz", accounts: none, contacts: none, opportunities: none, quotes: none }));
+    const user = userEvent.setup();
+    renderBox({ isSupport: true });
+    await user.type(box(), "zzz");
+    await pause();
+    expect(await within(results()).findByText("Nothing matches")).toBeInTheDocument();
+    expect(within(results()).queryByRole("button", { name: "New account" })).not.toBeInTheDocument();
+  });
+
+  it("signs the person out when the search says the session has ended", async () => {
+    const { SearchError } = await import("@/lib/searchApi");
+    client.searchRecords.mockRejectedValue(new SearchError("Your session has ended.", "PGRST301", true));
+    const user = userEvent.setup();
+    renderBox();
+    await user.type(box(), "harbor");
+    await pause();
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledWith("expired"));
+  });
+
+  it("searches at most the 200 characters the database keeps, and shows its answer", async () => {
+    const long = "h".repeat(250);
+    client.searchRecords.mockImplementation(async (_f: string, q: string) => found({ query: q }));
+    const user = userEvent.setup();
+    renderBox();
+    await user.click(box());
+    await user.paste(long);
+    await pause();
+    await waitFor(() => expect(client.searchRecords).toHaveBeenCalledWith("f1", "h".repeat(200)));
+    expect(await within(results()).findByText("Harborview Dental Group")).toBeInTheDocument();
   });
 });
