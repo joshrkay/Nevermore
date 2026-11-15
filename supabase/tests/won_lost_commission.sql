@@ -944,6 +944,10 @@ BEGIN
   o := pg_temp.id('o_rlp1');
   PERFORM pg_temp.move('rlp1', 'sent_to_carrier');   -- an advisor put it back to send to another PEO
   PERFORM pg_temp.is(pg_temp.code(pg_temp.lost('acme_agent1', 'o_rlp1', 'price', 'Too dear')), 'ok', 'lost from In market');
+  -- marking and clearing "needs action" after the loss writes lost-to-lost rows to the status history: they are not moves into Lost, so they are not where it
+  -- was lost from (a reopening read from them would leave it Lost)
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.set_submission_needs_action(%L, true, %L)::text', i, 'Call back'))), 'ok', 'needs action marked after the loss');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.as_call('acme_agent1', 'acme-brokers', format('SELECT public.set_submission_needs_action(%L, false)::text', i))), 'ok', 'and cleared');
   r := pg_temp.reopen('acme_agent1', 'o_rlp1');
   PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'reopened: ' || r);
   PERFORM pg_temp.is(pg_temp.pipeline('rlp1'), 'sent_to_carrier', 'back to the stage it was lost from');

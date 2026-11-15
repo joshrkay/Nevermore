@@ -58,6 +58,11 @@ export type RecordHistoryPage = {
  * One page of a record's history, newest first. `key` names the record within its firm (a referral partner's code, an account's, a contact's or an opportunity's id; several columns are a compact JSON array of the parts). The page is full when
  * `next` is set, so the caller asks again with it until it is null.
  */
+// A cause the app doesn't know is read as none, and so is its PEO: an entry never names a PEO without a cause to put it in.
+function causeOf(cause: string | null, peo: string | null): { cause: RecordHistoryCause | null; causePeo: string | null } {
+  return cause !== null && CAUSES.includes(cause) ? { cause: cause as RecordHistoryCause, causePeo: peo } : { cause: null, causePeo: null };
+}
+
 export async function listRecordHistory(
   firmId: string,
   table: RecordHistoryTable,
@@ -86,8 +91,7 @@ export async function listRecordHistory(
     field: row.field,
     from: row.from_value,
     to: row.to_value,
-    cause: row.cause !== null && CAUSES.includes(row.cause) ? (row.cause as RecordHistoryCause) : null,
-    causePeo: row.cause_peo,
+    ...causeOf(row.cause, row.cause_peo),
   }));
   const last = entries[entries.length - 1];
   return { entries, next: entries.length === limit && last ? { at: last.at, entryKey: last.entryKey } : null };

@@ -51,11 +51,11 @@ describe("the quote taken (D-473)", () => {
     expect(page.entries[0]).toMatchObject({ field: "stage", from: "quoted", to: "won", cause: "quote_taken", causePeo: "Justworks" });
   });
 
-  // Break caught: a cause the app does not know is shown as if it were one it does.
+  // Break caught: a cause the app does not know is shown as if it were one it does, or keeps its PEO with no cause to name it.
   it("reads a cause it does not know as none", async () => {
     rpc.mockResolvedValue({ data: [{ ...entry, cause: "something_new" }], error: null });
     const page = await listRecordHistory("f1", "opportunities", "o1");
-    expect(page.entries[0]?.cause).toBeNull();
+    expect(page.entries[0]).toMatchObject({ cause: null, causePeo: null });
   });
 
   // Break caught: the cause is shown as a code ("quote_taken"), or without the PEO, or a missing PEO leaves a hole in the sentence.

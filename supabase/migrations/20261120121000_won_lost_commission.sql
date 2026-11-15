@@ -517,8 +517,9 @@ BEGIN
       target := 'quoted';
       UPDATE public.submission_workflow SET status = target, won_quote_request_id = NULL, updated_at = now(), updated_by = auth.uid() WHERE session_id = cur.intake_id;
     ELSE
+      -- The last move INTO Lost: marking or clearing needs action writes lost-to-lost rows, which are not where it was lost from.
       SELECT x.from_status INTO target FROM public.submission_status_history x
-      WHERE x.session_id = cur.intake_id AND x.to_status = 'lost' ORDER BY x.id DESC LIMIT 1;
+      WHERE x.session_id = cur.intake_id AND x.to_status = 'lost' AND x.from_status IS DISTINCT FROM 'lost' ORDER BY x.id DESC LIMIT 1;
       target := COALESCE(target, 'submitted');
       UPDATE public.submission_workflow SET status = target, updated_at = now(), updated_by = auth.uid() WHERE session_id = cur.intake_id;
       UPDATE public.opportunities SET lost_reason = NULL, lost_note = NULL WHERE id = cur.id RETURNING version INTO version_now;
