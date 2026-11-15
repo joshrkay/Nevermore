@@ -1054,6 +1054,7 @@ $$;
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261120090000_opportunity_stage.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

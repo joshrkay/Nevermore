@@ -1419,12 +1419,16 @@ export type Database = {
         Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
         Returns: {
           at: string
+          // 'quote_send' or 'quote_recorded' on a stage change a send or a quote made (ADR 0026); null otherwise.
+          cause: string | null
+          // The PEO of the quote request that caused it.
+          cause_peo: string | null
           change_id: string
           entry_key: string
           field: string | null
           // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
           from_value: Json | null
-          // 'created' (no field, no values) or 'changed' (one field).
+          // 'created' (no field, no values), 'changed' (one field) or 'stage_changed' (an opportunity's stage, field 'stage').
           kind: string
           to_value: Json | null
           who: string

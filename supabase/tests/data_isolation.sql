@@ -208,6 +208,7 @@
 \i supabase/migrations/20261119150000_create_account.sql
 \i supabase/migrations/20261119160000_account_archive_delete_owner.sql
 \i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261120090000_opportunity_stage.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -766,7 +767,7 @@ INSERT INTO matrix VALUES
   ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1,"agent_b":1,"platform_admin":1,"former_agent":1,"suspended_agent":1}', NULL),
   ('public.intake_consents',                            '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":3,"B":1}'),
   ('public.submission_workflow',                        '{}', '{"A":7,"B":3}'),
-  ('public.submission_status_history',                  '{}', '{"A":10,"B":7}'),
+  ('public.submission_status_history',                  '{}', '{"A":11,"B":8}'),
   ('public.advisor_notes',                              '{}', '{"A":1,"B":1}'),
   ('public.advisor_field_reviews',                      '{}', '{"A":1,"B":1}'),
   ('public.advisor_review_events',                      '{}', '{"A":1,"B":1}'),
