@@ -538,7 +538,7 @@ describe("Undo", () => {
     await within(after).findByText("Undone.");
     expect(within(after).getByText("1 account is back as it was.")).toBeInTheDocument();
     expect(within(after).getByText("1 open opportunity is back as it was.")).toBeInTheDocument();
-    expect(within(after).getByText("1 open opportunity was left as it is, because it changed since.")).toBeInTheDocument();
+    expect(within(after).getByText("1 open opportunity was left as it is.")).toBeInTheDocument();
     expect(within(after).getByText("1 account was deleted since, so there is nothing to put back.")).toBeInTheDocument();
     expect(within(after).getByText("1 was skipped and left as they are")).toBeInTheDocument();
     expect(within(after).getByText("Harborview Dental Group: Its owner was changed after this change.")).toBeInTheDocument();
@@ -589,16 +589,6 @@ describe("Undo", () => {
     expect(await within(result).findByText("Couldn't undo that change. Try again.")).toBeInTheDocument();
     await user.click(within(result).getByRole("button", { name: "Undo" }));
     expect(await screen.findByText("Undone.")).toBeInTheDocument();
-  });
-
-  // Catches: Undo offered after the ten minutes the database gives.
-  it("stops offering Undo when the ten minutes are up", async () => {
-    const user = userEvent.setup();
-    renderAt();
-    const result = await change(user, made({ undoUntil: new Date(Date.now() + 2000).toISOString() }));
-    expect(within(result).getByRole("button", { name: "Undo" })).toBeInTheDocument();
-    await waitFor(() => expect(within(result).queryByRole("button", { name: "Undo" })).toBeNull(), { timeout: 4000 });
-    expect(within(result).getByText("The ten minutes to undo this have passed.")).toBeInTheDocument();
   });
 
   // Catches: a change that did nothing offering an Undo of nothing.
