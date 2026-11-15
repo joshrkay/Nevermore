@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { BulkChangeError, undoBulkChange, UNDO_WINDOW_MS, type SkippedAccount, type UndoOutcome } from "@/lib/bulkChangeApi";
 import type { BulkMade } from "./BulkChangeDialog";
-import { madeWords, opportunitiesLeftWords, plural, skippedLine, undoneWords } from "./bulkWords";
+import { differsWords, madeWords, opportunitiesLeftWords, plural, skippedLine, undoneWords, unavailableWords } from "./bulkWords";
 
 // What a bulk change did, and Undo for the ten minutes the database allows (story CRM-S3.7a, D-202): a line over the table that says what changed and which
 // accounts were skipped and why, with Undo; after an undo, what it put back and what it left, in words. It lives with the page, so leaving the page ends it
@@ -72,6 +72,8 @@ export function BulkResultBar({ firmId, made, extra, onUndone, onDismiss }: {
           <>
             <p className="font-semibold">{nothing ? "Nothing changed." : madeWords(made.action, outcome, made.withOpportunities)}</p>
             {opportunitiesLeftWords(outcome, made.withOpportunities) && <p>{opportunitiesLeftWords(outcome, made.withOpportunities)}</p>}
+            {differsWords(made.previewed, outcome) && <p className="font-medium">{differsWords(made.previewed, outcome)}</p>}
+            {outcome.unavailable > 0 && <p>{unavailableWords(outcome.unavailable)}</p>}
             {outcome.unchanged > 0 && <p>{plural(outcome.unchanged, "account was", "accounts were")} already as asked and stayed as {outcome.unchanged === 1 ? "it was" : "they were"}.</p>}
             {state.kind === "cannot" && <p className="text-destructive">{state.words}</p>}
             {!nothing && !canUndo && state.kind !== "cannot" && <p className="text-muted-foreground">The ten minutes to undo this have passed.</p>}

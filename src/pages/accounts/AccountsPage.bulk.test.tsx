@@ -190,6 +190,20 @@ describe("Change owner", () => {
     expect(await screen.findByText("Changed the owner to Marcus Hale on 2 accounts.")).toBeInTheDocument();
   });
 
+  // Catches (row 19, decision 10): an account that started matching between the check and the change being changed without a word on the result line.
+  it("says on the result line when the change reached other accounts than the check showed", async () => {
+    const user = userEvent.setup();
+    applyBulkChange.mockResolvedValue(made({ selected: 4, changed: 3 }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(barButton("Change owner"));
+    const d = await dialog();
+    await choose(user, d, "New owner", "Marcus Hale");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 accounts" }));
+    expect(await screen.findByText("1 more account matched by the time the change was made, so 3 changed, not the 2 the check showed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
   // Catches: a change that leaves the dialog open or the selection behind, a result that says nothing, or one with no Undo (ten minutes).
   it("says what changed, names what was skipped, ends the selection and offers Undo", async () => {
     const user = userEvent.setup();
@@ -241,6 +255,41 @@ describe("Change owner", () => {
     await choose(user, d, "New owner", "Marcus Hale");
     expect(await within(d).findByText("That is 1,250 accounts. A bulk change takes at most 1,000: narrow the selection and try again.")).toBeInTheDocument();
     await user.click(within(d).getByRole("button", { name: "Change accounts" }));
+    expect(applyBulkChange).not.toHaveBeenCalled();
+  });
+
+  // Catches: an owner change that only reaches open opportunities (the accounts already have that owner) refused as "nothing would change", and the preview saying so.
+  it("changes only the open opportunities when the accounts already have that owner, and says so", async () => {
+    const user = userEvent.setup();
+    previewBulkChange.mockResolvedValue(preview({ changed: 0, unchanged: 2, skipped: [], opportunities: { changed: 4, skipped: 0 } }));
+    applyBulkChange.mockResolvedValue(made({ changed: 0, unchanged: 2, skipped: [], opportunities: { changed: 4, skipped: 0 } }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(barButton("Change owner"));
+    const d = await dialog();
+    await choose(user, d, "New owner", "Marcus Hale");
+    expect(await within(d).findByText("This will change the owner of their 4 open opportunities.")).toBeInTheDocument();
+    expect(within(d).getByText("2 accounts already belong to that owner, so they stay as they are.")).toBeInTheDocument();
+    expect(within(d).queryByText("Nothing will change.")).toBeNull();
+    await user.click(within(d).getByRole("button", { name: "Change open opportunities" }));
+    await waitFor(() => expect(applyBulkChange).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Changed the owner of 4 open opportunities.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+  });
+
+  // Catches: the same case with the box unticked still making a change.
+  it("does nothing when only the opportunities would change and the box is unticked", async () => {
+    const user = userEvent.setup();
+    previewBulkChange.mockResolvedValue(preview({ changed: 0, unchanged: 2, skipped: [], opportunities: { changed: 4, skipped: 0 } }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(barButton("Change owner"));
+    const d = await dialog();
+    await choose(user, d, "New owner", "Marcus Hale");
+    await user.click(await within(d).findByLabelText("Also change the owner of their 4 open opportunities"));
+    expect(await within(d).findByText("Nothing will change.")).toBeInTheDocument();
+    await user.click(within(d).getByRole("button", { name: "Change accounts" }));
+    expect(await within(d).findByText("Nothing would change, so there is nothing to do.")).toBeInTheDocument();
     expect(applyBulkChange).not.toHaveBeenCalled();
   });
 

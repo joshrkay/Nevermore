@@ -26,6 +26,8 @@ export interface BulkMade {
   outcome: BulkOutcome;
   /** For an owner change: whether the open opportunities were taken along. */
   withOpportunities: boolean;
+  /** What the check showed, so the result can say when the change was not that (accounts that started or stopped matching in between). */
+  previewed: BulkOutcome;
 }
 
 const TITLES: Record<BulkKind, string> = { owner: "Change owner", field: "Set a field", label: "Add or remove a label", archive: "Archive" };
@@ -110,10 +112,12 @@ export function BulkChangeDialog({ firmId, kind, selection, count, onClose, onMa
       if (!previewed.current || previewed.current.key !== JSON.stringify(wanted)) throw new SaveRefused("Wait for the check above to finish, then try again.");
       const shown = previewed.current.outcome;
       if (shown.tooMany) throw new SaveRefused(tooManyWords(shown.selected));
-      if (shown.changed === 0) throw new SaveRefused("Nothing would change, so there is nothing to do.");
+      // An owner change whose accounts already have that owner still changes their open opportunities when the box is ticked.
+      const reaches = shown.changed + (sent.action === "owner" && sent.changeOpenOpportunities ? (shown.opportunities?.changed ?? 0) : 0);
+      if (reaches === 0) throw new SaveRefused("Nothing would change, so there is nothing to do.");
       try {
         const outcome = await applyBulkChange(firmId, sent, selection);
-        return { action: sent, outcome, withOpportunities: sent.action === "owner" && v.withOpen } satisfies BulkMade;
+        return { action: sent, outcome, withOpportunities: sent.action === "owner" && v.withOpen, previewed: shown } satisfies BulkMade;
       } catch (e) {
         if (e instanceof BulkChangeError) throw new SaveRefused(e.message);
         throw e;
@@ -151,7 +155,8 @@ export function BulkChangeDialog({ firmId, kind, selection, count, onClose, onMa
   const offerOpportunities = kind === "owner" && opportunities !== null && opportunities.changed + opportunities.skipped > 0;
   // The button says how many it will change, from the preview; with none to count (not checked yet, over the limit, nothing to do) it says what it is.
   const many = showing && !showing.tooMany && showing.changed > 0 ? accountsWords(showing.changed) : null;
-  const confirm = kind === "archive" ? (many ? `Archive ${many}` : "Archive accounts") : many ? `Change ${many}` : "Change accounts";
+  const onlyOpportunities = kind === "owner" && values.withOpen && showing && !showing.tooMany && showing.changed === 0 && (showing.opportunities?.changed ?? 0) > 0;
+  const confirm = onlyOpportunities ? "Change open opportunities" : kind === "archive" ? (many ? `Archive ${many}` : "Archive accounts") : many ? `Change ${many}` : "Change accounts";
 
   return (
     <Dialog open onOpenChange={(next) => { if (!next) api.requestClose(onClose); }}>
@@ -233,7 +238,7 @@ export function BulkChangeDialog({ firmId, kind, selection, count, onClose, onMa
             {kind !== "archive" && wanted === null && <p className="text-muted-foreground">Once you have chosen, this says exactly what will happen.</p>}
             {checking && <p role="status" className="text-muted-foreground">Checking what this will do…</p>}
             {refused && <p role="alert" className="text-destructive">{refused instanceof Error ? refused.message : "Couldn't check that change. Try again."}</p>}
-            {showing && wanted && <WhatWillHappen outcome={showing} action={wanted} />}
+            {showing && wanted && <WhatWillHappen outcome={showing} action={wanted} withOpen={values.withOpen} />}
           </div>
 
           {offerOpportunities && opportunities && (
@@ -259,12 +264,14 @@ export function BulkChangeDialog({ firmId, kind, selection, count, onClose, onMa
 const tooManyWords = (n: number) => `That is ${n.toLocaleString("en-US")} accounts. A bulk change takes at most 1,000: narrow the selection and try again.`;
 
 /** The preview's answer in words: how many change, how many stay as they are, and every skipped account by name and why. */
-function WhatWillHappen({ outcome, action }: { outcome: BulkOutcome; action: BulkAction }) {
+function WhatWillHappen({ outcome, action, withOpen }: { outcome: BulkOutcome; action: BulkAction; withOpen: boolean }) {
   if (outcome.tooMany) return <p role="alert" className="font-medium text-destructive">{tooManyWords(outcome.selected)}</p>;
   return (
     <div className="space-y-2">
       <p className="font-semibold">
-        {outcome.changed === 0 ? "Nothing will change." : `This will ${changeWords(spelled(action, outcome), outcome.changed, outcome.ownerName, false)}.`}
+        {outcome.changed === 0 && action.action === "owner" && withOpen && (outcome.opportunities?.changed ?? 0) > 0
+          ? `This will change the owner of their ${plural(outcome.opportunities?.changed ?? 0, "open opportunity", "open opportunities")}.`
+          : outcome.changed === 0 ? "Nothing will change." : `This will ${changeWords(spelled(action, outcome), outcome.changed, outcome.ownerName, false)}.`}
       </p>
       {outcome.unchanged > 0 && <p>{unchangedWords(outcome.unchanged, action)}</p>}
       {outcome.skipped.length > 0 && (

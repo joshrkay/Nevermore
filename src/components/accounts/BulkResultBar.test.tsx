@@ -14,8 +14,8 @@ const outcome = (over: Partial<BulkOutcome> = {}): BulkOutcome => ({
   changeId: "chg1", undoUntil: new Date(Date.now() + 600_000).toISOString(), ...over,
 });
 const undone = (over: Partial<UndoOutcome> = {}): UndoOutcome => ({ restored: 2, skipped: [], gone: 0, opportunities: { restored: 0, skipped: 0, gone: 0 }, ...over });
-const show = (o: BulkOutcome, withOpportunities = true) =>
-  render(<BulkResultBar firmId="f1" made={{ action: { action: "owner", ownerId: "u2", changeOpenOpportunities: true }, outcome: o, withOpportunities }} onUndone={() => undefined} onDismiss={() => undefined} />);
+const show = (o: BulkOutcome, withOpportunities = true, previewed: BulkOutcome = o) =>
+  render(<BulkResultBar firmId="f1" made={{ action: { action: "owner", ownerId: "u2", changeOpenOpportunities: true }, outcome: o, withOpportunities, previewed }} onUndone={() => undefined} onDismiss={() => undefined} />);
 
 afterEach(() => {
   cleanup();
@@ -33,6 +33,42 @@ describe("what the change left alone", () => {
   it("says nothing of opportunities that were not taken along", () => {
     show(outcome({ opportunities: { changed: 0, skipped: 1 } }), false);
     expect(screen.queryByText(/left as it is, because you can't change/)).toBeNull();
+  });
+});
+
+describe("accounts that dropped out while the change waited", () => {
+  // Catches: selected accounts deleted or hidden while the change waited for its locks being left out of what the line says (from the change's own answer).
+  it("counts the accounts that were no longer available, never naming them", () => {
+    show(outcome({ unavailable: 2 }));
+    expect(screen.getByText("2 selected accounts are no longer available to you, so they are left out.")).toBeInTheDocument();
+  });
+
+  it("says nothing of them when none dropped out", () => {
+    show(outcome());
+    expect(screen.queryByText(/no longer available/)).toBeNull();
+  });
+});
+
+describe("when the change is not what the check showed", () => {
+  // Catches (row 19, decision 10): "all that match" is the set when the change runs; a difference from the preview must be said, not hidden.
+  it("says more accounts matched, with what changed against what the check showed", () => {
+    show(outcome({ selected: 53, changed: 53 }), true, outcome({ selected: 50, changed: 50 }));
+    expect(screen.getByText("3 more accounts matched by the time the change was made, so 53 changed, not the 50 the check showed.")).toBeInTheDocument();
+  });
+
+  it("says fewer accounts matched", () => {
+    show(outcome({ selected: 48, changed: 48 }), true, outcome({ selected: 50, changed: 50 }));
+    expect(screen.getByText("2 fewer accounts matched by the time the change was made, so 48 changed, not the 50 the check showed.")).toBeInTheDocument();
+  });
+
+  it("says so when the same number was selected but fewer changed", () => {
+    show(outcome({ selected: 50, changed: 45, unchanged: 5 }), true, outcome({ selected: 50, changed: 50 }));
+    expect(screen.getByText("Things changed between the check and the change, so 45 changed, not the 50 the check showed.")).toBeInTheDocument();
+  });
+
+  it("says nothing when the answers match", () => {
+    show(outcome(), true, outcome());
+    expect(screen.queryByText(/the check showed/)).toBeNull();
   });
 });
 

@@ -81,8 +81,10 @@ export const unchangedWords = (n: number, action: BulkAction): string =>
 
 /** What a change that was made says, with the open opportunities it took along. */
 export function madeWords(action: BulkAction, outcome: BulkOutcome, withOpportunities: boolean): string {
-  const base = changeWords(spelled(action, outcome), outcome.changed, outcome.ownerName, true);
   const opp = withOpportunities && outcome.opportunities ? outcome.opportunities : null;
+  // An owner change that only reached open opportunities, the accounts already having that owner.
+  if (action.action === "owner" && outcome.changed === 0 && opp && opp.changed > 0) return `Changed the owner of ${plural(opp.changed, "open opportunity", "open opportunities")}.`;
+  const base = changeWords(spelled(action, outcome), outcome.changed, outcome.ownerName, true);
   const tail = opp && opp.changed > 0 ? `, and ${plural(opp.changed, "open opportunity", "open opportunities")}` : "";
   return `${base}${tail}.`;
 }
@@ -102,3 +104,15 @@ export const opportunitiesLeftWords = (outcome: BulkOutcome, withOpportunities: 
   const n = withOpportunities && outcome.opportunities ? outcome.opportunities.skipped : 0;
   return n > 0 ? `${plural(n, "open opportunity was", "open opportunities were")} left as ${n === 1 ? "it is" : "they are"}, because you can't change ${n === 1 ? "it" : "them"}.` : null;
 };
+
+/**
+ * Said on the result line when the change was not what the check showed. "All that match" is the set when the change runs, so accounts may have started or
+ * stopped matching in between (row 19's decision 10); Undo applies to what actually changed. Null when the answers agree.
+ */
+export function differsWords(previewed: BulkOutcome, made: BulkOutcome): string | null {
+  if (previewed.selected === made.selected && previewed.changed === made.changed && previewed.unchanged === made.unchanged && previewed.skipped.length === made.skipped.length) return null;
+  const was = `${made.changed.toLocaleString("en-US")} changed, not the ${previewed.changed.toLocaleString("en-US")} the check showed.`;
+  if (made.selected > previewed.selected) return `${plural(made.selected - previewed.selected, "more account", "more accounts")} matched by the time the change was made, so ${was}`;
+  if (made.selected < previewed.selected) return `${plural(previewed.selected - made.selected, "fewer account", "fewer accounts")} matched by the time the change was made, so ${was}`;
+  return `Things changed between the check and the change, so ${was}`;
+}
