@@ -113,7 +113,7 @@ const CONVERSATION_QUEUE: Queue = { claim: "claim_conversation_mail", complete: 
 const PEO_QUEUE: Queue = { claim: "claim_peo_mail", complete: "complete_peo_mail", fail: "fail_peo_mail" };
 
 /**
- * Where a PEO message's body holds its link: public.peo_link_marker(). The stored body never holds the token (D-67x); the link goes in its place
+ * Where a PEO message's body holds its link: public.peo_link_marker(). The stored body never holds the token (D-673); the link goes in its place
  * here, as the email is built, from the token the outbox event alone carries.
  */
 export const PEO_LINK_MARKER = "[the bundle link, sent in the email and not kept here]";

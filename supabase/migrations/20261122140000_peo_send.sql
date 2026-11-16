@@ -142,6 +142,8 @@ BEGIN
     'message_id', made.id,
     'company_name', (SELECT c.chamber_data ->> 'company_name' FROM public.chamber_certifications c WHERE c.session_id = p_session_id AND c.version = version_sent),
     'reference', (SELECT c.file_id FROM public.chamber_certifications c WHERE c.session_id = p_session_id AND c.version = version_sent)));
+  -- Seam for Q-2.1 (slice 6.10): the send's append-only registration (firm, PEO, the employer's FEIN or name and state, version, time) is written
+  -- here, in this transaction, once the message is recorded (D-679).
   RETURN jsonb_build_object('quote_request_id', req.id, 'message_id', made.id);
 END;
 $$;
@@ -165,7 +167,7 @@ AS $$
 $$;
 
 -- ---------- 5. The bundle link joins its message ----------
--- What the stored body keeps of the link (D-67x): never the token. The body holds this marker where the link goes; the send-mail function puts the link
+-- What the stored body keeps of the link (D-673): never the token. The body holds this marker where the link goes; the send-mail function puts the link
 -- in its place as it sends, from the token the outbox event alone carries.
 CREATE FUNCTION public.peo_link_marker()
 RETURNS text

@@ -989,7 +989,9 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.addNote).toHaveBeenCalledWith("s1", "Called the CFO"));
   });
 
-  describe("a save that fails (CRM-S2.3)", () => {
+  // Each renders the whole page and scans it by role: about 2 s alone, past the 5 s default under the full parallel run once each PEO card has its
+  // Send button (6.6), so these have more time.
+  describe("a save that fails (CRM-S2.3)", { timeout: 20_000 }, () => {
     // Catches: a failed save that says nothing beside the button (a toast that is gone in seconds), says the network's own words, clears what the person typed, or
     // leaves focus on the page where the button was.
     it("keeps a note's text, says in plain words beside its button that it was not saved, and puts focus back on the button", async () => {

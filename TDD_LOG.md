@@ -40,3 +40,35 @@ The `tdd` skill was the first tool call of this lane. One test, seen failing for
 | 34 | `SendToPeo.test.tsx` "with no mailbox, says so with a way to connect, sends nothing, and offers to send it from their own mail with the reply address in CC" | `Expected element to have text content: eaa-2026-0042.insperity.0123456789abcdef@` (the address offered had no domain) | green |
 | 35 | `PeoThreadPanel.test.tsx` "is marked as sent from the advisor's mailbox, with who it went to and whether it went" | `Unable to find an element with the text: Sent from your mailbox` | green |
 | 36 | `AdvisorSubmissionPage.test.tsx` "sends a PEO its bundle from its card, issuing the link from that PEO's plan for the quote request the send made" | `Unable to find an accessible element with the role "button" and name "Send to Justworks"` | green (two existing expectations updated: the card's buttons now end with "Send to Justworks"; issueBundleLink answers the link's id and token) |
+
+After merging `claude/admiring-keller-dd7w1a` twice (6.1 at ab74be46, then 6.4 at 8b919ee5): `peo_send.sql` loads 6.4's two migrations
+(`scripts/sqlMigrationOrder.test.ts`, red: "peo_send.sql reaches 20261122140000_peo_send.sql but does not load 20261122130000_conversation_replies.sql",
+then green); the composer uses 6.1's `useFirstSend` and `MailboxForWriting` instead of a seam. The page test's "a save that fails" block was given
+20 s per test: each renders the whole page (about 2 s alone) and timed out at 5 s under the full parallel run once each PEO card had its Send button.
+
+## Mutations (each rule broken; a test must go red)
+
+| Rule broken | Test that went red |
+|---|---|
+| send_to_peo without assert_peo_authorized | peo_send 2: `a PEO never authorized is refused gave ok` |
+| send_to_peo without assert_firm_writable | peo_send 3: `a support session gave PT412 ..., expected PT423` |
+| a superseded certification counts as current | peo_send 5: `answers changed since certifying gave ok` |
+| no mailbox check | peo_send 6: `no mailbox gave 23502 ...` |
+| no stage check | peo_send 9: `under review gave ok` |
+| no thread continued | peo_send 11: `In-Reply-To the message before gave <NULL>` |
+| the draft line left out of the block | peo_send 13: `the note, then the fixed block gave ...` |
+| any token joins a message | peo_send 14: `another link's token gave ok` |
+| another member may join a link | peo_send 15: `another member of the firm gave ok` |
+| claim without the link joined | peo_send 16: `a message with no link is not claimed gave t` |
+| token kept on the event after sending | peo_send 17: `and no longer holds the token gave t` |
+| the Outbox retry leaves the message failed | peo_send 19: `puts the message back in the queue gave failed` |
+| a revoked link still sent | peo_send 22: `it is not claimed gave t` |
+| a withdrawn PEO still sent | peo_send 23: `it is not claimed gave t` |
+| send-mail does not put the link in place of the marker | handler "a message to a PEO" |
+| send-mail completes a PEO message on the contacts' queue | handler "a message to a PEO" |
+| send-mail sends a PEO message with no token | handler "a message to a PEO with no link" (cycle 26) |
+
+## The gate
+
+`npm run lint` 0 errors (13 warnings, none in this slice's files); `npm run typecheck:functions` clean; `npm test` 281 files, 5904 tests passed;
+`npm run build` built; `supabase/tests/run.sh` on port 5435: all 94 SQL tests passed.
