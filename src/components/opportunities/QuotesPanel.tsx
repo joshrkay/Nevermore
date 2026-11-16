@@ -6,7 +6,7 @@ import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
 import { quoteCloseWords } from "@/data/opportunityClose";
 import { adminFeeWords, quoteStatusWords } from "@/data/opportunityPage";
 import type { OpportunityPage, OpportunityQuote } from "@/lib/opportunityPageApi";
-import { useStillNeeds } from "./useStillNeeds";
+import type { useStillNeeds } from "./useStillNeeds";
 
 // The quotes panel (screen 19, D-424): one row per quote request of the opportunity's intake. Each PEO opens the submission's page until the quote's own page
 // (Epic 5, D-403). The Emails column, Compare and Send to another PEO are off (D-402). What a PEO still needs loads as the panel's own read, not inside the
@@ -16,14 +16,16 @@ const muted = (words: string) => <span className="text-muted-foreground">{words}
 const notYet = muted("Not yet");
 const linkClass = "text-primary underline underline-offset-2 hover:text-primary/90";
 
-export function QuotesPanel({ firmId, page, closeReasons = {} }: {
-  firmId: string;
+export function QuotesPanel({ page, needs, action, closeReasons = {} }: {
   page: OpportunityPage;
+  /** The page's one read of the submission (D-1726). */
+  needs: ReturnType<typeof useStillNeeds>;
+  /** What sits beside the heading: Choose PEOs (D-1727). */
+  action?: React.ReactNode;
   /** By quote request id: why a closed quote closed (D-424, CRM-O1.3b). Empty until it is read. */
   closeReasons?: Readonly<Record<number, string | null>>;
 }) {
   const { quotes, intake } = page;
-  const needs = useStillNeeds(firmId, intake?.submissionId ?? null, quotes.length > 0);
   const day = today();
   const columns: Column<OpportunityQuote>[] = [
     { header: "PEO", cell: (q) => (intake ? <Link to={submissionPath(intake.submissionId)} className={linkClass}>{q.peoName}</Link> : q.peoName) },
@@ -43,7 +45,7 @@ export function QuotesPanel({ firmId, page, closeReasons = {} }: {
     },
   ];
   return (
-    <ListPanel id="opportunity-quotes" heading="Quotes" count={quotes.length}>
+    <ListPanel id="opportunity-quotes" heading="Quotes" count={quotes.length} seeAll={action}>
       {quotes.length === 0 ? (
         <EmptyLine>{intake ? "No quotes yet. Quotes appear when the opportunity is sent to a PEO." : "No quotes yet."}</EmptyLine>
       ) : (

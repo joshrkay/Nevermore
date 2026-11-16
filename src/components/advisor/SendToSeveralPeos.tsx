@@ -26,6 +26,10 @@ export interface SendToSeveralPeosProps {
   companyName: string;
   /** This page, to come back to after connecting a mailbox. */
   returnTo: string;
+  /** Open as soon as it is drawn (Choose PEOs on an opportunity's page opens it once the submission is read). */
+  startOpen?: boolean;
+  /** What the button that opens it says (Choose PEOs on an opportunity's page). Default: Send to several PEOs. */
+  openLabel?: string;
   /** After the sends, once any went. */
   onSent: () => void;
 }
@@ -55,7 +59,7 @@ interface Outcome {
  */
 const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   const id = useId();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(p.startOpen ?? false);
   const [step, setStep] = useState<Step>("choose");
   // Each PEO's composer read (peo_send_context): its people with an email; "failed" when it couldn't be read, which stops that PEO alone.
   const [contexts, setContexts] = useState<Record<string, PeoSendContext | "failed">>({});
@@ -163,7 +167,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="min-h-11 px-4 rounded-md border border-primary text-primary text-sm font-medium">
-        Send to several PEOs
+        {p.openLabel ?? "Send to several PEOs"}
       </button>
     );
   }

@@ -25,6 +25,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { listAccountTab, type AccountFields, type AccountPage as Page } from "@/lib/accountPageApi";
 import EmailAContact, { type ContactChoice } from "@/components/conversations/EmailAContact";
 import { AccountEmails } from "@/components/conversations/AccountEmails";
+import { emailChoices } from "@/components/conversations/emailChoices";
 import { contactName } from "@/data/accountPage";
 
 const isTab = (v: string | null): v is TabId => (TAB_IDS as readonly string[]).includes(v ?? "");
@@ -216,12 +217,6 @@ const AccountPage = () => {
     </Frame>
   );
 };
-
-/** The account's contacts Email offers, as many as one list holds (100). */
-async function emailChoices(firmId: string, accountId: string): Promise<ContactChoice[]> {
-  const list = await listAccountTab(firmId, accountId, "contacts", { limit: 100, offset: 0 });
-  return (list?.rows ?? []).map((c) => ({ id: c.id, name: contactName(c), email: c.email, doNotEmail: c.doNotEmail, isMain: c.isMain }));
-}
 
 const Frame = ({ children }: { children: React.ReactNode }) => (
   <div className="bg-background">

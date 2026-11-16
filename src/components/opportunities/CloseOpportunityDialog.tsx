@@ -9,7 +9,8 @@ import { dateRule, Field, FormActions, SaveRefused, SelectInput, useWorkspaceFor
 import { formatDay, STAGE_LABELS } from "@/data/accountPage";
 import { isConflict } from "@/lib/recordVersion";
 import { adminFeeWords, opportunityFieldLabel } from "@/data/opportunityPage";
-import { changedLine, commissionProblems, LOST_REASONS, renewalAfter } from "@/data/opportunityClose";
+import { changedLine, commissionProblems, LOST_REASONS, peosToTell, renewalAfter, withdrawalSubject, type TellMessage } from "@/data/opportunityClose";
+import { closingWithdrawalNote, peoNames } from "@/data/peoFollowUp";
 import { CommissionFields } from "./CommissionFields";
 import {
   markOpportunityLost, markOpportunityWon, OpportunityError, type OpportunityCloseConflict, type OpportunityClosed, type OpportunityQuote, type PlacementCommission,
@@ -60,7 +61,7 @@ export interface CloseTarget {
   employees: number | null;
 }
 
-export function CloseOpportunityDialog({ firmId, target, accountName, quotes, proposedStarts, brokerDefault, initial, onClose, onDone }: {
+export function CloseOpportunityDialog({ firmId, target, accountName, quotes, proposedStarts, brokerDefault, initial, mail, onClose, onDone }: {
   firmId: string;
   target: CloseTarget;
   accountName: string;
@@ -71,6 +72,8 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
   brokerDefault: string;
   /** What the person chose to do: "" lets them choose (Won first when a quote can be taken). */
   initial: "won" | "lost" | "";
+  /** The mail on the quote requests' threads, read with the submission: who is still open and was written to is drawn from it (D-1722, D-1726). */
+  mail: { status: "ready"; messages: readonly TellMessage[] } | { status: "loading" } | { status: "failed" };
   onClose: () => void;
   /** The close went through (or the person asked to reload): the page asks the database again. */
   onDone: (closed: OpportunityClosed | null) => void;
@@ -86,6 +89,14 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
   };
   const startFor = (quoteId: string) => (quoteId === "" ? "" : proposedStarts[Number(quoteId)] ?? target.targetStart ?? "");
   const [conflict, setConflict] = useState<OpportunityCloseConflict | null>(null);
+  const [tell, setTell] = useState(true);
+  const [subjectText, setSubjectText] = useState<string | null>(null);
+  const [bodyText, setBodyText] = useState<string | null>(null);
+  const messages = mail.status === "ready" ? mail.messages : [];
+  const open = quotes.map((q) => ({ id: q.id, peo_name: q.peoName, status: q.status }));
+  // Who a close would tell (D-1722): for Lost every PEO still open; for Won the others, once a quote is chosen.
+  const toldFor = (outcome: string, quoteId: string) => (outcome === "lost" ? peosToTell(open, messages, null) : outcome === "won" && quoteId !== "" ? peosToTell(open, messages, Number(quoteId)) : []);
+  const withdrawalFor = (told: ReturnType<typeof toldFor>) => ({ subject: subjectText ?? withdrawalSubject(told, messages, accountName), body: bodyText ?? closingWithdrawalNote({ companyName: accountName }) });
 
   const api = useWorkspaceForm({
     schema: closeSchema,
@@ -93,12 +104,13 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
     version: target.version,
     save: async (v, started): Promise<OpportunityClosed | OpportunityCloseConflict> => {
       if (started.version === undefined) throw new SaveRefused("Couldn't save. Reload the page and try again.");
+      if (mail.status === "loading") throw new SaveRefused("Still checking which PEOs are open. Try again in a moment.");
       try {
-        if (v.outcome === "lost") return await markOpportunityLost(firmId, target.id, { reason: v.reason, note: v.note }, started.version);
+        if (v.outcome === "lost") return await markOpportunityLost(firmId, target.id, { reason: v.reason, note: v.note }, started.version, toldFor(v.outcome, v.quote).length > 0 && tell ? withdrawalFor(toldFor(v.outcome, v.quote)) : undefined);
         const commission: PlacementCommission | null = v.commission_basis === "" ? null : {
           basis: v.commission_basis as PlacementCommission["basis"], rate: Number(v.commission_rate), expectedYearly: v.commission_yearly === "" ? null : Number(v.commission_yearly),
         };
-        return await markOpportunityWon(firmId, target.id, { quoteRequestId: Number(v.quote), startDate: v.start_date, renewalDate: v.renewal_date, brokerOfRecord: v.broker, commission }, started.version);
+        return await markOpportunityWon(firmId, target.id, { quoteRequestId: Number(v.quote), startDate: v.start_date, renewalDate: v.renewal_date, brokerOfRecord: v.broker, commission }, started.version, toldFor(v.outcome, v.quote).length > 0 && tell ? withdrawalFor(toldFor(v.outcome, v.quote)) : undefined);
       } catch (e) {
         if (e instanceof OpportunityError && e.kind !== "failed") throw new SaveRefused(e.message);
         throw e;
@@ -138,6 +150,8 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
   }, [startDay]);
 
   const renewal = form.watch("renewal_date") as string;
+  const told = toldFor(outcome, quoteId);
+  const withdrawal = withdrawalFor(told);
   const closing = outcome === "won" ? quotes.filter((q) => q.id !== chosen?.id && (q.status === "sent" || q.status === "quoted")) : [];
 
   return (
@@ -236,6 +250,26 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
                 </Field>
                 <Field name="note" label="Note" help="Up to 500 characters. Other needs a note.">{(field) => <Textarea {...field} rows={3} />}</Field>
               </>
+            )}
+            {mail.status === "failed" && outcome !== "" && (
+              <p role="status" className="text-sm text-muted-foreground">We couldn't check which PEOs are still open, so no withdrawal is offered. Their links stop working either way.</p>
+            )}
+            {told.length > 0 && (
+              <fieldset className="space-y-2 rounded-md border border-border p-3">
+                    <legend className="px-1 text-xs font-medium">Tell the PEOs still open</legend>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} className="mt-1" />
+                      <span>{`Send a withdrawal to ${peoNames(told.map((q) => q.peo_name))}`}</span>
+                    </label>
+                    {tell && (
+                      <>
+                        <label htmlFor="withdrawal-subject" className="block text-xs text-muted-foreground">Subject</label>
+                        <Input id="withdrawal-subject" value={withdrawal.subject} maxLength={300} onChange={(e) => setSubjectText(e.target.value)} />
+                        <label htmlFor="withdrawal-body" className="block text-xs text-muted-foreground">The withdrawal</label>
+                        <Textarea id="withdrawal-body" value={withdrawal.body} maxLength={50000} rows={5} onChange={(e) => setBodyText(e.target.value)} />
+                      </>
+                    )}
+              </fieldset>
             )}
           </WorkspaceForm>
         )}

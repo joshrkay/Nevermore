@@ -2,6 +2,7 @@ import { useContext, useEffect, useState } from "react";
 import { CloseOpportunityDialog } from "@/components/opportunities/CloseOpportunityDialog";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { STAGE_LABELS } from "@/data/accountPage";
+import type { TellMessage } from "@/data/opportunityClose";
 import { getFirmName, getOpportunityOutcome, getOpportunityPage, type OpportunityOutcome, type OpportunityPage } from "@/lib/opportunityPageApi";
 
 // The console's Won and Lost (CRM-O1.3b, D-470): the submission is on an opportunity, so the stage control opens the opportunity's own Mark won or lost dialog, the
@@ -17,10 +18,12 @@ const Notice = ({ role = "alert", onClose, children }: { role?: "alert" | "statu
 );
 
 /** Reads what the dialog needs, then shows it. A read that fails says so beside the control, and the person can close it and try again. */
-export function ConsoleCloseDialog({ firmId, opportunityId, initial, onClose, onDone }: {
+export function ConsoleCloseDialog({ firmId, opportunityId, initial, mail, onClose, onDone }: {
   firmId: string;
   opportunityId: string;
   initial: "won" | "lost";
+  /** The mail on the submission's quote requests, which the console's Status panel has already read: who is still open and was written to is drawn from it. */
+  mail: readonly TellMessage[];
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -58,6 +61,7 @@ export function ConsoleCloseDialog({ firmId, opportunityId, initial, onClose, on
       proposedStarts={Object.fromEntries(Object.entries(outcome.quotes).map(([k, v]) => [k, v.proposedStart]))}
       brokerDefault={broker}
       initial={initial}
+      mail={{ status: "ready", messages: mail }}
       onClose={onClose}
       onDone={() => onDone()}
     />

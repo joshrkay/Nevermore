@@ -31,11 +31,21 @@ const listFirmMembers = vi.fn();
 vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountsApi")), listFirmMembers: (...a: unknown[]) => listFirmMembers(...a) }));
 const listAccountOwners = vi.fn();
 vi.mock("@/lib/accountCreateApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountCreateApi")), listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
+const accountTab = { listAccountTab: vi.fn() };
+vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), ...accountTab }));
+const peoSend = { loadPeoSendContext: vi.fn(), sendToPeo: vi.fn() };
+vi.mock("@/lib/peoSendApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoSendApi")), ...peoSend }));
+const peoAuthorizations = { loadPeoAuthorizations: vi.fn() };
+vi.mock("@/lib/peoAuthorizationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoAuthorizationsApi")), ...peoAuthorizations }));
+const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
+vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const search = { noteRecentRecord: vi.fn() };
 vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
 
 // What "Still needs" reads, as the submission's page reads it: the submission (its last certified version) and the PEOs' requirement profiles.
-const advisor = { loadSubmission: vi.fn() };
+const advisor = { loadSubmission: vi.fn(), fetchMyMailbox: vi.fn() };
+const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), getAccountMessages: vi.fn() };
+vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...conversations }));
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 let peoCatalogRows: unknown = [];
 vi.mock("@/lib/peoCatalog", async () => {
@@ -98,7 +108,7 @@ const renderPage = (path = "/opportunities/o1", ws: Workspace = workspace()) => 
 beforeEach(() => {
   // The app's identity boundary says who is signed in; this page renders without it.
   setSignedInUser("u1");
-  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(activity), listFirmMembers, listAccountOwners, search.noteRecentRecord, signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(conversations), ...Object.values(peoSend), ...Object.values(peoAuthorizations), ...Object.values(peoRegistrations), ...Object.values(activity), listFirmMembers, listAccountOwners, search.noteRecentRecord, signOut]) fn.mockReset();
   peoCatalogRows = [];
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
@@ -111,6 +121,14 @@ beforeEach(() => {
   client.listOpportunityActivity.mockResolvedValue({ count: 0, rows: [] });
   client.getOpportunityOutcome.mockResolvedValue(noOutcome);
   search.noteRecentRecord.mockResolvedValue(true);
+  advisor.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "dana@example.com" });
+  conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
+  conversations.listAttachableFiles.mockResolvedValue([]);
+  conversations.getAccountMessages.mockResolvedValue([]);
+  accountTab.listAccountTab.mockResolvedValue({ count: 0, rows: [] });
+  peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "dana@example.com" }, contacts: [], reply_address: null });
+  peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([]);
+  peoRegistrations.loadRegisteredElsewhere.mockResolvedValue([]);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -168,12 +186,11 @@ describe("OpportunityPage: the trail and the header", () => {
     expect(line).not.toHaveTextContent(/Target start|employees/);
   });
 
-  // Catches: buttons that belong to later stories drawn as dead buttons (D-402: Email the contact, Send to a PEO). Mark won or lost is CRM-O1.3b's, tested below.
-  it("has no Email the contact or Send to a PEO", async () => {
+  // Catches: a "Send to a PEO" drawn in the header (D-1700: Choose PEOs is on the quotes panel, and Email is tested below).
+  it("has no Send to a PEO in the header", async () => {
     renderPage();
     await screen.findByRole("heading", { level: 1 });
-    expect(screen.queryByRole("button", { name: /^Email/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Send to/ })).toBeNull();
+    expect(within(header()).queryByRole("button", { name: /Send to/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /Send to/ })).toBeNull();
   });
 });
@@ -1279,7 +1296,7 @@ describe("OpportunityPage: marking won (D-464 to D-466)", () => {
     client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "won", version: 5 }));
     await userEvent.click(d.getByRole("button", { name: "Mark won" }));
     await waitFor(() => expect(client.markOpportunityWon).toHaveBeenCalledWith(
-      "f1", "o1", { quoteRequestId: 13, startDate: "2027-01-01", renewalDate: "2028-01-01", brokerOfRecord: "Acme Benefits", commission: { basis: "share", rate: 20, expectedYearly: 12744 } }, 4,
+      "f1", "o1", { quoteRequestId: 13, startDate: "2027-01-01", renewalDate: "2028-01-01", brokerOfRecord: "Acme Benefits", commission: { basis: "share", rate: 20, expectedYearly: 12744 } }, 4, undefined,
     ));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(toast.success).toHaveBeenCalledWith("Marked won");
@@ -1292,7 +1309,7 @@ describe("OpportunityPage: marking won (D-464 to D-466)", () => {
     client.markOpportunityWon.mockResolvedValue({ conflict: false, stage: "won", version: 5 });
     await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
     await userEvent.click(d.getByRole("button", { name: "Mark won" }));
-    await waitFor(() => expect(client.markOpportunityWon).toHaveBeenCalledWith("f1", "o1", expect.objectContaining({ quoteRequestId: 12, commission: null }), 4));
+    await waitFor(() => expect(client.markOpportunityWon).toHaveBeenCalledWith("f1", "o1", expect.objectContaining({ quoteRequestId: 12, commission: null }), 4, undefined));
   });
 
   // Catches: the database's refusal lost: it is said in its own words beside Mark won, and what was typed stays.
@@ -1364,7 +1381,7 @@ describe("OpportunityPage: marking lost (D-468)", () => {
     await userEvent.selectOptions(d.getByLabelText("Reason"), "other");
     await userEvent.type(d.getByLabelText("Note"), "Closed the practice");
     await userEvent.click(d.getByRole("button", { name: "Mark lost" }));
-    await waitFor(() => expect(client.markOpportunityLost).toHaveBeenCalledWith("f1", "o1", { reason: "other", note: "Closed the practice" }, 4));
+    await waitFor(() => expect(client.markOpportunityLost).toHaveBeenCalledWith("f1", "o1", { reason: "other", note: "Closed the practice" }, 4, undefined));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(toast.success).toHaveBeenCalledWith("Marked lost");
   });
@@ -1949,5 +1966,177 @@ describe("OpportunityPage: what a close, a reopen and a payment ask again (P3)",
     await userEvent.click(within(dialog()).getByRole("button", { name: "Mark won" }));
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["table", "f1", "accounts"] }));
     expect(spy).toHaveBeenCalledWith({ queryKey: ["opportunity-needs", "f1", "i1"] });
+  });
+});
+
+// ---------- 5.0y: the withdrawal offered when the page closes the search ----------
+const sentNote = (quoteRequestId: number, subject: string) => ({
+  id: quoteRequestId, quote_request_id: quoteRequestId, direction: "sent", subject, recorded_at: "2026-11-02T10:00:00Z", to_addresses: ["dana@peo.example"],
+});
+
+describe("OpportunityPage: closing offers the withdrawal (D-1724, D-1726)", () => {
+  // Catches: the dialog drawn with no knowledge of which PEOs the product wrote to, so a loss closes them without the note the person was meant to be offered.
+  it("offers a loss's withdrawal to the PEOs the submission's mail shows the product wrote to", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage());
+    advisor.loadSubmission.mockResolvedValue(certified({ quoteRequestMessages: [sentNote(12, "Harborview: version 2"), sentNote(13, "Harborview: version 2"), sentNote(14, "Harborview: version 2")] }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    await userEvent.click(within(dialog()).getByRole("radio", { name: /Lost/ }));
+    expect(await within(dialog()).findByRole("checkbox", { name: "Send a withdrawal to PEO A, PEO B and PEO C" })).toBeChecked();
+  });
+});
+
+// ---------- 5.0y: Email a contact from the header, returning to the opportunity ----------
+describe("OpportunityPage: Email a contact (D-1728)", () => {
+  const contactRow = (id: string, first: string, main: boolean) => ({ id, firstName: first, lastName: "Park", email: `${first.toLowerCase()}@harborview.example`, doNotEmail: false, isMain: main });
+  beforeEach(() => {
+    accountTab.listAccountTab.mockReset().mockResolvedValue({ count: 3, rows: [contactRow("c1", "Elena", true), contactRow("c2", "Owen", false), contactRow("c3", "Priya", false)] });
+  });
+
+  // Catches: an opportunity with no way to write to the people on it, or one that offers the account's main contact before the opportunity's own (D-683).
+  it("offers Email in the header, asking which contact with the opportunity's main contact first", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ mainContact: { id: "c3", name: "Priya Park" } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await userEvent.click(within(header()).getByRole("button", { name: "Email" }));
+    const choices = await within(await screen.findByRole("dialog")).findAllByRole("button", { name: /^Write to/ });
+    expect(choices.map((b) => b.textContent)).toEqual(["Write to Priya Park", "Write to Elena Park", "Write to Owen Park"]);
+  });
+});
+
+describe("OpportunityPage: back from connecting a mailbox (D-1728)", () => {
+  // Catches: coming back from connecting a mailbox to an opportunity's page with the place to write closed, or to the queue, so the unsent message seems lost (D-653, D-650).
+  it("opens the place to write for the contact being written to", async () => {
+    accountTab.listAccountTab.mockResolvedValue({ count: 1, rows: [{ id: "c1", firstName: "Elena", lastName: "Marsh", email: "elena@harborview.example", doNotEmail: false, isMain: true }] });
+    renderPage("/opportunities/o1?email=c1");
+    const writing = await screen.findByRole("dialog", { name: "Write to Elena Marsh" });
+    expect(await within(writing).findByRole("region", { name: "Emails" })).toBeInTheDocument();
+    expect(conversations.getConversation).toHaveBeenCalledWith("f1", "c1");
+  });
+});
+
+describe("OpportunityPage: the Emails panel (D-1728)", () => {
+  // Catches: an opportunity that shows none of the mail with its people (CRM-E1.3), asks for the account's mail instead of this opportunity's, or names no contact.
+  it("lists the opportunity's emails, each naming its contact from the page, asked for this opportunity", async () => {
+    conversations.getAccountMessages.mockResolvedValue([
+      { id: "m2", direction: "inbound", from: "elena@harborview.example", to: [], subject: "Re: Your renewal", body: "Friday?", status: "received", failureKind: null, failureReason: null, at: "2026-11-11T09:00:00+00:00", contactId: "c1" },
+    ]);
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Emails with the account's contacts" });
+    expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent("Re: Your renewal");
+    expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent("Elena Marsh");
+    expect(conversations.getAccountMessages).toHaveBeenCalledWith("f1", { opportunityId: "o1" });
+  });
+});
+
+describe("OpportunityPage: no Email where the database would refuse (D-1728)", () => {
+  // Catches: an Email button on an archived account or in a Nevermore support session, where the place to write would only be refused.
+  it.each([
+    ["an archived account", page({ account: { id: "a1", name: "Harborview Dental Group", archived: true } }), workspace()],
+    ["a support session", page(), workspace({ isSupport: true })],
+  ])("draws no Email for %s", async (_who, pageOf, ws) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf);
+    renderPage("/opportunities/o1", ws);
+    await screen.findByRole("heading", { level: 1 });
+    expect(within(header()).queryByRole("button", { name: "Email" })).not.toBeInTheDocument();
+  });
+});
+
+// ---------- 5.0y: Choose PEOs on the quotes panel ----------
+describe("OpportunityPage: Choose PEOs (D-1727)", () => {
+  const peoProfile = { id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], sources: { answers: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" } } } };
+  const submissionDetail = (over: object = {}) => certified({
+    fileId: "EAA-2026-0117", submission: { signer_name: "Elena Marsh", signer_title: "Owner", signed_at: "2026-10-28T10:00:00Z", file_id: "EAA-2026-0117", version: 2 }, ...over,
+  });
+  beforeEach(() => {
+    peoCatalogRows = [peoProfile];
+    advisor.loadSubmission.mockResolvedValue(submissionDetail());
+  });
+
+  // Catches: a certified search with no way to send its packet to several PEOs from its own page, or a button that opens nothing.
+  it("opens Send to several PEOs on the quotes panel, from the certified answers, when the person chooses PEOs", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)] }));
+    renderPage();
+    await userEvent.click(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("button", { name: "Choose PEOs" }));
+    const sending = await screen.findByRole("region", { name: "Send to several PEOs" });
+    expect(await within(sending).findByRole("checkbox", { name: "Justworks" })).toBeChecked();
+  });
+});
+
+describe("OpportunityPage: Choose PEOs only where it can work (D-1727)", () => {
+  // Catches: Choose PEOs on an intake nobody has certified, where there is no certified answer set to send.
+  it("is not drawn for an intake the prospect has not certified", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)], intake: { ...intake, certifiedAt: null, certifiedBy: null, version: null } }));
+    renderPage();
+    await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("table");
+    expect(screen.queryByRole("button", { name: "Choose PEOs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: no Choose PEOs where the database would refuse (D-1727)", () => {
+  // Catches: Choose PEOs offered in a Nevermore support session or on an archived account, where every send would be refused.
+  it.each([
+    ["an archived account", page({ quotes: [quote(1)], account: { id: "a1", name: "Harborview Dental Group", archived: true } }), workspace()],
+    ["a support session", page({ quotes: [quote(1)] }), workspace({ isSupport: true })],
+  ])("draws no Choose PEOs for %s", async (_who, pageOf, ws) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf);
+    renderPage("/opportunities/o1", ws);
+    await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("table");
+    expect(screen.queryByRole("button", { name: "Choose PEOs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: Choose PEOs when the submission can't be read (D-1727)", () => {
+  // Catches: a click on Choose PEOs that does nothing when the read fails, so the person cannot tell whether to wait or try again.
+  it("says it could not read the submission, and Try again reads it and opens the choosing", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [] }));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], sources: { answers: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" } } } }];
+    advisor.loadSubmission.mockRejectedValueOnce(new Error("down")).mockResolvedValue(certified({
+      fileId: "EAA-2026-0117", submission: { signer_name: "Elena Marsh", signer_title: "Owner", signed_at: "2026-10-28T10:00:00Z", file_id: "EAA-2026-0117", version: 2 },
+    }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Choose PEOs" }));
+    const said = await screen.findByText("We couldn't read this submission, so PEOs can't be chosen yet.");
+    await userEvent.click(within(said.parentElement as HTMLElement).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("region", { name: "Send to several PEOs" })).toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: Choose PEOs when the certification can't say what it held (D-1727)", () => {
+  // Catches: PEOs offered ticked as ready from a certification recorded before answers kept their status, which cannot say what it held.
+  it("says nothing can be sent from here", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [] }));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], sources: { answers: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" } } } }];
+    advisor.loadSubmission.mockResolvedValue(certified({
+      certificationLacksSnapshot: true, fileId: "EAA-2026-0117", submission: { signer_name: "Elena Marsh", signer_title: "Owner", signed_at: "2026-10-28T10:00:00Z", file_id: "EAA-2026-0117", version: 2 },
+    }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Choose PEOs" }));
+    expect(await screen.findByText("This certification can't say what it held, so nothing can be sent from here. Open the submission to send.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Send to several PEOs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: after Choose PEOs sends (D-1727)", () => {
+  // Catches: a send that leaves the quotes panel showing no new quote request until the page is reloaded.
+  it("asks the page's lists again once a send went", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [] }));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], sources: { answers: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" } } } }];
+    advisor.loadSubmission.mockResolvedValue(certified({
+      fileId: "EAA-2026-0117", submission: { signer_name: "Elena Marsh", signer_title: "Owner", signed_at: "2026-10-28T10:00:00Z", file_id: "EAA-2026-0117", version: 2 },
+    }));
+    peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "dana@example.com" }, contacts: [{ name: "Dana Lee", role: null, email: "dana@justworks.example" }], reply_address: null });
+    peoSend.sendToPeo.mockResolvedValue({ quoteRequestId: 21, messageId: 41 });
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([{ peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }]);
+    peoRegistrations.loadRegisteredElsewhere.mockResolvedValue([]);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Choose PEOs" }));
+    const sending = await screen.findByRole("region", { name: "Send to several PEOs" });
+    await userEvent.type(await within(sending).findByLabelText("Your note"), "Here it is.");
+    await userEvent.click(within(sending).getByRole("button", { name: "Review" }));
+    const before = client.getOpportunityPage.mock.calls.length;
+    await userEvent.click(await within(sending).findByRole("button", { name: "Send to 1 PEO" }));
+    await waitFor(() => expect(peoSend.sendToPeo).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(client.getOpportunityPage.mock.calls.length).toBeGreaterThan(before));
   });
 });

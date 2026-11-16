@@ -1225,6 +1225,30 @@ export type Database = {
         }
         Returns: Json
       }
+      // opportunity_mark_won and one withdrawal queued on each PEO still open, in one transaction: the won answer and {message_ids}.
+      opportunity_mark_won_and_withdraw: {
+        Args: {
+          p_opportunity_id: string
+          p_quote_request_id: number
+          p_start_date: string | null
+          p_renewal_date: string | null
+          p_broker_of_record: string | null
+          p_firm_id: string | null
+          p_version: number | null
+          p_commission_basis: string | null
+          p_commission_rate: number | null
+          p_commission_expected_yearly: number | null
+          p_time_zone: string
+          p_subject: string
+          p_body: string
+        }
+        Returns: Json
+      }
+      // opportunity_mark_lost and one withdrawal queued on every PEO still open, in one transaction.
+      opportunity_mark_lost_and_withdraw: {
+        Args: { p_opportunity_id: string; p_reason: string; p_note: string | null; p_firm_id: string | null; p_version: number | null; p_subject: string; p_body: string }
+        Returns: Json
+      }
       opportunity_mark_lost: {
         Args: { p_opportunity_id: string; p_reason: string; p_note?: string | null; p_firm_id?: string | null; p_version?: number | null }
         Returns: Json
