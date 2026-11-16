@@ -1657,7 +1657,13 @@ describe("AdvisorSubmissionPage", () => {
       { peo: "Insperity", state: "not_asked", signedAt: null, wordingVersion: null },
       { peo: "TriNet", state: "authorized", signedAt: "2026-11-14T10:00:00Z", wordingVersion: "2026-11-draft-1" },
     ]);
-    api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+    // An answer marked Needs follow-up, which a plain request would start with: the ask to add a PEO must name none.
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "ready_for_market",
+      reviews: { pay_frequency: {
+        field: "pay_frequency", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+      } } as SubmissionDetail["reviews"],
+    }));
     renderPage();
     const panel = await screen.findByRole("region", { name: "Who may receive the packet" });
     fireEvent.click(await within(panel).findByRole("button", { name: "Ask the employer to add Insperity" }));
