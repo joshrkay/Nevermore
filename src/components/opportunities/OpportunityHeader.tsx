@@ -12,8 +12,10 @@ import type { OpportunityPage } from "@/lib/opportunityPageApi";
  * the stage bar and, under it, what would move it on (D-414), and Mark won or lost (CRM-O1.3b, D-431) for those who may. Email the contact and Send to a PEO are off
  * (D-402), so none is drawn: nothing here is a button that does nothing (D-24). The trail is drawn by the page.
  */
-export function OpportunityHeader({ page, onMarkWonOrLost }: {
+export function OpportunityHeader({ page, email, onMarkWonOrLost }: {
   page: OpportunityPage;
+  /** Email the contact, given to those who can act (D-1728). */
+  email?: React.ReactNode;
   /** Given only to those who may close an open opportunity (D-431): whoever may change it, outside a support session. */
   onMarkWonOrLost?: () => void;
 }) {
@@ -28,9 +30,12 @@ export function OpportunityHeader({ page, onMarkWonOrLost }: {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-display text-3xl font-bold break-words">{o.name}</h1>
         <Pill>{STAGE_LABELS[o.stage]}</Pill>
-        {onMarkWonOrLost && o.stage !== "won" && o.stage !== "lost" && (
-          <Button type="button" variant="outline" className="ml-auto" onClick={onMarkWonOrLost}>Mark won or lost</Button>
-        )}
+        <div className="ml-auto flex flex-wrap gap-2">
+          {email}
+          {onMarkWonOrLost && o.stage !== "won" && o.stage !== "lost" && (
+            <Button type="button" variant="outline" onClick={onMarkWonOrLost}>Mark won or lost</Button>
+          )}
+        </div>
       </div>
       <p className="mt-1 text-sm text-muted-foreground break-words">
         {o.targetStart && <>Target start {formatDay(o.targetStart)} · </>}

@@ -253,7 +253,7 @@ describe("StatusPanel: a submission on an opportunity (D-470)", () => {
     opp.markOpportunityLost.mockResolvedValue({ conflict: false, stage: "lost", version: 5 });
     await userEvent.selectOptions(within(dialog).getByLabelText("Reason"), "price");
     await userEvent.click(within(dialog).getByRole("button", { name: "Mark lost" }));
-    await waitFor(() => expect(opp.markOpportunityLost).toHaveBeenCalledWith("f1", "o1", { reason: "price", note: "" }, 4));
+    await waitFor(() => expect(opp.markOpportunityLost).toHaveBeenCalledWith("f1", "o1", { reason: "price", note: "" }, 4, undefined));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(setStatus).not.toHaveBeenCalled();
   });
@@ -266,7 +266,7 @@ describe("StatusPanel: a submission on an opportunity (D-470)", () => {
     opp.markOpportunityWon.mockResolvedValue({ conflict: false, stage: "won", version: 5 });
     await userEvent.click(within(dialog).getByRole("radio", { name: /TriNet/ }));
     await userEvent.click(within(dialog).getByRole("button", { name: "Mark won" }));
-    await waitFor(() => expect(opp.markOpportunityWon).toHaveBeenCalledWith("f1", "o1", expect.objectContaining({ quoteRequestId: 7, brokerOfRecord: "Acme Benefits" }), 4));
+    await waitFor(() => expect(opp.markOpportunityWon).toHaveBeenCalledWith("f1", "o1", expect.objectContaining({ quoteRequestId: 7, brokerOfRecord: "Acme Benefits" }), 4, undefined));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
@@ -363,5 +363,38 @@ describe("StatusPanel: a submission on an opportunity (D-470)", () => {
     await choose("won");
     fireEvent.click(screen.getByRole("button", { name: "Update status" }));
     expect(await screen.findByText(/Couldn't open the opportunity to mark it won or lost/)).toBeInTheDocument();
+  });
+});
+
+// ---------- 5.0y: Won and Lost from the console make the same offer, from the mail the panel already read (D-1725) ----------
+describe("StatusPanel: the console's Lost offers the withdrawal (D-1725)", () => {
+  const sentTo = (id: number, quote_request_id: number) =>
+    ({ id, quote_request_id, direction: "sent", status: "sent", to_addresses: ["x@peo.example"], subject: "Reyes Bakery", recorded_at: "2026-11-10T10:00:00Z" }) as unknown as QuoteRequestMessageRow;
+  beforeEach(() => {
+    opp.getOpportunityOfSubmission.mockResolvedValue({ id: "o1", firmId: "f1" });
+    opp.getOpportunityPage.mockResolvedValue({
+      opportunity: { id: "o1", version: 4, accountId: "a1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, submissionId: "s1", stage: "quoted" },
+      account: { id: "a1", name: "Harborview Dental Group", archived: false }, canChange: true, intake: { censusSize: 45 },
+      quotes: [
+        { id: 7, peoName: "TriNet", status: "quoted", sentOn: "2026-11-10", quoteReceivedOn: null, quoteExpiresOn: null, adminFeePepm: 150 },
+        { id: 9, peoName: "Insperity", status: "sent", sentOn: "2026-11-10", quoteReceivedOn: null, quoteExpiresOn: null, adminFeePepm: null },
+      ],
+    });
+    opp.getOpportunityOutcome.mockResolvedValue({ lostReason: null, lostNote: null, placement: null, payments: [], receivedToDate: 0, quotes: {} });
+    opp.getFirmName.mockResolvedValue("Acme Benefits");
+  });
+
+  // Catches: the console's Lost closing the PEOs without the withdrawal the opportunity's own page offers, or offering it twice (the panel's own offer is Archived's only).
+  it("offers the one withdrawal in the opportunity's dialog, from the panel's own mail, and the panel draws none beside it", async () => {
+    render(
+      <StatusPanel sessionId="s1" prospectUserId="p1" status="quoted" certified certifiedOnce history={[]}
+        quoteRequests={[quote(7, "TriNet", "quoted"), quote(9, "Insperity", "sent")]} mail={[sentTo(41, 7), sentTo(42, 9)]} companyName="Reyes Bakery" onChanged={vi.fn()} />,
+    );
+    await waitFor(() => expect(opp.getOpportunityOfSubmission).toHaveBeenCalledWith("s1"));
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "lost" } });
+    expect(screen.queryByText("Tell the PEOs still open")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Update status" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("checkbox", { name: "Send a withdrawal to TriNet and Insperity" })).toBeChecked();
   });
 });

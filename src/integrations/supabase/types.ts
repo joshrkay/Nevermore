@@ -1078,6 +1078,8 @@ export type Database = {
           p_current_provider: string | null
           p_owner_id?: string | null
           p_firm_id?: string | null
+          // Added by hand unless said; New quote's step 1 says 'new_quote' (20261123130000).
+          p_source?: string
         }
         Returns: Json
       }
@@ -1223,6 +1225,30 @@ export type Database = {
           p_commission_expected_yearly?: number | null
           p_time_zone?: string
         }
+        Returns: Json
+      }
+      // opportunity_mark_won and one withdrawal queued on each PEO still open, in one transaction: the won answer and {message_ids}.
+      opportunity_mark_won_and_withdraw: {
+        Args: {
+          p_opportunity_id: string
+          p_quote_request_id: number
+          p_start_date: string | null
+          p_renewal_date: string | null
+          p_broker_of_record: string | null
+          p_firm_id: string | null
+          p_version: number | null
+          p_commission_basis: string | null
+          p_commission_rate: number | null
+          p_commission_expected_yearly: number | null
+          p_time_zone: string
+          p_subject: string
+          p_body: string
+        }
+        Returns: Json
+      }
+      // opportunity_mark_lost and one withdrawal queued on every PEO still open, in one transaction.
+      opportunity_mark_lost_and_withdraw: {
+        Args: { p_opportunity_id: string; p_reason: string; p_note: string | null; p_firm_id: string | null; p_version: number | null; p_subject: string; p_body: string }
         Returns: Json
       }
       opportunity_mark_lost: {
@@ -1573,6 +1599,29 @@ export type Database = {
           p_follow_up_title?: string | null
           p_follow_up_due_on?: string | null
           p_follow_up_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // ---- CRM-L2.2: converting a lead (20261122250000_convert_lead.sql) ----
+      // The accounts that may be the same business as the lead, by the duplicate match, only those the caller may see: {matches: [{id, name, city, state, reasons}]}.
+      lead_convert_context: {
+        Args: { p_firm_id: string; p_lead_id: string }
+        Returns: Json
+      }
+      // One step, all or none: the account (made, or p_account_id used), the contact, the opportunity; {account: {..., created}, contact | null, opportunity | null}.
+      convert_lead: {
+        Args: {
+          p_lead_id: string
+          p_account_id?: string | null
+          p_make_contact?: boolean | null
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_contact_email?: string | null
+          p_contact_phone?: string | null
+          p_make_opportunity?: boolean | null
+          p_opportunity_name?: string | null
+          p_target_start?: string | null
           p_firm_id?: string | null
         }
         Returns: Json

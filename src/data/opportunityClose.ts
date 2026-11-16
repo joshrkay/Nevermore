@@ -1,4 +1,6 @@
+import { isOpenQuoteRequest } from "@/data/quoteRequests";
 import { formatDay, formatWhen } from "@/data/accountPage";
+import { replySubject } from "@/data/peoFollowUp";
 import type { ChangedField } from "@/lib/recordVersion";
 
 // The rules of closing an opportunity as a person sees them (story CRM-O1.3b, D-465 to D-468, D-472). The database decides every rule that binds; this words them and
@@ -110,3 +112,17 @@ export const commissionFieldLabel = (field: string): string => COMMISSION_FIELDS
 
 /** "Amount changed by marcus@x.example, Nov 12, 2026, 10:00 AM": one entry of a conflict's `changed` list, its field in the page's words and never a column name. */
 export const changedLine = (c: ChangedField, label: (field: string) => string): string => `${label(c.field)} changed by ${c.who}, ${formatWhen(c.at)}`;
+
+/** What the close reads of a quote request and of the mail on its thread: enough to say who is still open and what was last written. */
+export interface TellRequest { id: number; peo_name: string; status: string }
+export interface TellMessage { quote_request_id: number; direction: string; subject: string | null; recorded_at: string }
+
+/** The PEOs a close offers to tell (D-1722), as the database works it out again. */
+export const peosToTell = <Q extends TellRequest>(quoteRequests: readonly Q[], mail: readonly TellMessage[], winnerId: number | null): Q[] => quoteRequests.filter((q) => q.id !== winnerId && (isOpenQuoteRequest(q.status) || q.status === "quoted") && mail.some((m) => m.quote_request_id === q.id && m.direction === "sent"));
+
+/** The subject the one note opens with: an answer to the newest message the product sent the PEOs it tells, else to the account's name (D-1724). */
+export function withdrawalSubject(told: readonly TellRequest[], mail: readonly TellMessage[], accountName: string): string {
+  const ids = new Set(told.map((q) => q.id));
+  const newest = mail.filter((m) => m.direction === "sent" && ids.has(m.quote_request_id)).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
+  return replySubject(newest?.subject ?? null, accountName);
+}

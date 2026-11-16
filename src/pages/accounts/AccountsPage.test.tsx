@@ -81,6 +81,7 @@ const second = row({
 });
 
 const ShowId = () => <p>Account page for {useParams().id}{useLocation().search}</p>;
+const OpenedFrom = () => <p data-testid="opened-from">{(useLocation().state as { backgroundLocation?: { pathname: string } } | null)?.backgroundLocation?.pathname ?? "nowhere"}</p>;
 const LocationProbe = () => <p data-testid="location">{useLocation().search}</p>;
 const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
   render(
@@ -90,6 +91,7 @@ const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
           <Routes>
             <Route path="/accounts" element={<><AccountsPage /><LocationProbe /></>} />
             <Route path="/accounts/:id" element={<ShowId />} />
+            <Route path="/new-quote" element={<OpenedFrom />} />
           </Routes>
         </MemoryRouter>
       </WorkspaceContext.Provider>
@@ -339,13 +341,20 @@ describe("the Accounts page: views and filters", () => {
 });
 
 describe("the Accounts page: states", () => {
-  // Catches: the story's "nothing yet" (Accounts are the businesses you quote for) missing, or offering New quote, New account or Import before they exist (D-186).
-  it("says accounts are the businesses you quote for when the firm has none, with only the buttons that do something (New account)", async () => {
+  // Catches: the story's "nothing yet" (Accounts are the businesses you quote for) missing, New quote not offered as the primary action now that it exists (CRM-Q2.1, D-160), New account
+  // dropped, or Import (CRM-X4.1, not built) offered before it exists (D-186).
+  it("says accounts are the businesses you quote for when the firm has none, offering New quote first and New account, and no Import", async () => {
     listAccounts.mockResolvedValue([]);
     renderAt();
     expect(await screen.findByText("Accounts are the businesses you quote for.")).toBeInTheDocument();
-    for (const name of ["New quote", "Import", "Export"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-    for (const name of ["New quote", "New account", "Import"]) expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    const empty = document.querySelector<HTMLElement>("[data-empty]")!;
+    expect(within(empty).getByRole("link", { name: "New quote" })).toHaveAttribute("href", "/new-quote");
+    expect(within(empty).getByRole("button", { name: "New account" })).toBeInTheDocument();
+    expect(within(empty).getAllByRole("link").concat(within(empty).getAllByRole("button")).map((e) => e.textContent)).not.toContain("Import");
+    expect(within(empty).getByRole("link", { name: "New quote" }).compareDocumentPosition(within(empty).getByRole("button", { name: "New account" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // It opens over the Accounts page (D-1709), so closing returns here.
+    await userEvent.click(within(empty).getByRole("link", { name: "New quote" }));
+    expect(screen.getByTestId("opened-from")).toHaveTextContent("/accounts");
   });
 
   // Catches: a narrowed empty list saying the firm has no accounts, or not naming the filter, or not clearing it.

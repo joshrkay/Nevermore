@@ -254,6 +254,18 @@ describe("closing an opportunity (CRM-O1.3b: opportunity_mark_won, opportunity_m
     expect(done).toEqual({ conflict: false, stage: "won", version: 5 });
   });
 
+  // Catches: a win with the withdrawal ticked that calls the plain function and then sends nothing, or sends the note in a second call that could be refused after the win.
+  it("marks won and withdraws in one call when the person offers a withdrawal", async () => {
+    rpc.mockResolvedValue({ data: wonAnswer, error: null });
+    const done = await markOpportunityWon("f1", "o1", win, 4, { subject: "Re: Reyes Bakery", body: "The employer chose another PEO." });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("opportunity_mark_won_and_withdraw", {
+      p_opportunity_id: "o1", p_quote_request_id: 12, p_start_date: "2027-01-01", p_renewal_date: "2028-01-01", p_broker_of_record: "Acme Benefits", p_firm_id: "f1", p_version: 4,
+      p_commission_basis: "share", p_commission_rate: 20, p_commission_expected_yearly: 12744, p_time_zone: "UTC", p_subject: "Re: Reyes Bakery", p_body: "The employer chose another PEO.",
+    });
+    expect(done).toEqual({ conflict: false, stage: "won", version: 5 });
+  });
+
   // Catches: a commission the person did not give sent as zeros, which the database would refuse or keep (D-466: optional).
   it("sends no commission when none was given", async () => {
     rpc.mockResolvedValue({ data: wonAnswer, error: null });
@@ -266,6 +278,17 @@ describe("closing an opportunity (CRM-O1.3b: opportunity_mark_won, opportunity_m
     rpc.mockResolvedValue({ data: { conflict: false, record: { id: "o1", stage: "lost", version: 5, lost_reason: "other", lost_note: "Closed" } }, error: null });
     const done = await markOpportunityLost("f1", "o1", { reason: "other", note: "Closed" }, 4);
     expect(rpc).toHaveBeenCalledWith("opportunity_mark_lost", { p_opportunity_id: "o1", p_reason: "other", p_note: "Closed", p_firm_id: "f1", p_version: 4 });
+    expect(done).toEqual({ conflict: false, stage: "lost", version: 5 });
+  });
+
+  // Catches: a loss with the withdrawal ticked that is sent without the subject and note, or as two calls.
+  it("marks lost and withdraws in one call when the person offers a withdrawal", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "o1", stage: "lost", version: 5, lost_reason: "price", lost_note: null } }, error: null });
+    const done = await markOpportunityLost("f1", "o1", { reason: "price", note: "" }, 4, { subject: "Re: Reyes Bakery", body: "The employer is not going ahead." });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("opportunity_mark_lost_and_withdraw", {
+      p_opportunity_id: "o1", p_reason: "price", p_note: null, p_firm_id: "f1", p_version: 4, p_subject: "Re: Reyes Bakery", p_body: "The employer is not going ahead.",
+    });
     expect(done).toEqual({ conflict: false, stage: "lost", version: 5 });
   });
 
@@ -282,6 +305,14 @@ describe("closing an opportunity (CRM-O1.3b: opportunity_mark_won, opportunity_m
     const done = await reopenOpportunity("f1", "o1", 5);
     expect(rpc).toHaveBeenCalledWith("opportunity_reopen", { p_opportunity_id: "o1", p_firm_id: "f1", p_version: 5 });
     expect(done).toEqual({ conflict: false, stage: "quoted", version: 6 });
+  });
+
+  // Catches: the refusal for a missing mailbox (PT412) said as a failed connection, so the person is told to check the network instead of to connect a mailbox.
+  it("says a missing mailbox in the database's own words when a close would send", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT412", message: "Connect your mailbox to send from here." } });
+    const e = (await caught(() => markOpportunityLost("f1", "o1", { reason: "price", note: "" }, 4, { subject: "S", body: "B" }))) as InstanceType<typeof OpportunityError>;
+    expect(e.kind).toBe("invalid");
+    expect(e.message).toBe("Connect your mailbox to send from here.");
   });
 
   // Catches: a stale close treated as done, or the person left without who changed what (D-46).

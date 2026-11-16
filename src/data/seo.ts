@@ -92,6 +92,7 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/b\/[^/]+$/, "Bundle"],
   [/^\/f$/, "A file"],
   [/^\/opportunities\/[^/]+$/, "Opportunity"],
+  [/^\/new-quote(\/[^/]+)?$/, "New quote"],
   [/^\/advisor\/held$/, "Held mail"],
   [/^\/advisor\/firms$/, "Firm approvals"],
   [/^\/advisor(\/.*)?$/, "Advisor Console"],
@@ -124,6 +125,8 @@ export const PRIVATE_PATH_EXAMPLES = [
   "/b/Abc123_-Abc123_-Abc123_-Abc123_-Abc123_-xyz",
   "/f",
   "/opportunities/123",
+  "/new-quote",
+  "/new-quote/123",
 ];
 
 /**

@@ -301,3 +301,29 @@ describe("SendToSeveralPeos", () => {
     expect(again).not.toHaveTextContent("couldn't load");
   });
 });
+
+// 5.0y: the opportunity's quotes panel places this component as "Choose PEOs", opened at once once the submission it needs has been read.
+describe("SendToSeveralPeos: as Choose PEOs on the opportunity's page", () => {
+  beforeEach(() => {
+    fetchMyMailbox.mockReset().mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    loadPeoSendContext.mockReset().mockResolvedValue({ mailbox: { connected: true, address: "sam@acme.example" }, contacts: [], reply_address: null });
+    loadPeoAuthorizations.mockReset().mockResolvedValue([]);
+    loadRegisteredElsewhere.mockReset().mockResolvedValue([]);
+  });
+
+  // Catches: Choose PEOs that needs a second click after the person has already chosen it (the page reads the submission first, then there is nothing left to choose).
+  it("opens at once when asked to", async () => {
+    render(<SendToSeveralPeos {...props} startOpen />);
+    expect(await screen.findByRole("region", { name: "Send to several PEOs" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send to several PEOs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("SendToSeveralPeos: the label that opens it", () => {
+  // Catches: a Choose PEOs that turns into "Send to several PEOs" once it has been closed, two names for one thing on one page.
+  it("names the button it comes back to as it was asked to", async () => {
+    render(<SendToSeveralPeos {...props} startOpen openLabel="Choose PEOs" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+    expect(await screen.findByRole("button", { name: "Choose PEOs" })).toBeInTheDocument();
+  });
+});

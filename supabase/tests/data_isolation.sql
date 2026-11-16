@@ -245,8 +245,11 @@
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261122250000_convert_lead.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1561,7 +1564,7 @@ INSERT INTO callable VALUES
    'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
   ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
    'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
-  ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+  ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid, p_source text)', 'own', NULL,
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
   ('create_lead(p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes a lead of that firm, owned by its maker (or, by the level rule, by someone they may choose), New and Added by hand (CRM-L1.2a); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
@@ -1672,6 +1675,10 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for marks an opportunity won on the quote the employer took, when the level rule gives them it, from a version: the submission won, the other open quotes closed, the placement and its renewal made, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity the caller may not see, the same as for one that is not there'),
   ('opportunity_mark_lost(p_opportunity_id uuid, p_reason text, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
    'a current member of the firm marks an opportunity lost for a reason from the list, when the level rule gives them it, from a version; refused as opportunity_mark_won is'),
+  ('opportunity_mark_won_and_withdraw(p_opportunity_id uuid, p_quote_request_id bigint, p_start_date date, p_renewal_date date, p_broker_of_record text, p_firm_id uuid, p_version integer, p_commission_basis text, p_commission_rate numeric, p_commission_expected_yearly numeric, p_time_zone text, p_subject text, p_body text)', 'own', NULL,
+   'a current member of the firm the call acts for marks an opportunity won as opportunity_mark_won does and, in the same transaction, sends the one note on each still-open PEO''s own thread from their own mailbox (5.0y); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT412 with no mailbox, 22023 outside 6.2''s limits, and nothing moves when any step is refused'),
+  ('opportunity_mark_lost_and_withdraw(p_opportunity_id uuid, p_reason text, p_note text, p_firm_id uuid, p_version integer, p_subject text, p_body text)', 'own', NULL,
+   'the same for marking it lost: every PEO still open is sent the note (there is no winner); refused as opportunity_mark_won_and_withdraw is'),
   ('opportunity_reopen(p_opportunity_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
    'the record owner of an opportunity or an owner of the firm reopens it, won or lost, from a version; refused as opportunity_mark_won is, and 42501 in words for one who may see it but is neither'),
   ('record_commission_payment(p_placement_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid)', 'own', NULL,
@@ -1711,6 +1718,12 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for reopens a Not a fit lead, by the level rule; refused as update_lead is'),
   ('log_lead_activity(p_kind text, p_lead_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the lead, logs a call, a note or a task on it; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see or that is not there, 55000 for one Converted, Not a fit or in the bin');
+-- CRM-L2.2 (20261122250000_convert_lead.sql; supabase/tests/convert_lead.sql): converting a lead, and the possible matches its dialog offers.
+INSERT INTO callable VALUES
+  ('lead_convert_context(p_firm_id uuid, p_lead_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads the accounts that may be the same business as a lead they may see, by the duplicate match, only those they may see and none archived; PT404, the same as for a lead that is not there, for one they may not see; 42501 for anyone who is no member of that firm'),
+  ('convert_lead(p_lead_id uuid, p_account_id uuid, p_make_contact boolean, p_first_name text, p_last_name text, p_contact_email text, p_contact_phone text, p_make_opportunity boolean, p_opportunity_name text, p_target_start date, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for converts a New or Working lead they may change, by the level rule, into an account (made or chosen), a contact and an opportunity, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see or an account they may not see, 55000 for a lead Converted, Not a fit or in the bin or an archived account, 22023 in words for what is wrong with a contact or the opportunity');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2424,6 +2437,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('opportunity_mark_won', 'advisor', 'by_id', $$SELECT public.opportunity_mark_won({opp}, 0, NULL, NULL, 'Probe', {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
   ('opportunity_mark_lost', 'advisor', 'by_id', $$SELECT public.opportunity_mark_lost({opp}, 'price', NULL, {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('opportunity_mark_won_and_withdraw', 'advisor', 'by_id', $$SELECT public.opportunity_mark_won_and_withdraw({opp}, 0, NULL, NULL, 'Probe', {firm}, 2147483647, NULL, NULL, NULL, 'UTC', 'Probe', 'Probe')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^(22023|PT412)$'),
+  ('opportunity_mark_lost_and_withdraw', 'advisor', 'by_id', $$SELECT public.opportunity_mark_lost_and_withdraw({opp}, 'price', NULL, {firm}, 2147483647, 'Probe', 'Probe')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^(22023|PT412)$'),
   ('opportunity_reopen', 'advisor', 'by_id', $$SELECT public.opportunity_reopen({opp}, {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
   ('record_commission_payment', 'advisor', 'by_id', $$SELECT public.record_commission_payment({plc}, current_date, 5, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"received_to_date"'),
   ('update_commission_payment', 'advisor', 'by_id',
@@ -2442,6 +2457,11 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('mark_lead_not_fit', 'advisor', 'by_id', $$SELECT public.mark_lead_not_fit({alead}, 'other', {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"not_fit_reason": "other"'),
   ('reopen_lead', 'advisor', 'by_id', $$SELECT public.reopen_lead({alead}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^55000$'),
   ('log_lead_activity', 'advisor', 'by_id', $$SELECT public.log_lead_activity('note', {alead}, p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"type": "note"');
+
+-- CRM-L2.2: converting a lead ({alead} is the firm's lead owned by its agent). The member's call makes no contact (no one to reach is not the probe's question) and no opportunity.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('lead_convert_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_convert_context({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('convert_lead', 'advisor', 'by_id', $$SELECT public.convert_lead({alead}, p_make_contact => false, p_make_opportunity => false, p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"created": true');
 
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
@@ -4391,6 +4411,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('activity_record_seen', 'service_only', 'whether the caller may see the account or lead a call, note or task is on; no API role can call it'),
   ('activity_lead_read_only', 'service_only', 'why a call, note or task on a lead can''t be changed (the lead is read, not changed); no API role can call it');
 INSERT INTO fn_class (fn, class, why) VALUES
+  ('lead_convert_context', 'firm_scoped', 'a current member of the firm who may see the lead reads the accounts that may be the same business, only those they may see; the same nothing for another firm''s lead as for one that is not there (4e)'),
+  ('convert_lead', 'firm_scoped', 'a current member of the firm the call acts for converts a lead they may change into an account, a contact and an opportunity; refused for another firm''s lead as for one that is not there (4e)');
+INSERT INTO fn_class (fn, class, why) VALUES
   ('contact_page', 'firm_scoped', 'a current member of the firm who may see the contact''s account (by level) reads its page; the same nothing for another firm''s contact as for one that is not there (4e)'),
   ('contact_activity', 'firm_scoped', 'the same for a page of the contact''s calls, notes and tasks (4e)'),
   ('update_contact', 'firm_scoped', 'a current member of the firm the call acts for saves a contact''s own fields from a version, when the level rule gives it them; refused for another firm''s contact as for one that is not there (4e)');
@@ -4445,6 +4468,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('undo_renewal_not_renewed', 'firm_scoped', 'the same for its undo: the renewal back and its placement reopened (4e)'),
   ('opportunity_mark_won', 'firm_scoped', 'a current member of the firm the call acts for marks an opportunity won, when the level rule gives them it, from a version: the quote chosen, the rest closed, the placement and renewal made, all or none; as not there for another firm''s (4e)'),
   ('opportunity_mark_lost', 'firm_scoped', 'the same for marking it lost for a reason (4e)'),
+  ('opportunity_mark_won_and_withdraw', 'firm_scoped', 'a current member of the firm the call acts for, with a connected mailbox, marks an opportunity won and sends each other PEO still open the one note on its own thread, all or none (5.0y); as not there for another firm''s'),
+  ('opportunity_mark_lost_and_withdraw', 'firm_scoped', 'the same for marking it lost: every PEO still open is told (5.0y)'),
+  ('opportunity_withdrawal_start', 'service_only', 'the refusals and the list of PEOs to tell, read before the move, inside opportunity_mark_won_and_withdraw and opportunity_mark_lost_and_withdraw, which check the firm first; no API role can call it'),
+  ('opportunity_withdrawal_send', 'service_only', 'records the one note on each PEO''s thread after the move, inside the same two functions; no API role can call it'),
   ('opportunity_reopen', 'firm_scoped', 'the same for reopening a won or lost opportunity, for its record owner or an owner of the firm (4e)'),
   ('record_commission_payment', 'firm_scoped', 'a current member of the firm the call acts for records commission received against a placement of the firm, by the level rule; as not there for another firm''s (4e)'),
   ('update_commission_payment', 'firm_scoped', 'the same for saving a payment from a version (4e)'),

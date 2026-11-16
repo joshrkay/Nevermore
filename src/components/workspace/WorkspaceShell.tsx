@@ -9,13 +9,14 @@ import {
 } from "@/components/ui/sidebar";
 import { SheetTitle } from "@/components/ui/sheet";
 import { firmHostname } from "@/lib/firmHost";
+import { NewQuoteHost } from "@/components/newquote/NewQuoteHost";
 import ClosingBanner from "./ClosingBanner";
 import ConnectionBanner from "./ConnectionBanner";
 import MailboxNotice from "./MailboxNotice";
 import MenuSearch from "./MenuSearch";
 import SupportBanner, { SupportEnded } from "./SupportBanner";
 import { useSupportOver } from "./useSupportOver";
-import { badgeText, MENU_ITEMS, SETTINGS_ITEM, type MenuItem } from "./menu";
+import { badgeText, MENU_ITEMS, NEW_QUOTE_ITEM, SETTINGS_ITEM, type MenuItem } from "./menu";
 import { useMenuCounts } from "./useMenuCounts";
 import { useWorkspace, WorkspaceProvider } from "./useWorkspace";
 
@@ -49,7 +50,8 @@ const MenuBody = () => {
   const { isMobile, setOpenMobile } = useSidebar();
   // Choosing an item closes the menu opened over the page, including the item for the page already shown.
   const close = () => setOpenMobile(false);
-  const { pathname, search } = useLocation();
+  const location = useLocation();
+  const { pathname, search } = location;
   const params = new URLSearchParams(search);
   const { signOut } = useAuth();
   const { firm, role, isPlatformAdmin, person, supportEndsAt } = useWorkspace();
@@ -75,6 +77,11 @@ const MenuBody = () => {
         <SidebarGroup className="flex-1">
           <nav aria-label="Workspace" className="flex h-full flex-col">
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <Link to={NEW_QUOTE_ITEM.to} state={{ backgroundLocation: location }} onClick={close}><NEW_QUOTE_ITEM.icon aria-hidden="true" /><span className="min-w-0 truncate">{NEW_QUOTE_ITEM.label}</span></Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               {MENU_ITEMS.map((item) => <Item key={item.key} item={item} pathname={pathname} search={params} onChoose={close} count={item.countKey ? counts[item.countKey] : undefined} />)}
             </SidebarMenu>
             <SidebarMenu className="mt-auto">
@@ -157,6 +164,7 @@ const Frame = () => {
       <ConnectionBanner />
       <MailboxNotice />
       {supportOver ? <SupportEnded /> : <Outlet />}
+      {!supportOver && <NewQuoteHost />}
       <div className="flex justify-center pb-8 pt-4"><LegalLinks compact /></div>
     </>
   );
