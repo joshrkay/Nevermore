@@ -18,6 +18,10 @@ export interface AccountActions {
   canMove: boolean;
   /** Opens Move on a contact of this account. */
   move: (contact: ContactRow) => void;
+  /** Whether a contact may be offered a merge with another contact of the account (CRM-S4.3a). Allowed on an archived account (D-642); the dialog says why not, from the preview. */
+  canMerge: boolean;
+  /** Opens Merge on a contact: choose the other contact, then the field-by-field choice. */
+  merge: (contact: ContactRow) => void;
 }
 
 export const AccountActionsContext = createContext<AccountActions | null>(null);

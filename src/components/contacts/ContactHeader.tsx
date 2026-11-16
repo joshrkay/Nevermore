@@ -40,7 +40,7 @@ export function ContactHeader({ contact, canMove }: { contact: ContactDetails; c
           </p>
         </div>
       </div>
-      {(actions?.canAdd || (actions && canMove)) && (
+      {(actions?.canAdd || (actions && canMove) || actions?.canMerge) && (
         <div data-contact-actions className="mt-4 flex flex-wrap gap-2">
           {actions.canAdd && <Button type="button" onClick={() => actions.log("call", contact.id)}>Log a call<span className="sr-only"> with {name}</span></Button>}
           {actions.canAdd && <Button type="button" variant="outline" onClick={() => actions.log("task", contact.id)}>Add a task<span className="sr-only"> for {name}</span></Button>}
@@ -51,6 +51,15 @@ export function ContactHeader({ contact, canMove }: { contact: ContactDetails; c
               onClick={() => actions.move({ id: contact.id, firstName: contact.firstName, lastName: contact.lastName, title: contact.title, email: contact.email, phone: contact.phone, mobile: contact.mobile, isMain: contact.isMain, doNotEmail: contact.doNotEmail })}
             >
               Move to another account
+            </Button>
+          )}
+          {actions.canMerge && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => actions.merge({ id: contact.id, firstName: contact.firstName, lastName: contact.lastName, title: contact.title, email: contact.email, phone: contact.phone, mobile: contact.mobile, isMain: contact.isMain, doNotEmail: contact.doNotEmail })}
+            >
+              Merge with another contact
             </Button>
           )}
         </div>
