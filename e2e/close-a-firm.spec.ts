@@ -69,7 +69,7 @@ test("an owner asks to close the firm, a member sees the banner and can't change
     await expect(memberPage.getByRole("heading", { name: "Submissions" })).toBeVisible();
     await expect(memberPage.getByRole("status", { name: "This firm is closing" })).toHaveCount(0);
     await addPartner(memberPage, "First Partners", "first-partners");
-    await expect(memberPage.getByRole("cell", { name: "First Partners" })).toBeVisible();
+    await expect(memberPage.getByText("First Partners", { exact: true })).toBeVisible();
   });
 
   await test.step("an owner asks to close the firm from Settings, and is told what will happen before typing the firm's name", async () => {
@@ -100,25 +100,25 @@ test("an owner asks to close the firm, a member sees the banner and can't change
     const banner = memberPage.getByRole("status", { name: "This firm is closing" });
     await expect(banner).toContainText("Closing Co closes on");
     await expect(banner).toContainText("nothing can be changed, added, sent or deleted");
-    await expect(memberPage.getByRole("cell", { name: "First Partners" })).toBeVisible();
+    await expect(memberPage.getByText("First Partners", { exact: true })).toBeVisible();
     await addPartner(memberPage, "Second Partners", "second-partners");
     await expect(memberPage.getByText("This firm is closing and can't be changed")).toBeVisible();
-    await expect(memberPage.getByRole("cell", { name: "Second Partners" })).toHaveCount(0);
+    await expect(memberPage.getByText("Second Partners", { exact: true })).toHaveCount(0);
     const kept = await withDb((client) => client.query("SELECT count(*)::int AS n FROM public.referral_partners WHERE firm_id = (SELECT id FROM public.firms WHERE address = $1)", [FIRM]));
     expect(kept.rows[0].n).toBe(1);
   });
 
   await test.step("the closing firm's member can still export the partners: a CSV of them is downloaded and the export is in the firm's record, in words", async () => {
     await memberPage.goto(`${firmUrl(FIRM)}/advisor/partners`);
-    await expect(memberPage.getByRole("cell", { name: "First Partners" })).toBeVisible();
+    await expect(memberPage.getByText("First Partners", { exact: true })).toBeVisible();
     const [download] = await Promise.all([memberPage.waitForEvent("download"), memberPage.getByRole("button", { name: "Export" }).click()]);
     expect(download.suggestedFilename()).toMatch(/^referral-partners-\d{4}-\d{2}-\d{2}\.csv$/);
     const bytes = await readFile(await download.path());
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const lines = bytes.toString("utf8").replace(/^\uFEFF/, "").split("\r\n");
-    // The columns the page shows (this firm has no link to show, so its code), under the page's own headings.
-    expect(lines[0]).toBe('Partner,Their code,"Started, 30 days","Certified, 30 days"');
-    expect(lines[1]).toBe("First Partners,first-partners,0,0");
+    // The columns the page shows (each partner's link, at the firm's own address, D-1704), under the page's own headings.
+    expect(lines[0]).toBe('Partner,Their link,"Started, 30 days","Certified, 30 days"');
+    expect(lines[1]).toBe(`First Partners,https://${FIRM}.nevermorepeo.com/?ref=first-partners,0,0`);
     expect(lines).toHaveLength(3);
     await expect(memberPage.getByText("Exported 1 referral partner.")).toBeVisible();
     const entry = await withDb((client) => client.query(
@@ -135,7 +135,7 @@ test("an owner asks to close the firm, a member sees the banner and can't change
     await memberPage.goto(`${firmUrl(FIRM)}/advisor/partners`);
     await expect(memberPage.getByRole("status", { name: "This firm is closing" })).toHaveCount(0);
     await addPartner(memberPage, "Second Partners", "second-partners");
-    await expect(memberPage.getByRole("cell", { name: "Second Partners" })).toBeVisible();
+    await expect(memberPage.getByText("Second Partners", { exact: true })).toBeVisible();
     const record = await withDb((client) => client.query(
       `SELECT (SELECT count(*)::int FROM public.firm_activity a WHERE a.firm_id = f.id AND a.kind = 'closure_withdrawn') AS withdrawn,
               (SELECT count(*)::int FROM public.referral_partners p WHERE p.firm_id = f.id) AS partners

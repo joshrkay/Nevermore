@@ -13,13 +13,19 @@ describe("how the webhook function is deployed", () => {
     expect(read("supabase/config.toml")).toMatch(/\[functions\.resend-webhook\]\s*\n\s*verify_jwt\s*=\s*false/);
   });
 
+  // Break caught (found by mutation): a gateway that checks a JWT refuses every visitor before the function sees them, so the "contact me" form never works.
+  it("has the gateway's JWT check turned off for the contact-request function, which checks a Turnstile token instead", () => {
+    expect(read("supabase/config.toml")).toMatch(/\[functions\.contact-request\]\s*\n\s*verify_jwt\s*=\s*false/);
+  });
+
   it("leaves it on for every other function", () => {
     const toml = read("supabase/config.toml");
     const sections = [...toml.matchAll(/\[functions\.([a-z-]+)\]/g)].map((m) => m[1]);
     // The two the email provider calls with a signature instead of a login, and the bundle link a PEO opens with no sign-in (ADR 0003),
     // which answers only a live link's token.
     // And the file link a contact opens from an agent's message (D-605), which answers only a live link's token too.
-    expect(sections).toEqual(["resend-webhook", "receive-mail", "bundle-link", "message-file"]);
+    // And the "contact me" form a visitor on a firm's link posts (slice 8.7b): nobody signs in, so the function checks a Turnstile token instead of a JWT.
+    expect(sections).toEqual(["resend-webhook", "receive-mail", "bundle-link", "message-file", "contact-request"]);
   });
 
   it("is checked on a signed-out call by the setup, which relies on its own 401", () => {

@@ -6,11 +6,13 @@ import { goOffline, goOnline, restoreConnection } from "@/test/connection";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { PeoRecord } from "@/data/peoCatalog";
 import { parsePeoCatalog } from "@/data/peoProfiles";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
+  setQuoteRequestStatus: vi.fn(),
   addQuoteRequestNote: vi.fn(),
   correctQuoteRequestNote: vi.fn(),
   reissueQuoteRequestAddress: vi.fn(),
@@ -70,12 +72,14 @@ const panel = (
   over: {
     status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; notes?: QuoteRequestNoteRow[]; addresses?: QuoteRequestAddressRow[];
     replyDomain?: string | null; currentVersion?: number | null;
-    data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string) => void;
+    data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string) => void; support?: boolean;
   } = {},
 ) => {
   const onChanged = vi.fn();
+  const shell = { firm: { id: "f1", name: "Acme Benefits", address: "acme" }, role: "Nevermore support" as const, isOwner: false, isSupport: true, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: true, person: "Sam" };
+  const Shell = ({ children }: { children: React.ReactNode }) => (over.support ? <WorkspaceContext.Provider value={shell}>{children}</WorkspaceContext.Provider> : <>{children}</>);
   render(
-    <QuoteRequestsPanel
+    <Shell><QuoteRequestsPanel
       sessionId="s1"
       prospectUserId="p1"
       status={over.status ?? "sent_to_carrier"}
@@ -89,7 +93,7 @@ const panel = (
       catalog={over.catalog ?? CATALOG}
       onAskProspect={over.onAskProspect ?? vi.fn()}
       onChanged={onChanged}
-    />,
+    /></Shell>,
   );
   return onChanged;
 };
@@ -353,6 +357,107 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
     await waitFor(() => expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ adminFeePepm: null, expiresOn: null })));
+  });
+
+  // N-1.2, CRM-Q3.1. Break caught: the Acknowledged status with no way to record it, so the board shows what no one can set.
+  it("records that a PEO acknowledged with one click on a Sent request", async () => {
+    panel({ requests: [request()] });
+    fireEvent.click(within(screen.getByTestId("quote-request-7")).getByRole("button", { name: "Mark TriNet acknowledged" }));
+    await waitFor(() => expect(api.setQuoteRequestStatus).toHaveBeenCalledWith(7, "acknowledged"));
+  });
+
+  // Break caught: a status recorded but the page never told, so the card keeps showing the old status until a reload.
+  it("tells the page once a status is recorded, so the card shows the new one", async () => {
+    const onChanged = panel({ requests: [request()] });
+    fireEvent.click(within(screen.getByTestId("quote-request-7")).getByRole("button", { name: "Mark TriNet acknowledged" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  });
+
+  // Break caught: a PEO's open question with no way to record it.
+  it("records that a PEO has a question open with one click on a Sent request", async () => {
+    panel({ requests: [request()] });
+    fireEvent.click(within(screen.getByTestId("quote-request-7")).getByRole("button", { name: "Mark TriNet question open" }));
+    await waitFor(() => expect(api.setQuoteRequestStatus).toHaveBeenCalledWith(7, "question_open"));
+  });
+
+  // Break caught: a button for the status a PEO is already in, which the database refuses.
+  it("does not offer Acknowledged on a request that is already Acknowledged", () => {
+    panel({ requests: [request({ status: "acknowledged" })] });
+    const row = screen.getByTestId("quote-request-7");
+    expect(within(row).queryByRole("button", { name: "Mark TriNet acknowledged" })).toBeNull();
+    expect(within(row).getByRole("button", { name: "Mark TriNet question open" })).toBeInTheDocument();
+  });
+
+  // Break caught: no way back once a question is answered or an acknowledgement was a mistake.
+  it("records Back to Sent from Acknowledged or Question open", async () => {
+    panel({ requests: [request({ id: 1, status: "acknowledged" }), request({ id: 2, peo_name: "Justworks", status: "question_open" })] });
+    fireEvent.click(within(screen.getByTestId("quote-request-1")).getByRole("button", { name: "Mark TriNet back to Sent" }));
+    await waitFor(() => expect(api.setQuoteRequestStatus).toHaveBeenLastCalledWith(1, "sent"));
+    fireEvent.click(within(screen.getByTestId("quote-request-2")).getByRole("button", { name: "Mark Justworks back to Sent" }));
+    await waitFor(() => expect(api.setQuoteRequestStatus).toHaveBeenLastCalledWith(2, "sent"));
+  });
+
+  // Break caught: status buttons on a quote, a decline or a closed request, where the database refuses every one.
+  it("offers none on a quoted, declined or closed quote request", () => {
+    panel({ requests: [request({ id: 1, status: "quoted" }), request({ id: 2, peo_name: "Justworks", status: "declined" }), request({ id: 3, peo_name: "Insperity", status: "closed" })] });
+    for (const id of [1, 2, 3]) expect(within(screen.getByTestId(`quote-request-${id}`)).queryAllByRole("button", { name: /^Mark / })).toHaveLength(0);
+  });
+
+  // Break caught: a status the database refused (someone else changed it a minute ago) shown as recorded, or the page told to refresh as if it had been.
+  it("shows the database's words when a status is refused, and does not tell the page it changed", async () => {
+    api.setQuoteRequestStatus.mockRejectedValueOnce(Object.assign(new Error("TriNet is already Acknowledged."), { code: "22023" }));
+    const onChanged = panel({ requests: [request()] });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Mark TriNet acknowledged" }));
+    expect(await within(row).findByRole("alert")).toHaveTextContent("TriNet is already Acknowledged.");
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  // Break caught: a dropped connection shown as the browser's own words, or as recorded.
+  it("says the status wasn't recorded when the connection failed", async () => {
+    api.setQuoteRequestStatus.mockRejectedValueOnce(new Error("TypeError: Failed to fetch"));
+    panel({ requests: [request()] });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Mark TriNet acknowledged" }));
+    expect(await within(row).findByRole("alert")).toHaveTextContent("The status wasn't recorded. Check your connection and try again.");
+  });
+
+  // Break caught: a double click recording the same status twice (the second is refused by the database as "already").
+  it("holds the status buttons while one is being recorded", async () => {
+    let finish: () => void = () => {};
+    api.setQuoteRequestStatus.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    panel({ requests: [request()] });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Mark TriNet acknowledged" }));
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Mark TriNet question open" })).toBeDisabled());
+    finish();
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Mark TriNet question open" })).toBeEnabled());
+  });
+
+  // Break caught: a status click with no connection that fails with the browser's words instead of being held with the reason.
+  it("holds the status buttons with the reason when there is no connection, and records nothing", () => {
+    panel({ requests: [request()] });
+    goOffline();
+    const button = within(screen.getByTestId("quote-request-7")).getByRole("button", { name: "Mark TriNet acknowledged" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription("You're offline. Saving is back when you are.");
+    fireEvent.click(button);
+    expect(api.setQuoteRequestStatus).not.toHaveBeenCalled();
+    goOnline();
+    restoreConnection();
+  });
+
+  // Break caught: status buttons offered to Nevermore support, whose every change the database refuses (they can look, not change).
+  it("offers no status buttons to Nevermore support", () => {
+    panel({ requests: [request()], support: true });
+    expect(within(screen.getByTestId("quote-request-7")).queryAllByRole("button", { name: /^Mark / })).toHaveLength(0);
+  });
+
+  // Break caught: an acknowledgement or an open question shown with no days, so an agent can't see how long the PEO has been sitting on it.
+  it("shows Acknowledged and Question open in words with their days", () => {
+    panel({ requests: [request({ id: 1, status: "acknowledged" }), request({ id: 2, peo_name: "Justworks", status: "question_open", sent_on: "2026-11-01" })] });
+    expect(within(screen.getByTestId("quote-request-1")).getByText("Acknowledged · 1 day")).toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-2")).getByText("Question open · 10 days")).toBeInTheDocument();
   });
 
   it("offers no answer on a closed quote request: only a new send reopens it", () => {

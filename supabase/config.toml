@@ -19,3 +19,8 @@ verify_jwt = false
 # asking the database as the service role.
 [functions.message-file]
 verify_jwt = false
+
+# The "contact me" form on a firm's public link (slice 8.7b): a visitor signs in nowhere. The function checks a Cloudflare Turnstile token (TURNSTILE_SECRET_KEY)
+# instead of a JWT, then asks the database as the service role; with no secret it refuses everyone.
+[functions.contact-request]
+verify_jwt = false

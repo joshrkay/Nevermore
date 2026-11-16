@@ -2311,6 +2311,28 @@ describe("AdvisorSubmissionPage", () => {
         expect([input.quoteRequestId, input.plan.peo, input.plan.version]).toEqual([7, "Justworks", 1]);
       });
 
+      // Catches (N-1.2): a PEO that acknowledged, or has a question open, losing its Follow up and Withdraw buttons the moment its status moves off Sent, so the
+      // very PEO that has just asked something can't be written to from its card.
+      it("keeps Follow up and Withdraw on the card of a PEO that acknowledged or has a question open", async () => {
+        const request = (id: number, peo: string, status: string) => ({ id, session_id: "s1", peo_name: peo, status, sent_version: 1, sent_on: "2026-11-03",
+          quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null, withdrawn_reason: null });
+        const message = (id: number, quoteRequestId: number, to: string) => ({ id, quote_request_id: quoteRequestId, session_id: "s1", direction: "sent", status: "sent",
+          from_address: "adv@example.com", to_addresses: [to], subject: "Acme: EAA-1, version 1", recorded_at: "2026-11-03T10:00:00Z" });
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 1, submission: { ...detail().submission!, version: 1 },
+          quoteRequests: [request(7, "Justworks", "acknowledged"), request(8, "TriNet", "question_open")],
+          quoteRequestMessages: [message(41, 7, "quotes@justworks.example"), message(42, 8, "quotes@trinet.example")] as unknown as SubmissionDetail["quoteRequestMessages"],
+        }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).getByRole("button", { name: "Follow up with Justworks" })).toBeInTheDocument();
+        expect(within(justworks).getByRole("button", { name: "Withdraw from Justworks" })).toBeInTheDocument();
+        const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+        expect(within(trinet).getByRole("button", { name: "Follow up with TriNet" })).toBeInTheDocument();
+        expect(within(trinet).getByRole("button", { name: "Withdraw from TriNet" })).toBeInTheDocument();
+      });
+
       // Catches (M-2.4): the console's stage control archiving a submission with no withdrawal offered to the PEO the product sent it to. (Won and Lost are marked on
       // the opportunity, D-470, whose dialog has no withdrawal yet: D-1717, D-1719.)
       it("offers the withdrawal when the status is changed to Archived, and sends it with the move", async () => {

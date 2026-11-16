@@ -197,7 +197,7 @@ test("a broker's second tab is told what the first changed, keeps its own words,
     await first.getByLabel("Kind of partner").selectOption({ index: 1 });
     await first.getByLabel("Code in their link").fill("twin");
     await first.getByRole("button", { name: "Add partner" }).click();
-    await expect(first.getByRole("cell", { name: "Twin Partners" })).toBeVisible();
+    await expect(first.getByText("Twin Partners", { exact: true })).toBeVisible();
     expect(await partnerNow()).toEqual({ name: "Twin Partners", version: 1 });
   });
 
@@ -211,7 +211,7 @@ test("a broker's second tab is told what the first changed, keeps its own words,
     await first.getByRole("button", { name: "Edit Twin Partners" }).click();
     await first.getByRole("form", { name: /^Edit Twin Partners/ }).getByRole("textbox", { name: "Name" }).fill("Twin Partners First");
     await first.getByRole("button", { name: "Save" }).click();
-    await expect(first.getByRole("cell", { name: "Twin Partners First" })).toBeVisible();
+    await expect(first.getByText("Twin Partners First", { exact: true })).toBeVisible();
     expect(await partnerNow()).toEqual({ name: "Twin Partners First", version: 2 });
   });
 
@@ -248,7 +248,7 @@ test("a broker's second tab is told what the first changed, keeps its own words,
   await test.step("Keep mine saves the second tab's words over the first's, from the version that holds them", async () => {
     await second.getByRole("button", { name: "Save" }).click();
     await second.getByRole("alertdialog").getByRole("button", { name: "Keep mine" }).click();
-    await expect(second.getByRole("cell", { name: "Twin Partners Too" })).toBeVisible();
+    await expect(second.getByText("Twin Partners Too", { exact: true })).toBeVisible();
     await expect(second.getByRole("alertdialog")).toHaveCount(0);
     expect(await partnerNow()).toEqual({ name: "Twin Partners Too", version: 3 });
     await expect(second.getByRole("button", { name: "Edit Twin Partners Too" })).toBeFocused();

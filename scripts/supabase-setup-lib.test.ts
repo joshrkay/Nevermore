@@ -21,6 +21,7 @@ const goodEnv = {
   RESEND_WEBHOOK_SECRET: "whsec_c2VjcmV0",
   MALWARE_SCANNER: "clamav",
   CLAMAV_HOST: "scan.example.com",
+  TURNSTILE_SECRET_KEY: "0x4AAAAAAA-secret",
 };
 
 describe("isProjectRef", () => {
@@ -85,8 +86,8 @@ describe("checkSecrets", () => {
     const template = parseEnvFile(readFileSync(path.resolve(__dirname, "../supabase/env.production.example"), "utf8"));
     const { errors, warnings } = checkSecrets(template);
     expect(errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
-    // Emails stay queued, and uploads are refused until a malware scanner is set.
-    expect(warnings).toHaveLength(2);
+    // Emails stay queued, uploads are refused until a malware scanner is set, and the 'contact me' form refuses everyone until Turnstile's secret is set.
+    expect(warnings).toHaveLength(3);
   });
 
   it("warns, without stopping, that bounces are not processed when sending is set up but the webhook secret is not", () => {
@@ -96,7 +97,7 @@ describe("checkSecrets", () => {
     expect(warnings[0]).toMatch(/RESEND_WEBHOOK_SECRET/);
     expect(warnings[0]).toMatch(/Bounces and spam complaints/);
     // Not a second warning on top of "emails stay queued" when sending itself is not set up.
-    expect(checkSecrets({ ANTHROPIC_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h" }).warnings).toHaveLength(1);
+    expect(checkSecrets({ ANTHROPIC_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h", TURNSTILE_SECRET_KEY: "s" }).warnings).toHaveLength(1);
   });
 
   it("stops on a key with something pasted after it, which would be stored whole and refused on every call", () => {
@@ -116,8 +117,20 @@ describe("checkSecrets", () => {
     expect(checkSecrets({ ...goodEnv, RESEND_API_KEY: "re_AbC_123" }).warnings).toEqual([]);
   });
 
+  // Break caught: the 'contact me' form on a firm's link is switched off (it never opens without Turnstile's check) and nobody running the setup is told why.
+  it("warns, without stopping, when TURNSTILE_SECRET_KEY is not set: the 'contact me' form refuses everyone", () => {
+    const { errors, warnings } = checkSecrets({ ...goodEnv, TURNSTILE_SECRET_KEY: "" });
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/'contact me' form.*TURNSTILE_SECRET_KEY.*VITE_TURNSTILE_SITE_KEY/)]);
+    expect(checkSecrets(goodEnv).warnings).toEqual([]);
+  });
+
   it("lists the webhook function among those it deploys and checks", () => {
     expect(FUNCTIONS).toContain("resend-webhook");
+  });
+
+  it("deploys and checks the contact-request function, the captcha in front of a firm's 'contact me' form (slice 8.7b)", () => {
+    expect(FUNCTIONS).toContain("contact-request");
   });
 
   it("deploys and checks the upload and scan functions", () => {
@@ -526,9 +539,22 @@ describe("interpretChecks", () => {
       site_url: "https://nevermorepeo.com", uri_allow_list: "https://nevermorepeo.com/**",
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
-    functions: Object.fromEntries(FUNCTIONS.map((fn) => [fn, { status: 401, ourError: true }])),
+    functions: Object.fromEntries(FUNCTIONS.map((fn) => [fn, { status: fn === "contact-request" ? 400 : 401, ourError: true }])),
     secretNames: ["ANTHROPIC_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"],
   };
+
+  // The contact-request function is public (a visitor signs in nowhere), so the empty probe is not met with a 401: it is met with its own 400, "Confirm you are not a robot".
+  // Break caught: the check holds the public function to the 401 only the signed-in ones give, so a good deploy fails the whole setup; or a function that cannot boot passes.
+  it("probes the contact-request function for its own answer to an empty request, and treats a form switched off for want of its secret as a to-do, not a failed setup", () => {
+    const probed = (answer: { status: number; ourError: boolean }) => interpretChecks({ ...allSet, functions: { ...allSet.functions, "contact-request": answer } }, { localMigrations: 16 });
+    const ok = probed({ status: 400, ourError: true });
+    expect(ok.find((c) => c.name === "Function contact-request")).toMatchObject({ ok: true, required: true });
+    const off = probed({ status: 503, ourError: true });
+    expect(off.find((c) => c.name === "Function contact-request")).toMatchObject({ ok: false, required: false });
+    expect(setupComplete(off)).toBe(true);
+    const gateway = probed({ status: 404, ourError: false });
+    expect(gateway.find((c) => c.name === "Function contact-request")).toMatchObject({ ok: false, required: true });
+  });
 
   it("passes a finished project, leaving emails and advisors as to-dos", () => {
     const checks = interpretChecks(allSet, { localMigrations: 16 });

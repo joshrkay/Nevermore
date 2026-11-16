@@ -118,7 +118,8 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
     return send(200, { external: { anonymous_users: fake.auth.external_anonymous_users_enabled === true }, mailer_autoconfirm: fake.auth.mailer_autoconfirm ?? true });
   }
   const fn = p.match(/^\/functions\/v1\/(.+)$/)?.[1];
-  if (fn) return fake.deployed.has(fn) ? send(401, { error: "Unauthorized" }) : send(404, { code: "NOT_FOUND" });
+  // A public function answers an empty request with its own 400 (contact-request, which needs no sign-in), every other with its own 401.
+  if (fn) return fake.deployed.has(fn) ? (fn === "contact-request" ? send(400, { error: "Confirm you are not a robot, then try again." }) : send(401, { error: "Unauthorized" })) : send(404, { code: "NOT_FOUND" });
   send(404, { message: "unknown route" });
 }
 
@@ -199,7 +200,7 @@ describe("supabase-setup", () => {
       ["link", "--project-ref", REF],
       ["db", "push", "--remote", "--yes"],
       ["secrets", "set", "--env-file", secretsFile, `--remote=${REF}`, "--yes"],
-      ...["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "invite-member", "send-mail", "bundle-link", "message-file", "purge-intakes", "ops-monitor"]
+      ...["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "invite-member", "send-mail", "bundle-link", "message-file", "purge-intakes", "ops-monitor", "contact-request"]
         .map((fn) => ["functions", "deploy", fn, `--remote=${REF}`, "--yes"]),
     ]);
 
@@ -212,7 +213,7 @@ describe("supabase-setup", () => {
     // The summary: every migration (a new project), the secret names (no values) and the functions.
     expect(out).toContain(`Migrations applied: ${MIGRATIONS} (${MIGRATION_FILES[0]} … ${MIGRATION_FILES[MIGRATIONS - 1]})`);
     expect(out).toContain("Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, ANTHROPIC_API_KEY, APP_BASE_URL, EMAIL_FROM, IP_HASH_SECRET, PROSPECT_RESPONSE_TIME, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SUPPORT_EMAIL)");
-    expect(out).toContain("Functions deployed: 16 (chamber-extract, document-upload, census-template-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, receive-mail, held-mail, mailbox, invite-member, send-mail, bundle-link, message-file, purge-intakes, ops-monitor)");
+    expect(out).toContain("Functions deployed: 17 (chamber-extract, document-upload, census-template-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, receive-mail, held-mail, mailbox, invite-member, send-mail, bundle-link, message-file, purge-intakes, ops-monitor, contact-request)");
 
     const secretsCall = cliCalls().find((c) => c.secrets);
     expect(secretsCall.mode).toBe(0o600);

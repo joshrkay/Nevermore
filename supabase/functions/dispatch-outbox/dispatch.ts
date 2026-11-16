@@ -13,6 +13,7 @@ import {
   parseAdvisorNotification,
   parsePeoMailArrived,
   parseExportAlert,
+  parseLeadFromLink,
   parseFirmClosing,
   parseMemberLeft,
   parseDraftExpiryReminder,
@@ -21,6 +22,7 @@ import {
   renderAdvisorNotification,
   renderPeoMailArrived,
   renderExportAlert,
+  renderLeadFromLink,
   renderFirmClosing,
   renderMemberLeft,
   renderDraftExpiryReminder,
@@ -161,6 +163,14 @@ function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
     return { ok: true, message: { from: config.firmNotice.from, to: advisorTo, ...renderExportAlert(n) } };
   }
+  if (row.kind === "lead_from_link") {
+    // Links to the lead, so it needs the app's address as well as the sender: the advisor readiness, not the firm notices'.
+    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseLeadFromLink(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    const leadUrl = `${config.advisor.appBaseUrl}/leads/${encodeURIComponent(n.leadId)}`;
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderLeadFromLink(n, { leadUrl }) } };
+  }
   // Every other kind is about an intake. An event with none can never be built.
   const sessionId = row.session_id;
   if (sessionId === null) return { ok: false, reason: "invalid_payload", final: true };
@@ -245,7 +255,7 @@ function firstRecipients(value: unknown): string[] | null {
 }
 
 /** The kinds sent to people of a firm, whose recipients are looked up at each send and fixed at the first preparation (D-35, D-102). */
-const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert";
+const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert" || kind === "lead_from_link";
 
 /** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
@@ -269,8 +279,8 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   let advisorTo: string[] = [];
   if (isAdvisorKind(row.kind)) {
     try {
-      // A firm's own email (a member left, a request to close, a large export) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
-      if (row.kind === "member_left" || row.kind === "firm_closing" || row.kind === "export_alert") {
+      // A firm's own email (a member left, a request to close, a large export, a visitor asking to be contacted) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
+      if (row.kind === "member_left" || row.kind === "firm_closing" || row.kind === "export_alert" || row.kind === "lead_from_link") {
         // An event that names no firm has no one to tell and never will: it is not looked up by a null id.
         if (!row.firm_id) return { outcome: "fail", reason: "invalid_payload", final: true };
         advisorTo = await deps.ownerRecipients(row.firm_id);
@@ -400,7 +410,7 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "lead_from_link");
   if (config.firmNotice.ok) kinds.push("member_left", "firm_closing", "export_alert");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
   if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");

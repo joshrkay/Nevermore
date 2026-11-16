@@ -244,6 +244,9 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261123100000_quote_statuses.sql
+\i supabase/migrations/20261123110000_firm_link.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1307,6 +1310,7 @@ INSERT INTO callable VALUES
   ('intake_owner_in_my_firm(p_user_id uuid)', 'own',     NULL, 'the consent and profile policies call it as the caller: whether a person owns an intake of a firm the caller currently belongs to'),
   ('colleague_in_my_firm(p_user_id uuid)',    'own',     NULL, 'the profile policy calls it as the caller: whether a person is a current member of a firm the caller currently belongs to'),
   ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
+  ('firm_takes_intakes(p_address text)',     'anyone',  NULL, 'whether the link at a firm address takes intakes now (P-2.1, D-1741): a yes or no for a signed-out visitor, nothing else about the firm; no name, no reason'),
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('sign_up_firm(p_name text, p_address text)', 'own',     NULL, 'a signed-in person with a verified email makes a firm of their own and becomes its owner; refuses guests and unverified accounts; acts only for the caller'),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (supabase/tests/firm_invitations.sql)'),
@@ -1364,8 +1368,6 @@ INSERT INTO callable VALUES
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
-  ('request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)', 'anyone', NULL,
-                                                                     'a visitor on a firm''s public link asks to be contacted (CRM-L1.2b): makes one lead of the firm the ADDRESS names, never one the caller names; capped per firm and overall, a repeat email is the same ask (supabase/tests/request_contact.sql)'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
   ('is_source_code(p_code text)',              'anyone',  NULL, 'pure: whether a referral or campaign code is well formed; the intake source check constraints call it as the writer'),
   ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
@@ -1423,6 +1425,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
   ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
+  ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
+                                                                     'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
   ('advisor_open_quote_request_thread(p_quote_request_id bigint, p_seen_through timestamp with time zone)', 'advisor',
@@ -2160,6 +2164,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_record_quote_send', 'advisor', 'by_id', $$SELECT public.advisor_record_quote_send({sid}, 'Probe PEO', NULL)::text$$),
   ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
+  ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
@@ -4257,7 +4262,7 @@ SELECT unnest(ARRAY[
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
   'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
-  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'record_manuscript_version',
+  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
@@ -4541,7 +4546,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
   ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller owns or is a firm member of (4h)'),
-  ('request_contact', 'platform_wide', 'a visitor on a firm''s public link asks to be contacted: callable by anyone, signed out included, and writes one lead of the firm the address names; no firm is chosen by the caller and nothing of a firm is read back (CRM-L1.2b, supabase/tests/request_contact.sql)'),
+  ('request_contact', 'platform_wide', 'a visitor on a firm''s public link asks to be contacted: callable only by the contact-request edge function as the service role, after Turnstile has checked the visitor (D-1673, amending D-1662), and writes one lead of the firm the address names and one email to its owners; no firm is chosen by the caller and nothing of a firm is read back (CRM-L1.2b, supabase/tests/request_contact.sql)'),
   ('archive_chamber_session', 'own', 'the prospect''s Start over, on their own intake'),
   ('record_intake_consent', 'own', 'the caller''s own agreement'),
   ('prospect_final_manuscript', 'own', 'the prospect''s own final Manuscript'),
@@ -4575,6 +4580,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_member_activity', 'own', 'writes an entry in the caller''s own firm''s record as the caller, from a fixed list of kinds'),
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
+  ('firm_takes_intakes', 'public', 'whether the link at a firm address takes intakes now: a yes or no, nothing else about the firm (P-2.1, D-1741)'),
+  ('firm_for_intake_link', 'service_only', 'the firm whose link an address is, when it takes intakes now: the intake trigger and firm_takes_intakes ask it; not callable through the API'),
+  ('keep_intake_firm', 'trigger', 'places a new intake in the firm of the address it was started at (the default firm with none), refuses a link that takes none, and freezes the firm afterwards (P-2.1, D-1704)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
   ('can_read_peo_mail', 'own', 'row security helper: whether a message is a firm''s the caller belongs to; held mail is its firm''s, and a held message that matches no firm is read by nobody'),
   ('admin_held_mail', 'platform_wide', 'the holding list as a platform admin sees it (D-16): which messages wait, why, since when, and the File ID and PEO an address belonged to; never a sender, subject, text or file name'),
@@ -5039,8 +5047,9 @@ BEGIN
   SELECT string_agg(c.fn, ', ' ORDER BY c.fn) INTO missing
   FROM callable c JOIN pg_proc p ON p.pronamespace = 'public'::regnamespace AND p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' = c.fn
   -- firm_public_name is on the list on purpose (CRM-P1.3a): it is the one thing a firm address shows before sign-in: a firm's name, and nothing else (D-27).
+  -- firm_takes_intakes (P-2.1) is the other: whether a firm's link takes intakes, a yes or no.
   WHERE p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');
-  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid), request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)' THEN
+  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), firm_takes_intakes(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
     RAISE EXCEPTION 'FAIL: SECURITY DEFINER functions signed-out callers can run changed: %', missing;
   END IF;
 

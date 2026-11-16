@@ -1461,6 +1461,10 @@ export type Database = {
         Args: { p_peo: string; p_sent_on?: string | null; p_session_id: string }
         Returns: Json
       }
+      advisor_set_quote_request_status: {
+        Args: { p_quote_request_id: number; p_status: string }
+        Returns: Json
+      }
       advisor_update_quote_request: {
         Args: {
           p_admin_fee_pepm?: number | null
@@ -1614,6 +1618,11 @@ export type Database = {
       request_contact: {
         Args: { p_address: string; p_name: string; p_email?: string; p_phone?: string; p_business?: string; p_message?: string }
         Returns: string
+      }
+      // Whether the link at a firm address takes intakes now (20261123110000).
+      firm_takes_intakes: {
+        Args: { p_address: string }
+        Returns: boolean
       }
       // Signing up a firm and its approval (20261116170000).
       sign_up_firm: {

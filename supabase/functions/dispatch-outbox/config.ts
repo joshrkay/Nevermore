@@ -80,6 +80,7 @@ export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<ob
   return [
     ["advisor_notification", config.advisor],
     ["peo_mail_arrived", config.advisor],
+    ["lead_from_link", config.advisor],
     ["member_left", config.firmNotice],
     ["firm_closing", config.firmNotice],
     ["export_alert", config.firmNotice],

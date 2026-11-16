@@ -1207,6 +1207,24 @@ describe("OpportunityPage: Mark won or lost opens the dialog (D-431, D-463)", ()
     expect(d.getByText("PEO C's open quote is closed.")).toBeInTheDocument();
     expect(d.getByText("A renewal for Jan 1, 2028 is added to the account.")).toBeInTheDocument();
   });
+
+  // Catches (N-1.2): Won saying nothing about a PEO that acknowledged, or has a question open, while the database closes it with the rest.
+  it("lists a PEO that acknowledged or has a question open among the open quotes Won closes", async () => {
+    const quotes = [
+      quotedQuote(12, "PEO A", 132),
+      { ...quotedQuote(14, "PEO D", null), status: "acknowledged", quoteReceivedOn: null },
+      { ...quotedQuote(15, "PEO E", null), status: "question_open", quoteReceivedOn: null },
+      { ...quotedQuote(16, "PEO F", null), status: "declined", quoteReceivedOn: null },
+    ];
+    client.getOpportunityPage.mockResolvedValue(quotedPage({ quotes }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    const d = within(dialog());
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    expect(d.getByText("PEO D's open quote is closed.")).toBeInTheDocument();
+    expect(d.getByText("PEO E's open quote is closed.")).toBeInTheDocument();
+    expect(d.queryByText("PEO F's open quote is closed.")).not.toBeInTheDocument();
+  });
 });
 
 describe("OpportunityPage: marking won (D-464 to D-466)", () => {
