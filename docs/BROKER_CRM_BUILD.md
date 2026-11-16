@@ -953,6 +953,14 @@ Slice 6.8, M-2.3 (send an update, #202), built test-first in `lane/6.8` (`TDD_LO
 | D-1617 | **Registries.** `send_peo_update` is an advisor's firm-scoped write: in the three registries of `data_isolation.sql` (advisor, firm probe, secret read), `help_from_nevermore.sql`'s writes and `close_a_firm.sql`'s guarded list. `peo_update_changes` and `intake_field_labels` are no definers and no API role may call them; the trigger function is a plain trigger. No new table, so no closing line, probe or data class |
 | D-1618 | **Left for later**: a census changed only under its legacy key (`employees`, intakes before the census) counts every person as added; the thread does not mark an update apart from a send (its body says "Changed since version <n>"); an update from 6.7's several-PEOs flow; M-2.4's follow-up carrying the live link |
 
+### 8.4 CRM-L1.1b decisions
+
+Slice 8.4, CRM-L1.1b (bulk actions with Undo, the bin with Restore, the 30-day nightly removal), built test-first in `lane/8.4` (`TDD_LOG.md`).
+
+| # | Decision |
+|---|---|
+| D-1640 | **Migration `20261122210000_leads_bulk_and_bin.sql`**, not the plan table's `20261121120000`: that date is older than migrations already merged (6.x's `20261122...`), so a later-merged, earlier-dated file would load before functions it must build on. Every SQL test that loads the whole suite takes it after `20261122190000` (6.10 takes `20261122200000`, 8.5 `20261122220000`) |
+
 ### Epic 7 build order
 
 | # | Slice | What it covers | Needs |
