@@ -721,6 +721,45 @@ Migrations sort after `20261120090000`.
 | 6.9 | M-2.4 | Follow up and withdraw | 6.6 |
 | 6.10 | Q-2.1, Q-2.2 | The registration record; the warning about a second submission, which records whether to block | 6.6 |
 
+
+### Epic 6 decisions (founder, 2026-11-16)
+
+Grilled 2026-11-16 at this branch's tip (8.1 to 8.3 built). The founder took every recommended answer. What exists: a broker's mailbox connected with send-only
+permission and its token sealed (M-4.1 to M-4.3, `supabase/functions/mailbox`, `_shared/mailbox.ts`), but **no code sends through it**; PEO mail received on
+quote requests (`quote_request_messages`, `receive-mail`, held mail, reply addresses `<File ID>.<PEO>.<16 hex>`); the outbox with retries
+(`dispatch-outbox`). What does not: any store of mail with a contact or a lead, the employer's PEO authorization (M-1.1), a page a PEO opens by link.
+
+| # | Decision |
+|---|---|
+| D-600 | **M-1.1 moves into Epic 6** as slice 6.6a, amending D-800: all of Epic 6 is built now. Its wording is draft, in the one legal-wording module (D-12), and every pull request that shows it says so. CRM-Q2.6 (New quote's step 5) still waits for New quote's steps 1 to 4 (Epic 5); until then sending to several PEOs (M-2.2) starts from the submission's page and the opportunity |
+| D-601 | **Mail with contacts and leads has its own store**: `conversations` (one per contact, one per lead, shared by the firm, with its reply address) and `conversation_messages`, added beside the quote requests' threads, which are not widened (ADR 0007). A conversation names its firm, account, contact or lead; a message on it is shown on the contact, the lead, the account and the account's opportunities from that one row |
+| D-602 | **One way to send**: a server function sends one message through the sender's connected mailbox (Gmail `users.messages.send`, Microsoft Graph `sendMail`). The message is recorded before it is sent and queued through the outbox with its retries. Reply-To is the thread's address first and the sender's own second; the message sets its `Message-ID`, `In-Reply-To` and `References`. Contact mail and PEO mail use it. Tests fake the provider (D-13 seam 4); a real send is confirmed only once the Google and Microsoft apps are configured for production |
+| D-603 | **Epic 6 before the rest of Epic 8.** The place to write on a lead's page arrives with 8.5; moving a lead's conversation to the contact is built in 8.6 |
+| D-604 | **Q-2.2 warns and never blocks**, naming nobody: "Another firm registered this employer with this PEO on Nov 3." Who owns an intake is QP-D4's, not code's |
+| D-605 | **A file on an email goes as an expiring link**, never as an attachment, for contacts as for PEOs (ADR 0003, M-3.5): scanned before, revocable, each download logged. A packet or a census goes only to its own employer |
+| D-606 | **A conversation's address** reads `c.<business or name, shortened>.<16 random hex>` on the receiving subdomain; the `c.` prefix can't be a File ID. `receive-mail` looks in both address tables; an address that belongs to no record holds the mail, as today. It keeps receiving after a contact moves accounts, and moves with a lead's conversation on convert (8.6) |
+| D-607 | **The inbox** (CRM-E1.4) lists every message, both directions, on the quote requests, contacts and leads the person may see (level rule), newest first; views All, New, From PEOs, From contacts and leads, Sent. "New" is one mark per thread for the firm, cleared when anyone opens it, as PEO threads are. Search: sender, subject, account; never the body |
+| D-608 | **M-1.1's screens.** On Certify & sign, after the certification: "Which PEOs may receive your packet?", the product's listed PEOs with a box each; none ticked is allowed and then nothing can be sent. The employer's profile has "Who can receive my packet" to add or withdraw at any time. Each change is an appended row (who, when, the PEO, the wording's version), never an edit. Withdrawing a PEO already sent to closes its quote request, revokes its link and marks the submission Needs advisor action; the PEO is sent nothing. The database refuses a send to a PEO without a live authorization. "Ask" uses the existing information request |
+| D-609 | **The bundle link** (M-2.1, ADR 0003): an unguessable token kept only as its hash, 30 days. `/b/<token>` opens with no sign-in: the employer, File ID and version, each file with its own download, the open items. Each download is on the quote request's timeline. A newer version sent (M-2.3), a withdrawal (M-2.4) or the employer withdrawing the PEO (M-1.1) revokes it |
+| D-610 | **Order and lanes.** Waves, at most three at once (D-25), each slice in its own working copy and its own test database, test-first (`tdd`), merged into this branch, then the full gate. Wave 1: 6.2, 6.6a, 6.6b. Wave 2: 6.1, 6.4, 6.6. Wave 3: 6.5, 6.3, 6.7. Wave 4: 6.8, 6.9, 6.10 |
+
+#### Epic 6 migrations
+
+| Slice | Migration |
+|---|---|
+| 6.2 CRM-E1.2a | `20261122090000` |
+| 6.6a M-1.1 | `20261122100000` |
+| 6.6b bundle link | `20261122110000` |
+| 6.1 CRM-E1.1 | `20261122120000` |
+| 6.4 CRM-E1.3 | `20261122130000` |
+| 6.6 M-2.1 | `20261122140000` |
+| 6.5 CRM-E1.4 | `20261122150000` |
+| 6.3 CRM-E1.2b | `20261122160000` |
+| 6.7 M-2.2 | `20261122170000` |
+| 6.8 M-2.3 | `20261122180000` |
+| 6.9 M-2.4 | `20261122190000` |
+| 6.10 Q-2.1, Q-2.2 | `20261122200000` |
+
 ### Epic 7 build order
 
 | # | Slice | What it covers | Needs |
