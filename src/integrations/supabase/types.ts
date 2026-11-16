@@ -1573,6 +1573,29 @@ export type Database = {
         }
         Returns: Json
       }
+      // ---- CRM-L2.2: converting a lead (20261122250000_convert_lead.sql) ----
+      // The accounts that may be the same business as the lead, by the duplicate match, only those the caller may see: {matches: [{id, name, city, state, reasons}]}.
+      lead_convert_context: {
+        Args: { p_firm_id: string; p_lead_id: string }
+        Returns: Json
+      }
+      // One step, all or none: the account (made, or p_account_id used), the contact, the opportunity; {account: {..., created}, contact | null, opportunity | null}.
+      convert_lead: {
+        Args: {
+          p_lead_id: string
+          p_account_id?: string | null
+          p_make_contact?: boolean | null
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_contact_email?: string | null
+          p_contact_phone?: string | null
+          p_make_opportunity?: boolean | null
+          p_opportunity_name?: string | null
+          p_target_start?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // ---- M-2.4: follow up and withdraw (20261122190000_follow_up_and_withdraw.sql) ----
       // A follow-up queued on the PEO's thread: {quote_request_id, message_id, version}; its fresh link is then joined by attach_peo_link.
       follow_up_peo: {

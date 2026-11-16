@@ -244,6 +244,7 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122250000_convert_lead.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1707,6 +1708,12 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for reopens a Not a fit lead, by the level rule; refused as update_lead is'),
   ('log_lead_activity(p_kind text, p_lead_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the lead, logs a call, a note or a task on it; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see or that is not there, 55000 for one Converted, Not a fit or in the bin');
+-- CRM-L2.2 (20261122250000_convert_lead.sql; supabase/tests/convert_lead.sql): converting a lead, and the possible matches its dialog offers.
+INSERT INTO callable VALUES
+  ('lead_convert_context(p_firm_id uuid, p_lead_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads the accounts that may be the same business as a lead they may see, by the duplicate match, only those they may see and none archived; PT404, the same as for a lead that is not there, for one they may not see; 42501 for anyone who is no member of that firm'),
+  ('convert_lead(p_lead_id uuid, p_account_id uuid, p_make_contact boolean, p_first_name text, p_last_name text, p_contact_email text, p_contact_phone text, p_make_opportunity boolean, p_opportunity_name text, p_target_start date, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for converts a New or Working lead they may change, by the level rule, into an account (made or chosen), a contact and an opportunity, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see or an account they may not see, 55000 for a lead Converted, Not a fit or in the bin or an archived account, 22023 in words for what is wrong with a contact or the opportunity');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2437,6 +2444,11 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('mark_lead_not_fit', 'advisor', 'by_id', $$SELECT public.mark_lead_not_fit({alead}, 'other', {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"not_fit_reason": "other"'),
   ('reopen_lead', 'advisor', 'by_id', $$SELECT public.reopen_lead({alead}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^55000$'),
   ('log_lead_activity', 'advisor', 'by_id', $$SELECT public.log_lead_activity('note', {alead}, p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"type": "note"');
+
+-- CRM-L2.2: converting a lead ({alead} is the firm's lead owned by its agent). The member's call makes no contact (no one to reach is not the probe's question) and no opportunity.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('lead_convert_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_convert_context({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('convert_lead', 'advisor', 'by_id', $$SELECT public.convert_lead({alead}, p_make_contact => false, p_make_opportunity => false, p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"created": true');
 
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
@@ -4385,6 +4397,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('lead_to_change', 'service_only', 'the lead a write acts on, held, after the sight and level checks; no API role can call it'),
   ('activity_record_seen', 'service_only', 'whether the caller may see the account or lead a call, note or task is on; no API role can call it'),
   ('activity_lead_read_only', 'service_only', 'why a call, note or task on a lead can''t be changed (the lead is read, not changed); no API role can call it');
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('lead_convert_context', 'firm_scoped', 'a current member of the firm who may see the lead reads the accounts that may be the same business, only those they may see; the same nothing for another firm''s lead as for one that is not there (4e)'),
+  ('convert_lead', 'firm_scoped', 'a current member of the firm the call acts for converts a lead they may change into an account, a contact and an opportunity; refused for another firm''s lead as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('contact_page', 'firm_scoped', 'a current member of the firm who may see the contact''s account (by level) reads its page; the same nothing for another firm''s contact as for one that is not there (4e)'),
   ('contact_activity', 'firm_scoped', 'the same for a page of the contact''s calls, notes and tasks (4e)'),

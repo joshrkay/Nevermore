@@ -194,6 +194,7 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122250000_convert_lead.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

@@ -112,13 +112,13 @@ const bannerLink = "text-primary underline underline-offset-2 hover:text-primary
 
 /**
  * The Converted banner (CRM-L2.1): when, and links to the account, contact and opportunity converting made, each where the person may see it. The opportunity
- * has no page of its own yet (D-683), so it opens its account's Opportunities tab, where it is listed (D-1655). The page is read-only.
+ * opens its own page, /opportunities/<id> (D-1655, now that it exists). The page is read-only.
  */
 export function ConvertedBanner({ on, made }: { on: string | null; made: NonNullable<LeadPage["converted"]> }) {
   const parts = [
     made.account && <Link key="a" to={`/accounts/${made.account.id}`} className={bannerLink}>{made.account.name}</Link>,
     made.contact && <Link key="c" to={`/contacts/${made.contact.id}`} className={bannerLink}>{made.contact.name}</Link>,
-    made.opportunity && made.account && <Link key="o" to={`/accounts/${made.account.id}?tab=opportunities`} className={bannerLink}>{made.opportunity.name}</Link>,
+    made.opportunity && <Link key="o" to={`/opportunities/${made.opportunity.id}`} className={bannerLink}>{made.opportunity.name}</Link>,
   ].filter(Boolean);
   return (
     <div role="note" aria-labelledby="lead-converted-banner" className="mb-6 rounded-xl border border-border bg-muted/40 p-4 text-sm">
@@ -132,7 +132,7 @@ export function ConvertedBanner({ on, made }: { on: string | null; made: NonNull
   );
 }
 
-/** "Converting makes": the account, contact and opportunity converting would make (D-810, D-1653). Converting itself is slice 8.6's (CRM-L2.2). */
+/** "Converting makes": the account, contact and opportunity converting would make (D-810, D-1653). Converting (CRM-L2.2, ConvertLeadDialog) makes the same three: `convertingMakes` and convert_lead agree (D-1653). */
 export function ConvertingMakes({ lead }: { lead: Pick<LeadFields, "name" | "business"> }) {
   const made = convertingMakes(lead);
   return (
