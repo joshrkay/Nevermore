@@ -174,6 +174,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 SET client_min_messages = notice;
@@ -760,9 +761,11 @@ END $$;
 DO $$
 DECLARE acme uuid := pg_temp.id('acme');
 BEGIN
-  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '42501', 'referral partners can''t be emptied');
+  -- A plain TRUNCATE is refused before the guard is asked, now that opportunities name a partner (CRM-A2.3's key: 0A000); with CASCADE it reaches the guard.
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '0A000', 'referral partners can''t be emptied');
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners CASCADE$q$), '42501', 'nor emptied along with what names them');
   PERFORM pg_temp.as_service();
-  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '42501', 'not by the service role either');
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners CASCADE$q$), '42501', 'not by the service role either');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.referral_partners WHERE firm_id = acme AND code = 'acme-cfo'), 1::bigint, 'and the partners are still there');
   RAISE NOTICE 'record_history: no emptying passed';

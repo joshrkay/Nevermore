@@ -1052,6 +1052,26 @@ export type Database = {
       move_contact: { Args: { p_contact_id: string; p_to_account_id: string; p_confirm?: boolean; p_firm_id?: string | null }; Returns: Json }
       contact_move_choices: { Args: { p_firm_id: string | null; p_contact_id: string; p_search?: string }; Returns: { id: string; name: string }[] }
       add_contact_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
+      // New opportunity on an account (20261120130000): the context is what the form needs ({account: {id, name, archived, employees}, main_contact, contacts, partners, owners});
+      // opportunity_create makes it (stage Qualifying, no intake) and answers {record} with its stage and referral_partner_code.
+      opportunity_create_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
+      opportunity_create: {
+        Args: {
+          p_account_id: string
+          p_name: string | null
+          p_target_start: string | null
+          p_employees: number | null
+          p_main_contact_id: string | null
+          p_expected_close: string | null
+          p_value: number | null
+          p_source: string | null
+          p_referral_partner_code: string | null
+          p_next_step: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // Spotting a duplicate while typing (20261121090000): {matches, more}; a match the person may see in full, one they may not as a mask.
       duplicate_account_check: { Args: { p_firm_id: string | null; p_name: string; p_website: string; p_state: string }; Returns: Json }
       duplicate_contact_check: { Args: { p_firm_id: string | null; p_email: string }; Returns: Json }

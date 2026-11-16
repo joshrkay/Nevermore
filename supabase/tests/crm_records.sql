@@ -165,6 +165,7 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 SET client_min_messages = notice;
@@ -637,7 +638,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.fields_of('opportunities', ho), 'created,employees,next_step,target_start,value', 'an opportunity''s own fields');
   PERFORM pg_temp.is((SELECT version FROM public.opportunities WHERE id = ho), 2, 'at version 2');
   PERFORM pg_temp.is((SELECT replace(encode(t.tgargs, 'escape'), '\000', ',') FROM pg_trigger t WHERE t.tgrelid = 'public.opportunities'::regclass AND t.tgname = 'opportunities_history'),
-    'opportunities,id,account_id,owner_id,name,target_start,employees,main_contact_id,expected_close,value,source,next_step,lost_at,lost_by,lost_reason,lost_note,', 'the list (with lost_at and lost_by, CRM-O1.2, and lost_reason and lost_note, CRM-O1.3a) is written in the trigger''s arguments');
+    'opportunities,id,account_id,owner_id,name,target_start,employees,main_contact_id,expected_close,value,source,next_step,lost_at,lost_by,lost_reason,lost_note,referral_partner_code,', 'the list (with lost_at and lost_by, CRM-O1.2, lost_reason and lost_note, CRM-O1.3a, and referral_partner_code, CRM-A2.3) is written in the trigger''s arguments');
   RESET ROLE;
   RAISE NOTICE 'crm_records: history and version passed';
 END $$;

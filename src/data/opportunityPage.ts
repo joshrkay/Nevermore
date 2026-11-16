@@ -62,8 +62,8 @@ const MOST_VALUE = 1_000_000_000_000;
 
 /**
  * The rules of an opportunity's own fields as the edit form applies them. The database asks the same (opportunity_input_error), so a form that takes a value is a
- * form the database takes: a name, up to 200 characters; a count of employees; a value in dollars under a trillion, to the cent; a source up to 100 characters;
- * a next step up to 2,000.
+ * form the database takes: a name, up to 200 characters; a count of employees; a value in dollars under a trillion, to the cent; a source up to 100 characters
+ * (the box offers only the list and the opportunity's own older value, which the database accepts unchanged); a next step up to 2,000.
  */
 export const opportunityFieldsSchema = z.object({
   name: nameRule("Give the opportunity a name.", 200),

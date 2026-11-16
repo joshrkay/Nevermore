@@ -15,6 +15,8 @@ export interface AccountActions {
   setDone: (task: ActivityItem, done: boolean) => Promise<void>;
   /** Opens the Add a contact form on this account (CRM-A2.2). Offered where `canAdd` is. */
   addContact: () => void;
+  /** Opens the New opportunity form on this account (CRM-A2.3). Offered where `canAdd` is. */
+  newOpportunity: () => void;
   /** Whether a contact may be offered a move to another account: the person may change this account (the database asks the rest, D-209). */
   canMove: boolean;
   /** Opens Move on a contact of this account. */

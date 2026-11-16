@@ -55,6 +55,16 @@ describe("getOpportunityPage", () => {
     expect(rpc).toHaveBeenCalledWith("opportunity_page", { p_firm_id: "f1", p_opportunity_id: "o1" });
   });
 
+  // Catches: the referral partner dropped or renamed on the way to the screen (D-439), so "Referral · <partner>" has nothing to show; or an older answer without it failing the whole page.
+  it("reads the referral partner as {code, name}, and an answer without one as none", async () => {
+    rpc.mockResolvedValue({ data: { ...page, opportunity: { ...page.opportunity, referral_partner: { code: "harbor", name: "Harbor Brokers" } } }, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.opportunity.referralPartner).toEqual({ code: "harbor", name: "Harbor Brokers" });
+    rpc.mockResolvedValue({ data: { ...page, opportunity: { ...page.opportunity, referral_partner: null } }, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.opportunity.referralPartner).toBeNull();
+    rpc.mockResolvedValue({ data: page, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.opportunity.referralPartner).toBeNull();
+  });
+
   // Catches: a part of the answer (the stage, the main contact, the quotes, the intake, a contact's marks) lost or renamed on the way to the screen.
   it("reads the opportunity, its quotes, its intake and its contacts in the page's own words", async () => {
     rpc.mockResolvedValue({ data: page, error: null });
@@ -62,7 +72,7 @@ describe("getOpportunityPage", () => {
     expect(got.opportunity).toEqual({
       id: "o1", version: 4, accountId: "a1", ownerId: "u1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1",
       expectedClose: "2026-12-12", value: 7100, source: "Referral", nextStep: "Send PEO B the loss run", submissionId: "i1", createdAt: "2026-10-21T10:00:00+00:00",
-      updatedAt: "2026-11-11T10:00:00+00:00", stage: "in_market",
+      updatedAt: "2026-11-11T10:00:00+00:00", referralPartner: null, stage: "in_market",
     });
     expect(got.account).toEqual({ id: "a1", name: "Harborview Dental Group", archived: false });
     expect(got.owner).toEqual({ id: "u1", name: "Dana Reyes" });
