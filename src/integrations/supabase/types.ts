@@ -1044,11 +1044,27 @@ export type Database = {
         }
         Returns: Json
       }
+      // Spotting a duplicate while typing (20261121090000): {matches, more}; a match the person may see in full, one they may not as a mask.
+      duplicate_account_check: { Args: { p_firm_id: string | null; p_name: string; p_website: string; p_state: string }; Returns: Json }
+      duplicate_contact_check: { Args: { p_firm_id: string | null; p_email: string }; Returns: Json }
       // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
       // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       restore_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       delete_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      // Merging (20261121100000). The preview answers {kind, problem, differs, kept, removed, moves}; a merge {record, removed: {id, name}, moved}; keep separate
+      // {record, was_duplicate_of}; the old address {kind, id, name} (a contact adds account_id), or null. src/lib/mergeApi.ts reads them.
+      merge_preview: { Args: { p_firm_id: string | null; p_kind: string; p_kept_id: string; p_removed_id: string }; Returns: Json }
+      merge_accounts: {
+        Args: { p_kept_id: string; p_removed_id: string; p_choices?: Json; p_kept_version?: number | null; p_removed_version?: number | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      merge_contacts: {
+        Args: { p_kept_id: string; p_removed_id: string; p_choices?: Json; p_kept_version?: number | null; p_removed_version?: number | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      account_keep_separate: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
+      resolve_merged_record: { Args: { p_firm_id: string | null; p_kind: string; p_id: string }; Returns: Json | null }
       accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
       change_account_owner: {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
@@ -1501,7 +1517,7 @@ export type Database = {
         Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
         Returns: {
           at: string
-          // 'quote_send' or 'quote_recorded' on a stage change a send or a quote made (ADR 0026); null otherwise.
+          // 'quote_send' or 'quote_recorded' on a stage change a send or a quote made (ADR 0026), 'quote_taken' on a win (D-473); null otherwise.
           cause: string | null
           // The PEO of the quote request that caused it.
           cause_peo: string | null
@@ -1510,8 +1526,10 @@ export type Database = {
           field: string | null
           // The value before and after, as it was: a JSON string, number or boolean; null when there was no value.
           from_value: Json | null
-          // 'created' (no field, no values), 'changed' (one field) or 'stage_changed' (an opportunity's stage, field 'stage').
+          // 'created' (no field, no values), 'changed' (one field), 'stage_changed' (an opportunity's stage, field 'stage') or 'merged' (the record absorbed another, 20261121100000).
           kind: string
+          // The name of the merged-away record an entry came from (copied in by a merge, or the 'merged' entry itself); null for every other entry.
+          merged_from: string | null
           to_value: Json | null
           who: string
           // 'member', 'nevermore' or 'system'.

@@ -50,10 +50,22 @@ ALTER TABLE public.opportunities ADD CONSTRAINT opportunities_partner_needs_refe
 
 CREATE INDEX opportunities_referral_partner_idx ON public.opportunities (firm_id, referral_partner_code) WHERE referral_partner_code IS NOT NULL;
 
--- The partner is one of the opportunity's own tracked fields (20261120090000's list, with it): its history and version follow it.
-SELECT public.record_track('public.opportunities', 'opportunities', ARRAY['id'], ARRAY[
-  'account_id', 'owner_id', 'name', 'target_start', 'employees', 'main_contact_id', 'expected_close', 'value', 'source', 'next_step',
-  'lost_at', 'lost_by', 'referral_partner_code']);
+-- The partner is one of the opportunity's own tracked fields: its history and version follow it. It is added to what the table tracks when this runs,
+-- read from its version trigger (as 20261120121000's track_more does), so a field another story added to the list (CRM-O1.3a's lost_reason and lost_note)
+-- is kept, and a restated copy of an older list cannot drop it.
+DO $$
+DECLARE
+  fields text[];
+BEGIN
+  SELECT array_agg(r.m[1] ORDER BY r.ord) INTO fields
+  FROM pg_trigger t CROSS JOIN LATERAL regexp_matches(pg_get_triggerdef(t.oid), '''([a-z0-9_]+)''', 'g') WITH ORDINALITY AS r (m, ord)
+  WHERE t.tgrelid = 'public.opportunities'::regclass AND t.tgname = 'opportunities_version';
+  IF fields IS NULL THEN
+    RAISE EXCEPTION 'public.opportunities has no version trigger to read its tracked fields from';
+  END IF;
+  IF NOT 'referral_partner_code' = ANY (fields) THEN fields := array_append(fields, 'referral_partner_code'); END IF;
+  PERFORM public.record_track('public.opportunities', 'opportunities', ARRAY['id'], fields);
+END $$;
 
 -- ---------- 2. The source, from the fixed list ----------
 -- Whether a trimmed source is one of the list (D-439). NULL is no source. Plain: the same words, in the same order, as src/data/opportunityFields.ts.
