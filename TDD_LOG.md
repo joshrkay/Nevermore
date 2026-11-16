@@ -44,3 +44,54 @@ The `tdd` skill was the first tool call. One test, seen red, then only its code,
 | 37 | schemaSync.test.ts: the withdrawal reasons agree between the migration and quoteRequests.ts (a guard) | passed when written; seen red by taking `other` out of the migration's list: `× ... holds the same reasons a PEO is withdrawn for` | green |
 | 38 | StatusPanel.test.tsx: the advisor can skip the closing withdrawal (a guard) | passed when written: cycle 34's code already sent nothing when unticked; seen red by mutation (see the mutation table) | green |
 | 39 | StatusPanel.test.tsx: never offered to the winner, and only with Won, Lost or Archived (from mutation) | passed when written (the code was already right); written because mutations F5 and F6 went unseen; both now red under the mutation | green |
+
+Cycles 25 to 28 are existing whole-suite tests that went red once this slice's migration was loaded. Cycles 37 to 39 are guards that passed when
+written; each was then seen red under a mutation, as noted.
+
+## Mutation (each change made alone, its tests run, the file restored)
+
+| Mutation | Caught by |
+|---|---|
+| S1 follow_up_peo skips assert_firm_writable | follow_up_and_withdraw.sql 2 |
+| S2 skips assert_peo_authorized | 4 |
+| S3 follows up a closed quote request | 8 |
+| S4 follows up over a link the advisor revoked | 10 |
+| S5 answers no version for the fresh link | 9 |
+| S6 records a follow-up with no mailbox | 5 |
+| S7 a message starts a new thread (no In-Reply-To/References) | 1 |
+| S8 a withdrawal leaves the link live | 11 |
+| S9 keeps no reason | 11 |
+| S10 leaves the quote request open | 11 |
+| S11 its event waits for a link | 11 |
+| S12 a withdrawal skips assert_firm_writable | 12 |
+| S13 withdraws another firm's quote request | 13 |
+| S14 withdraws twice | 15 |
+| S15 withdraws with no mailbox | 14 |
+| S16 claim_peo_mail skips a withdrawal | 18 |
+| S17 the ten-minute reaper ends a withdrawal | 18 |
+| S18 Lost leaves the links live | 19 |
+| S19 Won revokes the winner's link too | 20 |
+| S20 the closing withdrawal goes to the winner | 20 |
+| S21 the closing withdrawal with no mailbox | 21 |
+| S22 the closing withdrawal past 6.2's limits | 22 |
+| S23 a reopened quote request keeps its reason | 23 |
+| S24 the closing withdrawal skips the intake's firm check | data_isolation.sql two-firm probe |
+| F1 send-mail needs a token though the body has no marker | handler.test.ts (withdrawal) |
+| F2 send-mail sends a marked body with no token | handler.test.ts (no link) |
+| F3 StatusPanel ignores the untick | StatusPanel.test.tsx (skip) |
+| F4 offers PEOs the product never wrote to | StatusPanel.test.tsx |
+| F5 offers the winner a withdrawal | StatusPanel.test.tsx (cycle 39; unseen before it) |
+| F6 offers it on any move | StatusPanel.test.tsx (cycle 39; unseen before it) |
+| F7 follow-up offered over a newer certified version | FollowUpOrWithdraw.test.tsx |
+| F8 withdrawal sendable with no reason | FollowUpOrWithdraw.test.tsx |
+| F9 follow-up opens empty | FollowUpOrWithdraw.test.tsx |
+| F10 follow-up sent without the card's link issuer | FollowUpOrWithdraw.test.tsx |
+| F11 the card offers nothing | AdvisorSubmissionPage.test.tsx |
+| F12 the card's link built for another version | AdvisorSubmissionPage.test.tsx |
+| F13 the page gives the Status panel no mail | AdvisorSubmissionPage.test.tsx |
+| F14 the reason shown as its code | QuoteRequestsPanel.test.tsx |
+
+## The gate
+
+`npm run lint` 0 errors (13 warnings, none in this slice's files); `npm run typecheck:functions` clean; `npm test` 285 files, 5945 tests passed (before
+cycle 39's test, which passes: StatusPanel 6 of 6); `npm run build` built; `supabase/tests/run.sh` on port 5435: all 96 SQL tests passed.
