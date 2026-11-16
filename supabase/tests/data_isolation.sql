@@ -245,6 +245,7 @@
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 SET client_min_messages = notice;
 
@@ -1669,6 +1670,10 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for marks an opportunity won on the quote the employer took, when the level rule gives them it, from a version: the submission won, the other open quotes closed, the placement and its renewal made, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity the caller may not see, the same as for one that is not there'),
   ('opportunity_mark_lost(p_opportunity_id uuid, p_reason text, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
    'a current member of the firm marks an opportunity lost for a reason from the list, when the level rule gives them it, from a version; refused as opportunity_mark_won is'),
+  ('opportunity_mark_won_and_withdraw(p_opportunity_id uuid, p_quote_request_id bigint, p_start_date date, p_renewal_date date, p_broker_of_record text, p_firm_id uuid, p_version integer, p_commission_basis text, p_commission_rate numeric, p_commission_expected_yearly numeric, p_time_zone text, p_subject text, p_body text)', 'own', NULL,
+   'a current member of the firm the call acts for marks an opportunity won as opportunity_mark_won does and, in the same transaction, sends the one note on each still-open PEO''s own thread from their own mailbox (5.0y); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT412 with no mailbox, 22023 outside 6.2''s limits, and nothing moves when any step is refused'),
+  ('opportunity_mark_lost_and_withdraw(p_opportunity_id uuid, p_reason text, p_note text, p_firm_id uuid, p_version integer, p_subject text, p_body text)', 'own', NULL,
+   'the same for marking it lost: every PEO still open is sent the note (there is no winner); refused as opportunity_mark_won_and_withdraw is'),
   ('opportunity_reopen(p_opportunity_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
    'the record owner of an opportunity or an owner of the firm reopens it, won or lost, from a version; refused as opportunity_mark_won is, and 42501 in words for one who may see it but is neither'),
   ('record_commission_payment(p_placement_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid)', 'own', NULL,
@@ -2420,6 +2425,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('opportunity_mark_won', 'advisor', 'by_id', $$SELECT public.opportunity_mark_won({opp}, 0, NULL, NULL, 'Probe', {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
   ('opportunity_mark_lost', 'advisor', 'by_id', $$SELECT public.opportunity_mark_lost({opp}, 'price', NULL, {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('opportunity_mark_won_and_withdraw', 'advisor', 'by_id', $$SELECT public.opportunity_mark_won_and_withdraw({opp}, 0, NULL, NULL, 'Probe', {firm}, 2147483647, NULL, NULL, NULL, 'UTC', 'Probe', 'Probe')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^(22023|PT412)$'),
+  ('opportunity_mark_lost_and_withdraw', 'advisor', 'by_id', $$SELECT public.opportunity_mark_lost_and_withdraw({opp}, 'price', NULL, {firm}, 2147483647, 'Probe', 'Probe')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^(22023|PT412)$'),
   ('opportunity_reopen', 'advisor', 'by_id', $$SELECT public.opportunity_reopen({opp}, {firm}, 2147483647)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
   ('record_commission_payment', 'advisor', 'by_id', $$SELECT public.record_commission_payment({plc}, current_date, 5, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"received_to_date"'),
   ('update_commission_payment', 'advisor', 'by_id',
@@ -4441,6 +4448,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('undo_renewal_not_renewed', 'firm_scoped', 'the same for its undo: the renewal back and its placement reopened (4e)'),
   ('opportunity_mark_won', 'firm_scoped', 'a current member of the firm the call acts for marks an opportunity won, when the level rule gives them it, from a version: the quote chosen, the rest closed, the placement and renewal made, all or none; as not there for another firm''s (4e)'),
   ('opportunity_mark_lost', 'firm_scoped', 'the same for marking it lost for a reason (4e)'),
+  ('opportunity_mark_won_and_withdraw', 'firm_scoped', 'a current member of the firm the call acts for, with a connected mailbox, marks an opportunity won and sends each other PEO still open the one note on its own thread, all or none (5.0y); as not there for another firm''s'),
+  ('opportunity_mark_lost_and_withdraw', 'firm_scoped', 'the same for marking it lost: every PEO still open is told (5.0y)'),
+  ('opportunity_withdrawal_start', 'service_only', 'the refusals and the list of PEOs to tell, read before the move, inside opportunity_mark_won_and_withdraw and opportunity_mark_lost_and_withdraw, which check the firm first; no API role can call it'),
+  ('opportunity_withdrawal_send', 'service_only', 'records the one note on each PEO''s thread after the move, inside the same two functions; no API role can call it'),
   ('opportunity_reopen', 'firm_scoped', 'the same for reopening a won or lost opportunity, for its record owner or an owner of the firm (4e)'),
   ('record_commission_payment', 'firm_scoped', 'a current member of the firm the call acts for records commission received against a placement of the firm, by the level rule; as not there for another firm''s (4e)'),
   ('update_commission_payment', 'firm_scoped', 'the same for saving a payment from a version (4e)'),

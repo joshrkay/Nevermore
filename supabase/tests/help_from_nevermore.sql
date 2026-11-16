@@ -203,6 +203,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 SET client_min_messages = notice;
 
@@ -1141,7 +1142,7 @@ DECLARE
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo',
-    'close_submission_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
+    'close_submission_and_withdraw', 'opportunity_mark_won_and_withdraw', 'opportunity_mark_lost_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
     'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
@@ -1218,7 +1219,7 @@ DECLARE
     'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
-    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw',
+    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw', 'opportunity_mark_won_and_withdraw', 'opportunity_mark_lost_and_withdraw',
     'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
   exempt jsonb := jsonb_build_object(
