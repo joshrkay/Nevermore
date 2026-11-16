@@ -2,6 +2,8 @@
 
 One test per cycle: the test's name, the failing line seen, then green once it passed.
 
+On method, honestly: the tdd skill was invoked before any file was read or written, but it was not the session's very first tool call. One shell call came first, reading the lane brief and running `git checkout -B lane/6.6a claude/admiring-keller-dd7w1a`. No test or code was written before the skill was loaded. Cycles that passed on their first run (no code written for them) say so; three places where more than one test was written in one step say so too.
+
 1. `peo_authorizations.sql` "The employer authorizes a listed PEO": `ERROR:  function public.peo_authorized(uuid, unknown) does not exist`. green
 2. `peo_authorizations.sql` "Withdrawing": no failing line; it passed on its first run, because cycle 1's check already reads the latest row. No code written for it; kept as the guard on latest-wins (mutation M2 below proves it can go red).
 3. `peo_authorizations.sql` "Only PEOs on the product's list (L-1.1)": `FAIL: a PEO not on the list gave 23502: null value in column "peo_id" ... expected 22023: Acme PEO is not on the list of PEOs. Ask your advisor to have it added first.` green
