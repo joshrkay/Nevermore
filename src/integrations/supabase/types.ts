@@ -1403,6 +1403,11 @@ export type Database = {
         Args: { p_address: string }
         Returns: string | null
       }
+      // A visitor on a firm's public link asks to be contacted (20261122230000, CRM-L1.2b).
+      request_contact: {
+        Args: { p_address: string; p_name: string; p_email?: string; p_phone?: string; p_business?: string; p_message?: string }
+        Returns: string
+      }
       // Signing up a firm and its approval (20261116170000).
       sign_up_firm: {
         Args: { p_name: string; p_address: string }

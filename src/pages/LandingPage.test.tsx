@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: null }) }));
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
 const { default: Navbar } = await import("@/components/Navbar");
 const { default: LandingPage } = await import("./LandingPage");
