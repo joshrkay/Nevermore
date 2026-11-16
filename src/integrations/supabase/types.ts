@@ -1497,7 +1497,7 @@ export type Database = {
         Args: { p_firm_id: string; p_table: string; p_key: string; p_limit?: number; p_after_at?: string | null; p_after_key?: string | null }
         Returns: {
           at: string
-          // 'quote_send' or 'quote_recorded' on a stage change a send or a quote made (ADR 0026); null otherwise.
+          // 'quote_send' or 'quote_recorded' on a stage change a send or a quote made (ADR 0026), 'quote_taken' on a win (D-473); null otherwise.
           cause: string | null
           // The PEO of the quote request that caused it.
           cause_peo: string | null
