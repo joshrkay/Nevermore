@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom } from "./firmHost";
+import { firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom, getAQuoteUrl } from "./firmHost";
 
 // A firm address is <address>.<the site's domain> (story CRM-P1.3a, D-17). The app reads the firm from the host it
 // is served on; the database, never this, decides who gets in (D-18).
@@ -61,5 +61,12 @@ describe("a firm's web address, reached from the page the person is on (the \"Ch
   it("stays on this machine, with this page's scheme and port, from localhost", () => {
     expect(firmUrlFrom("Acme-Brokers", { protocol: "http:", hostname: "localhost", port: "4180" })).toBe("http://acme-brokers.localhost:4180");
     expect(firmUrlFrom("acme", { protocol: "http:", hostname: "other.localhost", port: "" })).toBe("http://acme.localhost");
+  });
+});
+
+describe("the address that starts an intake for a firm (\"Get a quote\", P-2.1)", () => {
+  // Break caught: the quote link points at the bare domain's start, so the database files the intake in the default firm instead of the firm's.
+  it("is the intake's start at the firm's own address, so the database files the intake there", () => {
+    expect(getAQuoteUrl("  Acme-Brokers ")).toBe("https://acme-brokers.nevermorepeo.com/start");
   });
 });

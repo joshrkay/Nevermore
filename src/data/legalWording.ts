@@ -43,3 +43,14 @@ export const PEO_SEND_NOTICE =
 
 /** The heading on the employer's profile (D-608). */
 export const PEO_AUTHORIZATION_PROFILE_HEADING = "Who can receive my packet";
+
+/** The heading on the intake's first screen at a firm's link, above what the firm will see (P-2.1, D-1744). */
+export const FIRM_SEES_ANSWERS_HEADING = "Who will see your answers";
+
+/**
+ * What the employer reads on the first screen of an intake started at a firm's link, and what is recorded with their agreement (D-1744): the firm will see
+ * the answers. Counsel's wording replaces this one (D-12). DRAFT: NOT LEGALLY REVIEWED.
+ */
+export function firmSeesAnswersText(firm: string): string {
+  return `${firm} invited you, so ${firm} will see everything you enter in this intake: your answers, your employees' personal information and the documents you upload.`;
+}

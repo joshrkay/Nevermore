@@ -244,6 +244,7 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261123110000_firm_link.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1307,6 +1308,7 @@ INSERT INTO callable VALUES
   ('intake_owner_in_my_firm(p_user_id uuid)', 'own',     NULL, 'the consent and profile policies call it as the caller: whether a person owns an intake of a firm the caller currently belongs to'),
   ('colleague_in_my_firm(p_user_id uuid)',    'own',     NULL, 'the profile policy calls it as the caller: whether a person is a current member of a firm the caller currently belongs to'),
   ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
+  ('firm_takes_intakes(p_address text)',     'anyone',  NULL, 'whether the link at a firm address takes intakes now (P-2.1, D-1741): a yes or no for a signed-out visitor, nothing else about the firm; no name, no reason'),
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('sign_up_firm(p_name text, p_address text)', 'own',     NULL, 'a signed-in person with a verified email makes a firm of their own and becomes its owner; refuses guests and unverified accounts; acts only for the caller'),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (supabase/tests/firm_invitations.sql)'),
@@ -4575,6 +4577,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('record_member_activity', 'own', 'writes an entry in the caller''s own firm''s record as the caller, from a fixed list of kinds'),
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
+  ('firm_takes_intakes', 'public', 'whether the link at a firm address takes intakes now: a yes or no, nothing else about the firm (P-2.1, D-1741)'),
+  ('firm_for_intake_link', 'service_only', 'the firm whose link an address is, when it takes intakes now: the intake trigger and firm_takes_intakes ask it; not callable through the API'),
+  ('keep_intake_firm', 'trigger', 'places a new intake in the firm of the address it was started at (the default firm with none), refuses a link that takes none, and freezes the firm afterwards (P-2.1, D-1704)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
   ('can_read_peo_mail', 'own', 'row security helper: whether a message is a firm''s the caller belongs to; held mail is its firm''s, and a held message that matches no firm is read by nobody'),
   ('admin_held_mail', 'platform_wide', 'the holding list as a platform admin sees it (D-16): which messages wait, why, since when, and the File ID and PEO an address belonged to; never a sender, subject, text or file name'),
@@ -5039,8 +5044,9 @@ BEGIN
   SELECT string_agg(c.fn, ', ' ORDER BY c.fn) INTO missing
   FROM callable c JOIN pg_proc p ON p.pronamespace = 'public'::regnamespace AND p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' = c.fn
   -- firm_public_name is on the list on purpose (CRM-P1.3a): it is the one thing a firm address shows before sign-in: a firm's name, and nothing else (D-27).
+  -- firm_takes_intakes (P-2.1) is the other: whether a firm's link takes intakes, a yes or no.
   WHERE p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');
-  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid), request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)' THEN
+  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), firm_takes_intakes(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid), request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)' THEN
     RAISE EXCEPTION 'FAIL: SECURITY DEFINER functions signed-out callers can run changed: %', missing;
   END IF;
 

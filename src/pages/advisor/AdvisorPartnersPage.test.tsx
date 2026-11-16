@@ -1012,7 +1012,7 @@ describe("AdvisorPartnersPage", () => {
     expect(await screen.findByText("No referral partners yet.")).toBeInTheDocument();
   });
 
-  describe("links, which only the default firm can use (D-101)", () => {
+  describe("links, for every firm (D-101 lifted by D-1704)", () => {
     const betaAcme = { ...acme, firm_id: "firm-b", name: "Beta's Acme" };
     const atBeta = () => {
       api.listMyFirms.mockResolvedValue([alpha, beta]);
@@ -1033,40 +1033,42 @@ describe("AdvisorPartnersPage", () => {
       await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Added New Co. Send them https://nevermorepeo.com/?ref=new-co"));
     });
 
-    it("keeps another firm's partner and its code but shows no link, and says when links come", async () => {
+    // Break caught: another firm's partner is given the bare domain's link (its intakes then file in the default firm), or no link at all (D-101's old limit).
+    it("shows and copies another firm's partner a link at that firm's address, with no note about links coming later", async () => {
       atBeta();
       renderPage();
       const row = await screen.findByRole("row", { name: /Beta's Acme/ });
-      expect(within(row).getByText("acme-cfo")).toBeInTheDocument();
-      expect(screen.queryByText(/nevermorepeo\.com/)).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Copy .*link/ })).not.toBeInTheDocument();
-      expect(screen.queryByRole("columnheader", { name: "Their link" })).not.toBeInTheDocument();
-      expect(screen.getByText(/links come when the firm can take intakes/i)).toBeInTheDocument();
+      expect(within(row).getByText("https://beta.nevermorepeo.com/?ref=acme-cfo")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy Beta's Acme's link" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Their link" })).toBeInTheDocument();
+      expect(screen.queryByText(/links come when/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("https://nevermorepeo.com/?ref=acme-cfo")).not.toBeInTheDocument();
       // The funnel counts are asked for the page's own firm, not for another membership's.
       expect(api.loadIntakeSources.mock.calls[0][2]).toBe("firm-b");
     });
 
-    it("offers no link while adding a partner to another firm, and the toast carries none", async () => {
+    // Break caught: the form and the toast offer the bare domain's link for another firm's partner.
+    it("offers the firm's own link while adding a partner to another firm, and the toast carries it", async () => {
       atBeta();
       api.addReferralPartner.mockResolvedValue({ ...betaAcme, code: "new-co", name: "New Co" });
       renderPage();
       await screen.findByRole("row", { name: /Beta's Acme/ });
       fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Name"), { target: { value: "New Co" } });
       expect(screen.getByLabelText("Code in their link")).toHaveValue("new-co");
-      expect(screen.queryByText(/Their link:/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/nevermorepeo\.com/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Their link: https:\/\/beta\.nevermorepeo\.com\/\?ref=new-co/)).toBeInTheDocument();
       fireEvent.change(within(screen.getByRole("form", { name: "Add a partner" })).getByLabelText("Kind of partner"), { target: { value: "other" } });
       fireEvent.click(screen.getByRole("button", { name: "Add partner" }));
-      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Added New Co."));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Added New Co. Send them https://beta.nevermorepeo.com/?ref=new-co"));
     });
 
-    it("says it too for another firm with no partners yet", async () => {
+    // Break caught: the empty state of another firm still says links come later.
+    it("tells another firm with no partners yet to send them their link", async () => {
       atBeta();
       api.listReferralPartners.mockResolvedValue([]);
       renderPage();
       expect(await screen.findByText("No referral partners yet.")).toBeInTheDocument();
-      expect(screen.getByText(/links come when the firm can take intakes/i)).toBeInTheDocument();
-      expect(screen.queryByText(/then send them their link/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/then send them their link/i)).toBeInTheDocument();
+      expect(screen.queryByText(/links come when/i)).not.toBeInTheDocument();
     });
   });
 
@@ -1200,7 +1202,7 @@ describe("AdvisorPartnersPage", () => {
       const [blob, name] = downloadBlob.mock.calls[0] as [Blob, string];
       return { name, text: await blobText(blob), bytes: await blobBytes(blob) };
     };
-    // The page's own columns, as the table on screen words them: its default firm shows each partner's link, any other firm its code.
+    // The page's own columns, as the table on screen words them: each partner's link, at the firm's own address (the default firm's is the front page's).
     const HEAD = 'Partner,Their link,"Started, 30 days","Certified, 30 days"';
 
     it("downloads a CSV of every partner with the columns the page shows, in the order it shows them, named for the table and the day, and says how many", async () => {
@@ -1220,14 +1222,15 @@ describe("AdvisorPartnersPage", () => {
       );
     });
 
-    it("names the column as the page does when the firm has no link to show: their code", async () => {
+    // Break caught: another firm's export carries codes or the bare domain's links where the page shows the firm's own links.
+    it("writes another firm's links, at its own address, as the page shows them", async () => {
       api.listMyFirms.mockResolvedValue([beta]);
       api.listReferralPartners.mockResolvedValue([{ ...acme, firm_id: "firm-b" }]);
       exportRows.mockResolvedValue(answer([row()]));
       renderPage("/advisor/partners?firm=firm-b");
       fireEvent.click(await exportButton());
       await screen.findByText("Exported 1 referral partner.");
-      expect((await theFile()).text).toBe('Partner,Their code,"Started, 30 days","Certified, 30 days"\r\nAcme CFO Partners,acme-cfo,5,2\r\n');
+      expect((await theFile()).text).toBe('Partner,Their link,"Started, 30 days","Certified, 30 days"\r\nAcme CFO Partners,https://beta.nevermorepeo.com/?ref=acme-cfo,5,2\r\n');
     });
 
     it("starts the file with a byte order mark, so a spreadsheet reads an accent as it was written", async () => {
