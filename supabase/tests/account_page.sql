@@ -164,6 +164,7 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -512,8 +513,8 @@ BEGIN
   PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(p) k), 'account,can_change,tabs', 'whose parts are the account, whether the person may change it and the tabs');
   PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(p -> 'tabs') k), 'activity,contacts,files,opportunities,quotes', 'the tabs are these five, with no renewals (D-186)');
   PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(p -> 'account') k),
-    'archived_at,city,created_at,current_provider,employees,id,industry,name,owner,phone,postal_code,source,source_partner,state,states_of_operation,status,street,trade_name,updated_at,version,web_domain,website',
-    'the account: its fields, its version, the worked-out status and source, its owner');
+    'archived_at,city,created_at,current_provider,employees,id,industry,name,owner,phone,possible_duplicate_of,postal_code,source,source_partner,state,states_of_operation,status,street,trade_name,updated_at,version,web_domain,website',
+    'the account: its fields, its version, the worked-out status and source, its owner, its possible-duplicate mark');
   PERFORM pg_temp.is(p #>> '{account,id}', pg_temp.id('a1')::text, 'it is the account asked for');
   PERFORM pg_temp.is(p #>> '{account,name}', 'Harborview Dental Group', 'its name');
   PERFORM pg_temp.is(p #>> '{account,trade_name}', 'Harborview Dental', 'trade name');
@@ -673,6 +674,28 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT public.account_page(%L, %L)$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '42501', 'a signed-out caller may not call it');
   RESET ROLE;
   RAISE NOTICE 'account_page: who gets the page passed';
+END $$;
+
+-- ---------- the page: the possible-duplicate mark (story CRM-S4.3a, D-660) ----------
+-- Break caught: the page says nothing of the mark (so the banner could not be drawn), says it for an account that carries none, names an account the caller may not
+-- see (a person learns that one exists but never its name), or loses the mark's name when the person may see it.
+DO $$
+DECLARE p jsonb;
+BEGIN
+  PERFORM pg_temp.is(pg_temp.page('acme_owner', 'acme', 'a1') #> '{account,possible_duplicate_of}', 'null'::jsonb, 'an account with no mark says null');
+  RESET ROLE;
+  UPDATE public.accounts SET possible_duplicate_of = pg_temp.id('a2') WHERE id = pg_temp.id('a1');
+  p := pg_temp.page('acme_owner', 'acme', 'a1');
+  PERFORM pg_temp.is(p #>> '{account,possible_duplicate_of,id}', pg_temp.id('a2')::text, 'a marked account names the account it may duplicate');
+  PERFORM pg_temp.is(p #>> '{account,possible_duplicate_of,name}', (SELECT name FROM public.accounts WHERE id = pg_temp.id('a2')), 'with its name, to someone who may see it');
+  p := pg_temp.page('acme_agent1', 'acme', 'a1');
+  PERFORM pg_temp.is(jsonb_typeof(p #> '{account,possible_duplicate_of}'), 'object', 'someone who may not see the other account is still told the mark is there');
+  PERFORM pg_temp.is(p #> '{account,possible_duplicate_of,id}', 'null'::jsonb, 'without its id');
+  PERFORM pg_temp.is(p #> '{account,possible_duplicate_of,name}', 'null'::jsonb, 'or its name');
+  PERFORM pg_temp.is(pg_temp.page('acme_owner', 'acme', 'a2') #> '{account,possible_duplicate_of}', 'null'::jsonb, 'the other account carries no mark of its own');
+  RESET ROLE;
+  UPDATE public.accounts SET possible_duplicate_of = NULL WHERE id = pg_temp.id('a1');
+  RAISE NOTICE 'account_page: the possible-duplicate mark passed';
 END $$;
 
 -- ---------- the page: one firm at a time, and Nevermore support ----------

@@ -450,6 +450,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,

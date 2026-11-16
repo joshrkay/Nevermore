@@ -7,7 +7,9 @@ import { AccountActionsContext, type AccountActions } from "./useAccountActions"
 import { AddContactDialog } from "./AddContactDialog";
 import { AddToNoteDialog } from "./AddToNoteDialog";
 import { LogActivityDialog } from "./LogActivityDialog";
+import { MergeDialog, type MergedRecords } from "./MergeDialog";
 import { MoveContactDialog } from "./MoveContactDialog";
+import { PickContactDialog } from "./PickContactDialog";
 import { accountKey } from "./useAccountQueries";
 
 // What a person can do to an account's calls, notes and tasks (story CRM-E1.5), offered to the places that draw them (the header's buttons, a contact's
@@ -20,14 +22,20 @@ type Open =
   | { mode: "add"; item: ActivityItem }
   | { mode: "contact" }
   | { mode: "move"; contact: ContactRow }
+  | { mode: "pick"; contact: ContactRow }
+  | { mode: "merge"; keptId: string; removedId: string }
   | null;
 
 const SAVED_WORDS: Record<ActivityType, string> = { call: "Call logged", note: "Note added", task: "Task added" };
 
-export function AccountActionsProvider({ firmId, accountId, accountName, userId, person, canAdd, canMove, alsoRefresh, startWithContactForm = false, onStarted, children }: {
+export function AccountActionsProvider({ firmId, accountId, accountName, userId, person, canAdd, canMove, canMerge = false, alsoRefresh, startWithContactForm = false, onStarted, onContactsMerged, children }: {
   firmId: string; accountId: string; accountName: string; userId: string | null; person?: string; canAdd: boolean;
   /** Whether a contact may be offered a move: the person may change the account. */
   canMove: boolean;
+  /** Whether a contact may be offered a merge with another contact of this account (CRM-S4.3a). The database asks the rest (D-642). */
+  canMerge?: boolean;
+  /** Said after two contacts were merged, once the lists are asked again: a contact's page leaves the one that is gone. */
+  onContactsMerged?: (merged: MergedRecords) => void;
   /** Another key whose queries are asked again with the account's own: a contact's page keeps its lists under the contact (CRM-C1.1), not under the account it is on now. */
   alsoRefresh?: readonly unknown[];
   /** Opens the Add a contact form as the page arrives ("Save and add a contact" on New account, CRM-A1.2), once; `onStarted` says it has been (the address is cleaned). */
@@ -56,6 +64,8 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
     addContact: () => setOpen({ mode: "contact" }),
     canMove,
     move: (contact) => setOpen({ mode: "move", contact }),
+    canMerge,
+    merge: (contact) => setOpen({ mode: "pick", contact }),
     setDone: async (task, done) => {
       try {
         await setTaskDone(firmId, task.id, done);
@@ -64,7 +74,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
         toast.error(err instanceof ActivityError ? err.message : "Couldn't update the task. Check your connection and try again.");
       }
     },
-  }), [firmId, refresh, canAdd, canMove]);
+  }), [firmId, refresh, canAdd, canMove, canMerge]);
   const close = () => setOpen(null);
   return (
     <AccountActionsContext.Provider value={actions}>
@@ -98,6 +108,31 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
             refresh();
             void queryClient.invalidateQueries({ queryKey: accountKey(firmId, moved.from.id) });
             void queryClient.invalidateQueries({ queryKey: accountKey(firmId, moved.to.id) });
+          }}
+        />
+      )}
+      {open?.mode === "pick" && (
+        <PickContactDialog
+          firmId={firmId}
+          accountId={accountId}
+          contact={{ id: open.contact.id, name: [open.contact.firstName, open.contact.lastName].filter(Boolean).join(" ") }}
+          onClose={close}
+          onPicked={(otherId) => setOpen({ mode: "merge", keptId: open.contact.id, removedId: otherId })}
+        />
+      )}
+      {open?.mode === "merge" && (
+        <MergeDialog
+          firmId={firmId}
+          kind="contact"
+          keptId={open.keptId}
+          removedId={open.removedId}
+          onClose={close}
+          onMerged={(merged) => {
+            close();
+            refresh();
+            void queryClient.invalidateQueries({ queryKey: ["contact", firmId, merged.kept.id] });
+            void queryClient.invalidateQueries({ queryKey: ["contact", firmId, merged.removed.id] });
+            onContactsMerged?.(merged);
           }}
         />
       )}
