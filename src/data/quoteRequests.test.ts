@@ -39,6 +39,11 @@ describe("a quote request's change log", () => {
     expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Revoked: newer_version" })).toBe("Bundle link revoked: a newer version was sent");
   });
 
+  // Catches: a link the employer's ending of the firm's access revoked (CRM-P2.5) shown by its code, "access_ended", in the change log.
+  it("describes a bundle link revoked because the employer ended the firm's access", () => {
+    expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Revoked: access_ended" })).toBe("Bundle link revoked: the employer ended the firm's access");
+  });
+
   it("describes a reply address being issued and reissued", () => {
     expect(describeQuoteRequestEvent({ field: "reply_address", old_value: null, new_value: "a.b.c" })).toBe("Reply address: — → a.b.c");
     expect(describeQuoteRequestEvent({ field: "reply_address", old_value: "a.b.c", new_value: "a.b.d" })).toBe("Reply address: a.b.c → a.b.d");

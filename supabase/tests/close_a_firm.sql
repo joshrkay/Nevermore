@@ -199,6 +199,7 @@
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1424,6 +1425,7 @@ DECLARE
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',
     'set_peo_authorization', 'the employer''s own say over which PEOs may receive their packet (M-1.1, D-623): not the firm''s to freeze; a withdrawal must close that PEO''s quote request even while the firm is closing',
+    'employer_end_firm_access', 'the employer''s own say to take an intake out of a firm (CRM-P2.5, D-1714): not the firm''s to freeze; an employer must be able to leave a firm that is closing',
     'record_history_capture', 'the trigger that writes a record''s history (CRM-S5.2): it runs inside a write that already asked the guard (referral partners are written only by the two guarded partner functions) and no API role can run it or write the table; the history table has no write grant or policy for an API role at all',
         'report_client_event', 'the platform''s monitoring',
     'request_firm_closure', 'the closing''s own door',

@@ -208,6 +208,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1137,7 +1138,7 @@ DECLARE
   reads text[] := ARRAY['opportunity_create_context', 'opportunity_outcome', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'opportunity_page', 'opportunity_activity', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check', 'lead_page', 'lead_activity', 'lead_activity_options', 'lead_convert_context',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
-    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin'];
+    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'my_intake_firms', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin'];
   writes text[] := ARRAY['opportunity_create', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
@@ -1151,7 +1152,7 @@ DECLARE
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
-  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event', 'request_contact', 'set_peo_authorization'];
+  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event', 'request_contact', 'set_peo_authorization', 'employer_end_firm_access'];
   unplaced text; stale text; lost text; weak text;
 BEGIN
   RESET ROLE;
@@ -1247,6 +1248,7 @@ DECLARE
     'leave_firm', 'ends the caller''s own membership: a support session has none, so it answers "not a member"',
     'record_intake_consent', 'the caller''s own agreement as an employer; writes a row with the caller''s id',
     'set_peo_authorization', 'the employer''s own say over which PEOs may receive their packet (M-1.1, D-623): only the intake''s own employer may call it, and a support session''s admin is not that employer',
+    'employer_end_firm_access', 'the employer''s own ending of a firm''s access to their intake (CRM-P2.5, D-1714): only the intake''s own employer may call it, and a support session''s admin is not that employer',
     'report_client_event', 'the platform''s monitoring: a row with the caller''s own id, read by platform admins only',
     'request_contact', 'a visitor''s own ask on a firm''s public link (CRM-L1.2b), reached only by the contact-request function as the service role after the captcha (D-1673): it reads no membership and no role, so a support session''s admin gets nothing by it that any visitor does not; it refuses a closing firm itself and takes the firm only from the address',
     'request_firm_closure', 'asks for the owner role by name; a support session is not an owner (tested above)',

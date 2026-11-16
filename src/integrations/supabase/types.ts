@@ -1910,6 +1910,15 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: string
       }
+      // CRM-P2.5 (20261123200000): the employer ends a firm's access to their own intake; the firm that sees each of the caller's own intakes.
+      employer_end_firm_access: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      my_intake_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: { session_id: string; firm_name: string; company: string | null }[]
+      }
       prospect_submission_status: {
         Args: { p_session_id: string }
         Returns: string | null

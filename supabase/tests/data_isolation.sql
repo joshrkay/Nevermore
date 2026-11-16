@@ -250,6 +250,7 @@
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -839,6 +840,8 @@ BEGIN
     INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, fein, employer_name, employer_state, file_id, version)
     SELECT fid, p.id, p.name, '12345678' || CASE f WHEN 'a' THEN '1' ELSE '2' END, 'Fixture employer ' || f, 'NY', 'EAA-FIXTURE-' || upper(f), 1
     FROM public.peos p WHERE p.name = 'Fixture PEO';
+    -- 5.13: the employer's ending of the firm's access to an intake (it names the intake and no answers).
+    INSERT INTO public.intake_access_ends (firm_id, firm_name, session_id, ended_by) VALUES (fid, 'Fixture firm ' || f, gen_random_uuid(), gen_random_uuid());
     -- CRM-S4.3b: a merged-away account's pointer to the owned account.
     INSERT INTO public.merged_records (firm_id, kind, removed_id, kept_id, removed_name) VALUES (fid, 'account', gen_random_uuid(), acc1, 'Fixture merged account');
   END LOOP;
@@ -1042,6 +1045,10 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.conversation_message_files',                 '{"service":0}', NULL),
   ('public.conversation_file_downloads',                '{"service":0}', NULL);
+-- ---- 5.13 CRM-P2.5: the employer ends a firm's access (20261123200000) ----
+-- Closed to the API, the service role included: written by employer_end_firm_access (supabase/tests/employer_ends_access.sql).
+INSERT INTO matrix VALUES
+  ('public.intake_access_ends',                         '{"service":0}', NULL);
 -- ---- 6.10 Q-2.1: the registration record (20261122200000) ----
 -- Closed to the API, the service role included: written by a send (register_peo_send), read through peo_registration_statement (the firm's own) and
 -- peo_registered_elsewhere (no firm named) (supabase/tests/peo_registrations.sql).
@@ -1391,6 +1398,8 @@ INSERT INTO callable VALUES
   ('prospect_information_request(p_session_id uuid)', 'own', NULL, 'the advisor''s open request on the caller''s own intake; null for anyone else''s'),
   ('set_peo_authorization(p_session_id uuid, p_peo text, p_authorized boolean, p_version text, p_text text)', 'own', NULL, 'the employer authorizes or withdraws a PEO on their own intake; 42501 for everyone else (supabase/tests/peo_authorizations.sql)'),
   ('peo_authorization_states(p_session_id uuid)', 'own', NULL, 'each PEO''s state on the caller''s own intake, or one of their firm''s; PT404 for anyone else''s (4e)'),
+  ('employer_end_firm_access(p_session_id uuid)', 'own', NULL, 'the employer ends a firm''s access to their own intake; 42501 for everyone else, the intake''s firm included (supabase/tests/employer_ends_access.sql)'),
+  ('my_intake_firms()', 'own', NULL, 'the firm that sees each of the caller''s own intakes, by name; nothing of anyone else''s (supabase/tests/employer_ends_access.sql)'),
   ('peo_authorization_version()', 'anyone', NULL, 'a constant: the version of the PEO authorization wording in force'),
   ('record_manuscript_download(p_session_id uuid)', 'own', NULL, 'records a download of the caller''s own certified intake''s Manuscript; nothing for anyone else''s'),
   ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
@@ -3673,6 +3682,14 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_
    $m$WITH p AS (INSERT INTO public.peos (name) VALUES ('Probe PEO {tag}') RETURNING id, name) INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, fein, file_id, version) SELECT {firm}, p.id, p.name, '987654321', 'EAA-PROBE-{tag}', 1 FROM p RETURNING ctid::text$m$, false,
    'firm_id = {firm}',
    $m$INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, file_id, version) VALUES ({firm}, (SELECT min(p.id) FROM public.peos p), 'Probe PEO', 'EAA-PROBE-{tag}', 1)$m$);
+-- ---- 5.13 CRM-P2.5: the employer ends a firm's access (20261123200000) ----
+-- An ending: its own firm_id (the firm that lost the intake), no answers in it. Read by no member through the API (the firm reads the note the ending leaves on the
+-- opportunity), appended only, so no caller changes, moves or deletes one, and a non-member writes none.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.intake_access_ends', 'firm', 'its own firm_id; closed to the API, appended only',
+   $m$INSERT INTO public.intake_access_ends (firm_id, firm_name, session_id, ended_by) VALUES ({firm}, 'Probe Firm', gen_random_uuid(), {u}) RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.intake_access_ends (firm_id, firm_name, session_id, ended_by) VALUES ({firm}, 'Probe Firm', gen_random_uuid(), {u})$m$);
 -- ---- CRM-E1.3: replies come back (20261122130000) ----
 -- A received file is on a message of its own firm, by a foreign key on the pair; its bytes are read by whoever reads its message, so (as for the messages)
 -- one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
@@ -4369,7 +4386,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('assert_peo_authorized', 'service_only', 'refuses a send to a PEO the employer never authorized or withdrew; for any intake by id, so no API role can call it: advisor_record_quote_send asks it after its firm check (M-1.1)'),
   ('peo_authorization_version', 'public', 'a constant: the version of the PEO authorization wording in force'),
   ('set_peo_authorization', 'own', 'the employer authorizes or withdraws a PEO on their own intake; refused for everyone else, the intake''s firm included (supabase/tests/peo_authorizations.sql)'),
-  ('peo_authorization_states', 'firm_scoped', 'each PEO''s state on one intake: its employer, or a current member of its firm; the same refusal as a submission that does not exist for everyone else (4e)');
+  ('peo_authorization_states', 'firm_scoped', 'each PEO''s state on one intake: its employer, or a current member of its firm; the same refusal as a submission that does not exist for everyone else (4e)'),
+  ('employer_end_firm_access', 'own', 'the employer ends a firm''s access to their own intake; refused for everyone else, the intake''s firm included (supabase/tests/employer_ends_access.sql)'),
+  ('my_intake_firms', 'own', 'the firm that sees each of the caller''s own intakes, by name, and nothing of anyone else''s (supabase/tests/employer_ends_access.sql)'),
+  ('intake_access_ended', 'service_only', 'whether an employer has ended a firm''s access to an intake; for any intake by id, so no API role can call it: the PEO gate asks it');
 
 -- CRM-Q1.1b (20261119110000_chain_at_certification.sql; supabase/tests/chain_at_certification.sql): the chain made when an intake is first certified.
 INSERT INTO fn_class (fn, class, why) VALUES

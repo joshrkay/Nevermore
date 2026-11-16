@@ -28,6 +28,9 @@ vi.mock("@/integrations/supabase/client", () => ({
 // The employer's PEOs (M-1.1) are tested on their own (src/components/MyPacketRecipients.test.tsx); here, only that the profile carries them.
 vi.mock("@/components/MyPacketRecipients", () => ({ default: () => <section aria-label="Who can receive my packet" /> }));
 
+// Which firm sees each intake, and ending it (CRM-P2.5), is tested on its own (src/components/MyFirmAccess.test.tsx).
+vi.mock("@/components/MyFirmAccess", () => ({ default: () => <section aria-label="Who can see my intake" /> }));
+
 const { default: ProfilePage } = await import("./ProfilePage");
 
 const save = async (phone: string) => {
@@ -103,5 +106,17 @@ describe("ProfilePage, who can receive my packet", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByRole("region", { name: "Who can receive my packet" })).toBeInTheDocument();
+  });
+});
+
+describe("ProfilePage, who can see my intake", () => {
+  // CRM-P2.5, D-1714. Break caught: the employer has nowhere to see which firm can see their intake, or to end it.
+  it("carries which firm sees each intake, with the way to end it", async () => {
+    render(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("region", { name: "Who can see my intake" })).toBeInTheDocument();
   });
 });
