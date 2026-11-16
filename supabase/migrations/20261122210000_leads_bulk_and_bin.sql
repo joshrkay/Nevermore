@@ -81,6 +81,26 @@ REVOKE ALL ON FUNCTION public.lead_labels_history() FROM PUBLIC, anon, authentic
 
 CREATE TRIGGER lead_labels_history AFTER INSERT OR DELETE ON public.lead_labels FOR EACH ROW EXECUTE FUNCTION public.lead_labels_history();
 
+-- The firm has one list of labels for accounts and leads (D-805). bulk_accounts_undo takes a word its change made out of the list when no account carries it
+-- (20261119210000) and does not know leads: a word a lead still carries is kept instead (the delete is skipped, so the rest of that undo goes on). The firm's
+-- closing takes the leads' labels before the labels (firm_closing_plan), so nothing is kept from it.
+CREATE FUNCTION public.labels_kept_while_on_a_lead()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.lead_labels ll WHERE ll.label_id = OLD.id) THEN
+    RETURN NULL;
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.labels_kept_while_on_a_lead() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER labels_kept_while_on_a_lead BEFORE DELETE ON public.labels FOR EACH ROW EXECUTE FUNCTION public.labels_kept_while_on_a_lead();
+
 -- ---------- 2. What a bulk change asks for, checked ----------
 -- The optional standard fields Set a field offers on a lead (D-1646): never the name (required), the status, its reason and the source (the product's, or
 -- their own actions), the owner (its own action) or the note (a page's long text). Kept in step with src/lib/leadsBulkApi.ts.
@@ -273,16 +293,64 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  cap constant integer := 1000;
+  f jsonb := NULLIF(p_filters, 'null'::jsonb);
   i jsonb := NULLIF(p_ids, 'null'::jsonb);
+  tz text;
+  checked jsonb;
+  hits uuid[];
   named uuid[];
 BEGIN
   too_many := false;
-  SELECT count(DISTINCT lower(e)) INTO requested FROM jsonb_array_elements_text(i) e;
-  named := ARRAY(SELECT e::uuid FROM jsonb_array_elements_text(i) e WHERE e ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
-  SELECT COALESCE(array_agg(l.id ORDER BY l.id), '{}') INTO lead_ids
-  FROM public.leads l
-  WHERE l.firm_id = p_firm_id AND l.id = ANY (named) AND l.deleted_at IS NULL AND public.can_see_firm_record(l.firm_id, l.owner_id);
-  selected := cardinality(lead_ids);
+  requested := NULL;
+  IF f IS NOT NULL AND i IS NOT NULL THEN
+    RAISE EXCEPTION 'Choose the leads by their ids or by the table''s filters, not both.' USING ERRCODE = '22023';
+  END IF;
+  IF f IS NULL AND i IS NULL THEN
+    RAISE EXCEPTION 'Choose the leads to change.' USING ERRCODE = '22023';
+  END IF;
+  IF i IS NOT NULL THEN
+    IF jsonb_typeof(i) <> 'array' OR EXISTS (SELECT 1 FROM jsonb_array_elements(i) e WHERE jsonb_typeof(e) <> 'string') THEN
+      RAISE EXCEPTION 'Name the leads as a list of ids.' USING ERRCODE = '22023';
+    END IF;
+    IF jsonb_array_length(i) = 0 THEN
+      RAISE EXCEPTION 'Choose at least one lead.' USING ERRCODE = '22023';
+    END IF;
+    -- Cut before anything is looked up: a list of a million ids costs one length.
+    IF jsonb_array_length(i) > cap THEN
+      requested := jsonb_array_length(i);
+      selected := requested;
+      lead_ids := '{}';
+      too_many := true;
+      RETURN;
+    END IF;
+    SELECT count(DISTINCT lower(e)) INTO requested FROM jsonb_array_elements_text(i) e;
+    named := ARRAY(SELECT e::uuid FROM jsonb_array_elements_text(i) e WHERE e ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+    SELECT COALESCE(array_agg(l.id ORDER BY l.id), '{}') INTO hits
+    FROM public.leads l
+    WHERE l.firm_id = p_firm_id AND l.id = ANY (named) AND l.deleted_at IS NULL AND public.can_see_firm_record(l.firm_id, l.owner_id);
+  ELSE
+    -- "Select all N that match": the table's own filters, search and time zone, matched by the leads query itself (D-44), the bin left out as the table leaves it.
+    IF jsonb_typeof(f) IS DISTINCT FROM 'object'
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(f) k WHERE k NOT IN ('filters', 'search', 'time_zone'))
+       OR (f ? 'search' AND jsonb_typeof(f -> 'search') IS DISTINCT FROM 'string')
+       OR (f ? 'time_zone' AND jsonb_typeof(f -> 'time_zone') IS DISTINCT FROM 'string')
+       OR (f ? 'filters' AND jsonb_typeof(f -> 'filters') IS DISTINCT FROM 'array') THEN
+      RAISE EXCEPTION 'Those filters don''t apply to this table' USING ERRCODE = '22023';
+    END IF;
+    tz := public.workspace_time_zone(f ->> 'time_zone');
+    checked := public.leads_filters_checked(p_firm_id, COALESCE(f -> 'filters', '[]'::jsonb), (now() AT TIME ZONE tz)::date);
+    SELECT COALESCE(array_agg(r.id ORDER BY r.id), '{}') INTO hits
+    FROM public.leads_rows(p_firm_id, f ->> 'search') r
+    WHERE public.leads_row_passes(r, checked, tz);
+  END IF;
+  selected := cardinality(hits);
+  IF selected > cap THEN
+    too_many := true;
+    lead_ids := '{}';
+  ELSE
+    lead_ids := hits;
+  END IF;
 END;
 $$;
 
@@ -395,6 +463,10 @@ BEGIN
       RAISE EXCEPTION 'The firm has no label called "%".', params ->> 'name' USING ERRCODE = '22023';
     END IF;
   END IF;
+  IF sel.too_many THEN
+    RETURN jsonb_build_object('action', p_action, 'selected', sel.selected, 'requested', sel.requested, 'limit', 1000, 'too_many', true,
+      'unavailable', 0, 'will_change', 0, 'unchanged', 0, 'skipped', '[]'::jsonb);
+  END IF;
   FOR l IN SELECT x.* FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (sel.lead_ids) ORDER BY x.id LOOP
     seen := seen + 1;
     SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params, lbl);
@@ -451,6 +523,9 @@ BEGIN
   params := public.bulk_lead_params_checked(p_action, p_params);
   SELECT m.id INTO maker FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = auth.uid() AND public.membership_is_current(m.valid_from, m.valid_until);
   SELECT * INTO sel FROM public.bulk_leads_resolve(firm, p_filters, p_ids);
+  IF sel.too_many THEN
+    RAISE EXCEPTION 'That is % leads. A bulk change takes at most 1,000: narrow the selection and try again.', sel.selected USING ERRCODE = 'PT413';
+  END IF;
   -- Every lead of the selection, held in one statement in id order (the lock order of 20261119210000).
   SELECT COALESCE(array_agg(k.id ORDER BY k.id), '{}') INTO locked
   FROM (SELECT x.id FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (sel.lead_ids) AND x.deleted_at IS NULL ORDER BY x.id FOR NO KEY UPDATE) k;

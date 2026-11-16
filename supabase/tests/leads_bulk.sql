@@ -725,3 +725,55 @@ BEGIN
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.lead_labels WHERE lead_id = pg_temp.id('lb1')), 1, 'the label is back on');
 END $$;
+
+-- Catches (D-805: one label list for accounts and leads): undoing an accounts' change that made a word taking that word off the leads that carry it too.
+SELECT pg_temp.account('lbacct', 'acme', 'acme_agent1');
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_accounts_change(pg_temp.id('acme'), 'label_add', '{"name":"Shared word"}', NULL, jsonb_build_array(pg_temp.id('lbacct')::text));
+  PERFORM public.bulk_leads_change(pg_temp.id('acme'), 'label_add', '{"name":"Shared word"}', NULL, jsonb_build_array(pg_temp.id('lb1')::text));
+  PERFORM public.bulk_accounts_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.labels WHERE firm_id = pg_temp.id('acme') AND name = 'Shared word'), 1, 'the word stays in the firm''s list');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.lead_labels ll JOIN public.labels l ON l.id = ll.label_id WHERE ll.lead_id = pg_temp.id('lb1') AND l.name = 'Shared word'), 1,
+    'the lead keeps it');
+END $$;
+
+-- ---------- 8. The selection: all that match, and the most one change takes ----------
+-- Catches (CRM-S3.6, D-44): "Select all N that match" changing leads the filters and search do not match, or ones the person does not see.
+SELECT pg_temp.lead('m1', 'acme', 'acme_agent1', 'Match Co');
+SELECT pg_temp.lead('m2', 'acme', 'acme_agent1', 'Match Co');
+SELECT pg_temp.lead('m3', 'acme', 'acme_agent2', 'Match Co');
+UPDATE public.leads SET state = 'WA' WHERE id IN (pg_temp.id('m1'), pg_temp.id('m2'), pg_temp.id('m3'));
+UPDATE public.leads SET employees = 200 WHERE id = pg_temp.id('m2');
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'field', '{"field":"city","value":"Spokane"}',
+    '{"filters":[{"field":"state","op":"any_of","value":["WA"]}],"search":"match","time_zone":"America/Los_Angeles"}', NULL);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'selected')::int, 2, 'the two the agent sees that match');
+  PERFORM pg_temp.is((SELECT string_agg(f.name, ',' ORDER BY f.name) FROM public.leads l JOIN fx f ON f.id = l.id WHERE l.city = 'Spokane'), 'm1,m2', 'only they changed');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, %L, %L)', pg_temp.id('acme'), 'delete', '{}', '{"filters":[]}', jsonb_build_array(pg_temp.id('m1')::text))),
+    '22023: Choose the leads by their ids or by the table''s filters, not both.', 'ids and filters together');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, %L, NULL)', pg_temp.id('acme'), 'delete', '{}', '{"filter":[]}')), ':', 1),
+    '22023', 'a filter key the table does not have never selects everything');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- Catches (CRM-S3.7): more than 1,000 leads changed in one step. The preview says so and counts nothing else; the change is refused in words, nothing done.
+DO $$
+DECLARE p jsonb; many jsonb;
+BEGIN
+  many := (SELECT jsonb_agg(gen_random_uuid()::text) FROM generate_series(1, 1001));
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  p := public.bulk_leads_preview(pg_temp.id('acme'), 'delete', '{}', NULL, many);
+  PERFORM pg_temp.is(p -> 'too_many', 'true'::jsonb, 'the preview says too many');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'delete', '{}', many)),
+    'PT413: That is 1001 leads. A bulk change takes at most 1,000: narrow the selection and try again.', 'the change refused');
+  PERFORM pg_temp.as_owner();
+END $$;
