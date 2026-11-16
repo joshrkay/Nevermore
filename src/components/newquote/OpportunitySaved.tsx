@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import AdvisorSubmissionPage from "@/pages/advisor/AdvisorSubmissionPage";
+import { certifiedViewShows, progressOf } from "@/data/newQuote";
 import { getOpportunityPage } from "@/lib/opportunityPageApi";
 
 // New quote opened on an opportunity (its own address, D-1709): the account, contact and opportunity step 1 made, and Save and close. There is no step 2 to 4 here
@@ -8,10 +11,22 @@ import { getOpportunityPage } from "@/lib/opportunityPageApi";
 
 export function OpportunitySaved({ firmId, opportunityId, onClose }: { firmId: string; opportunityId: string; onClose: () => void }) {
   const found = useQuery({ queryKey: ["new-quote", firmId, opportunityId, "page"], queryFn: () => getOpportunityPage(firmId, opportunityId), retry: false, gcTime: 0 });
+  const [backToFlow, setBackToFlow] = useState(false);
   const page = found.data;
   if (found.isError) return <p role="alert" className="text-sm">Couldn't load the opportunity.</p>;
   if (found.isSuccess && !page) return <p role="alert" className="text-sm">This opportunity isn't available.</p>;
   if (!page) return <p role="status" className="text-sm text-muted-foreground">Loading the opportunity…</p>;
+  if (certifiedViewShows(progressOf(page)) && !backToFlow) {
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" onClick={() => setBackToFlow(true)}>Back to New quote</Button>
+          <Button type="button" onClick={onClose}>Save and close</Button>
+        </div>
+        <AdvisorSubmissionPage submissionId={page.intake!.submissionId} embedded />
+      </div>
+    );
+  }
   return (
     <section aria-label="Saved" className="space-y-4">
       <dl className="grid max-w-xl grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm">
@@ -19,7 +34,10 @@ export function OpportunitySaved({ firmId, opportunityId, onClose }: { firmId: s
         <dt className="text-muted-foreground">Opportunity</dt><dd>{page.opportunity.name}</dd>
         {page.mainContact && <><dt className="text-muted-foreground">Contact</dt><dd>{page.mainContact.name}</dd></>}
       </dl>
-      <Button type="button" onClick={onClose}>Save and close</Button>
+      <div className="flex gap-2">
+        {certifiedViewShows(progressOf(page)) && <Button type="button" variant="outline" onClick={() => setBackToFlow(false)}>Certified answers</Button>}
+        <Button type="button" onClick={onClose}>Save and close</Button>
+      </div>
     </section>
   );
 }
