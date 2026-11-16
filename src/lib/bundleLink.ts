@@ -7,6 +7,7 @@ import { certifiedAnswersFilename, type CertifiedAnswersDocument } from "@/data/
 import { categoryInfo } from "@/data/documentCategories";
 import type { BundleOutcome, BundlePlan } from "@/data/submissionBundle";
 import { madeBundleFiles, safeFileName, type BundleDeps } from "@/lib/submissionBundle";
+import type { Json } from "@/integrations/supabase/types";
 
 export interface IssueBundleLinkDeps extends Pick<BundleDeps, "readTemplate"> {
   /** Stores one file in the bundle-links bucket at that path. */
@@ -85,4 +86,22 @@ export async function issueBundleLink(
   });
   const origin = deps.origin ?? window.location.origin;
   return { url: `${origin}/b/${issued.token}`, expiresAt: issued.expires_at, version: issued.version, notIncluded: made.notIncluded };
+}
+
+/** The app's own storage, database and PEO template workbooks, for issueBundleLink. Loaded only when a link is issued. */
+export async function supabaseBundleLinkDeps(): Promise<IssueBundleLinkDeps> {
+  const { supabase } = await import("@/integrations/supabase/client");
+  const { readTemplateWorkbook } = await import("@/lib/templateWorkbooks");
+  return {
+    readTemplate: readTemplateWorkbook,
+    upload: async (path, blob) => {
+      const { error } = await supabase.storage.from("bundle-links").upload(path, blob, { upsert: false, contentType: "application/octet-stream" });
+      if (error) throw error;
+    },
+    issue: async (args) => {
+      const { data, error } = await supabase.rpc("issue_bundle_link", { ...args, p_files: args.p_files as unknown as Json, p_open_items: args.p_open_items });
+      if (error) throw error;
+      return data as unknown as IssuedLink;
+    },
+  };
 }

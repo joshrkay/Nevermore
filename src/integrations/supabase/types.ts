@@ -1253,6 +1253,10 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      issue_bundle_link: {
+        Args: { p_quote_request_id: number; p_version: number; p_folder: string; p_files: Json; p_open_items?: Json }
+        Returns: Json
+      }
       firm_public_name: {
         Args: { p_address: string }
         Returns: string | null
@@ -1592,6 +1596,10 @@ export type Database = {
           p_value?: Json | null
         }
         Returns: Database["public"]["Tables"]["advisor_field_reviews"]["Row"]
+      }
+      revoke_bundle_link: {
+        Args: { p_quote_request_id: number; p_reason?: string }
+        Returns: number
       }
       revoke_chamber_session: {
         Args: { p_reason: string; p_session_id: string }
