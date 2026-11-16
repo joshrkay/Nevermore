@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { noteRecentRecord, type SearchKind } from "@/lib/searchApi";
+import { signedInUser } from "@/lib/signedInUser";
 
-/** The menu search box's recent records; the firm is added to it. */
+/** The menu search box's recent records; the firm and the person are added to it, so one person's list is never another's in the same tab. */
 export const RECENT_RECORDS_KEY = ["recent-records"] as const;
 
 let queue: Promise<void> = Promise.resolve();
@@ -15,16 +17,18 @@ let queue: Promise<void> = Promise.resolve();
  */
 export function useNoteOpened(firmId: string | null, kind: SearchKind, id: string, found: boolean) {
   const queryClient = useQueryClient();
+  const userId = useAuth().user?.id ?? null;
   useEffect(() => {
-    if (!firmId || !found || id === "") return;
+    if (!firmId || !userId || !found || id === "") return;
     let cancelled = false;
-    // Notes go to the database one after another, in the order the pages were opened, so a slow earlier note can't land after a later one.
-    const noting = queue.then(() => noteRecentRecord(firmId, kind, id));
+    // Notes go to the database one after another, in the order the pages were opened, so a slow earlier note can't land after a later one. A note that waited
+    // while the person signed out and another signed in is dropped, not sent: it would go into the new person's list.
+    const noting = queue.then(() => (signedInUser() === userId ? noteRecentRecord(firmId, kind, id) : false));
     queue = noting.then(() => undefined, () => undefined);
     noting.then(
-      (noted) => { if (noted && !cancelled) void queryClient.invalidateQueries({ queryKey: [...RECENT_RECORDS_KEY, firmId] }); },
+      (noted) => { if (noted && !cancelled) void queryClient.invalidateQueries({ queryKey: [...RECENT_RECORDS_KEY, firmId, userId] }); },
       () => undefined,
     );
     return () => { cancelled = true; };
-  }, [firmId, kind, id, found, queryClient]);
+  }, [firmId, userId, kind, id, found, queryClient]);
 }
