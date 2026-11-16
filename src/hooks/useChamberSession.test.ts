@@ -138,7 +138,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 const { useChamberSession, describeInvalidPath, VERIFY_EMAIL_MESSAGE } = await import("./useChamberSession");
 const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
-const { applyExtraction } = await import("@/data/provenance");
+const { applyExtraction, applyFieldAction } = await import("@/data/provenance");
 const { parseChamberData } = await import("@/data/chamberValidation");
 const { createChatMessage, OPENING_MESSAGE } = await import("@/data/chat");
 const { readBackup, writeBackup } = await import("@/data/intakeBackup");
@@ -389,6 +389,70 @@ describe("useChamberSession", () => {
     await startIntake(result);
     expect(result.current.resumeFailed).toBe(false);
     expect(inserts).toBe(1);
+  });
+
+  describe("a member of the firm working an intake the firm started (D-1751)", () => {
+    const startedByFirm = (over: Record<string, unknown> = {}) => ({
+      id: "firm-intake",
+      user_id: null,
+      started_by: "u2",
+      data_version: 3,
+      status: "in_progress",
+      chamber_data: { company_name: "Acme Robotics" },
+      field_provenance: {},
+      transcript: [],
+      ...over,
+    });
+
+    // Break caught: the chamber that already exists can't be opened on an intake the firm started (no employer owns it yet), so a broker would need a screen of their own.
+    it("opens the intake when the database says the caller may enter answers there, and says it is the firm's", async () => {
+      resumeRow = startedByFirm();
+      rpcResult = { data: true, error: null };
+      const { result } = renderHook(() => useChamberSession("firm-intake"));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.resumeFailed).toBe(false);
+      expect(result.current.sessionId).toBe("firm-intake");
+      expect(result.current.brokerEntry).toBe(true);
+      expect(result.current.chamberData.company_name).toBe("Acme Robotics");
+      expect(rpcCalls).toContainEqual({ fn: "broker_may_enter_intake", args: { p_intake_id: "firm-intake" } });
+      expect(inserts).toBe(0);
+    });
+
+    // Break caught: anyone who can read the intake (another firm's member, a former member) opens it as a draft to edit.
+    it("won't open it when the database says the caller may not enter answers there", async () => {
+      resumeRow = startedByFirm();
+      rpcResult = { data: false, error: null };
+      const { result } = renderHook(() => useChamberSession("firm-intake"));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.resumeFailed).toBe(true);
+      expect(result.current.sessionId).toBeNull();
+      expect(result.current.brokerEntry).toBe(false);
+    });
+
+    // Break caught: the employer's own intake opens as a broker's (it has no firm starter), or reports itself as the firm's.
+    it("is not the firm's when the caller owns the intake", async () => {
+      resumeRow = startedByFirm({ user_id: "u1" });
+      const { result } = renderHook(() => useChamberSession("firm-intake"));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.sessionId).toBe("firm-intake");
+      expect(result.current.brokerEntry).toBe(false);
+      expect(rpcCalls.map((c) => c.fn)).not.toContain("broker_may_enter_intake");
+    });
+
+    // Break caught: what the broker types is saved with the employer's own source (the database corrects it, the screen and the draft kept in the browser do not).
+    it("marks what the member enters as a broker entry, in what is saved", async () => {
+      resumeRow = startedByFirm();
+      rpcResult = { data: true, error: null };
+      const { result } = renderHook(() => useChamberSession("firm-intake"));
+      await waitFor(() => expect(result.current.sessionId).toBe("firm-intake"));
+      act(() => result.current.updateIntake((prev) => applyFieldAction(prev, { type: "edit", field: "industry", value: "Bakery" })));
+      expect(result.current.provenance.industry).toMatchObject({ status: "inferred", source: { kind: "broker_entry", member_id: "u1" } });
+      const pending = result.current.saveAll();
+      await waitFor(() => expect(updates).toHaveLength(1));
+      expect(updates[0].payload.field_provenance).toMatchObject({ industry: { status: "inferred", source: { kind: "broker_entry", member_id: "u1" } } });
+      updates[0].resolve({ error: null });
+      await act(async () => { await pending; });
+    });
   });
 
   describe("certification", () => {

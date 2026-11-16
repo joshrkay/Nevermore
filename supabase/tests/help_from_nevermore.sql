@@ -204,6 +204,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123120000_broker_intake.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1132,7 +1133,7 @@ DECLARE
   reads text[] := ARRAY['opportunity_create_context', 'opportunity_outcome', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'opportunity_page', 'opportunity_activity', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check', 'lead_page', 'lead_activity', 'lead_activity_options',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
-    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin'];
+    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin', 'intake_invite_status', 'broker_may_enter_intake'];
   writes text[] := ARRAY['opportunity_create', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
@@ -1142,11 +1143,11 @@ DECLARE
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo',
     'close_submission_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
-    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads'];
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads', 'start_broker_intake', 'invite_intake_client', 'remind_intake_invite'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
-  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event', 'request_contact', 'set_peo_authorization'];
+  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event', 'request_contact', 'set_peo_authorization', 'accept_intake_invite'];
   unplaced text; stale text; lost text; weak text;
 BEGIN
   RESET ROLE;
@@ -1212,7 +1213,7 @@ END $$;
 -- cannot use it to change a firm's data. The list of functions is the one supabase/tests/close_a_firm.sql keeps for the closing guard.
 DO $$
 DECLARE
-  guarded text[] := ARRAY['opportunity_create', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  guarded text[] := ARRAY['opportunity_create', 'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity',
@@ -1236,6 +1237,8 @@ DECLARE
     'advisor_open_quote_request_thread', 'marks a thread read: for a support session it marks nothing (tested above), so no email is left for the firm',
     'open_conversation', 'marks a conversation read for the firm (CRM-E1.3, D-607): for a support session it marks nothing (tested above), so no admin is left as who opened it',
     'archive_chamber_session', 'changes the caller''s own intake only (user_id is the caller); a support session has no intake of the firm''s prospects',
+    'accept_intake_invite', 'the employer taking over an intake the firm started (D-1703): it needs the link''s secret and the invited email, signed in and verified; a support session''s admin is neither, and is refused as a member of no one''s intake (supabase/tests/broker_intake.sql)',
+    'peek_intake_invite', 'a visitor opening the link the firm sent them: it needs the link''s secret, and marks the link opened, which a support session''s admin has no way to make without it',
     'consume_ai_quota', 'the caller''s own allowance',
     'end_support_session', 'the doorway itself: the admin''s own session, in the platform''s table and the firm''s record of the use',
     'export_rows', 'reads a table and records the export in the firm''s record (CRM-S3.8b); it calls refuse_support_session(firm) first, so a session can neither take rows nor write the entry (the exports block above and supabase/tests/export.sql)',

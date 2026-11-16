@@ -6,6 +6,8 @@ import {
   applyChosenValue,
   applyExtraction,
   applyFieldAction,
+  describeSource,
+  markBrokerEntries,
   FIELD_LABELS,
   fieldOpenItems,
   parseEvidence,
@@ -13,6 +15,7 @@ import {
   parseProvenance,
   transcriptExtraction,
   type ExtractionOptions,
+  type FieldProvenance,
   type FieldSource,
   type IntakeState,
 } from "./provenance";
@@ -1023,5 +1026,135 @@ describe("the ACORD 130 questions: what closes them and what answers them", () =
     expect(value(applyExtraction(confirmed, { in_peo: false }, { source: { ...heard, message_id: "m8" }, corrections: ["in_peo"] }), "wcq_21")).toBe(true);
     const own = applyFieldAction(empty, { type: "edit", field: "wcq_19", value: false });
     expect(value(applyExtraction(own, { virgin_medical: false }, { source: heard }), "wcq_19")).toBe(false);
+  });
+});
+
+describe("a broker's entry (D-1710)", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+  const entry = { status: "inferred", source: { kind: "broker_entry", member_id: MEMBER }, updated_at: NOW.toISOString() };
+
+  // Break caught: the browser drops the broker-entry source it is sent, so the employer sees an answer with no mark of who entered it.
+  it("is read back from what the database stored, with the member who entered it", () => {
+    expect(parseProvenance({ company_name: entry }).company_name).toEqual(entry);
+  });
+});
+
+describe("a broker's entry once the employer certified (D-1710)", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+
+  // Break caught: the browser strips the time the employer confirmed a broker's entry, and its next save writes the stripped entry back over the database's.
+  it("keeps when the employer confirmed it", () => {
+    const entry = { status: "confirmed", source: { kind: "broker_entry", member_id: MEMBER }, updated_at: NOW.toISOString(), employer_confirmed_at: "2026-11-21T09:00:00.000Z" };
+    expect(parseProvenance({ company_name: entry }).company_name).toEqual(entry);
+  });
+});
+
+describe("a broker's entry in the precedence ladder (D-1710)", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+  const broker: FieldSource = { kind: "broker_entry", member_id: MEMBER };
+  const held = (source: FieldSource, value: string): IntakeState => ({
+    data: { ...EMPTY_CHAMBER_DATA, company_name: value },
+    provenance: { company_name: { status: "confirmed", source, updated_at: NOW.toISOString() } },
+  });
+
+  // Break caught: what a broker tells Lenore replaces what the employer typed, confirmed or said themselves.
+  it("never replaces an answer the employer typed, applied from a document or said to Lenore", () => {
+    for (const source of [{ kind: "prospect_edit" } as FieldSource, { kind: "document", document_id: "d1" } as FieldSource, msg("m1")]) {
+      const next = applyExtraction(held(source, "Employer Co"), { company_name: "Broker Co" }, { source: broker, now: NOW });
+      expect(next.data.company_name).toBe("Employer Co");
+      expect(next.provenance.company_name?.source).toEqual(source);
+    }
+  });
+
+  // Break caught: the employer's later word is only noted beside a broker's entry, so the broker's value stands over it.
+  it("is replaced by the employer's own word, which the broker's entry is then noted beside", () => {
+    const next = applyExtraction(held(broker, "Broker Co"), { company_name: "Employer Co" }, { source: msg("m2"), now: NOW });
+    expect(next.data.company_name).toBe("Employer Co");
+    expect(next.provenance.company_name?.also_heard?.[0]?.value).toBe("Broker Co");
+  });
+
+  // Break caught: a broker correcting their own earlier entry leaves a conflict the employer is asked to settle.
+  it("is replaced by the same broker's later entry, not made a conflict", () => {
+    const next = applyExtraction(held(broker, "Broker Co"), { company_name: "Broker Company" }, { source: broker, now: NOW });
+    expect(next.data.company_name).toBe("Broker Company");
+    expect(next.provenance.company_name?.status).not.toBe("conflicting");
+  });
+});
+
+describe("how the firm reads a broker's entry", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+
+  // Break caught: the firm's own view of an answer says nothing of where it came from (an undefined source line), or calls a broker's entry the prospect's.
+  it("says it was entered by the firm, and what was told to Lenore", () => {
+    expect(describeSource({ kind: "broker_entry", member_id: MEMBER })).toBe("Entered by the firm");
+    expect(describeSource({ kind: "broker_entry", member_id: MEMBER, message_id: "m4", quote: "about forty of them" })).toBe("Told to Lenore by the firm: “about forty of them”");
+  });
+});
+
+describe("marking what a broker enters in the chamber (D-1751)", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+  const before: IntakeState = {
+    data: { ...EMPTY_CHAMBER_DATA, employee_count: 40 },
+    provenance: { employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: NOW.toISOString() } },
+  };
+
+  // Break caught: what a broker types in the workspace shows as the employer's own confirmed answer until the page is reloaded (the database marks it, the screen does not).
+  it("gives every answer that changed a broker-entry source naming the member, and the status inferred", () => {
+    const after = applyFieldAction(before, { type: "edit", field: "company_name", value: "Acme Co" }, NOW);
+    const marked = markBrokerEntries(before, after, MEMBER, NOW);
+    expect(marked.data.company_name).toBe("Acme Co");
+    expect(marked.provenance.company_name).toEqual({ status: "inferred", source: { kind: "broker_entry", member_id: MEMBER }, updated_at: NOW.toISOString() });
+  });
+
+  // Break caught: an answer the broker did not touch is re-marked as theirs, which would take the employer's own answers over.
+  it("leaves an answer that did not change as it was", () => {
+    const after = applyFieldAction(before, { type: "edit", field: "company_name", value: "Acme Co" }, NOW);
+    expect(markBrokerEntries(before, after, MEMBER, NOW).provenance.employee_count).toEqual(before.provenance.employee_count);
+  });
+
+  // Break caught: what Lenore heard from the broker loses the message and the words it came from.
+  it("keeps the message and the words of an answer Lenore heard", () => {
+    const after = applyExtraction(before, { industry: "Bakery" }, { source: { kind: "transcript", message_id: "m3", quote: "a bakery" }, now: NOW });
+    const marked = markBrokerEntries(before, after, MEMBER, NOW);
+    expect(marked.provenance.industry?.source).toEqual({ kind: "broker_entry", member_id: MEMBER, message_id: "m3", quote: "a bakery" });
+    expect(marked.provenance.industry?.status).toBe("inferred");
+  });
+
+  // Break caught: the broker's screen shows an answer it was never going to keep (the employer's own answer is replaced in the database by nothing but the employer).
+  it("does not replace an answer the employer typed, applied from a document or said to Lenore", () => {
+    const held: IntakeState = {
+      data: { ...EMPTY_CHAMBER_DATA, company_name: "Employer Co" },
+      provenance: { company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: NOW.toISOString() } },
+    };
+    const after = { ...held, data: { ...held.data, company_name: "Broker Co" } };
+    const marked = markBrokerEntries(held, after, MEMBER, NOW);
+    expect(marked.data.company_name).toBe("Employer Co");
+    expect(marked.provenance.company_name).toEqual(held.provenance.company_name);
+  });
+
+  // Break caught: the FEIN, which the employer alone types, can be changed on the broker's screen.
+  it("never changes the FEIN", () => {
+    const after = { ...before, data: { ...before.data, fein: "123456789" } };
+    expect(markBrokerEntries(before, after, MEMBER, NOW).data.fein).toBe(before.data.fein);
+  });
+});
+
+describe("an answer that is not a broker's own, in a broker's chamber", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+
+  // Break caught: an answer the employer gave Lenore, a document gave, or one saved before provenance existed (the employer's own) is replaced by a broker's later entry on screen, though the database keeps the employer's.
+  it.each([
+    ["said to Lenore", { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: NOW.toISOString() }],
+    ["applied from a document", { status: "confirmed", source: { kind: "document", document_id: "d1" }, updated_at: NOW.toISOString() }],
+    ["saved before provenance", undefined],
+  ])("keeps an answer %s", (_name, entry) => {
+    const held: IntakeState = {
+      data: { ...EMPTY_CHAMBER_DATA, company_name: "Employer Co" },
+      provenance: entry ? { company_name: entry as FieldProvenance } : {},
+    };
+    const after = { ...held, data: { ...held.data, company_name: "Broker Co" } };
+    const marked = markBrokerEntries(held, after, MEMBER, NOW);
+    expect(marked.data.company_name).toBe("Employer Co");
+    expect(marked.provenance.company_name).toEqual(held.provenance.company_name);
   });
 });

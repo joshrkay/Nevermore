@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/hooks/useAuth";
@@ -62,7 +62,14 @@ const Notice = ({ title, children }: { title: string; children: ReactNode }) => 
   </div>
 );
 
-const ChamberPage = () => {
+/**
+ * The intake: Lenore on one side and the tabs on the other. `intakeId` opens a given intake instead of the signed-in person's own, for a member of the firm working an intake the firm started
+ * (D-1751): the same chamber, saving through the same path, with what they enter marked as a broker entry and the employer's own steps left out. Without it, the employer's own, as before.
+ */
+const ChamberPage = ({ intakeId: given }: { intakeId?: string }) => {
+  // At /client-intake/:intakeId the address names it (a member of the firm opening the firm's intake); New quote's step 2 gives it.
+  const params = useParams();
+  const intakeId = given ?? params.intakeId;
   const isMobile = useIsMobile();
   const { isAnonymous } = useAuth();
   // What the text chat shows on the orb (thinking, then speaking). A voice call starting or under way shows its
@@ -114,11 +121,12 @@ const ChamberPage = () => {
     saveStatus,
     retrySave,
     saveAll,
+    brokerEntry,
     loadLatest,
     keepMine,
     discardChanges,
     invalidField,
-  } = useChamberSession(searchParams.get("session"));
+  } = useChamberSession(intakeId ?? searchParams.get("session"));
 
   // Saving progress before certifying (verifying an email): the dialog, and the nudge put off for which intake.
   const [saveOpen, setSaveOpen] = useState(false);
@@ -138,19 +146,19 @@ const ChamberPage = () => {
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
   useEffect(() => {
-    if (sessionId && searchParams.get("session") !== sessionId) {
+    if (!intakeId && sessionId && searchParams.get("session") !== sessionId) {
       setSearchParams({ session: sessionId }, { replace: true });
     }
-  }, [sessionId, searchParams, setSearchParams]);
+  }, [intakeId, sessionId, searchParams, setSearchParams]);
 
   // No intake exists until the prospect starts one (A-1). Once there is deliberately none on screen (after
   // Start over, or a new intake asked for), the address mustn't name the old one, or a reload would try to open
   // it. While a link is being opened, couldn't be, or turned out to have expired, it stays.
   useEffect(() => {
-    if (!sessionId && !sessionLoading && !resumeFailed && !loadFailed && !expired && searchParams.get("session")) {
+    if (!intakeId && !sessionId && !sessionLoading && !resumeFailed && !loadFailed && !expired && searchParams.get("session")) {
       setSearchParams({}, { replace: true });
     }
-  }, [sessionId, sessionLoading, resumeFailed, loadFailed, expired, searchParams, setSearchParams]);
+  }, [intakeId, sessionId, sessionLoading, resumeFailed, loadFailed, expired, searchParams, setSearchParams]);
 
   // The orb repeats Lenore's latest line, so a restored conversation doesn't open with a second hello.
   const latestLenore = [...messages].reverse().find((m) => m.sender === "lenore");
@@ -368,7 +376,7 @@ const ChamberPage = () => {
           Nevermore
         </a>
         <span className="text-muted-foreground">/</span>
-        <span className="text-sm text-muted-foreground whitespace-nowrap">Your intake</span>
+        <span className="text-sm text-muted-foreground whitespace-nowrap">{brokerEntry ? "Your client's intake" : "Your intake"}</span>
         {isAnonymous && !messages.some((m) => m.sender === "user") && (
           // A guest on a fresh intake may be someone back from another browser: offer them their own.
           <Dialog>
@@ -390,7 +398,7 @@ const ChamberPage = () => {
           </Dialog>
         )}
         {isAnonymous && sessionId && <SaveProgressButton onOpen={() => setSaveOpen(true)} />}
-        {sessionId && <StartOverButton onStartOver={startOver} certifiedBefore={certification.status !== "none"} />}
+        {sessionId && !brokerEntry && <StartOverButton onStartOver={startOver} certifiedBefore={certification.status !== "none"} />}
         {ready && certification.status !== "certified" && (
           <span role="status" className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
             Ready for your review
@@ -477,6 +485,7 @@ const ChamberPage = () => {
             peoCatalog={peoCatalog}
             openReview={reviewRequest}
             ensureIntake={ensureIntake}
+            brokerEntry={brokerEntry}
           />
         </div>
       </div>

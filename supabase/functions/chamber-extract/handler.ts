@@ -230,11 +230,18 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     event.model = chosen.adapter.model;
 
     // 3. The intake must be the caller's. Row security lets an advisor read any intake, so the owner is
-    // compared too.
+    // compared too. The one other caller is a member of the firm in an intake the firm started (P-2.2, P-2.4): the database says
+    // whether they may enter answers there, and what Lenore hears from them is marked as the broker's by the chamber (markBrokerEntries), never the employer's.
+    let enteredByBroker = false;
     if (typeof sessionId === "string") {
-      const { data: intake, error } = await supabase.from("chamber_sessions").select("id, user_id").eq("id", sessionId).maybeSingle();
+      const { data: intake, error } = await supabase.from("chamber_sessions").select("id, user_id, started_by").eq("id", sessionId).maybeSingle();
       if (error) throw new Error("intake lookup failed");
-      if (!intake || intake.user_id !== userId) return await fail(aiError("not_found", { message: "Intake not found" }));
+      if (intake && intake.user_id !== userId && intake.started_by) {
+        const may = await supabase.rpc("broker_may_enter_intake", { p_intake_id: sessionId });
+        if (may.error) throw new Error("intake lookup failed");
+        enteredByBroker = may.data === true;
+      }
+      if (!intake || (intake.user_id !== userId && !enteredByBroker)) return await fail(aiError("not_found", { message: "Intake not found" }));
       event.sessionId = sessionId;
     }
     if (extra.skipped.length > 0) {

@@ -19,6 +19,7 @@ import {
 import { isRequiredField } from "@/data/readiness";
 import { searchNaics } from "../../../../supabase/functions/_shared/naics2022.ts";
 import { useVerifiedFields } from "./VerifiedFieldsContext";
+import { useBrokerEntry } from "./BrokerEntryContext";
 import { useRequestedFields } from "./RequestedFieldsContext";
 import { BADGES, sourceLine } from "./statusBadges";
 
@@ -67,7 +68,10 @@ interface ProvenanceFieldProps {
 const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field), allowNotApplicable = false }: ProvenanceFieldProps) => {
   const kind = field === "census" ? null : FIELD_KINDS[field];
   // A table of rows has its own editor (RowsField).
-  const canEdit = Boolean(onAction && editable && kind && kind !== "rows");
+  // The FEIN is typed into the workspace by the employer only (ADR 0006): a broker working the intake is offered no box for it (D-1751).
+  const brokerEntry = useBrokerEntry();
+  const employerOnly = brokerEntry && field === "fein";
+  const canEdit = Boolean(onAction && editable && kind && kind !== "rows" && !employerOnly);
   const choices = FIELD_CHOICES[field];
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -102,7 +106,10 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
   const badge = onAction && status
     ? settledByAdvisor
       ? VERIFIED_BADGE
-      : status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
+      : status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" }
+      // An answer the broker entered and the employer hasn't confirmed says whose it is, not that Lenore captured it (D-1710). One they changed has their own source.
+      : status === "inferred" && provenance?.source.kind === "broker_entry" ? { ...BADGES.inferred, text: "Your broker entered this" }
+      : BADGES[status]
     // A value with no provenance (typed before provenance existed) the advisor verified is badged too.
     : onAction && verifiedByAdvisor ? VERIFIED_BADGE : null;
 
@@ -218,6 +225,8 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
           {/* A required answer is still needed to certify (src/data/readiness.ts), whatever else is known about it. */}
           {required && <p className="text-xs text-warning">Needed before you can certify.</p>}
         </div>
+      ) : employerOnly ? (
+        <p className="text-xs text-muted-foreground">The employer types this.</p>
       ) : required ? (
         <p className="text-xs text-warning">Not provided yet. Needed before you can certify.</p>
       ) : (
@@ -225,7 +234,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
       )}
 
       {/* Only an answer has a source (showsSource): a field the prospect hasn't answered is never quoted (QA F11). */}
-      {!editing && onAction && provenance && display && showsSource(raw) && (
+      {!editing && onAction && provenance && display && showsSource(raw) && !(status === "inferred" && provenance.source.kind === "broker_entry" && !provenance.source.quote) && (
         <p className="text-[10px] text-muted-foreground mt-0.5 break-words">{sourceLine(provenance.source)}</p>
       )}
 

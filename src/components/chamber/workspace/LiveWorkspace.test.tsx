@@ -305,3 +305,18 @@ describe("LiveWorkspace", () => {
     expect(screen.queryByRole("button", { name: /^Confirm / })).not.toBeInTheDocument();
   });
 });
+
+describe("the workspace a broker works in (D-1751)", () => {
+  // Break caught: the broker is offered the employer's Certify & sign step (the database would refuse it, but the button would be there).
+  it("leaves out Certify & sign, and keeps every other tab", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={EMPTY_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} brokerEntry />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("button", { name: "⑩ Certify & sign" })).not.toBeInTheDocument();
+    for (const [tab] of TABS.filter(([name]) => name !== "⑩ Certify & sign")) {
+      expect(screen.getByRole("button", { name: tab })).toBeInTheDocument();
+    }
+  });
+});

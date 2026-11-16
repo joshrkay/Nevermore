@@ -446,6 +446,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "A member's account deleted at their request clears who invited or accepted from the invitations that name it; the invited email address stays until a later story clears expired invitations (docs/DATA_HANDLING.md).",
   },
   {
+    id: "intake_invitations",
+    label: "Invitations to finish and certify an intake",
+    sensitivity: "confidential",
+    examples: "The email address and name of the client a firm invited to finish an intake it started, who invited them, when they were first invited, reminded and last opened the link, when it ends, whether the email went out and when the client accepted. The link's token is never kept, only a hash of it. Nothing about the answers.",
+    stored: { tables: ["intake_invitations"], buckets: [], elsewhere: ["Resend, which sends the invitation email (the address and the link, once)"] },
+    retention: "Kept with the firm: each link a reminder replaced stays as the record of how often the client was written to. Deleted when the firm closes (the intake stays with its employer). A rule to clear old ones is not built yet (docs/DATA_HANDLING.md).",
+    deletion: "A member's account deleted at their request clears who invited from the invitations that name it; the client's email address stays until the firm closes or a later story clears expired invitations (docs/DATA_HANDLING.md).",
+  },
+  {
     id: "firm_join_by_organisation",
     label: "The organisations a firm lists, and requests to join it",
     sensitivity: "confidential",
