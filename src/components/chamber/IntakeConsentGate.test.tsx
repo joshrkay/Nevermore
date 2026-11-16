@@ -2,22 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { INTAKE_CONSENT_AGREEMENT, INTAKE_CONSENT_SECTIONS, INTAKE_CONSENT_VERSION, intakeConsentText } from "@/data/intakeConsent";
-import { DRAFT_WORDING_NOTICE, FIRM_SEES_ANSWERS_HEADING, firmSeesAnswersText } from "@/data/legalWording";
-import type { FirmAddress } from "@/hooks/useFirmAddress";
 
 const auth = { user: { id: "u1" } as { id: string } | null };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
-
-// The firm the page is at: none on the bare domain.
-let firmAddress: FirmAddress = { status: "none" };
-vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
 // The lookup and the agreement, as the gate makes them.
 const lookups: { user: unknown; version: unknown }[] = [];
 let lookup: () => Promise<{ data: unknown; error: { message: string } | null }>;
 const rpc = vi.fn();
-// What the database says of the link at the firm's address.
-let takesIntakes = true;
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => {
@@ -54,13 +46,10 @@ const renderGate = () =>
 describe("IntakeConsentGate", () => {
   beforeEach(() => {
     auth.user = { id: "u1" };
-    firmAddress = { status: "none" };
     lookups.length = 0;
     lookup = async () => ({ data: null, error: null });
     rpc.mockReset();
-    takesIntakes = true;
-    rpc.mockImplementation(async (name: string) =>
-      name === "firm_takes_intakes" ? { data: takesIntakes, error: null } : { data: "2026-11-04T10:00:00Z", error: null });
+    rpc.mockResolvedValue({ data: "2026-11-04T10:00:00Z", error: null });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
@@ -91,49 +80,12 @@ describe("IntakeConsentGate", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  // Break caught: a firm's link opens the same first screen as the bare domain's, so the employer never learns whose link it is or who will see the answers (P-2.1, D-1713).
-  it("at a firm's address says who invited them and that the firm will see the answers, in draft wording", async () => {
-    firmAddress = { status: "known", address: "alpha-advisory", name: "Alpha Advisory" };
-    renderGate();
-    expect(await screen.findByText("You were invited by Alpha Advisory")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: FIRM_SEES_ANSWERS_HEADING })).toBeInTheDocument();
-    expect(screen.getByText(firmSeesAnswersText("Alpha Advisory"))).toBeInTheDocument();
-    expect(screen.getByText(DRAFT_WORDING_NOTICE)).toBeInTheDocument();
-    expect(screen.queryByText("The Chamber")).not.toBeInTheDocument();
-  });
-
-  // Break caught: a closing, suspended or refused firm's link still shows the agreement, and the employer types answers that can't be saved (D-1741).
-  it("at a link that takes no intakes says so, shows no agreement and asks nothing to be recorded", async () => {
-    firmAddress = { status: "known", address: "alpha-advisory", name: "Alpha Advisory" };
-    takesIntakes = false;
-    renderGate();
-    expect(await screen.findByRole("heading", { name: "This link isn't taking new intakes" })).toBeInTheDocument();
-    expect(rpc).toHaveBeenCalledWith("firm_takes_intakes", { p_address: "alpha-advisory" });
-    expect(screen.queryByRole("heading", { name: "Before you start" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Agree and start" })).not.toBeInTheDocument();
-    expect(screen.queryByText("The Chamber")).not.toBeInTheDocument();
-    expect(rpc).not.toHaveBeenCalledWith("record_intake_consent", expect.anything());
-  });
-
   it("records the exact wording and version, then opens the Chamber", async () => {
     renderGate();
     fireEvent.click(await screen.findByRole("checkbox", { name: INTAKE_CONSENT_AGREEMENT }));
     fireEvent.click(screen.getByRole("button", { name: "Agree and start" }));
     expect(await screen.findByText("The Chamber")).toBeInTheDocument();
     expect(rpc).toHaveBeenCalledWith("record_intake_consent", { p_version: INTAKE_CONSENT_VERSION, p_text: intakeConsentText() });
-  });
-
-  // Break caught: the agreement is recorded with the bare wording, so the record doesn't show the employer was told the firm would see the answers.
-  it("at a firm's address records the firm's line with the agreement, exactly as it was shown", async () => {
-    firmAddress = { status: "known", address: "alpha-advisory", name: "Alpha Advisory" };
-    renderGate();
-    fireEvent.click(await screen.findByRole("checkbox", { name: INTAKE_CONSENT_AGREEMENT }));
-    fireEvent.click(screen.getByRole("button", { name: "Agree and start" }));
-    expect(await screen.findByText("The Chamber")).toBeInTheDocument();
-    expect(rpc).toHaveBeenCalledWith("record_intake_consent", {
-      p_version: INTAKE_CONSENT_VERSION,
-      p_text: `${intakeConsentText()}\n\n${FIRM_SEES_ANSWERS_HEADING}: ${firmSeesAnswersText("Alpha Advisory")}`,
-    });
   });
 
   it("stays closed and says why when the agreement isn't recorded", async () => {

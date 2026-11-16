@@ -31,18 +31,6 @@ export function firmUrl(address: string, siteDomain: string = SITE_DOMAIN): stri
   return `https://${firmHostname(address, siteDomain)}`;
 }
 
-/** The path that starts an intake: the Chamber, behind the intake agreement (src/App.tsx). */
-export const START_INTAKE_PATH = "/start";
-
-/**
- * The address that starts an intake for a firm, "Get a quote" on its public page (P-2.1, D-1713): the intake's start at the firm's own address. The browser
- * names that address on every request, and the database files the intake in the firm that holds it (20261123110000_firm_link.sql). The bare domain's start
- * files it in the default firm.
- */
-export function getAQuoteUrl(address: string, siteDomain: string = SITE_DOMAIN): string {
-  return `${firmUrl(address, siteDomain)}${START_INTAKE_PATH}`;
-}
-
 /**
  * Where a firm is reached from the page the person is on: on `localhost` (local development and the end-to-end tests) the
  * firm's `<address>.localhost`, with this page's scheme and port; anywhere else the firm's address on the site's domain.

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { INTAKE_CONSENT_VERSION, intakeConsentText } from "@/data/intakeConsent";
-import { FIRM_SEES_ANSWERS_HEADING, firmSeesAnswersText } from "@/data/legalWording";
 
 /**
  * Whether the signed-in account has agreed to the intake consent in force (src/data/intakeConsent.ts), and a
@@ -24,11 +23,7 @@ export interface UseIntakeConsent {
   retry: () => void;
 }
 
-/**
- * `firmName`: the firm whose link this intake starts at, if any. The agreement is then recorded with the line the employer was shown saying that firm will
- * see the answers (src/data/legalWording.ts, D-1713), after the wording every employer reads.
- */
-export function useIntakeConsent(firmName: string | null = null): UseIntakeConsent {
+export function useIntakeConsent(): UseIntakeConsent {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const [status, setStatus] = useState<IntakeConsentStatus>("checking");
@@ -71,7 +66,7 @@ export function useIntakeConsent(firmName: string | null = null): UseIntakeConse
     setAgreeError(null);
     const { error } = await supabase.rpc("record_intake_consent", {
       p_version: INTAKE_CONSENT_VERSION,
-      p_text: firmName === null ? intakeConsentText() : `${intakeConsentText()}\n\n${FIRM_SEES_ANSWERS_HEADING}: ${firmSeesAnswersText(firmName)}`,
+      p_text: intakeConsentText(),
     });
     if (forRef.current !== asked) return;
     setAgreeing(false);
@@ -86,7 +81,7 @@ export function useIntakeConsent(firmName: string | null = null): UseIntakeConse
         ? "This page is out of date. Reload it to read the current wording, then agree again."
         : "We couldn't record your agreement. Check your connection and try again.",
     );
-  }, [firmName]);
+  }, []);
 
   const retry = useCallback(() => setRun((n) => n + 1), []);
 
