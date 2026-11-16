@@ -66,7 +66,7 @@ export const MENU_ITEMS: MenuItem[] = [
     icon: FileText,
     countKey: "quotes",
     countWords: (n) => `${n} open`,
-    isCurrent: (pathname) => isQueue(pathname) || pathname.startsWith("/advisor/submissions/"),
+    isCurrent: (pathname) => isQueue(pathname) || pathname.startsWith("/advisor/submissions/") || pathname.startsWith("/quotes/"),
   },
   // The inbox (CRM-E1.4): every message on the threads the person may see. Its number is the threads with new mail, PEO threads and conversations (D-695).
   { key: "inbox", label: "Inbox", to: INBOX_PATH, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: (pathname) => pathname === INBOX_PATH },

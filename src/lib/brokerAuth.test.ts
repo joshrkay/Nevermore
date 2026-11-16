@@ -52,6 +52,12 @@ describe("where a broker goes after signing in", () => {
     for (const bad of ["/opportunities", "/opportunities/a/b", "/opportunities/..", "/opportunitiesx/1", "/opportunities/o1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
   });
 
+  // Catches: a broker who connects their mailbox from Follow up or Send again on a quote's page (CRM-Q3.2, D-650) landing on the queue instead of back on the quote.
+  it("keeps a quote's page, by its number", () => {
+    for (const kept of ["/quotes/7", "/quotes/7?x=1"]) expect(brokerNext(kept), kept).toBe(kept);
+    for (const bad of ["/quotes", "/quotes/7/8", "/quotes/..", "/quotesx/7", "/quotes/7?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+  });
+
   // Catches: a broker who connects their mailbox from the inbox's banner (CRM-E1.4) landing on the queue instead of back in the inbox, with its view.
   it("keeps the inbox, with its query", () => {
     for (const kept of ["/inbox", "/inbox?view=new", "/inbox?view=sent&q=reyes"]) expect(brokerNext(kept), kept).toBe(kept);

@@ -25,7 +25,7 @@
       ]
     },
     {
-      "source": "/(b/.*|f|start|profile|login|auth/.*|broker/.*|firms/.*|firm/.*|settings|join|choose-firm|inbox|leads|leads/.*|accounts|accounts/.*|contacts/.*|opportunities/.*|new-quote|new-quote/.*|advisor|advisor/.*|manuscript|manuscript/(?!demo$).*)",
+      "source": "/(b/.*|f|start|profile|login|auth/.*|broker/.*|firms/.*|firm/.*|settings|join|choose-firm|inbox|leads|leads/.*|accounts|accounts/.*|contacts/.*|opportunities/.*|new-quote|new-quote/.*|quotes/.*|advisor|advisor/.*|manuscript|manuscript/(?!demo$).*)",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
     },
     {

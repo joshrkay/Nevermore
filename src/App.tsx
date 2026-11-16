@@ -40,6 +40,7 @@ const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
 const LeadPage = lazy(() => import("./pages/leads/LeadPage"));
 const OpportunityPage = lazy(() => import("./pages/opportunities/OpportunityPage"));
+const QuotePage = lazy(() => import("./pages/quotes/QuotePage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
 const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPage"));
@@ -102,6 +103,8 @@ const AppRoutes = () => (
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/contacts/:id" element={<ContactPage />} />
                   <Route path="/opportunities/:id" element={<OpportunityPage />} />
+                  {/* A quote is a quote request (D-185): its page, from the quotes panel, the submission and the menu search (CRM-Q3.2). */}
+                  <Route path="/quotes/:quoteRequestId" element={<QuotePage />} />
                   {/* New quote is drawn by the shell (NewQuoteHost), over the page it was opened from or, opened alone, by itself (D-1709): these routes draw nothing. */}
                   <Route path="/new-quote" element={null} />
                   <Route path="/new-quote/:opportunityId" element={null} />

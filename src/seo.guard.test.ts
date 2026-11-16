@@ -68,6 +68,12 @@ describe("the title of each workspace page", () => {
   it("is private: never indexed", () => {
     for (const path of PAGES) expect(pageMetaFor(path).index, path).toBe(false);
   });
+  // Catches: a quote's page (CRM-Q3.2, /quotes/:quoteRequestId) taken for an address the app doesn't route (a "Page not found" title in the tab), or indexed.
+  it("names a quote's page, privately", () => {
+    expect(pageMetaFor("/quotes/123").title).toBe("Quote | Nevermore");
+    expect(pageMetaFor("/quotes/123").index).toBe(false);
+    expect(PRIVATE_PATH_EXAMPLES).toContain("/quotes/123");
+  });
 });
 
 describe("the head the app sets", () => {

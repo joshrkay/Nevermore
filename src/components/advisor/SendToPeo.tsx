@@ -27,6 +27,8 @@ export interface SendToPeoProps {
    * since it. Null or left out for a first send.
    */
   updateFrom?: number | null;
+  /** The button's and the form's name when it is not "Send to <PEO>": a quote's page words a send to a closed PEO "Send again" (CRM-Q3.2). */
+  label?: string;
   /** After the send is queued. */
   onSent: () => void;
   /** The advisor chose to send it from their own mail instead: the page offers to record that send (the existing recorded send, M-2.5). */
@@ -44,7 +46,7 @@ const typed = (text: string) => text.split(/[\s,;]+/).map((x) => x.trim()).filte
  */
 const SendToPeo = (p: SendToPeoProps) => {
   const update = p.updateFrom != null && p.version !== null && p.updateFrom < p.version;
-  const title = update ? `Send version ${p.version} to ${p.peo}` : `Send to ${p.peo}`;
+  const title = p.label ?? (update ? `Send version ${p.version} to ${p.peo}` : `Send to ${p.peo}`);
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<PeoSendContext | null>(null);
   const [picked, setPicked] = useState<string[]>([]);

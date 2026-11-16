@@ -12,6 +12,7 @@ export const submissionPath = (submissionId: string) => `/advisor/submissions/${
 
 /** An account's own page. */
 export const accountPath = (accountId: string) => `/accounts/${encodeURIComponent(accountId)}`;
+export const quotePath = (quoteRequestId: number) => `/quotes/${quoteRequestId}`;
 
 /** An opportunity's own page (CRM-O1.1b). */
 export const opportunityPath = (opportunityId: string) => `/opportunities/${encodeURIComponent(opportunityId)}`;
@@ -56,7 +57,7 @@ export const opportunityColumns: Column<OpportunityRow>[] = [
 
 const notYet = muted("Not yet");
 export const quoteColumns: Column<QuoteRow>[] = [
-  { header: "PEO", cell: (q) => <Link to={submissionPath(q.submissionId)} className={linkClass}>{q.peoName}</Link> },
+  { header: "PEO", cell: (q) => <Link to={quotePath(q.id)} className={linkClass}>{q.peoName}</Link> },
   { header: "Opportunity", cell: (q) => q.opportunityName },
   { header: "Status", cell: (q) => <Pill>{quoteStatusLabel(q.status)}</Pill> },
   { header: "Sent", cell: (q) => (q.sentOn ? formatDay(q.sentOn) : notYet), className: "whitespace-nowrap" },
