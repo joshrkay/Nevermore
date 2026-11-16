@@ -30,6 +30,16 @@ describe("where a broker goes after signing in", () => {
     }
   });
 
+  // Catches: a broker who connects their mailbox from a place to write on a contact or a lead (CRM-E1.1, D-650) landing on the queue instead of back where they were writing.
+  it("keeps a contact's page and the Leads page, with their query", () => {
+    for (const kept of ["/contacts/5f1c2a9e-0000-4000-8000-000000000003", "/contacts/c1?tab=email", "/leads", "/leads?lead=5f1c2a9e-0000-4000-8000-000000000004"]) {
+      expect(brokerNext(kept), kept).toBe(kept);
+    }
+    for (const bad of ["/contacts", "/contacts/a/b", "/contactsx/1", "/leadsx", "/leads/../advisor", "/contacts/1?x=//evil.example"]) {
+      expect(brokerNext(bad), bad).toBe("/advisor");
+    }
+  });
+
   // Catches: a broker who signs in again for an Accounts export (or on an expired session) landing on the queue with the filters gone (D-223).
   it("keeps the Accounts page and an account's page, with their query", () => {
     for (const kept of [

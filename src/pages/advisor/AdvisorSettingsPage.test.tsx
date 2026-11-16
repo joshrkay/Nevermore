@@ -41,6 +41,14 @@ describe("the Settings page", () => {
     ]);
   });
 
+  // Catches: Settings telling a person the product reads replies in their mailbox, which it never does (send only: docs/adr/0005, CRM-E1.1).
+  it("describes the Mailbox as the one you write from, which Nevermore only sends from", async () => {
+    const list = await renderPage("agent");
+    const mailbox = list.getByRole("link", { name: /Mailbox/ });
+    expect(mailbox).toHaveTextContent(/only sends/);
+    expect(mailbox).not.toHaveTextContent(/read/i);
+  });
+
   it("leaves Activity out for an agent or a lead, who would only be turned away", async () => {
     for (const role of ["agent", "lead"]) {
       const list = await renderPage(role);
