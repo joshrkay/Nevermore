@@ -18,6 +18,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getLeadPage: vi.fn(), listLeadActivity: vi.fn(), updateLead: vi.fn(), markLeadNotFit: vi.fn(), reopenLead: vi.fn() };
 vi.mock("@/lib/leadPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/leadPageApi")), ...client }));
+const convert = { getConvertMatches: vi.fn(), convertLead: vi.fn() };
+vi.mock("@/lib/leadConvertApi", async () => ({ ...(await vi.importActual<object>("@/lib/leadConvertApi")), ...convert }));
 const activity = { logLeadActivity: vi.fn(), updateActivity: vi.fn(), addToNote: vi.fn(), setTaskDone: vi.fn(), getLeadActivityOptions: vi.fn() };
 vi.mock("@/lib/activityApi", async () => ({ ...(await vi.importActual<object>("@/lib/activityApi")), ...activity }));
 const listFirmMembers = vi.fn();
@@ -77,10 +79,11 @@ const renderPage = (path = "/leads/l1", ws: Workspace = workspace()) => {
 };
 
 beforeEach(() => {
-  for (const fn of [...Object.values(client), ...Object.values(activity), ...Object.values(conversations), listFirmMembers, listAccountOwners, fetchMyMailbox, signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(convert), ...Object.values(activity), ...Object.values(conversations), listFirmMembers, listAccountOwners, fetchMyMailbox, signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getLeadPage.mockResolvedValue(page());
+  convert.getConvertMatches.mockResolvedValue([]);
   serveActivity([call, note]);
   conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
   conversations.getLeadConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
@@ -93,9 +96,8 @@ beforeEach(() => {
 });
 
 describe("LeadPage: the header", () => {
-  // Catches: a header that leaves out a fact the story names (name, status, business, location, employees, source, owner), or offers Convert before slice 8.6
-  // builds it (no button that does nothing).
-  it("shows the name, status, business, location, employees, source and owner, with Email, Log a call and Not a fit, and no Convert", async () => {
+  // Catches: a header that leaves out a fact the story names (name, status, business, location, employees, source, owner).
+  it("shows the name, status, business, location, employees, source and owner, with Email, Log a call and Not a fit", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" })).toBeInTheDocument();
     const header = screen.getByRole("banner");
@@ -108,7 +110,6 @@ describe("LeadPage: the header", () => {
     expect(within(header).getByRole("link", { name: /^Email/ })).toHaveAttribute("href", "#emails");
     expect(within(header).getByRole("button", { name: /^Log a call/ })).toBeInTheDocument();
     expect(within(header).getByRole("button", { name: /^Not a fit/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Convert/ })).toBeNull();
   });
 });
 
@@ -359,5 +360,71 @@ describe("LeadPage: the status bar", () => {
     renderPage();
     const bar = await screen.findByRole("list", { name: "Status" });
     for (const step of within(bar).getAllByRole("listitem")) expect(step).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("LeadPage: Convert", () => {
+  // Catches: a New or Working lead whose page has no way to convert it (CRM-L2.2: Convert is on the lead's page header).
+  it("offers Convert on the header of a lead the person may change", async () => {
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" });
+    expect(within(screen.getByRole("banner")).getByRole("button", { name: /^Convert/ })).toBeInTheDocument();
+  });
+
+  // Catches: a Convert button that opens nothing.
+  it("opens the Convert dialog for the lead", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Convert/ }));
+    expect(await screen.findByRole("dialog", { name: "Convert Lucia Reyes" })).toBeInTheDocument();
+  });
+
+  // Catches: a conversion that leaves the page showing a working lead (the person would convert it twice), or no word that it happened.
+  it("reloads the lead as Converted after converting, with the banner and no dialog", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Convert/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Convert Lucia Reyes" });
+    client.getLeadPage.mockResolvedValue(page({
+      canChange: false, canAdd: false, stages: { ...page().stages, converted: "2026-11-15T10:00:00+00:00" },
+      converted: { account: { id: "a1", name: "Reyes Bakery" }, contact: { id: "c1", name: "Lucia Reyes" }, opportunity: { id: "o1", name: "Reyes Bakery – PEO search" } },
+    }, { status: "converted" }));
+    convert.convertLead.mockResolvedValue({ account: { id: "a1", name: "Reyes Bakery", created: true }, contact: { id: "c1", name: "Lucia Reyes" }, opportunity: { id: "o1", name: "Reyes Bakery – PEO search" } });
+    await user.click(within(dialog).getByRole("button", { name: "Convert" }));
+    expect(await screen.findByRole("note", { name: "Converted" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Converted into Reyes Bakery");
+  });
+
+  // Catches: a Convert button on a Not a fit lead, which the database refuses until it is reopened (D-810).
+  it("offers no Convert on a Not a fit lead", async () => {
+    client.getLeadPage.mockResolvedValue(page({ canChange: true, canAdd: false, canReopen: true, stages: { ...page().stages, notFit: "2026-11-14T10:00:00+00:00" } }, { status: "not_fit", notFitReason: "too_small" }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" });
+    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
+  });
+
+  // Catches: a Convert button for a lead the person may read and not change (the database would refuse it).
+  it("offers no Convert on a lead the person may read and not change", async () => {
+    client.getLeadPage.mockResolvedValue(page({ canChange: false }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" });
+    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
+  });
+
+  // Catches: a Convert button on a lead in the bin, which cannot be converted until restored (D-1686), even should the page's own answer allow a change.
+  it("offers no Convert on a lead in the bin", async () => {
+    client.getLeadPage.mockResolvedValue(page({ canChange: true, inBin: true }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" });
+    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
+  });
+
+  // Catches: a Convert button in a Nevermore support session, which converts nothing (ADR 0024).
+  it("offers no Convert in a support session", async () => {
+    renderPage("/leads/l1", workspace({ isSupport: true }));
+    await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" });
+    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
   });
 });
