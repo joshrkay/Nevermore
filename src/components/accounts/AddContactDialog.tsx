@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CheckField } from "@/components/accounts/CheckField";
+import { DuplicateWarning } from "@/components/accounts/DuplicateWarning";
+import { useContactDuplicates } from "@/components/accounts/useDuplicates";
 import { Field, FormActions, SaveRefused, SelectInput, useAlternateFlag, useAlternateSave, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { contactFieldsSchema } from "@/data/contactFields";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,7 +20,10 @@ import { addContact, ContactError, getAddContactContext, type AddContactContext,
 // (D-29); this form says what it can itself and shows the database's own words for the rest. Ticking "Main contact" makes this one the account's only main
 // contact: the form says who it takes over from before saving and the toast says it after.
 //
-// Not here, and where it goes: the warning for an email already on another contact (CRM-S4.2), custom fields (CRM-X3.1), a contact's own page (CRM-C1.1).
+// While the person types an email, the database says which contacts of the firm have it (CRM-S4.2, D-193): a warning under the fields that names each one that may be
+// seen and says only who to ask for one that may not. It never stops the save.
+//
+// Not here, and where it goes: merging (CRM-S4.3), custom fields (CRM-X3.1), a contact's own page (CRM-C1.1).
 
 const schema = contactFieldsSchema.and(z.object({ owner: z.string(), is_main: z.boolean(), do_not_email: z.boolean() }));
 
@@ -128,6 +133,7 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
     return () => { closer.current = null; };
   });
 
+  const duplicates = useContactDuplicates(firmId, (api.form.watch("email") as string | undefined) ?? "");
   const ticked = api.form.watch("is_main") === true;
   const takesOver = ticked && context.mainContact !== null;
   return (
@@ -174,6 +180,7 @@ function AddContactForm({ firmId, accountId, person, context, onClose, onAdded, 
           )}
         </Field>
       </div>
+      <DuplicateWarning found={duplicates} kind="contact" />
       <div className="flex flex-wrap gap-x-8 gap-y-2">
         <CheckField name="is_main" label="Main contact for this account" api={api} />
         <CheckField name="do_not_email" label="Do not email" api={api} />

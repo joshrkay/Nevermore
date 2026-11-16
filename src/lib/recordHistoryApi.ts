@@ -31,7 +31,7 @@ export type RecordHistoryEntry = {
   at: string;
   /** The fields changed by one save share this, so a screen can show them as one change. */
   changeId: string;
-  kind: "created" | "changed" | "stage_changed";
+  kind: "created" | "changed" | "stage_changed" | "merged";
   /** A member's email, "Nevermore" (who at Nevermore is never shown, D-33) or "System". */
   who: string;
   whoKind: "member" | "nevermore" | "system";
@@ -44,6 +44,8 @@ export type RecordHistoryEntry = {
   cause: RecordHistoryCause | null;
   /** The PEO of the quote request that caused it; null when there is no cause or that quote request is gone. */
   causePeo: string | null;
+  /** The name of the merged-away record an entry was copied from, or, for the "merged" entry, the record this one absorbed (D-203); null for every other entry. */
+  mergedFrom: string | null;
 };
 
 export class RecordHistoryError extends Error {}
