@@ -31,3 +31,8 @@ got a test, then all 13 went red:
 
 12. (mutation gap) "leaves a PEO unticked that has everything it needs to quote but fails an eligibility check": written after the mutation, which it kills.
 13. (mutation gap) "forgets the last opening's reads when closed": written after the mutation, which it kills.
+
+## Gate (after merging the build line with 6.5)
+
+`npm run lint` 0 errors (13 warnings, none in this slice); `npm run typecheck:functions` clean; `npm test` 284 files, 5935 tests passed;
+`npm run build` built; `supabase/tests/run.sh` on port 5435: 95 of 95 passed. No migration in this slice, so no whole-suite load list changed.
