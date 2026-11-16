@@ -904,6 +904,34 @@ export type Database = {
         }
         Returns: Json
       }
+      // The opportunity's page (20261120120000): the opportunity with its stage, account, owner, main contact, quote requests, intake summary and contacts; raises PT404 for one
+      // that is not there or may not be seen. Its activity (calls, notes, tasks, history and the quote requests' events, newest first): {count, rows}. And the save of its own fields
+      // from a version: {conflict: false, record} or the conflict answer.
+      opportunity_page: {
+        Args: { p_firm_id: string; p_opportunity_id: string }
+        Returns: Json
+      }
+      opportunity_activity: {
+        Args: { p_firm_id: string; p_opportunity_id: string; p_filter?: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      update_opportunity: {
+        Args: {
+          p_opportunity_id: string
+          p_name: string
+          p_target_start: string | null
+          p_employees: number | null
+          p_main_contact_id: string | null
+          p_expected_close: string | null
+          p_value: number | null
+          p_source: string | null
+          p_next_step: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
       // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
       // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
       log_activity: {

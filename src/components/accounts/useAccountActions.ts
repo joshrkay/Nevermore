@@ -8,7 +8,8 @@ import type { ContactRow } from "@/lib/accountPageApi";
 export interface AccountActions {
   /** Whether something new can be added: false on an archived account (D-222), where a call or a task can still be changed and a task marked done. */
   canAdd: boolean;
-  log: (kind: ActivityType, contactId?: string | null) => void;
+  /** `contactId` and `opportunityId` are already chosen in the form when it is opened from a contact or an opportunity (CRM-O1.1b). */
+  log: (kind: ActivityType, contactId?: string | null, opportunityId?: string | null) => void;
   edit: (item: ActivityItem) => void;
   addTo: (note: ActivityItem) => void;
   setDone: (task: ActivityItem, done: boolean) => Promise<void>;

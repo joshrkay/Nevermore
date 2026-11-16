@@ -5,10 +5,16 @@ import { ActivityActions, ActivityWhat, ContactActions } from "./ActivityEntry";
 import { Pill, type Column } from "./accountLists";
 
 // What each of an account's lists shows and where each name goes (story CRM-A2.1b), drawn once for the Overview's first five and for each tab's whole list.
-// Every name opens its record (D-187): an opportunity and a quote open their submission's page until the opportunity has a page of its own; a contact's name
-// opens the contact's page (CRM-C1.1, `/contacts/:id`).
+// Every name opens its record: an opportunity's name opens its own page (CRM-O1.1b, `/opportunities/:id`, D-430, which replaces D-187); a quote's PEO opens its
+// submission's page until the quote has a page of its own (Epic 5); a contact's name opens the contact's page (CRM-C1.1, `/contacts/:id`).
 
-export const submissionPath = (submissionId: string) => `/advisor/submissions/${submissionId}`;
+export const submissionPath = (submissionId: string) => `/advisor/submissions/${encodeURIComponent(submissionId)}`;
+
+/** An account's own page. */
+export const accountPath = (accountId: string) => `/accounts/${encodeURIComponent(accountId)}`;
+
+/** An opportunity's own page (CRM-O1.1b). */
+export const opportunityPath = (opportunityId: string) => `/opportunities/${encodeURIComponent(opportunityId)}`;
 
 /** A contact's own page (CRM-C1.1). */
 export const contactPath = (contactId: string) => `/contacts/${encodeURIComponent(contactId)}`;
@@ -42,8 +48,7 @@ export const contactColumns: Column<ContactRow>[] = [
 export const opportunityColumns: Column<OpportunityRow>[] = [
   {
     header: "Opportunity",
-    // The opportunity's own page is Epic 4's (D-187): its submission's page opens until then, and a name with none is plain text.
-    cell: (o) => (o.submissionId ? <Link to={submissionPath(o.submissionId)} className={linkClass}>{o.name}</Link> : <span className="font-medium">{o.name}</span>),
+    cell: (o) => <Link to={opportunityPath(o.id)} className={linkClass}>{o.name}</Link>,
   },
   { header: "Stage", cell: (o) => <Pill>{STAGE_LABELS[o.stage]}</Pill> },
   { header: "Target start", cell: (o) => (o.targetStart ? formatDay(o.targetStart) : muted(NOT_GIVEN)), className: "whitespace-nowrap" },
