@@ -443,6 +443,7 @@ END $$;
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried
