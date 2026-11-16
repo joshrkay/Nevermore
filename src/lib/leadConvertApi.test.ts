@@ -24,6 +24,12 @@ describe("getConvertMatches", () => {
     await expect(getConvertMatches("f1", "l1")).rejects.toThrow("Couldn't look for matching accounts. You can still convert the lead.");
   });
 
+  // Catches: a lead that is not there (the database's PT404) said as a failure to look, when the person should be told to reload.
+  it("says in the database's words when the lead is not there", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT404", message: "" } });
+    await expect(getConvertMatches("f1", "l1")).rejects.toThrow("That isn't available any more. Reload the page.");
+  });
+
   // Catches: an answer of another shape drawn as if it were matches (a half-read answer offering an account with no id).
   it("treats an answer that is not the agreed shape as a failure", async () => {
     rpc.mockResolvedValue({ data: { matches: [{ name: "No id" }] }, error: null });

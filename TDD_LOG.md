@@ -43,3 +43,51 @@ Skill "mattpocock-skills:tdd" was the first tool call. One failing test seen red
 Mutation pass (scratchpad/8.6/mutate.py and mutate_ts.py, each mutant applied to the real file, suite run, file restored): 19 SQL and 21 TS/page/API mutants. 38 killed outright; survivors found and fixed with tests: last-name rule on screen, dialog closing on refusal, existing-account owner (all now red); `owner fallback dropped` first survived only because my mutant was malformed (the fallback is the line before the IF), rewritten, red. One equivalent mutant remains: dropping `!page.inBin` from the Convert condition (`can_change` is already false for a lead in the bin, so the condition is a second guard that cannot show).
 
 Gate: lint 0 errors (17 existing warnings); typecheck:functions and typecheck:app clean; npm test 6481 tests (a first full run under load failed 9 in three unrelated files by timeout; all 513 pass alone); build ok; supabase/tests/run.sh 111 of 111 SQL tests pass on port 5451.
+
+
+## 8.6c: the screen half, rebuilt test-first
+
+Skill "mattpocock-skills:tdd" was the first tool call. The screen half of 8.6b (dialog, API module, Convert button, their tests, `personNameParts`) was removed in commit ecbd9288 and rebuilt one test at a time: one failing test, run and seen red for the reason named, then only the code that passes it. Kept from 8.6b: the migration, `convert_lead.sql`, registries, types, docs, GLOSSARY, and the Converted banner's `/opportunities/<id>` link (its red was logged in 8.6b cycle 37, in the existing "Converted banner" page test, so it was not removed; it is mutation-checked below). Seams: the lead's page (`LeadPage.test.tsx`), the dialog (`ConvertLeadDialog.test.tsx`), the API module (`leadConvertApi.test.ts`). Test files are changed only by adding the one test of the cycle (and the page test's mock of the new API module, with cycle 21).
+
+1. Page `offers Convert on the header of a lead the person may change`. Red: `Unable to find an accessible element with the role "button" and name /^Convert/`. Green (button in LeadHeader; the page passed a placeholder handler). The slice-8.5 assertion "and no Convert" now contradicted the spec and was removed with this cycle.
+2. Page `offers no Convert on a Not a fit lead`. Red: `expected <button ...> to be null`. Green (status New or Working).
+3. Page `offers no Convert on a lead the person may read and not change`. Red: same line. Green (`page.canChange`).
+4. Page `offers no Convert in a support session`. Red: same line. Green (`canAct`).
+5. Page `offers no Convert on a lead in the bin` (fixture `canChange: true, inBin: true`, defensive: the real answer has canChange false). Red: same line. Green (`!page.inBin`).
+6. Page `opens the Convert dialog for the lead`. Red: `Unable to find role="dialog" and name "Convert Lucia Reyes"`. Green (a dialog with its title only).
+7. API `getConvertMatches asks for the lead's possible matches and reads them`. Red: `Failed to resolve import "./leadConvertApi"`. Green.
+8. API `fails, in a plain sentence, when the database cannot answer`. Red: `expected [Function] to throw error including 'Couldn't look for matching accounts...' but got 'Cannot read properties of null'`. Green.
+9. API `treats an answer that is not the agreed shape as a failure` (matches). Red: `promise resolved "[ { name: 'No id' } ]" instead of rejecting`. Green (zod).
+10. Dialog `lists the possible matches first, then Create account for the business`. Red: `Unable to find role="radio"`. Green.
+11. Dialog `makes a new account unless the agent chooses a match`. Red: `expect(element).toBeChecked()`. Green.
+12. Dialog `lets the agent choose a match instead, and back to creating one`. Red: `expect(element).toBeChecked()`. Green (state).
+13. Dialog `is the lead's person, ticked, split into first and last name, with the lead's email and phone`. Red: `Unable to find an accessible element with the role "checkbox" and name "Make a contact"`. Green (with `personNameParts` in `src/data/leadPage.ts`).
+14. Dialog `is unticked for a business with no person, and says no contact is made`. Red: `expect(element).not.toBeChecked()`. Green.
+15. API `convertLead sends what the agent chose with the database's parameter names, a blank target start as none, and reads the three records made`. Red: `TypeError: convertLead is not a function`. Green.
+16. API `says what is wrong in the database's own words, and nothing of an unexpected failure but a plain sentence`. Red: `expected [Function] to throw error including 'Enter an email or a phone number.' but got 'Cannot read properties of null'`. Green.
+17. API `treats an answer that is not the agreed shape as a failure` (convert). Red: `promise resolved "{ account: { name: 'No id' }, ...(2) }" instead of rejecting`. Green.
+18. API `reads no contact and no opportunity when none were made`. PASSED ON FIRST RUN (the nullable schema and the ternary were written in cycles 15 and 17). Proven by the mutation `contact always object` (red).
+19. Dialog `converts with the defaults: a new account, the lead's person, no target start`. Red: `Unable to find role="button" and name "Convert"`. Green.
+20. Dialog `tells the page what was made`. Red: `expected "spy" to be called with arguments`. Green.
+21. Page `reloads the lead as Converted after converting, with the banner and no dialog` (with the page test's mock of `@/lib/leadConvertApi`). Red: `Unable to find role="note" and name "Converted"`. Green (toast, close, invalidate the lead's queries).
+22. Dialog `is ticked, named for the account, with no target start`. Red: `Unable to find an accessible element with the role "checkbox" and name "Make an opportunity"`. Green.
+23. Dialog `is named for the account chosen, and that account is sent`. Red: `Expected the element to have value` ("Reyes Bakery LLC – PEO search"). Green.
+24. Dialog `sends the name and target start the agent typed`. Red: `Tests 1 failed` (the name field was bound read-only to the derived name). Green.
+25. Dialog `makes none when unticked, and then asks for no name or target start` (opportunity). Red: `expected <input ...> to be null`. Green.
+26. Dialog `makes none when unticked, and then asks for no name, email or phone` (contact). Red: `expected <input ...> to be null`. Green.
+27. Dialog `does not say no person is named when the agent unticks a person's contact`. Red: `expected <p ...> to be null`. Green.
+28. Dialog `leaves the names blank when a contact is ticked for a business with no person`. Red: `Expected the element to have value` (the business name had been split). Green.
+29. Dialog `sends the name, email and phone the agent typed`. Red: `expected "spy" to be called with arguments` (fields were uncontrolled). Green.
+30. Dialog `asks for an email or a phone, and sends nothing, when the contact has neither`. Red: `Unable to find role="alert"`. Green.
+31. Dialog `asks for the contact's last name, and sends nothing, when it is blank`. Red: `Unable to find role="alert"`. Green. NOT ONE TEST PER CYCLE: I added `asks for nothing about a contact the agent unticked` in the same step as this one; it passed on first run (cycle 30's check already had `makeContact &&`), proven by the mutation `contact rule on unticked` (red).
+32. Dialog `shows the database's own words and stays open with what was typed`. Red: `Unable to find role="alert"` plus an unhandled `Error: This opportunity's name is too long.`. Green.
+33. Dialog `says plainly that it could not convert, and stays open, when something unexpected fails`. Red: `Expected element to have text content` (the raw error text was shown). Green.
+34. Dialog `says it could not look for matching accounts, and still lets the agent create one`. Red: `Unable to find an element with the text: Couldn't look for accounts this might be...`. Green.
+35. Dialog `closes with Cancel, converting nothing`. Red: `Unable to find role="button" and name "Cancel"`. Green.
+36. Dialog `takes a one-word name as the last name alone`. PASSED ON FIRST RUN (`personNameParts` from cycle 13 already did it). Proven by the mutation `one-word name` (red).
+37. Dialog `offers no Convert and start a quote` (D-402). PASSED ON FIRST RUN (nothing offers it); a negative guard, not mutation-provable (adding such a button would turn it red).
+38. API `says in the database's words when the lead is not there` (matches). PASSED ON FIRST RUN: found by mutation, the mutant `context refusal` (dropping the error check) survived because a null answer fails the shape check with the same sentence. Red under that mutant after the test was added.
+
+Not rebuilt test-first: the banner's `/opportunities/<id>` link (kept from 8.6b, test and code, see above). The page's `LeadHeader` Convert button stays "outline" like Not a fit (no test for styling).
+
+Mutation pass (scratchpad/mutate.py, mutate2.py; each mutant applied to the real file, the three test files run, file restored): 42 mutants of the page, panels, dialog, `personNameParts` and API module (support session, read-only, status, bin, no reload, no toast, dialog stays, banner link, Create not default, opportunity named for matched account, contact default ticked, business name split, last-name rule, email/phone rule, rule on an unticked contact, no-person message for an unticked person, raw error shown, opportunity name sent when unticked, matches failure unsaid, Cancel, target start dropped, onConverted not called, chosen account not sent, unticked contact and opportunity ignored, back to Create, email/phone not prefilled, one-word name, first name only the first word, blank target start sent as empty, contact name, convert and context refusal, both shape checks, contact always an object, parameter name, context arguments, matches listed after Create). All killed; the one survivor (`context refusal`) is cycle 38.
