@@ -322,6 +322,15 @@ describe("QuoteRequestsPanel", () => {
     expect(within(history).getAllByText(/adv@example\.com/)).toHaveLength(3);
   });
 
+  // Break caught (M-2.4): a withdrawal's reason, which only advisors see, shown as its stored code, or not shown at all.
+  it("shows why a PEO was withdrawn in the change log, in words", () => {
+    panel({ events: [event({ id: 6, field: "withdrawn_reason", old_value: null, new_value: "employer_went_elsewhere" })] });
+    const history = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet history" });
+    expect(within(history).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      expect.stringContaining("Why withdrawn: — → The employer went elsewhere"),
+    ]);
+  });
+
   it("drops the fee and dates typed for a quote when the answer is changed to a decline", async () => {
     panel({ status: "sent_to_carrier" });
     const row = screen.getByTestId("quote-request-7");

@@ -382,3 +382,17 @@ describe("send-mail: a message to a PEO with no link", () => {
     });
   });
 });
+
+describe("send-mail: a withdrawal from a PEO (M-2.4)", () => {
+  // Break caught: a withdrawal, which carries no link and holds no marker, refused as "the bundle link wasn't made", so the PEO is never told.
+  it("sends it as written on the PEO's thread, with no link, and records it sent", async () => {
+    const withdrawal = { ...PEO_MESSAGE, id: 42, body_text: "Hello Dana, please set Reyes Bakery aside.", link_token: null };
+    const s = await setup({ claimed: [], peoClaimed: [{ event_id: "p3", attempt: 1, message: withdrawal }] });
+    const res = await handleSendMailRequest(post(), s.deps);
+    const sent = gmailRaw(s.fetchFn);
+    expect(decodeBody(sent.body)).toContain("Hello Dana, please set Reyes Bakery aside.");
+    expect(sent.headers.get("in-reply-to")).toBe("<r1@insperity.example>");
+    expect(s.calls.find(([fn]) => fn === "complete_peo_mail")?.[1]).toEqual({ p_event_id: "p3", p_attempt: 1, p_provider_message_id: "gmail-18c2f" });
+    expect(await res.json()).toEqual({ claimed: 1, sent: 1, retrying: 0, failed: 0 });
+  });
+});

@@ -107,6 +107,21 @@ export function olderVersionNote(
   return `Sent v${r.sent_version}, current v${currentVersion}`;
 }
 
+/** Why a PEO was withdrawn (quote_requests.withdrawn_reason), for advisors only; the database's list, compared by schemaSync.test.ts. */
+export const WITHDRAWAL_REASONS = [
+  // sync:begin withdrawal_reasons
+  "employer_went_elsewhere", "prospect_withdrew_peo", "peo_not_a_fit", "other",
+  // sync:end withdrawal_reasons
+] as const;
+export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
+
+export const WITHDRAWAL_REASON_LABELS: Record<WithdrawalReason, string> = {
+  employer_went_elsewhere: "The employer went elsewhere",
+  prospect_withdrew_peo: "The prospect withdrew this PEO",
+  peo_not_a_fit: "The PEO is not a fit",
+  other: "Other",
+};
+
 const FIELD_NAMES: Record<string, string> = {
   status: "Status",
   peo_name: "PEO",
@@ -121,6 +136,7 @@ const FIELD_NAMES: Record<string, string> = {
   note_kind: "Note kind",
   note_noted_on: "Note date",
   note_body: "Note text",
+  withdrawn_reason: "Why withdrawn",
 };
 
 // A message moved on or off a thread (story M-3.3): the event names the message by id and carries nothing from it.
@@ -132,6 +148,7 @@ const MAIL_EVENT_LABELS: Record<string, string> = {
 const shown = (field: string, value: string | null) => {
   if (value === null) return "—";
   if (field === "note_kind") return quoteNoteKindLabel(value);
+  if (field === "withdrawn_reason" && value in WITHDRAWAL_REASON_LABELS) return WITHDRAWAL_REASON_LABELS[value as WithdrawalReason];
   return field === "status" && isQuoteRequestStatus(value) ? QUOTE_REQUEST_LABELS[value] : value;
 };
 
