@@ -317,6 +317,8 @@ export type Database = {
           sent_version: number | null
           // One of QUOTE_REQUEST_STATUSES (src/data/quoteRequests.ts).
           status: string
+          // M-2.3: the version a quote was given on, while quoted; older than sent_version after an update, until a new answer is recorded.
+          quoted_version?: number | null
         }
         Insert: never
         Update: never
@@ -398,6 +400,8 @@ export type Database = {
           message_references?: string[]
           sender_id?: string | null
           bundle_link_id?: number | null
+          // M-2.3: the version the PEO held when this message is an update; null on every other message.
+          update_from_version?: number | null
         }
         Insert: never
         Update: never
@@ -1337,6 +1341,11 @@ export type Database = {
       // Sending the bundle to a PEO (M-2.1, 20261122140000): the send records the message queued and answers {quote_request_id, message_id};
       // 42501, PT423, PT404, 22023 (not authorized, answers changed since certifying, stage, addresses, subject and note), PT412 no mailbox.
       send_to_peo: {
+        Args: { p_session_id: string; p_peo: string; p_to: string[]; p_subject: string; p_note: string }
+        Returns: Json
+      }
+      // M-2.3: the newer certified version to a PEO holding an older one, on its thread; send_to_peo's every check, then what changed under the note.
+      send_peo_update: {
         Args: { p_session_id: string; p_peo: string; p_to: string[]; p_subject: string; p_note: string }
         Returns: Json
       }

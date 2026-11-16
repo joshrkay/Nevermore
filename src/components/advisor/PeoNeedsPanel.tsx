@@ -13,7 +13,7 @@ import {
   type PeoCompletenessEntry,
 } from "@/data/peoCompleteness";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
-import { formatDay } from "@/data/quoteRequests";
+import { formatDay, updateFrom } from "@/data/quoteRequests";
 import { documentFile, type QuoteRequestRow } from "@/lib/advisorApi";
 import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import type { PipelineStatus } from "@/data/advisor";
@@ -195,6 +195,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           companyName={companyName}
           fileId={fileId}
           version={certified.version}
+          updateFrom={updateFrom(sent, certified.version)}
           openItems={c.toQuote.map((i) => i.label)}
           returnTo={`/advisor/submissions/${bundle.sessionId}`}
           issueLink={async (quoteRequestId) => {
