@@ -220,6 +220,7 @@
 \i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121150000_epic4_after_merge_records.sql
 SET client_min_messages = notice;
 
@@ -1511,20 +1512,16 @@ INSERT INTO callable VALUES
 
 -- CRM-S4.3b (20261121100000_merge_records.sql; supabase/tests/merge_records.sql): merging accounts and contacts, keeping two separate, and the old address of a merged-away record.
 INSERT INTO callable VALUES
-  ('opportunity_mark_won(p_opportunity_id uuid, p_quote_request_id bigint, p_start_date date, p_renewal_date date, p_broker_of_record text, p_firm_id uuid, p_version integer, p_commission_basis text, p_commission_rate numeric, p_commission_expected_yearly numeric, p_time_zone text)', 'own', NULL,
-   'a current member of the firm the call acts for marks an opportunity won on the quote the employer took, when the level rule gives them it, from a version: the submission won, the other open quotes closed, the placement and its renewal made, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity the caller may not see, the same as for one that is not there'),
-  ('opportunity_mark_lost(p_opportunity_id uuid, p_reason text, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
-   'a current member of the firm marks an opportunity lost for a reason from the list, when the level rule gives them it, from a version; refused as opportunity_mark_won is'),
-  ('opportunity_reopen(p_opportunity_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
-   'the record owner of an opportunity or an owner of the firm reopens it, won or lost, from a version; refused as opportunity_mark_won is, and 42501 in words for one who may see it but is neither'),
-  ('record_commission_payment(p_placement_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm records commission received against a placement won from an opportunity, when the level rule gives them that opportunity (PT409 for a placement made by hand); refused as opportunity_mark_won is'),
-  ('update_commission_payment(p_payment_id uuid, p_received_on date, p_amount numeric, p_note text, p_firm_id uuid, p_version integer)', 'own', NULL,
-   'the same for saving a payment from a version; refused as record_commission_payment is'),
-  ('delete_commission_payment(p_payment_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
-   'the same for deleting a payment from a version; refused as record_commission_payment is'),
-  ('set_placement_commission(p_placement_id uuid, p_firm_id uuid, p_version integer, p_basis text, p_rate numeric, p_expected_yearly numeric)', 'own', NULL,
-   'a current member of the firm adds, changes or clears the commission a placement expects, when the level rule gives them its opportunity, from a version; refused as record_commission_payment is, and conflict-shaped for a stale version');
+  ('merge_preview(p_firm_id uuid, p_kind text, p_kept_id uuid, p_removed_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see both records, reads them side by side with the fields that differ, what would move and, in words, why they may not merge them; 42501 for anyone who is no member of that firm, PT404 for a record the caller may not see, the same as for one that is not there'),
+  ('merge_accounts(p_kept_id uuid, p_removed_id uuid, p_choices jsonb, p_kept_version integer, p_removed_version integer, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may change both accounts by the level rule, merges two accounts of that firm into the kept one; 42501 for anyone who is no member of that firm or may not change both, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('merge_contacts(p_kept_id uuid, p_removed_id uuid, p_choices jsonb, p_kept_version integer, p_removed_version integer, p_firm_id uuid)', 'own', NULL,
+   'the same for two contacts of one account; 22023 for two contacts of two accounts; 42501 for anyone who is no member of that firm or may not change both, PT423 for a closing firm and a support session, PT404 for a contact the caller may not see, the same as for one that is not there'),
+  ('account_keep_separate(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may change an account by the level rule, clears its possible-duplicate mark; 42501 for anyone who is no member of that firm or may not change it, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('resolve_merged_record(p_firm_id uuid, p_kind text, p_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for is led from the old address of a merged-away account or contact to the record it became, when they may see that record; NULL for anyone else, the same as for an address that was never merged; 42501 for anyone who is no member of that firm');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2173,7 +2170,7 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('undo_renewal_not_renewed', 'advisor', 'by_id',
    $$SELECT public.undo_renewal_not_renewed({rnw}, {firm}, (SELECT version FROM public.renewals WHERE id = {rnw}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
   ('delete_renewal', 'advisor', 'by_id', $$SELECT public.delete_renewal({rdel}, {firm}, (SELECT version FROM public.renewals WHERE id = {rdel}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true');
-v-- CRM-O1.1a and CRM-A2.3 (opportunity_create makes one on {acct}, the firm's account owned by its agent): the opportunity's page, its activity and its save ({opp} is an opportunity of the firm's owned account). The reads refuse whoever may not see the
+-- CRM-O1.1a and CRM-A2.3 (opportunity_create makes one on {acct}, the firm's account owned by its agent): the opportunity's page, its activity and its save ({opp} is an opportunity of the firm's owned account). The reads refuse whoever may not see the
 -- account with the one answer; the save's version is the opportunity's current one, read as the caller.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('opportunity_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_page({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),

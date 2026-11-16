@@ -11,6 +11,7 @@ import { LogActivityDialog } from "./LogActivityDialog";
 import { MergeDialog, type MergedRecords } from "./MergeDialog";
 import { MoveContactDialog } from "./MoveContactDialog";
 import { NewOpportunityDialog } from "./NewOpportunityDialog";
+import { PickContactDialog } from "./PickContactDialog";
 import { accountKey } from "./useAccountQueries";
 
 // What a person can do to an account's calls, notes and tasks (story CRM-E1.5), offered to the places that draw them (the header's buttons, a contact's
