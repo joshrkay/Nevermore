@@ -106,7 +106,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
       )}
       {open?.mode === "opportunity" && (
         <NewOpportunityDialog
-          firmId={firmId} accountId={accountId} person={person} renewal={open.renewal} onClose={close}
+          firmId={firmId} accountId={accountId} person={person} renewal={open.renewal} onRenewalTaken={refresh} onClose={close}
           // Saving opens the new opportunity's own page (D-442, CRM-O1.1b's route); the account's lists are asked again for when the person comes back.
           onCreated={(made) => { close(); refresh(); navigate(`/opportunities/${made.id}`); }}
         />

@@ -177,6 +177,23 @@ describe("the Renewals tab: Start the renewal (D-449)", () => {
   });
 });
 
+describe("Start the renewal after someone else started it first (D-449)", () => {
+  // Catches: the renewal still showing "Start the renewal" after the database says an open opportunity already works it, so the person tries again and again.
+  it("reads the renewals again, so the renewal now shows the other opportunity", async () => {
+    const user = userEvent.setup();
+    opportunities.createOpportunity.mockRejectedValue(new (await import("@/lib/opportunityCreateApi")).OpportunityError("renewalTaken", "Its renewal is being worked by January 2027 renewal", "PT409"));
+    renderTab();
+    await user.click(within(await rowOf("Carrier 1")).getByRole("button", { name: /Start the renewal/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Start the renewal" });
+    await within(dialog).findByLabelText("Opportunity name");
+    const reads = renewalsClient.getAccountRenewals.mock.calls.length;
+    renewalsClient.getAccountRenewals.mockResolvedValue(renewals([renewal(1, { opportunity: { id: "o7", name: "January 2027 renewal", stage: "in_market" } })]));
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    expect(await within(dialog).findByText("Its renewal is being worked by January 2027 renewal")).toBeInTheDocument();
+    await waitFor(() => expect(renewalsClient.getAccountRenewals.mock.calls.length).toBeGreaterThan(reads));
+  });
+});
+
 describe("the Renewals tab: Add a renewal (D-447)", () => {
   // Catches: the form's fields wrong, the start date asked for a current plan (the database refuses it), what was typed sent untrimmed or under another name, the list not read again.
   it("adds a PEO placement renewal with its start date, then reads the renewals again", async () => {
@@ -192,6 +209,22 @@ describe("the Renewals tab: Add a renewal (D-447)", () => {
     await waitFor(() => expect(renewalsClient.addRenewal).toHaveBeenCalledWith("f1", "a1", { kind: "peo_placement", withWhom: "Justworks", renewsOn: "2027-06-01", placementStartOn: "2026-06-01" }));
     await waitFor(() => expect(renewalsClient.getAccountRenewals.mock.calls.length).toBeGreaterThan(1));
     expect(toast.success).toHaveBeenCalledWith("Renewal added");
+  });
+
+  // Catches: a "With" that takes 200 characters when the database takes 80, and the start date's refusal put under the Renewal date field (it is about no field of the form).
+  it("holds With to 80 characters, and puts a refusal about the start date beside the buttons, not under the date", async () => {
+    const user = userEvent.setup();
+    const { RenewalError } = await import("@/lib/renewalsApi");
+    renewalsClient.addRenewal.mockRejectedValue(new RenewalError("invalid", "Only a PEO placement has a start date.", "22023"));
+    renderTab();
+    await user.click((await tab()).getByRole("button", { name: "Add a renewal" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a renewal" });
+    expect(within(dialog).getByLabelText("With")).toHaveAttribute("maxlength", "80");
+    await user.type(within(dialog).getByLabelText("With"), "Justworks");
+    await user.type(within(dialog).getByLabelText("Renewal date"), "2027-06-01");
+    await user.click(within(dialog).getByRole("button", { name: "Add renewal" }));
+    const words = await within(dialog).findByText("Only a PEO placement has a start date.");
+    expect(within(dialog).getByLabelText("Renewal date")).not.toHaveAccessibleDescription(/Only a PEO placement/);
   });
 
   it("asks no start date for the employer's current plan", async () => {
@@ -276,6 +309,24 @@ describe("the Renewals tab: Didn't renew and its undo (D-451)", () => {
     await waitFor(() => expect(renewalsClient.undoNotRenewed).toHaveBeenCalledWith("f1", "r1", 6));
     expect(toast.error).toHaveBeenCalledWith("Someone else changed this renewal. It is shown as it is now.");
     expect(toast.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Renewals tab: Undo is guarded against a double click", () => {
+  // Catches: a second click while the undo is on its way sending a second undo (from a version that has just moved: a spurious conflict).
+  it("disables Undo while it is in flight, so two clicks send one undo", async () => {
+    const user = userEvent.setup();
+    renewalsClient.getAccountRenewals.mockResolvedValue(renewals([renewal(1, { version: 6, done: true, outcome: "not_renewed", notRenewedOn: "2026-12-01" })]));
+    let finish: (v: unknown) => void = () => {};
+    renewalsClient.undoNotRenewed.mockReturnValue(new Promise((r) => { finish = r; }));
+    renderTab();
+    const undo = within(await rowOf("Carrier 1")).getByRole("button", { name: /Undo/ });
+    await user.click(undo);
+    await user.click(undo);
+    expect(renewalsClient.undoNotRenewed).toHaveBeenCalledTimes(1);
+    expect(undo).toBeDisabled();
+    finish({ conflict: false, renewal: renewal(1, { version: 7 }) });
+    await waitFor(() => expect(undo).not.toBeDisabled());
   });
 });
 

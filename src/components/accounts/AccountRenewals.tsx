@@ -50,6 +50,8 @@ export function RenewalsPanel({ firmId, accountId, first = false }: { firmId: st
   const queryClient = useQueryClient();
   const actions = useAccountActions();
   const [dialog, setDialog] = useState<Dialog>(null);
+  // The renewal whose undo is on its way: its button is disabled, so a second click is not a second undo.
+  const [undoing, setUndoing] = useState<string | null>(null);
   const data = query.data;
   const id = first ? "overview-renewals" : "account-renewals-heading";
   const refresh = () => void queryClient.invalidateQueries({ queryKey: accountKey(firmId, accountId) });
@@ -83,7 +85,16 @@ export function RenewalsPanel({ firmId, accountId, first = false }: { firmId: st
         {canChange && <button type="button" className={linkButton} onClick={() => setDialog({ mode: "edit", renewal: r })}>Edit<span className="sr-only"> the renewal with {r.withWhom}</span></button>}
         {canChange && !r.done && <button type="button" className={linkButton} onClick={() => setDialog({ mode: "notRenewed", renewal: r })}>Didn't renew<span className="sr-only"> with {r.withWhom}</span></button>}
         {canChange && r.outcome === "not_renewed" && (
-          <button type="button" className={linkButton} onClick={() => void undoNotRenewedWithWords(firmId, r).then(refresh)}>Undo<span className="sr-only"> didn't renew with {r.withWhom}</span></button>
+          <button
+            type="button"
+            className={`${linkButton} disabled:opacity-50`}
+            disabled={undoing === r.id}
+            onClick={() => {
+              if (undoing !== null) return;
+              setUndoing(r.id);
+              void undoNotRenewedWithWords(firmId, r).then(refresh).finally(() => setUndoing(null));
+            }}
+          >Undo<span className="sr-only"> didn't renew with {r.withWhom}</span></button>
         )}
         {canChange && !r.madeByWin && <button type="button" className={linkButton} onClick={() => setDialog({ mode: "delete", renewal: r })}>Delete<span className="sr-only"> the renewal with {r.withWhom}</span></button>}
       </span>

@@ -30,7 +30,7 @@ export interface StartingRenewal {
 }
 
 /** The form in a dialog over an account. `onCreated` runs once the opportunity is made (the page opens it); `onClose` closes the form. `renewal` opens it as Start the renewal. */
-export function NewOpportunityDialog({ firmId, accountId, person = "You", renewal, onClose, onCreated }: {
+export function NewOpportunityDialog({ firmId, accountId, person = "You", renewal, onClose, onCreated, onRenewalTaken }: {
   firmId: string;
   accountId: string;
   renewal?: StartingRenewal;
@@ -38,6 +38,8 @@ export function NewOpportunityDialog({ firmId, accountId, person = "You", renewa
   person?: string;
   onClose: () => void;
   onCreated: (made: MadeOpportunity) => void;
+  /** The database says the renewal is done or already worked (someone else started it first): the page asks for its renewals again so the stale link goes. */
+  onRenewalTaken?: () => void;
 }) {
   const context = useQuery({ queryKey: ["new-opportunity", firmId, accountId, "context"], queryFn: () => getNewOpportunityContext(firmId, accountId), retry: false, gcTime: 0 });
   const data = context.data;
@@ -66,7 +68,7 @@ export function NewOpportunityDialog({ firmId, accountId, person = "You", renewa
             <Button type="button" variant="outline" onClick={onClose}>Close</Button>
           </div>
         ) : (
-          <NewOpportunityForm firmId={firmId} accountId={accountId} person={person} renewal={renewal} context={data} onClose={onClose} onCreated={onCreated} closer={closer} />
+          <NewOpportunityForm firmId={firmId} accountId={accountId} person={person} renewal={renewal} context={data} onClose={onClose} onCreated={onCreated} onRenewalTaken={onRenewalTaken} closer={closer} />
         )}
       </DialogContent>
     </Dialog>
@@ -89,8 +91,8 @@ const fieldOf = (message: string): string | undefined => {
   return undefined;
 };
 
-function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClose, onCreated, closer }: {
-  firmId: string; accountId: string; person: string; renewal?: StartingRenewal; context: NewOpportunityContext; onClose: () => void; onCreated: (made: MadeOpportunity) => void;
+function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClose, onCreated, onRenewalTaken, closer }: {
+  firmId: string; accountId: string; person: string; renewal?: StartingRenewal; context: NewOpportunityContext; onClose: () => void; onCreated: (made: MadeOpportunity) => void; onRenewalTaken?: () => void;
   closer: MutableRefObject<(() => void) | null>;
 }) {
   const { user } = useAuth();
@@ -126,6 +128,7 @@ function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClo
           renewalId: renewal?.id ?? null,
         });
       } catch (e) {
+        if (e instanceof OpportunityError && e.kind === "renewalTaken") onRenewalTaken?.();
         if (e instanceof OpportunityError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? (OWNER_RULE.test(e.message) ? "owner" : undefined) : e.kind === "invalid" ? fieldOf(e.message) : undefined);
         throw e;
       }
@@ -178,7 +181,8 @@ function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClo
         <Field name="value" label="Value, a year">{(field) => <Input {...field} inputMode="decimal" />}</Field>
         <Field name="source" label="Source">
           {(field) => (
-            <SelectInput {...field}>
+            // Start the renewal holds the source to Renewal (D-439, D-449): the database refuses any other, so it is not offered as a choice.
+            <SelectInput {...field} disabled={renewal !== undefined}>
               <option value="">No source</option>
               {OPPORTUNITY_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
             </SelectInput>

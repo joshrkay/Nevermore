@@ -165,6 +165,7 @@
 \i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121150000_epic4_after_merge_records.sql
 \i supabase/migrations/20261121160000_start_the_renewal.sql
 SET client_min_messages = notice;
@@ -415,6 +416,65 @@ BEGIN
   second_opp := (r::jsonb -> 'record' ->> 'id')::uuid;
   PERFORM pg_temp.is((SELECT opportunity_id FROM public.renewals WHERE id = pg_temp.id('r_lost')), second_opp, 'and names the new one');
   PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities WHERE id = first_opp), 1::bigint, 'the lost one is kept');
+END $$;
+
+-- A submission moved the way set_submission_status moves it (a won intake makes its opportunity Won).
+CREATE FUNCTION pg_temp.move(intake text, to_status text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE from_status text;
+BEGIN
+  SELECT w.status INTO from_status FROM public.submission_workflow w WHERE w.session_id = pg_temp.id(intake);
+  UPDATE public.submission_workflow SET status = to_status WHERE session_id = pg_temp.id(intake);
+  INSERT INTO public.submission_status_history (session_id, from_status, to_status) VALUES (pg_temp.id(intake), from_status, to_status);
+END $$;
+
+-- ---------- a renewal its opportunity has won, and the source (D-449, D-439) ----------
+-- Break caught: a renewal that a win has renewed is started again (two opportunities, one renewal), or refused in other words than renewal_set_not_renewed's;
+-- an opportunity that starts a renewal is made with another source (the form holds Renewal, and so must the database), or the refusal is made after the renewal
+-- was looked at and leaves a link behind.
+DO $$
+DECLARE before_n bigint;
+BEGIN
+  PERFORM pg_temp.renewal('r_won', 'a1');
+  PERFORM pg_temp.renewal('r_src', 'a1');
+  PERFORM pg_temp.intake('rw_i', 'acme');
+  PERFORM pg_temp.opportunity('rw_o', 'a1', 'acme_agent1', 'rw_i');
+  PERFORM pg_temp.move('rw_i', 'won');
+  UPDATE public.renewals SET opportunity_id = pg_temp.id('rw_o') WHERE id = pg_temp.id('r_won');
+  SELECT count(*) INTO before_n FROM public.opportunities;
+  PERFORM pg_temp.is(pg_temp.start('acme_agent1', 'acme', 'a1', 'X', pg_temp.id('r_won')), 'PT409: This renewal was renewed by PEO search rw_o. Reopen that win first.', 'a renewal its opportunity won');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format(
+    $q$SELECT public.opportunity_create(%L, 'X', NULL, NULL, NULL, NULL, NULL, 'Inbound', NULL, NULL, NULL, %L, %L)::text$q$, pg_temp.id('a1'), pg_temp.id('acme'), pg_temp.id('r_src'))),
+    '22023: The source of an opportunity that starts a renewal is Renewal.', 'another source with a renewal');
+  PERFORM pg_temp.is(pg_temp.as_call('acme_agent1', 'acme-brokers', format(
+    $q$SELECT public.opportunity_create(%L, 'X', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, %L, %L)::text$q$, pg_temp.id('a1'), pg_temp.id('acme'), pg_temp.id('r_src'))),
+    '22023: The source of an opportunity that starts a renewal is Renewal.', 'no source with a renewal');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.opportunities), before_n, 'and nothing was made');
+  PERFORM pg_temp.is((SELECT opportunity_id FROM public.renewals WHERE id = pg_temp.id('r_src')), NULL::uuid, 'or linked');
+END $$;
+
+-- ---------- the accounts export carries the Renewal column (D-223) ----------
+-- Break caught: the table shows a Renewal column that the export leaves out (a person exports what the page shows), or exports it as another account's date, or as
+-- the nearest renewal that is done.
+DO $$
+DECLARE rows jsonb;
+BEGIN
+  PERFORM pg_temp.account('a_none', 'acme', 'acme_agent1');
+  PERFORM pg_temp.renewal('r_exp_done', 'a_none', current_date + 5);
+  UPDATE public.renewals SET not_renewed_on = current_date WHERE id = pg_temp.id('r_exp_done');
+  PERFORM pg_temp.renewal('r_exp_far', 'a_none', current_date + 200);
+  PERFORM pg_temp.renewal('r_exp_near', 'a_none', current_date + 20);
+  PERFORM pg_temp.is((SELECT columns ->> 14 FROM public.export_table_registry() WHERE name = 'accounts') IS NOT NULL, true, 'the registry lists the accounts columns');
+  PERFORM pg_temp.is(EXISTS (SELECT 1 FROM public.export_table_registry() t, jsonb_array_elements(t.columns) c WHERE t.name = 'accounts' AND c ->> 'id' = 'renewal_date' AND c ->> 'label' = 'Renewal date'), true, 'and the Renewal date');
+  PERFORM pg_temp.claims_of('acme_owner');
+  SELECT jsonb_agg(x) INTO rows FROM public.export_source_accounts(pg_temp.id('acme'), '{}', NULL, 100) x;
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT x ->> 'renewal_date' FROM jsonb_array_elements(rows) x WHERE x ->> 'name' = 'a2'), (current_date + 60)::text, 'an account''s nearest renewal is exported as its date');
+  PERFORM pg_temp.is((SELECT x ->> 'renewal_date' FROM jsonb_array_elements(rows) x WHERE x ->> 'name' = 'a_none'), (current_date + 20)::text, 'the nearest one not done (not the one marked as not renewed, not the far one)');
+  PERFORM pg_temp.account('a_empty', 'acme', 'acme_agent1');
+  PERFORM pg_temp.claims_of('acme_owner');
+  SELECT jsonb_agg(x) INTO rows FROM public.export_source_accounts(pg_temp.id('acme'), '{}', NULL, 100) x;
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT x -> 'renewal_date' FROM jsonb_array_elements(rows) x WHERE x ->> 'name' = 'a_empty'), 'null'::jsonb, 'an account with none exports null');
 END $$;
 
 -- ---------- two sessions at once ----------

@@ -26,8 +26,10 @@ const refused = (e: unknown): never => {
   throw e;
 };
 const fieldOf = (message: string): string | undefined => {
-  if (/who it is with|with whom|80 characters/i.test(message)) return "with_whom";
-  if (/renewal date|date/i.test(message)) return "renews_on";
+  // The database's words for each field (renewal_input_error): "Say who it is with.", "Keep who it is with to 80 characters.", "Give the renewal date." A start date's refusal
+  // ("Only a PEO placement has a start date.") is about no field of this form's own, so it shows beside the buttons.
+  if (/who it is with/i.test(message)) return "with_whom";
+  if (/the renewal date/i.test(message)) return "renews_on";
   return undefined;
 };
 
@@ -79,7 +81,7 @@ export function AddRenewalDialog({ firmId, accountId, onClose, onAdded }: { firm
         <Field name="kind" label="What renews" required>
           {(field) => <SelectInput {...field}>{RENEWAL_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}</SelectInput>}
         </Field>
-        <Field name="with_whom" label="With" required>{(field) => <Input {...field} autoFocus maxLength={200} />}</Field>
+        <Field name="with_whom" label="With" required>{(field) => <Input {...field} autoFocus maxLength={80} />}</Field>
         <Field name="renews_on" label="Renewal date" required>{(field) => <Input {...field} type="date" />}</Field>
         {kind === "peo_placement" && (
           <Field name="placement_start" label="Placement start date" help="When the placement started, if you know.">{(field) => <Input {...field} type="date" />}</Field>
@@ -132,7 +134,7 @@ export function EditRenewalDialog({ firmId, renewal, onClose, onSaved }: { firmI
   return (
     <FormDialog title="Edit the renewal" description={`${kindLabel(renewal.kind)}.`} closer={closer} onClose={onClose}>
       <WorkspaceForm api={api} aria-label="Edit the renewal" actions={<FormActions />}>
-        <Field name="with_whom" label="With" required>{(field) => <Input {...field} autoFocus maxLength={200} />}</Field>
+        <Field name="with_whom" label="With" required>{(field) => <Input {...field} autoFocus maxLength={80} />}</Field>
         <Field name="renews_on" label="Renewal date" required>{(field) => <Input {...field} type="date" />}</Field>
       </WorkspaceForm>
     </FormDialog>

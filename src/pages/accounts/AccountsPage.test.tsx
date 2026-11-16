@@ -7,6 +7,7 @@ import type { AccountRow } from "@/lib/accountsApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
 import { blobBytes, blobText } from "@/test/blob";
 import { allStatuses, expectStatusesOutsideBusy } from "@/test/loading";
+import { formatDay } from "@/data/accountPage";
 
 // The Accounts page on the workspace's table frame (story CRM-A1.1a, screen 16). The database cuts the pages and runs the filters
 // (supabase/tests/accounts_query.sql); these tests are what a person sees and does through the page: the columns, the views and their counts, the
@@ -472,6 +473,14 @@ describe("the Accounts page: the Renewal column and its view (CRM-A2.4b, D-450)"
     expect(within(today).getByText("today").className).not.toContain("text-warning");
   });
 
+  // Catches: a typed ?sort=renewing_in_120_days sent to the database, which has no order for a filter-only field and refuses it, so the whole page breaks (D-450).
+  it("drops a sort in the address that names the filter-only field, and shows the rows in the table's own order", async () => {
+    renderAt("/accounts?sort=renewing_in_120_days");
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    expect(listAccounts).toHaveBeenCalled();
+    for (const call of listAccounts.mock.calls) expect(call[0].sort?.field).not.toBe("renewing_in_120_days");
+  });
+
   // Catches: the view opening in the table's own order (last activity) instead of soonest renewal first, or sorting the rows the wrong way (D-450).
   it("opens Renewing in 120 days sorted by the renewal date, soonest first", async () => {
     const user = userEvent.setup();
@@ -486,13 +495,13 @@ describe("the Accounts page: Export", () => {
   const COLUMNS = [
     "name", "trade_name", "website", "city", "state", "employees", "industry", "states_of_operation", "current_provider", "source", "status", "owner", "main_contact",
     "main_contact_email", "main_contact_phone", "opportunity", "opportunity_stage", "target_start", "open_opportunities", "quote_requests_sent", "quotes_received",
-    "earliest_quote_expires_on", "last_activity_at", "created_at", "archived",
+    "earliest_quote_expires_on", "renewal_date", "last_activity_at", "created_at", "archived",
   ].map((id) => ({ id, label: id }));
   const exported = (over: Record<string, unknown> = {}) => ({
     name: "Harborview Dental Group", trade_name: null, website: "harborviewdental.example", city: "Portland", state: "OR", employees: 45, industry: "Dental practice",
     states_of_operation: "OR, WA", current_provider: null, source: "Employer's intake", status: "Prospect", owner: "Dana Reyes", main_contact: "Elena Marsh",
     main_contact_email: "elena@harborviewdental.example", main_contact_phone: null, opportunity: "January 2027 PEO search", opportunity_stage: "In market",
-    target_start: "2027-01-01", open_opportunities: 1, quote_requests_sent: 3, quotes_received: 1, earliest_quote_expires_on: null,
+    target_start: "2027-01-01", open_opportunities: 1, quote_requests_sent: 3, quotes_received: 1, earliest_quote_expires_on: null, renewal_date: inDays(50),
     last_activity_at: "2026-11-11T10:00:00+00:00", created_at: "2026-10-28T10:00:00+00:00", archived: false, ...over,
   });
   const answer = (rows: Record<string, unknown>[]) => ({ table: "accounts", label: "Accounts", columns: COLUMNS, rows, count: rows.length, skipped: 0, exportedAt: "2026-11-19T10:00:00+00:00" });
@@ -503,7 +512,7 @@ describe("the Accounts page: Export", () => {
   };
   const press = async (user: ReturnType<typeof userEvent.setup>) => user.click(await screen.findByRole("button", { name: "Export" }));
 
-  // Catches: an export of something other than what is on screen: the filters in force, the search, the time zone, and the columns shown, in order and worded as the page words them.
+  // Catches: an export of something other than what is on screen: the filters in force, the search, the time zone, and the columns shown (the Renewal column among them, D-223), in order and worded as the page words them.
   it("exports the accounts that match the filters and search in force, as a file of the columns shown", async () => {
     const user = userEvent.setup();
     exportRows.mockResolvedValue(answer([exported()]));
@@ -517,8 +526,8 @@ describe("the Accounts page: Export", () => {
     expect(name).toBe("accounts-2026-11-19.csv");
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     expect(text).toBe(
-      "Account,Main contact,Opportunity,Quotes,Employees,Owner,Last activity\r\n" +
-      "Harborview Dental Group,\"Elena Marsh, elena@harborviewdental.example\",\"In market, Jan 2027 start\",1 of 3 back,45,Dana Reyes,2026-11-11\r\n",
+      "Account,Main contact,Opportunity,Quotes,Renewal,Employees,Owner,Last activity\r\n" +
+      `Harborview Dental Group,"Elena Marsh, elena@harborviewdental.example","In market, Jan 2027 start",1 of 3 back,"${formatDay(inDays(50))}, in 50 days",45,Dana Reyes,2026-11-11\r\n`,
     );
   });
 

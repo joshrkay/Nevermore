@@ -324,7 +324,7 @@ describe("selecting rows on the Accounts page", () => {
   // Catches: the file holding fewer accounts than the bar said, with no reason given (an id deleted or no longer visible comes back as skipped).
   it("says how many selected accounts the export left out", async () => {
     const user = userEvent.setup();
-    const ids = ["name", "main_contact", "main_contact_email", "main_contact_phone", "opportunity", "opportunity_stage", "target_start", "quote_requests_sent", "quotes_received", "earliest_quote_expires_on", "employees", "owner", "last_activity_at", "city", "state"];
+    const ids = ["name", "main_contact", "main_contact_email", "main_contact_phone", "opportunity", "opportunity_stage", "target_start", "quote_requests_sent", "quotes_received", "earliest_quote_expires_on", "renewal_date", "employees", "owner", "last_activity_at", "city", "state"];
     const made = (name: string) => Object.fromEntries(ids.map((id) => [id, id === "name" ? name : null]));
     exportRows.mockResolvedValue({ table: "accounts", label: "Accounts", columns: ids.map((id) => ({ id, label: id })), rows: [made("A"), made("B"), made("C")], count: 3, skipped: 1, exportedAt: "2026-11-19T10:00:00+00:00" });
     renderAt();

@@ -24,7 +24,7 @@ export function daysAwayWords(days: number): string {
 
 /**
  * The whole days from `today` (a Date, read in the person's own time) to a renewal's day (YYYY-MM-DD); negative once it has passed. The accounts table's Renewal
- * column says it from the row's date alone; an account's own tab takes the number from the database, which works it out in the firm's time zone (D-448).
+ * column says it from the row's date alone; an account's own tab takes the number from the database, which works it out from today in the person's own time zone (the one the page sends, `browserTimeZone()`, D-448).
  */
 export function daysFromToday(day: string, today: Date = new Date()): number {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);

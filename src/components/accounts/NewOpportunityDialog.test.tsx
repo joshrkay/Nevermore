@@ -31,6 +31,7 @@ const context = (over: Record<string, unknown> = {}) => ({
 
 const onClose = vi.fn();
 const onCreated = vi.fn();
+const onRenewalTaken = vi.fn();
 
 const open = async () => {
   const user = userEvent.setup();
@@ -46,7 +47,7 @@ const open = async () => {
 const field = (dialog: HTMLElement, label: string | RegExp) => within(dialog).getByLabelText(label);
 
 beforeEach(() => {
-  for (const m of [createOpportunity, getNewOpportunityContext, onClose, onCreated, toast.success, toast.error]) m.mockReset();
+  for (const m of [createOpportunity, getNewOpportunityContext, onClose, onCreated, onRenewalTaken, toast.success, toast.error]) m.mockReset();
   getNewOpportunityContext.mockResolvedValue(context());
   createOpportunity.mockResolvedValue({ id: "o1", version: 1, stage: "qualifying" });
 });
@@ -217,7 +218,7 @@ describe("Start the renewal (the form filled in, D-449)", () => {
     const user = userEvent.setup();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <NewOpportunityDialog firmId="f1" accountId="a1" renewal={{ id: "r1", renewsOn }} onClose={onClose} onCreated={onCreated} />
+        <NewOpportunityDialog firmId="f1" accountId="a1" renewal={{ id: "r1", renewsOn }} onClose={onClose} onCreated={onCreated} onRenewalTaken={onRenewalTaken} />
       </QueryClientProvider>,
     );
     const dialog = await screen.findByRole("dialog", { name: "Start the renewal" });
@@ -264,5 +265,20 @@ describe("Start the renewal (the form filled in, D-449)", () => {
     expect(await within(dialog).findByText("Its renewal is being worked by January 2027 renewal")).toBeInTheDocument();
     expect(onCreated).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+    // The page is told, so it asks for the renewals again and the stale link goes (D-449).
+    expect(onRenewalTaken).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: the Source of a started renewal left as a choice (D-439: it is Renewal; the database refuses any other), so a person picks another and the save is refused.
+  it("holds the Source to Renewal: it is not a choice", async () => {
+    const { dialog } = await openRenewal();
+    expect(field(dialog, "Source")).toBeDisabled();
+    expect(field(dialog, "Source")).toHaveValue("Renewal");
+  });
+
+  // Catches: the hold on Source reaching an ordinary New opportunity, where Source is a free choice (D-438).
+  it("leaves Source a choice on an ordinary New opportunity", async () => {
+    const { dialog } = await open();
+    expect(field(dialog, "Source")).toBeEnabled();
   });
 });

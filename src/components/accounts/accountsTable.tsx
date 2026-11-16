@@ -282,6 +282,8 @@ export const ACCOUNTS_TABLE: AccountsTableDefinition = {
   id: "accounts",
   noun: { singular: "account", plural: "accounts" },
   fields: fieldsWith(undefined),
+  // "Renewing in 120 days" is only a filter (D-450): a typed ?sort= naming it is dropped, not sent to the database.
+  unsortable: ["renewing_in_120_days"],
   columns: accountColumns,
   usual: USUAL_COLUMNS,
   // The filters shown in the row (the story's): Owner, State and Employees. Every other field is under "Add filter".
@@ -380,6 +382,8 @@ const exportedFor = (timeZone: string): Record<string, { id: string; text?: (row
       return typeof r.earliest_quote_expires_on === "string" && r.earliest_quote_expires_on ? `${words}, ${expiryWords(r.earliest_quote_expires_on).text}` : words;
     },
   },
+  // The Renewal column as the page words it: the day and how far away it is (D-450), or "None on file". The database exports the date (export_source_accounts).
+  renewal: { id: "renewal_date", text: (r) => renewalText({ renewal_date: str(r.renewal_date) === "" ? null : str(r.renewal_date) }) },
   employees: { id: "employees" },
   owner: { id: "owner" },
   last_activity: { id: "last_activity_at", text: (r) => dayInZone(str(r.last_activity_at), timeZone) },
