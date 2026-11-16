@@ -9,12 +9,15 @@ import {
   countLeadViews, LEAD_FIELDS, LEAD_NOT_FIT_REASONS, LEAD_SOURCES, LEAD_STATUSES, listLeads, type LeadField, type LeadFilter, type LeadRow, type LeadsPage,
 } from "@/lib/leadsApi";
 import type { ViewCount } from "@/lib/tableQuery";
+import type { ExportValue } from "@/lib/exportApi";
+import type { ShownColumn } from "@/lib/exportFile";
+import { dayInZone } from "@/components/accounts/accountsTable";
 
 // The leads table (story CRM-L1.1a, slice 8.3, screen 14) as a workspace table: its columns, views, filters and the two calls to the database. The frame
 // (src/components/workspace/table/) does the rest, as it does for the accounts table (src/components/accounts/accountsTable.tsx).
 //
-// Not here, and where it goes: selecting rows, bulk changes, the bin and export (slice 8.4, D-811), the Convert row action (slice 8.6), the lead's page and
-// the name as its link (slice 8.5), labels (8.4) and custom fields (Epic 9).
+// Selecting rows, bulk changes, the bin and export are slice 8.4's (D-811, src/pages/leads/LeadsPage.tsx). Not here, and where it goes: the Convert row
+// action (slice 8.6), the lead's page and the name as its link (slice 8.5), the Label column and filter (D-1648), and custom fields (Epic 9).
 
 type Fields = typeof LEAD_FIELDS;
 
@@ -200,6 +203,28 @@ export const useLeadsTable = (): LeadsTable => {
 /** The page's one call for rows: the effective query (the view's filters and the address's together), for the firm. */
 export const fetchLeadsPage = (firmId: string | null) => (query: TableQuery<Fields>): Promise<LeadsPage> =>
   listLeads({ firmId, filters: query.filters as LeadFilter[], sort: query.sort, page: query.page, search: query.search });
+
+/**
+ * The export's columns for the ones the page shows, in its order, each as the page words it (the database gives a column of its own for each:
+ * export_source_leads). A column that isn't here has no export.
+ */
+const exportStr = (v: ExportValue | undefined): string => (typeof v === "string" ? v : "");
+export const leadExportColumnsFor = (shown: readonly { id: string; header: string }[], timeZone: string): ShownColumn[] => {
+  const known: Record<string, { id: string; text?: (row: Record<string, ExportValue>) => string }> = {
+    lead: { id: "name" },
+    business: { id: "business" },
+    email_phone: { id: "email", text: (r) => [exportStr(r.email), exportStr(r.phone)].filter(Boolean).join(", ") },
+    status: { id: "status", text: (r) => [exportStr(r.status), exportStr(r.not_fit_reason)].filter(Boolean).join(", ") },
+    source: { id: "source" },
+    last_activity: { id: "last_activity_at", text: (r) => dayInZone(exportStr(r.last_activity_at), timeZone) },
+    owner: { id: "owner" },
+    created: { id: "created_at", text: (r) => dayInZone(exportStr(r.created_at), timeZone) },
+    state: { id: "state" },
+    employees: { id: "employees" },
+    current_provider: { id: "current_provider" },
+  };
+  return shown.filter((c) => known[c.id]).map((c) => ({ id: known[c.id].id, heading: c.header, ...(known[c.id].text ? { text: known[c.id].text } : {}) }));
+};
 
 /** The counts of the tabs, under the same filters and search. */
 export const countLeadsViews = (firmId: string | null) =>

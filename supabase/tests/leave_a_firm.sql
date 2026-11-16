@@ -186,6 +186,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -602,7 +603,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-new'), 1::bigint, 'a newer one is kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-intake-old'), 1::bigint, 'an intake-bound row is left alone, however old');
   PERFORM pg_temp.is((SELECT interval '90 days' = public.firm_activity_retention()), true, 'the window is the firm record''s');
-  PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'), 'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions();', 'it runs in the firm record''s daily job, which CRM-P1.7 gave one more step (closing the firms whose 30 days have passed) and CRM-P2.4 another (recording the support sessions that ran out)');
+  PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'), 'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions(); select public.remove_binned_leads();', 'it runs in the firm record''s daily job, which CRM-P1.7 gave one more step (closing the firms whose 30 days have passed) CRM-P2.4 another (recording the support sessions that ran out) and CRM-L1.1b another (removing leads 30 days in the bin)');
   PERFORM pg_temp.is((SELECT count(*) FROM cron.job), 1::bigint, 'and no second job was made');
   RAISE NOTICE 'leave_a_firm: outbox retention passed';
 END $$;

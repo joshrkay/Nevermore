@@ -1073,6 +1073,7 @@ $$;
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

@@ -227,6 +227,7 @@
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

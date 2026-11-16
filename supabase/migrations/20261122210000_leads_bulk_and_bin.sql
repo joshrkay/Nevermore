@@ -809,16 +809,18 @@ $$;
 REVOKE ALL ON FUNCTION public.remove_binned_leads() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.remove_binned_leads() TO service_role;
 
--- Every night at 04:41 UTC, where pg_cron is there (as the other daily jobs are scheduled); where it is not, this says so and nothing else.
+-- A step of the firm record's daily job (20261118120000's, restated with every step it had and this one after them), not a second scheduler. Where the job
+-- does not exist (no pg_cron) this does nothing and says so; run public.remove_binned_leads() every night another way.
 DO $$
 BEGIN
-  IF to_regprocedure('cron.schedule(text,text,text)') IS NULL THEN
-    RAISE NOTICE 'the lead bin: pg_cron is not available; run public.remove_binned_leads() every night another way';
+  IF to_regprocedure('cron.schedule(text,text,text)') IS NULL OR NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'prune-firm-activity') THEN
+    RAISE NOTICE 'the lead bin: the prune-firm-activity job does not exist; run public.remove_binned_leads() every night another way';
     RETURN;
   END IF;
-  PERFORM cron.schedule('remove-binned-leads', '41 4 * * *', 'select public.remove_binned_leads();');
+  PERFORM cron.schedule('prune-firm-activity', '53 3 * * *',
+    'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions(); select public.remove_binned_leads();');
 EXCEPTION WHEN OTHERS THEN
-  RAISE WARNING 'the lead bin: could not schedule remove-binned-leads (%); run public.remove_binned_leads() every night another way', SQLERRM;
+  RAISE WARNING 'the lead bin: could not add it to the daily job (%); run public.remove_binned_leads() every night another way', SQLERRM;
 END $$;
 
 -- ---------- 9. Export (D-811: through the existing export) ----------

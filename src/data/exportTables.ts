@@ -15,6 +15,7 @@ const WORDS: Record<ExportTable, ExportTableWords> = {
   referral_partners: { one: "referral partner", many: "referral partners", file: "referral-partners" },
   firm_activity: { one: "entry in the firm's record", many: "entries in the firm's record", file: "firm-record" },
   accounts: { one: "account", many: "accounts", file: "accounts" },
+  leads: { one: "lead", many: "leads", file: "leads" },
 };
 
 const known = (table: string): table is ExportTable => Object.prototype.hasOwnProperty.call(WORDS, table);

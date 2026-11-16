@@ -176,6 +176,7 @@
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -549,6 +550,9 @@ BEGIN
     ('change accounts in bulk', 'agent_a', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('preview a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('undo a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
+    ('change leads in bulk', 'agent_a', format($q$SELECT public.bulk_leads_change(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), closing_msg),
+    ('preview a bulk change of leads', 'agent_a', format($q$SELECT public.bulk_leads_preview(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), closing_msg),
+    ('undo a bulk change of leads', 'agent_a', format($q$SELECT public.bulk_leads_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
     ('log a call', 'agent_a', format($q$SELECT public.log_activity('call', %L, NULL, NULL, NULL, 'spoke', 'Hello', NULL, NULL, NULL, NULL, NULL, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('change a task', 'agent_a', format($q$SELECT public.update_activity(%L, NULL, NULL, NULL, NULL, NULL, 'Renamed', current_date, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a5'::uuid, fa), closing_msg),
     ('add to a note', 'agent_a', format($q$SELECT public.add_to_note(%L, 'More', %L)$q$, '00000000-0000-4000-8000-0000000000a4'::uuid, fa), closing_msg),
@@ -1344,7 +1348,8 @@ DECLARE
     'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
-    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw'];
+    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw',
+    'bulk_leads_change', 'bulk_leads_undo', 'restore_leads'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s: the PEO list is the same for every firm',
