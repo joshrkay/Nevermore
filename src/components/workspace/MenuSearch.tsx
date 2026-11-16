@@ -77,11 +77,14 @@ const Group = ({ label, group, onChoose, seeAll }: { label: string; group: Searc
 
 /** What is searched: whole characters, at most the 200 the database keeps (D-240), runs of spaces as one. */
 const squeeze = (typed: string) => searchTermFor(typed.replace(/\s+/g, " "), 0);
+/** How long a search is, in characters as the database counts them: an emoji is one, though JavaScript's length says two. */
+const charsIn = (text: string) => Array.from(text).length;
 
 /** The search box with its results. It sits in the menu, so it is mounted for every workspace page and holds the New account form it offers. */
 export default function MenuSearch() {
   const { firm, person, isSupport } = useWorkspace();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
+  const userId = user?.id ?? null;
   const firmId = firm?.id ?? null;
   const navigate = useNavigate();
   const { setOpenMobile } = useSidebar();
@@ -96,7 +99,7 @@ export default function MenuSearch() {
   // The words searched follow what is typed after a pause; fewer than two characters is no search.
   useEffect(() => {
     const next = squeeze(typed);
-    const asked = next.length >= MENU_SEARCH_MIN_CHARS ? next : "";
+    const asked = charsIn(next) >= MENU_SEARCH_MIN_CHARS ? next : "";
     if (asked === term) return;
     if (asked === "") { setTerm(""); return; }
     const timer = setTimeout(() => setTerm(asked), MENU_SEARCH_DELAY_MS);
@@ -113,9 +116,10 @@ export default function MenuSearch() {
     return () => document.removeEventListener("mousedown", away);
   }, [open]);
 
-  const typing = squeeze(typed).length >= MENU_SEARCH_MIN_CHARS;
-  const found = useQuery({ queryKey: ["menu-search", firmId, term], queryFn: () => searchRecords(firmId as string, term), enabled: !!firmId && term !== "" && open, retry: false, staleTime: 10_000 });
-  const recent = useQuery({ queryKey: [...RECENT_RECORDS_KEY, firmId], queryFn: () => myRecentRecords(firmId as string), enabled: !!firmId && open && !typing, retry: false, staleTime: 0 });
+  const typing = charsIn(squeeze(typed)) >= MENU_SEARCH_MIN_CHARS;
+  // Both are kept per person as well as per firm: what the database returns depends on who asks, and the cache outlives a sign-out in the same tab.
+  const found = useQuery({ queryKey: ["menu-search", firmId, userId, term], queryFn: () => searchRecords(firmId as string, term), enabled: !!firmId && !!userId && term !== "" && open, retry: false, staleTime: 10_000 });
+  const recent = useQuery({ queryKey: [...RECENT_RECORDS_KEY, firmId, userId], queryFn: () => myRecentRecords(firmId as string), enabled: !!firmId && !!userId && open && !typing, retry: false, staleTime: 0 });
 
   // A lapsed session signs the person out, as every failed load does (LoadFailed).
   const lapsed = [found.error, recent.error].some((e) => (e as Partial<SearchError> | null)?.unauthenticated);
