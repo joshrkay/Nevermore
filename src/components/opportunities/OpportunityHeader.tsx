@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/accounts/accountLists";
 import { contactPath } from "@/components/accounts/accountColumns";
 import { PlaceholderLine } from "@/components/workspace/states";
@@ -8,10 +9,14 @@ import type { OpportunityPage } from "@/lib/opportunityPageApi";
 
 /**
  * The top of the opportunity's page (screen 19, D-431): "Opportunity", the name with its stage, one line of target start, employees, main contact and owner,
- * the stage bar and, under it, what would move it on (D-414). Email the contact and Send to a PEO are off (D-402) and Mark won or lost is CRM-O1.3b's, so none
- * is drawn: nothing here is a button that does nothing (D-24). The trail is drawn by the page.
+ * the stage bar and, under it, what would move it on (D-414), and Mark won or lost (CRM-O1.3b, D-431) for those who may. Email the contact and Send to a PEO are off
+ * (D-402), so none is drawn: nothing here is a button that does nothing (D-24). The trail is drawn by the page.
  */
-export function OpportunityHeader({ page }: { page: OpportunityPage }) {
+export function OpportunityHeader({ page, onMarkWonOrLost }: {
+  page: OpportunityPage;
+  /** Given only to those who may close an open opportunity (D-431): whoever may change it, outside a support session. */
+  onMarkWonOrLost?: () => void;
+}) {
   const { opportunity: o, mainContact, owner, intake, contacts } = page;
   // Who the intake waits on: the prospect by the name they gave (gone once the intake is submitted), else the contact made from them, else who certified it.
   const waitingOn = intake?.prospectName ?? contacts.find((c) => c.fillsInIntake)?.name ?? intake?.certifiedBy ?? null;
@@ -23,6 +28,9 @@ export function OpportunityHeader({ page }: { page: OpportunityPage }) {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-display text-3xl font-bold break-words">{o.name}</h1>
         <Pill>{STAGE_LABELS[o.stage]}</Pill>
+        {onMarkWonOrLost && o.stage !== "won" && o.stage !== "lost" && (
+          <Button type="button" variant="outline" className="ml-auto" onClick={onMarkWonOrLost}>Mark won or lost</Button>
+        )}
       </div>
       <p className="mt-1 text-sm text-muted-foreground break-words">
         {o.targetStart && <>Target start {formatDay(o.targetStart)} · </>}

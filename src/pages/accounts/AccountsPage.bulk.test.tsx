@@ -121,7 +121,9 @@ describe("the bulk bar", () => {
     const user = userEvent.setup();
     renderAt();
     await selectTwo(user);
-    expect(within(bar()!).getAllByRole("button").map((b) => b.textContent)).toEqual(["Change owner", "Set a field", "Label", "Archive", "Export", "Clear"]);
+    // Exactly two chosen also offers Merge (CRM-S4.3a), once the database has said the person may change both.
+    await within(bar()!).findByRole("button", { name: "Merge" });
+    expect(within(bar()!).getAllByRole("button").map((b) => b.textContent)).toEqual(["Change owner", "Set a field", "Label", "Archive", "Merge", "Export", "Clear"]);
   });
 
   // Catches (D-24, ADR 0024): Nevermore support being offered a change of anything.

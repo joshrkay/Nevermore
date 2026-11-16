@@ -172,6 +172,7 @@
 \i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

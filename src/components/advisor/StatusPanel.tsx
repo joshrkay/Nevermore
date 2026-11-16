@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
@@ -11,6 +11,8 @@ import {
   type PipelineStatus,
 } from "@/data/advisor";
 import { setStatus, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
+import { getOpportunityOfSubmission } from "@/lib/opportunityPageApi";
+import { ConsoleCloseDialog } from "./ConsoleCloseDialog";
 import { PipelineBadge } from "./PipelineBadge";
 import { actorName, formatDateTime } from "./format";
 
@@ -45,8 +47,17 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const offlineSave = useOfflineSave();
   const updateButton = useRef<HTMLButtonElement>(null);
   const [winner, setWinner] = useState("");
+  // The opportunity the submission is on, if any (D-470): there, Won and Lost are the opportunity's to close, in its own dialog, not this panel's to move.
+  const [opportunity, setOpportunity] = useState<{ id: string; firmId: string } | null>(null);
+  const [closing, setClosing] = useState<"won" | "lost" | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getOpportunityOfSubmission(sessionId).then((found) => !cancelled && setOpportunity(found), () => undefined);
+    return () => { cancelled = true; };
+  }, [sessionId]);
+  const closesOnOpportunity = opportunity !== null && (next === "won" || next === "lost");
   const quoted = quoteRequests.filter((q) => q.status === "quoted");
-  const needsWinner = next === "won" && winner === "";
+  const needsWinner = next === "won" && winner === "" && !closesOnOpportunity;
   const seen = prospectStatusAfter(next, history);
   const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
   // While withdrawn, the prospect sees it once they certify again, and certifying at "information
@@ -67,6 +78,10 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
 
   const save = async () => {
     if (next === status) return;
+    if (closesOnOpportunity) {
+      setClosing(next as "won" | "lost");
+      return;
+    }
     setSaving(true);
     failure.clear();
     try {
@@ -110,7 +125,8 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             : `From ${PIPELINE_LABELS[status]} it can move to ${options.map((s) => optionLabel(status, s)).join(", ")}.`}
         </p>
         <p className="text-xs text-muted-foreground">{hint}</p>
-        {next === "won" && (
+        {closesOnOpportunity && <p className="text-xs text-muted-foreground">Marking it {next} opens its opportunity's dialog, where you choose how it ended.</p>}
+        {next === "won" && !closesOnOpportunity && (
           <>
             <label htmlFor="won-quote" className="block text-xs text-muted-foreground pt-1">Which quote did the employer take?</label>
             <select
@@ -136,6 +152,16 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
           rows={2}
           className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
         />
+        {closing && opportunity && (
+          <ConsoleCloseDialog
+            firmId={opportunity.firmId}
+            opportunityId={opportunity.id}
+            submissionId={sessionId}
+            initial={closing}
+            onClose={() => setClosing(null)}
+            onDone={onChanged}
+          />
+        )}
         <SaveFailed message={failure.message} returnFocusTo={updateButton} />
         {offlineSave.reason}
         <button

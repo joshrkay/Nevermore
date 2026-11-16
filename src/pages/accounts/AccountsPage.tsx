@@ -1,5 +1,6 @@
 import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { accountKey } from "@/components/accounts/useAccountQueries";
 import { useNavigate } from "react-router-dom";
 import { Building2, RefreshCw, SearchX } from "lucide-react";
 import { accountsTableWords } from "@/data/accountsPage";
@@ -8,6 +9,7 @@ import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
 import { AccountMenu } from "@/components/accounts/AccountMenu";
 import { BulkChangeDialog, type BulkKind, type BulkMade } from "@/components/accounts/BulkChangeDialog";
 import { BulkResultBar } from "@/components/accounts/BulkResultBar";
+import { MergeDialog } from "@/components/accounts/MergeDialog";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
@@ -28,6 +30,7 @@ const NEW_ACCOUNT_BUTTON = "inline-flex h-10 items-center justify-center rounded
 
 const AccountsPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { table, names } = useAccountsTable();
   const { firmId } = useFirmReady();
   const location = useTableAddress(table);
@@ -88,6 +91,18 @@ const AccountsPage = () => {
     selected: selection.all ? { filters: exportFilters as unknown as Extract<BulkSelection, { filters: unknown }>["filters"] } : { ids: selection.ids },
   });
 
+  // Merging two accounts (CRM-S4.3a): offered when exactly two are chosen by hand and the database says the person may change both (the preview in the dialog
+  // still says why not in words, should that change before it opens). Never in a Nevermore support session. The first chosen is the one kept; the dialog can swap.
+  const [merging, setMerging] = useState<{ kept: string; removed: string } | null>(null);
+  const pair = canBulk && !selection.all && selection.count === 2 ? selection.ids : null;
+  const mayMerge = useQuery({
+    queryKey: [...changeKey, "merge-pair", pair],
+    queryFn: () => accountsCanChange(firmId as string, pair as string[]),
+    enabled: !!firmId && pair !== null,
+    retry: false,
+  });
+  const canMerge = pair !== null && pair.length === 2 && pair.every((id) => (mayMerge.data ?? []).includes(id));
+
   const toolbar = ({ loading, slowLine }: { loading: boolean; slowLine: ReactNode }) => (
     <>
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
@@ -108,6 +123,9 @@ const AccountsPage = () => {
             {{ owner: "Change owner", field: "Set a field", label: "Label", archive: "Archive" }[kind]}
           </button>
         ))}
+        {canMerge && pair && (
+          <button type="button" onClick={() => setMerging({ kept: pair[0], removed: pair[1] })} className="min-h-11 rounded-md border border-border bg-background px-4 text-sm hover:bg-muted">Merge</button>
+        )}
         {firmId && <ExportControl firmId={firmId} table="accounts" columns={exportColumnsFor(columns, timeZone)} filters={selectedFilters} {...(selection.all ? {} : { ids: selection.ids })} />}
       </SelectionBar>
       {selection.count === 0 && (<>
@@ -210,6 +228,23 @@ const AccountsPage = () => {
             onMade={(m) => {
               setAsking(null);
               setMade((previous) => ({ seq: (previous?.seq ?? 0) + 1, made: m }));
+              selection.clear();
+              refresh();
+            }}
+          />
+        )}
+        {merging && firmId && (
+          <MergeDialog
+            firmId={firmId}
+            kind="account"
+            keptId={merging.kept}
+            removedId={merging.removed}
+            onClose={() => setMerging(null)}
+            onMerged={({ kept, removed }) => {
+              setMerging(null);
+              // Both accounts' own pages (and lists) are stale: the kept one has what moved, the removed one is gone.
+              void queryClient.invalidateQueries({ queryKey: accountKey(firmId, kept.id) });
+              void queryClient.invalidateQueries({ queryKey: accountKey(firmId, removed.id) });
               selection.clear();
               refresh();
             }}
