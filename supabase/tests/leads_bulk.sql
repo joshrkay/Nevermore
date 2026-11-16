@@ -676,3 +676,52 @@ BEGIN
   PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'the field change undone');
   PERFORM pg_temp.is((pg_temp.lead_row('f1')).city, 'Bend', 'the old city back');
 END $$;
+
+-- ---------- 7. Labels ----------
+-- Catches (D-805, D-811, CRM-S3.7): a label not put on the leads, a second word made for one the firm already has (case aside), or no history entry for it.
+SELECT pg_temp.lead('lb1', 'acme', 'acme_agent1', 'Label Co');
+INSERT INTO public.labels (firm_id, name) VALUES (pg_temp.id('acme'), 'Hot');
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'label_add', '{"name":"hot"}', NULL, jsonb_build_array(pg_temp.id('lb1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'changed')::int, 1, 'one lead labelled');
+  PERFORM pg_temp.is(r ->> 'label', 'Hot', 'with the firm''s own spelling');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.lead_labels ll JOIN public.labels l ON l.id = ll.label_id WHERE ll.lead_id = pg_temp.id('lb1') AND l.name = 'Hot'), 1, 'the label is on it');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.labels WHERE firm_id = pg_temp.id('acme')), 1, 'no second word made');
+  PERFORM pg_temp.is((SELECT h.new_value FROM public.record_history h WHERE h.table_name = 'leads' AND h.record_key = pg_temp.id('lb1')::text AND h.field = 'labels'),
+    '["Hot"]'::jsonb, 'one history entry: the labels after');
+END $$;
+
+-- Catches (D-811): taking a label off that is not taken off, or one the firm does not have accepted as if it were.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_preview(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'label_remove', '{"name":"Cold"}', jsonb_build_array(pg_temp.id('lb1')::text))),
+    '22023: The firm has no label called "Cold".', 'a label the firm does not have');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'label_remove', '{"name":"HOT"}', NULL, jsonb_build_array(pg_temp.id('lb1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'changed')::int, 1, 'one label taken off');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.lead_labels WHERE lead_id = pg_temp.id('lb1')), 0, 'the lead has no label now');
+END $$;
+
+-- Catches (D-202): Undo of a label change not putting the leads' labels back as they were.
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'label_add', '{"name":"Hot"}', NULL, jsonb_build_array(pg_temp.id('lb1')::text));
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'adding undone');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.lead_labels WHERE lead_id = pg_temp.id('lb1')), 0, 'the label is off again');
+  INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT firm_id, pg_temp.id('lb1'), id FROM public.labels WHERE firm_id = pg_temp.id('acme') AND name = 'Hot';
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'label_remove', '{"name":"Hot"}', NULL, jsonb_build_array(pg_temp.id('lb1')::text));
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.lead_labels WHERE lead_id = pg_temp.id('lb1')), 1, 'the label is back on');
+END $$;

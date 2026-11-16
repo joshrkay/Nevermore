@@ -20,6 +20,67 @@ ALTER TABLE public.bulk_change_records
     AND (record_type = 'lead') = (lead_id IS NOT NULL)),
   ADD CONSTRAINT bulk_change_records_lead_fkey FOREIGN KEY (firm_id, lead_id) REFERENCES public.leads (firm_id, id) ON DELETE CASCADE;
 
+-- ---------- 1b. A lead's labels in its history ----------
+-- A lead's labels, as the history shows them: their names, alphabetically, ignoring case (account_label_names, for a lead). Internal.
+CREATE FUNCTION public.lead_label_names(p_lead_id uuid, p_plus uuid DEFAULT NULL, p_minus uuid DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(jsonb_agg(n.name ORDER BY lower(n.name), n.name), '[]'::jsonb)
+  FROM (
+    SELECT l.name FROM public.lead_labels ll JOIN public.labels l ON l.id = ll.label_id
+    WHERE ll.lead_id = p_lead_id AND ll.label_id IS DISTINCT FROM p_minus
+    UNION
+    SELECT l.name FROM public.labels l WHERE l.id = p_plus
+  ) n
+$$;
+
+REVOKE ALL ON FUNCTION public.lead_label_names(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+-- The history of a lead takes its labels as one field, "labels", as an account's does (account_labels_history): one entry per label put on or taken off,
+-- from the list of names before to the list after, by whoever did it. Written for a lead and a label that still exist.
+CREATE FUNCTION public.lead_labels_history()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  ld public.leads;
+  nm text;
+  before_list jsonb;
+  after_list jsonb;
+  who uuid := auth.uid();
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    SELECT * INTO ld FROM public.leads x WHERE x.id = NEW.lead_id;
+    IF ld.id IS NULL OR NOT EXISTS (SELECT 1 FROM public.labels l WHERE l.id = NEW.label_id) THEN
+      RETURN NULL;
+    END IF;
+    after_list := public.lead_label_names(NEW.lead_id);
+    before_list := public.lead_label_names(NEW.lead_id, NULL, NEW.label_id);
+  ELSE
+    SELECT * INTO ld FROM public.leads x WHERE x.id = OLD.lead_id;
+    SELECT l.name INTO nm FROM public.labels l WHERE l.id = OLD.label_id;
+    IF ld.id IS NULL OR nm IS NULL THEN
+      RETURN NULL;
+    END IF;
+    after_list := public.lead_label_names(OLD.lead_id);
+    before_list := public.lead_label_names(OLD.lead_id, OLD.label_id);
+  END IF;
+  INSERT INTO public.record_history (firm_id, table_name, record_key, change_id, kind, field, old_value, new_value, actor_id, actor_is_staff, version)
+  VALUES (ld.firm_id, 'leads', ld.id::text, gen_random_uuid(), 'changed', 'labels', before_list, after_list, who, public.firm_actor_is_staff(who, ld.firm_id), ld.version);
+  RETURN NULL;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.lead_labels_history() FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER lead_labels_history AFTER INSERT OR DELETE ON public.lead_labels FOR EACH ROW EXECUTE FUNCTION public.lead_labels_history();
+
 -- ---------- 2. What a bulk change asks for, checked ----------
 -- The optional standard fields Set a field offers on a lead (D-1646): never the name (required), the status, its reason and the source (the product's, or
 -- their own actions), the owner (its own action) or the note (a page's long text). Kept in step with src/lib/leadsBulkApi.ts.
@@ -108,6 +169,8 @@ BEGIN
     WHEN 'status' THEN ARRAY['status']
     WHEN 'not_fit' THEN ARRAY['reason']
     WHEN 'field' THEN ARRAY['field', 'value']
+    WHEN 'label_add' THEN ARRAY['name']
+    WHEN 'label_remove' THEN ARRAY['name']
     WHEN 'delete' THEN ARRAY[]::text[]
     ELSE NULL END;
   IF allowed IS NULL THEN
@@ -138,6 +201,20 @@ BEGIN
       RAISE EXCEPTION 'Choose why they are not a fit: too small, wrong industry, not interested, bad contact details or other.' USING ERRCODE = '22023';
     END IF;
     RETURN jsonb_build_object('reason', prm ->> 'reason');
+  END IF;
+  IF p_action IN ('label_add', 'label_remove') THEN
+    -- A label's words, as bulk_params_checked takes them for accounts (D-198).
+    s := CASE WHEN jsonb_typeof(prm -> 'name') = 'string' THEN public.label_name_clean(prm ->> 'name') END;
+    IF s IS NULL THEN
+      RAISE EXCEPTION 'Type a label.' USING ERRCODE = '22023';
+    END IF;
+    IF char_length(s) > 40 THEN
+      RAISE EXCEPTION 'Keep a label to 40 characters.' USING ERRCODE = '22023';
+    END IF;
+    IF s ~ '[[:cntrl:]]' THEN
+      RAISE EXCEPTION 'A label is plain text on one line.' USING ERRCODE = '22023';
+    END IF;
+    RETURN jsonb_build_object('name', s);
   END IF;
   IF p_action = 'field' THEN
     IF jsonb_typeof(prm -> 'field') IS DISTINCT FROM 'string' THEN
@@ -230,12 +307,14 @@ REVOKE ALL ON FUNCTION public.lead_change_words(uuid) FROM PUBLIC, anon, authent
 --   skip    the caller may not change it; `code` says why and `reason` in words
 --   change  it will change
 -- Internal.
-CREATE FUNCTION public.bulk_lead_outcome(l public.leads, p_action text, p_params jsonb, OUT outcome text, OUT code text, OUT reason text)
+CREATE FUNCTION public.bulk_lead_outcome(l public.leads, p_action text, p_params jsonb, p_label_id uuid, OUT outcome text, OUT code text, OUT reason text)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+DECLARE
+  has_label boolean;
 BEGIN
   IF NOT public.can_change_firm_record(l.firm_id, l.owner_id) THEN
     outcome := 'skip';
@@ -264,6 +343,11 @@ BEGIN
     outcome := CASE WHEN l.status = p_params ->> 'status' THEN 'same' ELSE 'change' END;
     RETURN;
   END IF;
+  IF p_action IN ('label_add', 'label_remove') THEN
+    has_label := p_label_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.lead_labels ll WHERE ll.lead_id = l.id AND ll.label_id = p_label_id);
+    outcome := CASE WHEN has_label = (p_action = 'label_add') THEN 'same' ELSE 'change' END;
+    RETURN;
+  END IF;
   IF p_action = 'field' THEN
     outcome := CASE WHEN public.lead_field_json(l, p_params ->> 'field') = COALESCE(p_params -> 'value', 'null'::jsonb) THEN 'same' ELSE 'change' END;
     RETURN;
@@ -277,7 +361,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.bulk_lead_outcome(public.leads, text, jsonb) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.bulk_lead_outcome(public.leads, text, jsonb, uuid) FROM PUBLIC, anon, authenticated, service_role;
 
 -- ---------- 4. The preview ----------
 -- Answers {action, selected, requested, unavailable, limit, too_many, will_change, unchanged, skipped: [{id, name, code, reason}]}: what the change would do,
@@ -300,13 +384,20 @@ DECLARE
   seen integer := 0;
   skipped jsonb := '[]'::jsonb;
   params jsonb;
+  lbl uuid;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   params := public.bulk_lead_params_checked(p_action, p_params);
   SELECT * INTO sel FROM public.bulk_leads_resolve(firm, p_filters, p_ids);
+  IF p_action IN ('label_add', 'label_remove') THEN
+    SELECT x.id INTO lbl FROM public.labels x WHERE x.firm_id = firm AND lower(x.name) = lower(params ->> 'name');
+    IF p_action = 'label_remove' AND lbl IS NULL THEN
+      RAISE EXCEPTION 'The firm has no label called "%".', params ->> 'name' USING ERRCODE = '22023';
+    END IF;
+  END IF;
   FOR l IN SELECT x.* FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (sel.lead_ids) ORDER BY x.id LOOP
     seen := seen + 1;
-    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params);
+    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params, lbl);
     IF oc.outcome = 'change' THEN
       n_change := n_change + 1;
     ELSIF oc.outcome = 'same' THEN
@@ -352,6 +443,9 @@ DECLARE
   row_before jsonb;
   row_after jsonb;
   result jsonb;
+  lbl uuid;
+  ll_id uuid;
+  old_ll public.lead_labels;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   params := public.bulk_lead_params_checked(p_action, p_params);
@@ -365,8 +459,15 @@ BEGIN
     new_owner := (params ->> 'owner_id')::uuid;
     PERFORM public.member_to_own(firm, new_owner);
   END IF;
+  -- The label, looked up once the leads are held and kept FOR KEY SHARE to the end (bulk_accounts_change's reason).
+  IF p_action IN ('label_add', 'label_remove') THEN
+    SELECT x.id INTO lbl FROM public.labels x WHERE x.firm_id = firm AND lower(x.name) = lower(params ->> 'name') FOR KEY SHARE;
+    IF p_action = 'label_remove' AND lbl IS NULL THEN
+      RAISE EXCEPTION 'The firm has no label called "%".', params ->> 'name' USING ERRCODE = '22023';
+    END IF;
+  END IF;
   FOR l IN SELECT x.* FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (locked) ORDER BY x.id LOOP
-    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params);
+    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params, lbl);
     IF oc.outcome = 'skip' THEN
       skipped := skipped || jsonb_build_object('id', l.id, 'name', l.name, 'code', oc.code, 'reason', oc.reason);
       CONTINUE;
@@ -395,6 +496,22 @@ BEGIN
       row_before := jsonb_build_object('field', params ->> 'field', 'value', public.lead_field_json(l, params ->> 'field'));
       row_after := jsonb_build_object('field', params ->> 'field', 'value', params -> 'value');
       PERFORM public.lead_set_field(l.id, params ->> 'field', params -> 'value');
+    ELSIF p_action = 'label_add' THEN
+      IF lbl IS NULL THEN
+        -- Made by typing it (D-198), once: a second change of the same word finds it.
+        INSERT INTO public.labels (firm_id, name, created_by) VALUES (firm, params ->> 'name', auth.uid())
+        ON CONFLICT (firm_id, lower(name)) DO NOTHING RETURNING id INTO lbl;
+        IF lbl IS NULL THEN
+          SELECT x.id INTO lbl FROM public.labels x WHERE x.firm_id = firm AND lower(x.name) = lower(params ->> 'name');
+        END IF;
+      END IF;
+      INSERT INTO public.lead_labels (firm_id, lead_id, label_id, added_by) VALUES (firm, l.id, lbl, auth.uid()) RETURNING id INTO ll_id;
+      row_before := jsonb_build_object('label_id', lbl, 'present', false);
+      row_after := jsonb_build_object('label_id', lbl, 'lead_label_id', ll_id);
+    ELSIF p_action = 'label_remove' THEN
+      DELETE FROM public.lead_labels WHERE lead_id = l.id AND label_id = lbl RETURNING * INTO old_ll;
+      row_before := jsonb_build_object('label_id', lbl, 'present', true, 'added_by', old_ll.added_by, 'added_at', old_ll.added_at);
+      row_after := jsonb_build_object('label_id', lbl, 'present', false);
     ELSE
       row_before := jsonb_build_object('deleted_at', NULL);
       row_after := jsonb_build_object('deleted_at', now());
@@ -416,6 +533,8 @@ BEGIN
     'change_id', CASE WHEN made THEN chg END, 'undo_until', CASE WHEN made THEN undo_by END);
   IF p_action = 'owner' THEN
     result := result || jsonb_build_object('owner', jsonb_build_object('id', new_owner, 'name', public.crm_person_name(new_owner)));
+  ELSIF p_action IN ('label_add', 'label_remove') THEN
+    result := result || jsonb_build_object('label', COALESCE((SELECT x.name FROM public.labels x WHERE x.id = lbl), params ->> 'name'));
   END IF;
   RETURN result;
 END;
@@ -461,7 +580,7 @@ BEGIN
     SELECT * INTO l FROM public.leads x WHERE x.id = rec.lead_id AND x.firm_id = firm FOR NO KEY UPDATE;
     -- Changed since: the lead's history has an entry for the field after the change finished with it, whoever made it (a value put back is a change too).
     since := EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text AND h.id > rec.history_mark
-      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' WHEN 'status' THEN 'status' WHEN 'not_fit' THEN 'status' WHEN 'field' THEN rec.after ->> 'field' ELSE 'deleted_at' END);
+      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' WHEN 'status' THEN 'status' WHEN 'not_fit' THEN 'status' WHEN 'field' THEN rec.after ->> 'field' WHEN 'label_add' THEN 'labels' WHEN 'label_remove' THEN 'labels' ELSE 'deleted_at' END);
     IF since THEN
       skipped := skipped || jsonb_build_object('id', l.id, 'name', rec.record_name, 'code', 'changed_since', 'reason', 'It has been changed since.');
       CONTINUE;
@@ -473,6 +592,11 @@ BEGIN
         CONTINUE;
       END IF;
       UPDATE public.leads SET owner_id = prev WHERE id = l.id;
+    ELSIF ch.action = 'label_add' THEN
+      DELETE FROM public.lead_labels WHERE id = (rec.after ->> 'lead_label_id')::uuid;
+    ELSIF ch.action = 'label_remove' THEN
+      INSERT INTO public.lead_labels (firm_id, lead_id, label_id, added_by, added_at)
+      VALUES (firm, l.id, (rec.before ->> 'label_id')::uuid, (rec.before ->> 'added_by')::uuid, (rec.before ->> 'added_at')::timestamptz);
     ELSIF ch.action = 'field' THEN
       PERFORM public.lead_set_field(l.id, rec.before ->> 'field', COALESCE(rec.before -> 'value', 'null'::jsonb));
     ELSIF ch.action IN ('status', 'not_fit') THEN
