@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type {
   QuoteRequestEventRow, QuoteRequestMailAttachmentRow, QuoteRequestMessageRow, QuoteRequestNoteRow, QuoteRequestRow, QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
@@ -180,6 +180,23 @@ describe("PeoThreadPanel", () => {
       const hand = open({ direction: "sent_by_hand", to_addresses: ["dana@trinet.example"], from_name: null, from_address: "marcus@advisory.example" });
       expect(hand.getByText("Sent by hand")).toBeInTheDocument();
       expect(hand.getByText("to dana@trinet.example")).toBeInTheDocument();
+    });
+
+    // Break caught (M-2.1): a message the product sent through the advisor's mailbox read as received, or as sent when it is still queued or did not
+    // go; a failure with no reason; no delivery mark promised (ADR 0005: none is reported); or one the advisor sent offered to move off the thread.
+    it("is marked as sent from the advisor's mailbox, with who it went to and whether it went", () => {
+      const sent = { direction: "sent", to_addresses: ["dana@trinet.example"], from_name: null, from_address: "sam@acme.example", status: "sent" as const };
+      const went = open(sent);
+      expect(went.getByText("Sent from the advisor's mailbox")).toBeInTheDocument();
+      expect(went.getByText("to dana@trinet.example")).toBeInTheDocument();
+      expect(went.getByText("Sent")).toBeInTheDocument();
+      expect(went.queryByRole("button", { name: /Move it off this thread/ })).not.toBeInTheDocument();
+      cleanup();
+      expect(open({ ...sent, status: "queued" }).getByText("Queued")).toBeInTheDocument();
+      cleanup();
+      const failed = open({ ...sent, status: "failed", failure_kind: "mailbox", failure_reason: "Connect your mailbox again." });
+      expect(failed.getByText("Not sent")).toBeInTheDocument();
+      expect(failed.getByText("Connect your mailbox again.")).toBeInTheDocument();
     });
 
     it("is marked as automatic when a machine wrote it", () => {

@@ -88,6 +88,14 @@ _Avoid_: package, zip, submission package
 The link an advisor's send gives a PEO instead of attachments: `/b/<token>`, opened with no sign-in, for 30 days. It shows the employer's company name as certified, the File ID and version, the PEO, the day it stops working, each file with its own Download (the advisor's **Bundle** as separate files, plus the certified answers as JSON) and the open items as they stood when it was issued. One is live per quote request; a newer version sent, a withdrawal, the submission closing, the employer withdrawing the PEO or the advisor revokes it. Each download is on the quote request's timeline as "Downloaded <file>, by the bundle link". A link that no longer works shows one page, "This link no longer works", naming nobody.
 _Avoid_: share link, download link, portal
 
+**Send to a PEO** (code: `send_to_peo`, `attach_peo_link`, outbox kind `peo_message`, `SendToPeo`; M-2.1, slice 6.6, D-670 to D-679):
+An advisor's email to people at one PEO, from their own connected mailbox, carrying their cover note and the **Bundle link**, never files. It creates or continues that PEO's quote request and is on its thread as sent. Under the note is the **Fixed block**.
+_Avoid_: submit to carrier, upload
+
+**Fixed block** (M-2.1, D-674):
+What the database writes under the advisor's note on a send to a PEO, which the advisor can't edit: the link and the day it stops working, the File ID and version, the open items, the advisor's name, firm and phone, and the draft line from the legal-wording module.
+_Avoid_: signature, footer
+
 **Census**:
 The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees

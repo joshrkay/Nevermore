@@ -92,7 +92,7 @@ describe("issueBundleLink", () => {
       ],
       p_open_items: ["FEIN", "Workers' comp loss runs"],
     }]);
-    expect(link).toEqual({ url: `https://app.example.test/b/${"T".repeat(43)}`, expiresAt: "2026-12-11T00:00:00Z", version: 3, notIncluded: [] });
+    expect(link).toEqual({ id: 5, token: "T".repeat(43), url: `https://app.example.test/b/${"T".repeat(43)}`, expiresAt: "2026-12-11T00:00:00Z", version: 3, notIncluded: [] });
   });
 
   // Catches: a link issued while one of its files never reached storage, so the PEO opens a page whose Download fails.

@@ -389,6 +389,15 @@ export type Database = {
           session_id: string | null
           subject: string | null
           to_addresses: string[]
+          // A message the product sent through the advisor's mailbox (direction 'sent', M-2.1, 20261122140000): its state, and why it failed.
+          status?: "queued" | "sent" | "failed" | null
+          failure_kind?: "mailbox" | "refused" | "uncertain" | "unavailable" | null
+          failure_reason?: string | null
+          message_id?: string | null
+          in_reply_to?: string | null
+          message_references?: string[]
+          sender_id?: string | null
+          bundle_link_id?: number | null
         }
         Insert: never
         Update: never
@@ -1316,6 +1325,22 @@ export type Database = {
       is_advisor: {
         Args: Record<PropertyKey, never>
         Returns: boolean
+      }
+      // Sending the bundle to a PEO (M-2.1, 20261122140000): the send records the message queued and answers {quote_request_id, message_id};
+      // 42501, PT423, PT404, 22023 (not authorized, answers changed since certifying, stage, addresses, subject and note), PT412 no mailbox.
+      send_to_peo: {
+        Args: { p_session_id: string; p_peo: string; p_to: string[]; p_subject: string; p_note: string }
+        Returns: Json
+      }
+      // Joins the bundle link to the message, which writes the fixed block under the note; PT404, PT409, 22023 for a link that isn't the message's.
+      attach_peo_link: {
+        Args: { p_message_id: number; p_link_id: number; p_token: string }
+        Returns: Json
+      }
+      // What the composer reads: {mailbox: {connected, address}, contacts: [{name, role, email}], reply_address}.
+      peo_send_context: {
+        Args: { p_session_id: string; p_peo: string }
+        Returns: Json
       }
       issue_bundle_link: {
         Args: { p_quote_request_id: number; p_version: number; p_folder: string; p_files: Json; p_open_items?: Json }

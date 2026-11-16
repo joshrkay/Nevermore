@@ -11,7 +11,7 @@ const KEY = parseTokenKey(KEY_B64)!;
 const ENV: Record<string, string> = {
   SUPABASE_URL: "https://p.supabase.co", SUPABASE_ANON_KEY: "anon", SUPABASE_SERVICE_ROLE_KEY: "service-key", MAILBOX_TOKEN_KEY: KEY_B64,
   GOOGLE_OAUTH_CLIENT_ID: "gid", GOOGLE_OAUTH_CLIENT_SECRET: "gsecret", MICROSOFT_OAUTH_CLIENT_ID: "mid", MICROSOFT_OAUTH_CLIENT_SECRET: "msecret",
-  QUOTE_REPLY_DOMAIN: "replies.nevermore.example",
+  QUOTE_REPLY_DOMAIN: "replies.nevermore.example", APP_BASE_URL: "https://app.nevermore.example",
 };
 const reply = (status: number, body?: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status });
 
@@ -36,6 +36,8 @@ const MESSAGE = {
 interface Options {
   env?: Record<string, string | undefined>;
   claimed?: { event_id: string; attempt: number; message: Record<string, unknown> }[];
+  /** What claim_peo_mail answers: PEO messages with their link (M-2.1). */
+  peoClaimed?: { event_id: string; attempt: number; message: Record<string, unknown> }[];
   provider?: "google" | "microsoft";
   /** The mailbox row the database holds for the sender; null for none. */
   mailbox?: Record<string, unknown> | null;
@@ -55,6 +57,7 @@ async function setup(o: Options = {}) {
     rpc: async (fn, args) => {
       calls.push([fn, args]);
       if (fn === "claim_conversation_mail") return { data: o.claimed ?? [{ event_id: "e1", attempt: 1, message: MESSAGE }], error: null };
+      if (fn === "claim_peo_mail") return { data: o.peoClaimed ?? [], error: null };
       if (fn === "mailbox_secret") return { data: mailbox, error: null };
       if (fn === "complete_conversation_mail" || fn === "fail_conversation_mail") return { data: true, error: null };
       return { data: null, error: null };
@@ -357,5 +360,51 @@ describe("send-mail: a message through Microsoft", () => {
     expect(s.fetchFn.mock.calls.some(([url]) => String(url).includes("gmail"))).toBe(false);
     expect(s.calls.find(([fn]) => fn === "complete_conversation_mail")?.[1]).toEqual({ p_event_id: "e1", p_attempt: 1, p_provider_message_id: MESSAGE.message_id });
     expect(await res.json()).toEqual({ claimed: 1, sent: 1, retrying: 0, failed: 0 });
+  });
+});
+
+/** A message to a PEO as claim_peo_mail answers it (M-2.1): its body holds the link's marker, and the token rides beside it. */
+const PEO_MESSAGE = {
+  ...MESSAGE,
+  id: 41,
+  to_addresses: ["dana@insperity.example"],
+  subject: "Reyes Bakery: EAA-2026-0042",
+  body_text: "Dana, here it is.\n\n-- \nThe bundle: [the bundle link, sent in the email and not kept here]\nFile ID EAA-2026-0042, version 1",
+  message_id: "<0b5e@acme.example>",
+  in_reply_to: "<r1@insperity.example>",
+  message_references: ["<r1@insperity.example>"],
+  reply_address: "eaa-2026-0042.insperity.0123456789abcdef",
+  link_token: "T".repeat(43),
+};
+
+/** A base64 body, decoded. */
+const decodeBody = (b64: string) => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\r\n/g, "")), (c) => c.charCodeAt(0)));
+
+describe("send-mail: a message to a PEO", () => {
+  // Break caught: a PEO email without its bundle link (the marker left in), a link at an address the advisor chose, the reply address missing from
+  // Reply-To, the thread not continued, or the send recorded on the contacts' queue instead of the PEO's.
+  it("sends it from the advisor's mailbox with the link in place of the marker, Reply-To the quote request's address first, and records it sent", async () => {
+    const s = await setup({ claimed: [], peoClaimed: [{ event_id: "p1", attempt: 1, message: PEO_MESSAGE }] });
+    const res = await handleSendMailRequest(post(), s.deps);
+    const sent = gmailRaw(s.fetchFn);
+    const body = decodeBody(sent.body);
+    expect(body).toContain(`The bundle: https://app.nevermore.example/b/${"T".repeat(43)}`);
+    expect(body).not.toContain("not kept here");
+    expect(sent.headers.get("reply-to")).toBe("eaa-2026-0042.insperity.0123456789abcdef@replies.nevermore.example, agent1@acme.example");
+    expect(sent.headers.get("in-reply-to")).toBe("<r1@insperity.example>");
+    expect(s.calls.find(([fn]) => fn === "complete_peo_mail")?.[1]).toEqual({ p_event_id: "p1", p_attempt: 1, p_provider_message_id: "gmail-18c2f" });
+    expect(await res.json()).toEqual({ claimed: 1, sent: 1, retrying: 0, failed: 0 });
+  });
+});
+
+describe("send-mail: a message to a PEO with no link", () => {
+  // Break caught: a PEO emailed a message whose bundle link never reached the function (the marker sent as it is, and no bundle at all).
+  it("sends nothing and fails it for good, saying the link wasn't made", async () => {
+    const s = await setup({ claimed: [], peoClaimed: [{ event_id: "p2", attempt: 1, message: { ...PEO_MESSAGE, link_token: null } }] });
+    await handleSendMailRequest(post(), s.deps);
+    expect(s.fetchFn.mock.calls.some(([url]) => String(url).includes("gmail"))).toBe(false);
+    expect(s.calls.find(([fn]) => fn === "fail_peo_mail")?.[1]).toEqual({
+      p_event_id: "p2", p_attempt: 1, p_kind: "refused", p_reason: "The bundle link wasn't made, so nothing was sent. Send it again.", p_retry_in_seconds: null,
+    });
   });
 });

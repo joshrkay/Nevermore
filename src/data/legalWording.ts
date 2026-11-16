@@ -33,5 +33,13 @@ export const PEO_AUTHORIZATION_QUESTION = "Which PEOs may receive your packet?";
 export const PEO_AUTHORIZATION_EXPLAINER =
   "Tick each PEO your advisor may send your packet to. Your packet includes your employees' personal information. You don't have to tick any: with none ticked, nothing is sent. You can add or withdraw a PEO at any time from your profile.";
 
+/**
+ * The line every message to a PEO carries, last in the fixed block under the advisor's note (M-2.1, D-12): the "line counsel requires", in draft. The
+ * database writes it into the message (public.peo_send_notice, kept equal by schemaSync.test.ts), so the advisor can't edit it. No apostrophes: the
+ * sync test reads the database's copy as one quoted string.
+ */
+export const PEO_SEND_NOTICE =
+  "Draft wording: sent with the authorization of the employer, for this PEO alone to consider them for a quote. Please do not pass the link on.";
+
 /** The heading on the employer's profile (D-608). */
 export const PEO_AUTHORIZATION_PROFILE_HEADING = "Who can receive my packet";

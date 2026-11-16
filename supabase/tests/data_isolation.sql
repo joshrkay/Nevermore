@@ -222,6 +222,7 @@
 \i supabase/migrations/20261122110000_bundle_links.sql
 \i supabase/migrations/20261122130000_conversation_replies.sql
 \i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122160000_conversation_files.sql
 SET client_min_messages = notice;
 
@@ -1371,6 +1372,12 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_correct_quote_request_note(0, ''call'', current_date, ''probe'')', 'correcting a quote request note'),
   ('advisor_reissue_quote_request_address(p_quote_request_id bigint)', 'advisor',
                                                                      'SELECT public.advisor_reissue_quote_request_address(0)', 'revoking and reissuing a quote request''s reply address'),
+  ('send_to_peo(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.send_to_peo(gen_random_uuid(), ''Probe PEO'', ARRAY[''peo@peo.example''], ''S'', ''N'')', 'sending the bundle to a PEO (6.6)'),
+  ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)', 'advisor',
+                                                                     'SELECT public.attach_peo_link(0, 0, ''probe'')', 'joining the bundle link to a message to a PEO (6.6)'),
+  ('peo_send_context(p_session_id uuid, p_peo text)', 'advisor',
+                                                                     'SELECT public.peo_send_context(gen_random_uuid(), ''Probe PEO'')', 'what the composer of a send to a PEO reads (6.6)'),
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)', 'advisor',
                                                                      'SELECT public.issue_bundle_link(0, 1, gen_random_uuid(), ''[{"name": "a.pdf", "what": "A"}]'')', 'issuing the bundle link a PEO opens (6.6b)'),
   ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', 'advisor',
@@ -1609,7 +1616,10 @@ BEGIN
     format('SELECT public.complete_conversation_mail(%L, 1, ''probe'')', nobody),
     format('SELECT public.fail_conversation_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody),
     format('SELECT public.record_conversation_attachment(%L, ''probe'', ''x.pdf'', NULL, 1, NULL)', nobody),
-    format('SELECT public.finish_conversation_attachment(%L, ''clean'', NULL, ''contact-mail'', ''x'')', nobody)
+    format('SELECT public.finish_conversation_attachment(%L, ''clean'', NULL, ''contact-mail'', ''x'')', nobody),
+    'SELECT count(*) FROM public.claim_peo_mail(1, 5, 600)',
+    format('SELECT public.complete_peo_mail(%L, 1, ''probe'')', nobody),
+    format('SELECT public.fail_peo_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody)
   ] LOOP
     FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
       PERFORM pg_temp.become(who);
@@ -1987,6 +1997,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_reissue_quote_request_address', 'advisor', 'by_id', $$SELECT public.advisor_reissue_quote_request_address({qr})::text$$),
   ('issue_bundle_link', 'advisor', 'by_id', $$SELECT public.issue_bundle_link({qr}, 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
   ('revoke_bundle_link', 'advisor', 'by_id', $$SELECT public.revoke_bundle_link({qr})::text$$),
+  -- M-2.1: a member gets past the firm to the PEO's authorization (22023), the writer of the message to its link (22023), another member to the writer (PT409).
+  ('send_to_peo', 'advisor', 'by_id', $$SELECT public.send_to_peo({sid}, 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('attach_peo_link', 'advisor', 'by_id', $$SELECT public.attach_peo_link({peomsg}::bigint, 0, 'probe')::text$$),
+  ('peo_send_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_send_context({sid}, 'Probe PEO'))$$),
   ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
   ('set_submission_needs_action', 'advisor', 'by_id', $$SELECT public.set_submission_needs_action({sid}, true, 'probe')::text$$),
   ('review_submission_field', 'advisor', 'by_id', $$SELECT public.review_submission_field({sid}, 'company_name', 'follow_up')::text$$),
@@ -2240,6 +2254,14 @@ BEGIN
     FROM public.conversations v WHERE v.id = (SELECT x.v::uuid FROM fprobe_ids x WHERE x.firm = f AND x.k = 'aconv')
     RETURNING id::text INTO qr;
     INSERT INTO fprobe_ids VALUES (f, 'anewmsg', qr);
+    -- A message the product sends to a PEO (M-2.1), written by the firm's member and waiting for its bundle link: written the same way.
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, to_addresses, subject, body_text,
+                                               status, message_id, sender_id)
+    SELECT '<probe-' || f || '@acme.example>', q.id, q.session_id, 'sent', 'probe@acme.example', ARRAY['peo@peo.example'], 'Probe', 'Probe',
+           'queued', '<probe-' || f || '@acme.example>', pg_temp.id(CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END)
+    FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'peomsg', qr);
   END LOOP;
 END $$;
 
@@ -3945,6 +3967,14 @@ SELECT unnest(ARRAY[
 INSERT INTO fn_class (fn, class, why) VALUES
   ('issue_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm issues its bundle link; the same refusal for another firm''s quote request as for one that does not exist (4e; supabase/tests/bundle_links.sql)'),
   ('revoke_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm revokes its link; the same refusal for another firm''s quote request as for one that does not exist (4e)'),
+  ('send_to_peo', 'firm_scoped', 'a current member of the intake''s firm, with a connected mailbox, sends its bundle to a PEO the employer authorized (M-2.1); the same refusal for another firm''s intake as for one that does not exist (4e; supabase/tests/peo_send.sql)'),
+  ('attach_peo_link', 'firm_scoped', 'the advisor who wrote a message to a PEO joins its bundle link to it; the same refusal for another firm''s message as for one that does not exist (4e)'),
+  ('peo_send_context', 'firm_scoped', 'a current member of the intake''s firm reads their own mailbox, the PEO''s contacts and the reply address for the composer; PT404 for another firm''s intake (4e)'),
+  ('claim_peo_mail', 'service_only', 'the send-mail function claims PEO messages whose link has joined them, with the token; no API role can call it'),
+  ('complete_peo_mail', 'service_only', 'the send-mail function records a sent PEO message, for the attempt that holds its claim; no API role can call it'),
+  ('fail_peo_mail', 'service_only', 'the send-mail function records a failed attempt at a PEO message, retried or final; no API role can call it'),
+  ('peo_mail_ended', 'trigger', 'a PEO message whose outbox event died by another path (the reaper) is marked failed as uncertain, inside that write'),
+  ('peo_mail_requeued', 'trigger', 'the Outbox page''s retry of a dead PEO message puts the message back in the queue, inside that write'),
   ('bundle_link_folder_in_my_firm', 'own', 'storage policy helper: whether a bundle link file''s folder is a quote request of a firm the caller belongs to'),
   ('bundle_link_folder_read_only', 'own', 'storage policy helper: whether that quote request''s firm is closing'),
   ('bundle_link_open', 'service_only', 'the bundle-link edge function opens a link by its token''s hash: no API role but the service role can call it (supabase/tests/bundle_links.sql)'),
@@ -4396,6 +4426,14 @@ INSERT INTO secret_readers VALUES
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)',
    $$SELECT public.issue_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
   ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', $$SELECT public.revoke_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1))::text$$),
+  -- M-2.1: the send and the composer read the caller's own mailbox address, never its token; joining a link reads its hash to check the token given,
+  -- and answers neither.
+  ('send_to_peo(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.send_to_peo((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('peo_send_context(p_session_id uuid, p_peo text)',
+   $$SELECT public.peo_send_context((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO')::text$$),
+  ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)',
+   $$SELECT public.attach_peo_link((SELECT m.id FROM public.quote_request_messages m WHERE m.firm_id = {firm_a} AND m.direction = 'sent' LIMIT 1), (SELECT b.id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 'probe')::text$$),
   ('accept_invitation(p_token_hash text, p_firm_address text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.accept_invitation(repeat('c', 64), (SELECT address FROM public.firms WHERE id = {firm_a})) f$$);
 
