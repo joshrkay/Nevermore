@@ -28,16 +28,13 @@ export interface MenuItem {
 
 /**
  * The address parameter that asks the queue for new PEO mail only. The queue's table address reads it as the filter "has new PEO mail
- * is yes" (CRM-S3.5a) and rewrites the address to say so, so the page then holds `filter=has_new_peo_mail:is:true`: Inbox is the current
- * section for either spelling.
+ * is yes" (CRM-S3.5a) and rewrites the address to say so. Until CRM-E1.4 it was where the menu's Inbox went; the inbox now has its own page
+ * (`INBOX_PATH`), and the old links keep opening the queue's own filter (D-8), which is part of Quotes.
  */
 export const INBOX_PARAM = { name: "mail", value: "new" } as const;
-const INBOX_FILTER = "has_new_peo_mail:is:true";
 
 const QUEUE = "/advisor";
 const isQueue = (pathname: string) => pathname === QUEUE;
-const isInbox = (pathname: string, search: URLSearchParams) =>
-  isQueue(pathname) && (search.get(INBOX_PARAM.name) === INBOX_PARAM.value || search.getAll("filter").includes(INBOX_FILTER));
 
 /** What Settings opens (D-38). Activity is for owners. `atFirmAddress`: the page works only at the firm's own address, so from the bare domain the link goes there. */
 export const SETTINGS_LINKS: { label: string; description: string; to: string; ownersOnly?: boolean; atFirmAddress?: boolean }[] = [
@@ -53,6 +50,8 @@ export const SETTINGS_LINKS: { label: string; description: string; to: string; o
 export const SETTINGS_PATH = "/settings";
 /** The page where a mailbox is connected and disconnected. */
 export const MAILBOX_PATH = "/advisor/mailbox";
+/** The inbox's page (CRM-E1.4). */
+export const INBOX_PATH = "/inbox";
 
 export const MENU_ITEMS: MenuItem[] = [
   {
@@ -62,9 +61,10 @@ export const MENU_ITEMS: MenuItem[] = [
     icon: FileText,
     countKey: "quotes",
     countWords: (n) => `${n} open`,
-    isCurrent: (pathname, search) => (isQueue(pathname) && !isInbox(pathname, search)) || pathname.startsWith("/advisor/submissions/"),
+    isCurrent: (pathname) => isQueue(pathname) || pathname.startsWith("/advisor/submissions/"),
   },
-  { key: "inbox", label: "Inbox", to: `${QUEUE}?${INBOX_PARAM.name}=${INBOX_PARAM.value}`, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: isInbox },
+  // The inbox (CRM-E1.4): every message on the threads the person may see. Its number is the threads with new mail, PEO threads and conversations (D-695).
+  { key: "inbox", label: "Inbox", to: INBOX_PATH, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: (pathname) => pathname === INBOX_PATH },
   // The leads table and, with slice 8.5, a lead's page (CRM-L1.1a). Its number is the open leads (New or Working) the person may see.
   { key: "leads", label: "Leads", to: "/leads", icon: UserPlus, countKey: "leads", countWords: (n) => `${n} open`, isCurrent: (pathname) => pathname === "/leads" || pathname.startsWith("/leads/") },
   // The accounts page and an account's page (CRM-A1.1a, CRM-A2.1b). The number beside it (screen 16) is not built yet.

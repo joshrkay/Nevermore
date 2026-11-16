@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 // address names (D-40): supabase/migrations/20261118140000_menu_counts.sql holds what each one means. Later stories add keys to the same
 // answer (leads, others); a caller reads by name, so none of them changes.
 
-/** What the menu shows: open quotes (quote requests sent and not yet answered), intakes with new PEO mail, and open leads (New or Working, CRM-L1.1a). */
+/** What the menu shows: open quotes (quote requests sent and not yet answered), the threads with new mail (PEO threads and conversations, CRM-E1.4), and open leads (New or Working, CRM-L1.1a). */
 export interface MenuCounts {
   quotes: number;
   inbox: number;
