@@ -331,7 +331,13 @@ BEGIN
   PERFORM pg_temp.is(o.account_id, a.id, 'the opportunity is on that account');
 
   -- ADR 0006: the FEIN, the census and anything about an employee never reach the CRM.
-  SELECT to_jsonb(a)::text || to_jsonb(c)::text || to_jsonb(o)::text INTO blob;
+  -- Only the records' own values are searched: their ids (random uuids) and timestamps can hold "1988" or a run of digits by chance, which made
+  -- this check fail on a lucky draw while nothing of the intake had reached the CRM.
+  SELECT string_agg(e.value, ' ') INTO blob
+  FROM (SELECT to_jsonb(a) AS j UNION ALL SELECT to_jsonb(c) UNION ALL SELECT to_jsonb(o)) r, jsonb_each_text(r.j) e
+  WHERE e.value IS NOT NULL
+    AND e.value !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    AND e.value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.+-]+$';
   PERFORM pg_temp.is(blob LIKE '%123456789%' OR blob LIKE '%Zelda%' OR blob LIKE '%Censusperson%' OR blob LIKE '%1988%', false, 'no FEIN and nothing of the census (ADR 0006)');
   RAISE NOTICE 'chain_at_certification: the first certification passed';
 END $$;
