@@ -182,6 +182,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1104,7 +1105,8 @@ DECLARE
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
-    'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link'];
+    'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'follow_up_peo', 'withdraw_from_peo',
+    'close_submission_and_withdraw'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1180,7 +1182,7 @@ DECLARE
     'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
-    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link'];
+    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s, open to every admin with or without a session; the PEO list is the same for every firm',

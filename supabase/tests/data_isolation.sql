@@ -224,6 +224,7 @@
 \i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1364,6 +1365,12 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.send_to_peo(gen_random_uuid(), ''Probe PEO'', ARRAY[''peo@peo.example''], ''S'', ''N'')', 'sending the bundle to a PEO (6.6)'),
   ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)', 'advisor',
                                                                      'SELECT public.attach_peo_link(0, 0, ''probe'')', 'joining the bundle link to a message to a PEO (6.6)'),
+  ('follow_up_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.follow_up_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'')', 'following up with a PEO on its thread (6.9)'),
+  ('withdraw_from_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text, p_reason text)', 'advisor',
+                                                                     'SELECT public.withdraw_from_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'', ''other'')', 'withdrawing a submission from a PEO (6.9)'),
+  ('close_submission_and_withdraw(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_subject text, p_body text)', 'advisor',
+                                                                     'SELECT public.close_submission_and_withdraw(gen_random_uuid(), ''lost'', NULL, NULL, ''S'', ''N'')', 'marking a submission Won, Lost or Archived with one withdrawal to every PEO still open (6.9)'),
   ('peo_send_context(p_session_id uuid, p_peo text)', 'advisor',
                                                                      'SELECT public.peo_send_context(gen_random_uuid(), ''Probe PEO'')', 'what the composer of a send to a PEO reads (6.6)'),
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)', 'advisor',
@@ -1990,6 +1997,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   -- M-2.1: a member gets past the firm to the PEO's authorization (22023), the writer of the message to its link (22023), another member to the writer (PT409).
   ('send_to_peo', 'advisor', 'by_id', $$SELECT public.send_to_peo({sid}, 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('attach_peo_link', 'advisor', 'by_id', $$SELECT public.attach_peo_link({peomsg}::bigint, 0, 'probe')::text$$),
+  -- M-2.4: a member gets past the firm to the PEO's authorization or the mailbox (22023, PT412); the closing withdrawal to the status rules.
+  ('follow_up_peo', 'advisor', 'by_id', $$SELECT public.follow_up_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('withdraw_from_peo', 'advisor', 'by_id', $$SELECT public.withdraw_from_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
+  ('close_submission_and_withdraw', 'advisor', 'by_id', $$SELECT public.close_submission_and_withdraw({sid}, 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
   ('peo_send_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_send_context({sid}, 'Probe PEO'))$$),
   ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
   ('set_submission_needs_action', 'advisor', 'by_id', $$SELECT public.set_submission_needs_action({sid}, true, 'probe')::text$$),
@@ -3950,6 +3961,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('send_to_peo', 'firm_scoped', 'a current member of the intake''s firm, with a connected mailbox, sends its bundle to a PEO the employer authorized (M-2.1); the same refusal for another firm''s intake as for one that does not exist (4e; supabase/tests/peo_send.sql)'),
   ('attach_peo_link', 'firm_scoped', 'the advisor who wrote a message to a PEO joins its bundle link to it; the same refusal for another firm''s message as for one that does not exist (4e)'),
   ('peo_send_context', 'firm_scoped', 'a current member of the intake''s firm reads their own mailbox, the PEO''s contacts and the reply address for the composer; PT404 for another firm''s intake (4e)'),
+  ('follow_up_peo', 'firm_scoped', 'a current member of the quote request''s firm, with a connected mailbox, follows up with a PEO the employer authorized (M-2.4); the same refusal for another firm''s quote request as for one that does not exist (4e; supabase/tests/follow_up_and_withdraw.sql)'),
+  ('withdraw_from_peo', 'firm_scoped', 'a current member of the quote request''s firm, with a connected mailbox, withdraws it from its PEO (M-2.4); the same refusal for another firm''s quote request as for one that does not exist (4e)'),
+  ('close_submission_and_withdraw', 'firm_scoped', 'a current member of the intake''s firm marks it Won, Lost or Archived through set_submission_status and sends the PEOs still open one withdrawal (M-2.4); another firm''s intake is refused as one that does not exist (4e)'),
+  ('record_peo_thread_message', 'service_only', 'records a follow-up or withdrawal on a PEO''s thread, inside follow_up_peo, withdraw_from_peo and close_submission_and_withdraw, which check first; no API role can call it'),
   ('claim_peo_mail', 'service_only', 'the send-mail function claims PEO messages whose link has joined them, with the token; no API role can call it'),
   ('complete_peo_mail', 'service_only', 'the send-mail function records a sent PEO message, for the attempt that holds its claim; no API role can call it'),
   ('fail_peo_mail', 'service_only', 'the send-mail function records a failed attempt at a PEO message, retried or final; no API role can call it'),
@@ -4412,6 +4427,14 @@ INSERT INTO secret_readers VALUES
    $$SELECT public.peo_send_context((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO')::text$$),
   ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)',
    $$SELECT public.attach_peo_link((SELECT m.id FROM public.quote_request_messages m WHERE m.firm_id = {firm_a} AND m.direction = 'sent' LIMIT 1), (SELECT b.id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 'probe')::text$$),
+  -- M-2.4: a follow-up reads the caller's mailbox address and the newest link's revoke reason; a withdrawal and the closing withdrawal the address. None
+  -- answers a token or its hash.
+  ('follow_up_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.follow_up_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('withdraw_from_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text, p_reason text)',
+   $$SELECT public.withdraw_from_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
+  ('close_submission_and_withdraw(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_subject text, p_body text)',
+   $$SELECT public.close_submission_and_withdraw((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
   ('accept_invitation(p_token_hash text, p_firm_address text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.accept_invitation(repeat('c', 64), (SELECT address FROM public.firms WHERE id = {firm_a})) f$$);
 
