@@ -449,6 +449,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
 
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,

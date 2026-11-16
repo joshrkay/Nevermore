@@ -168,6 +168,7 @@
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
