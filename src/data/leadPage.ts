@@ -45,15 +45,6 @@ export const convertingMakes = (l: Pick<LeadFields, "name" | "business">): { acc
   return { account, contact: noPerson ? null : l.name.trim(), opportunity: `${account} – PEO search` };
 };
 
-/**
- * A person's name as the database splits it for the contact converting makes (crm_split_person_name): the last word is the last name and the rest the first, so
- * "Jo Q Doe" is "Jo Q" and "Doe", and one word is a last name alone.
- */
-export const personNameParts = (name: string): { firstName: string; lastName: string } => {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  return { firstName: words.slice(0, -1).join(" "), lastName: words.at(-1) ?? "" };
-};
-
 /** What the form sends: every field, a blank as typed (the database clears it), an owner left empty as "keep". */
 export const leadEditOf = (f: LeadForm): LeadEdit => ({
   name: f.name, title: f.title, business: f.business, email: f.email, phone: f.phone, city: f.city, state: f.state, employees: f.employees,

@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import PlaceToWrite from "@/components/conversations/PlaceToWrite";
 import { LeadDetailsPanel } from "@/components/leads/LeadDetails";
 import { LeadActionsProvider } from "@/components/leads/leadActions";
-import { ConvertLeadDialog } from "@/components/leads/ConvertLeadDialog";
 import { LeadHeader, LeadHeaderLoading } from "@/components/leads/LeadHeader";
 import { ConvertedBanner, ConvertingMakes, LeadActivity, NotFitBanner } from "@/components/leads/LeadPanels";
 import { LeadStatusBar } from "@/components/leads/LeadStatusBar";
@@ -33,7 +32,6 @@ const LeadPage = () => {
   const slow = useSlowLoad(waiting, retry);
   const [markingNotFit, setMarkingNotFit] = useState(false);
   const [reopening, setReopening] = useState(false);
-  const [converting, setConverting] = useState(false);
 
   // The saved fields go on the page at once (the reload that follows confirms them, and brings the status a save may have moved); every list of the lead is
   // asked again.
@@ -74,7 +72,6 @@ const LeadPage = () => {
         lead={lead}
         canEmail={lead.status !== "converted" && !page.inBin}
         onNotFit={canAct && page.canChange ? () => setMarkingNotFit(true) : null}
-        onConvert={canAct && page.canChange && (lead.status === "new" || lead.status === "working") && !page.inBin ? () => setConverting(true) : null}
       />
       {lead.status === "converted" && page.converted && <ConvertedBanner on={page.stages.converted} made={page.converted} />}
       {lead.status === "not_fit" && (
@@ -100,19 +97,6 @@ const LeadPage = () => {
           {firmId && <LeadActivity key={lead.id} firmId={firmId} leadId={lead.id} />}
         </div>
       </div>
-      {converting && firmId && (
-        <ConvertLeadDialog
-          firmId={firmId}
-          lead={lead}
-          onClose={() => setConverting(false)}
-          onConverted={(made) => {
-            setConverting(false);
-            toast.success(`Converted into ${made.account.name}`);
-            // The lead is Converted now: what the page holds is read again, and every list of it with it.
-            void queryClient.invalidateQueries({ queryKey: leadKey(firmId, id) });
-          }}
-        />
-      )}
       {markingNotFit && firmId && (
         <NotFitDialog
           firmId={firmId}

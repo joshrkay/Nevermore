@@ -13,16 +13,15 @@ const leadPlace = (l: Pick<LeadFields, "city" | "state">): string | null => [l.c
 /**
  * The top of a lead's page (story CRM-L2.1, screen 15): a trail back to Leads, "Lead", the name with its status, one line of title at the business, where it is,
  * its employees, where it came from and its owner; and Email (to the place to write on this page), Log a call and Not a fit where each will serve: Log a call
- * where something can be logged, and Convert (CRM-L2.2) and Not a fit where the person may change the lead and it is New or Working.
+ * where something can be logged, Not a fit where the person may change the lead and it is New or Working. Convert is slice 8.6's (CRM-L2.2) and is not shown
+ * until it does something (D-402: no dead buttons).
  */
-export function LeadHeader({ lead, canEmail, onNotFit, onConvert }: {
+export function LeadHeader({ lead, canEmail, onNotFit }: {
   lead: LeadFields;
   /** Whether the place to write is on the page (not for a converted lead or one in the bin). */
   canEmail: boolean;
   /** Not a fit, or null where the person may not mark it. */
   onNotFit: (() => void) | null;
-  /** Convert (opens its dialog), or null where the person may not convert the lead. */
-  onConvert: (() => void) | null;
 }) {
   // Log a call is the lead's actions' (leadActions.tsx), offered where something can be logged; with no actions (a support session) it is not drawn.
   const actions = useAccountActions();
@@ -54,13 +53,12 @@ export function LeadHeader({ lead, canEmail, onNotFit, onConvert }: {
           <p className="mt-1 text-sm text-muted-foreground break-words">{facts.join(" · ")}</p>
         </div>
       </div>
-      {(canEmail || onLogCall || onConvert || onNotFit) && (
+      {(canEmail || onLogCall || onNotFit) && (
         <div className="mt-4 flex flex-wrap gap-2">
           {canEmail && (
             <Button asChild variant="outline"><a href="#emails">Email<span className="sr-only"> {lead.name}</span></a></Button>
           )}
           {onLogCall && <Button type="button" onClick={onLogCall}>Log a call<span className="sr-only"> with {lead.name}</span></Button>}
-          {onConvert && <Button type="button" variant="outline" onClick={onConvert}>Convert<span className="sr-only"> {lead.name}</span></Button>}
           {onNotFit && <Button type="button" variant="outline" onClick={onNotFit}>Not a fit</Button>}
         </div>
       )}

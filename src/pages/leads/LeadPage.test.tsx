@@ -18,8 +18,6 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getLeadPage: vi.fn(), listLeadActivity: vi.fn(), updateLead: vi.fn(), markLeadNotFit: vi.fn(), reopenLead: vi.fn() };
 vi.mock("@/lib/leadPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/leadPageApi")), ...client }));
-const convert = { getConvertMatches: vi.fn(), convertLead: vi.fn() };
-vi.mock("@/lib/leadConvertApi", async () => ({ ...(await vi.importActual<object>("@/lib/leadConvertApi")), ...convert }));
 const activity = { logLeadActivity: vi.fn(), updateActivity: vi.fn(), addToNote: vi.fn(), setTaskDone: vi.fn(), getLeadActivityOptions: vi.fn() };
 vi.mock("@/lib/activityApi", async () => ({ ...(await vi.importActual<object>("@/lib/activityApi")), ...activity }));
 const listFirmMembers = vi.fn();
@@ -79,11 +77,10 @@ const renderPage = (path = "/leads/l1", ws: Workspace = workspace()) => {
 };
 
 beforeEach(() => {
-  for (const fn of [...Object.values(client), ...Object.values(convert), ...Object.values(activity), ...Object.values(conversations), listFirmMembers, listAccountOwners, fetchMyMailbox, signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(activity), ...Object.values(conversations), listFirmMembers, listAccountOwners, fetchMyMailbox, signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getLeadPage.mockResolvedValue(page());
-  convert.getConvertMatches.mockResolvedValue([]);
   serveActivity([call, note]);
   conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
   conversations.getLeadConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
@@ -96,9 +93,9 @@ beforeEach(() => {
 });
 
 describe("LeadPage: the header", () => {
-  // Catches: a header that leaves out a fact the story names (name, status, business, location, employees, source, owner), or leaves out Convert (slice 8.6,
-  // CRM-L2.2: the button on the lead's page header).
-  it("shows the name, status, business, location, employees, source and owner, with Email, Log a call, Convert and Not a fit", async () => {
+  // Catches: a header that leaves out a fact the story names (name, status, business, location, employees, source, owner), or offers Convert before slice 8.6
+  // builds it (no button that does nothing).
+  it("shows the name, status, business, location, employees, source and owner, with Email, Log a call and Not a fit, and no Convert", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" })).toBeInTheDocument();
     const header = screen.getByRole("banner");
@@ -111,7 +108,7 @@ describe("LeadPage: the header", () => {
     expect(within(header).getByRole("link", { name: /^Email/ })).toHaveAttribute("href", "#emails");
     expect(within(header).getByRole("button", { name: /^Log a call/ })).toBeInTheDocument();
     expect(within(header).getByRole("button", { name: /^Not a fit/ })).toBeInTheDocument();
-    expect(within(header).getByRole("button", { name: /^Convert/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Convert/ })).toBeNull();
   });
 });
 
@@ -180,44 +177,6 @@ describe("LeadPage: the Not a fit banner, read only", () => {
     renderPage();
     const banner = await screen.findByRole("note", { name: "Not a fit" });
     expect(within(banner).queryByRole("button", { name: "Reopen" })).toBeNull();
-  });
-});
-
-describe("LeadPage: Convert", () => {
-  // Catches: a Convert button that opens nothing, a conversion that leaves the page showing a working lead (the person would convert it twice), or a banner with no
-  // link to the opportunity page that now exists (D-1655: /opportunities/<id>).
-  it("opens the dialog, and converting reloads the lead as Converted with the banner linking to what was made", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: /^Convert/ }));
-    const dialog = await screen.findByRole("dialog", { name: "Convert Lucia Reyes" });
-    client.getLeadPage.mockResolvedValue(page({
-      canChange: false, canAdd: false, stages: { ...page().stages, converted: "2026-11-15T10:00:00+00:00" },
-      converted: { account: { id: "a1", name: "Reyes Bakery" }, contact: { id: "c1", name: "Lucia Reyes" }, opportunity: { id: "o1", name: "Reyes Bakery – PEO search" } },
-    }, { status: "converted" }));
-    convert.convertLead.mockResolvedValue({ account: { id: "a1", name: "Reyes Bakery", created: true }, contact: { id: "c1", name: "Lucia Reyes" }, opportunity: { id: "o1", name: "Reyes Bakery – PEO search" } });
-    await user.click(within(dialog).getByRole("button", { name: "Convert" }));
-    const banner = await screen.findByRole("note", { name: "Converted" });
-    expect(within(banner).getByRole("link", { name: "Reyes Bakery – PEO search" })).toHaveAttribute("href", "/opportunities/o1");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Converted into Reyes Bakery");
-  });
-});
-
-describe("LeadPage: where Convert is not offered", () => {
-  // Catches: a Convert button the database will refuse (a Not a fit lead must be reopened first, D-810; one in the bin; one the person may not change; a Nevermore
-  // support session, which converts nothing), so the person is offered a step that can only fail.
-  it.each([
-    ["a Not a fit lead", page({ canChange: true, canAdd: false, canReopen: true, stages: { ...page().stages, notFit: "2026-11-14T10:00:00+00:00" } }, { status: "not_fit", notFitReason: "too_small" }), workspace()],
-    ["a lead in the bin", page({ canChange: false, canAdd: false, inBin: true }), workspace()],
-    ["a lead the person may read and not change", page({ canChange: false }), workspace()],
-    ["a lead in a support session", page(), workspace({ isSupport: true })],
-  ])("offers no Convert on %s", async (_name, answer, ws) => {
-    client.getLeadPage.mockResolvedValue(answer);
-    renderPage("/leads/l1", ws);
-    expect(await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Convert/ })).toBeNull();
   });
 });
 
