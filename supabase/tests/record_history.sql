@@ -664,8 +664,8 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history), before_rows, 'creating, answering and deleting an intake writes nothing to the history');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgrelid = 'public.chamber_sessions'::regclass AND t.tgfoid = 'public.record_history_capture()'::regprocedure), 0::bigint,
     'the intake table has no history trigger');
-  PERFORM pg_temp.is((SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal), 'accounts,contacts,opportunities,placements,referral_partners,renewals',
-    'the only tables with the trigger are the ones that keep a history: accounts, contacts, opportunities, placements, referral partners and renewals');
+  PERFORM pg_temp.is((SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal), 'accounts,commission_payments,contacts,opportunities,placements,referral_partners,renewals',
+    'the only tables with the trigger are the ones that keep a history: accounts, commission payments, contacts, opportunities, placements, referral partners and renewals');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND encode(t.tgargs, 'escape') ~ 'chamber_data'), 0::bigint, 'and no list names an intake''s answers');
   -- Nothing else writes the history: the only function that inserts into it is the capture trigger.
   PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,crm_merge_history,merge_accounts,record_history_capture',

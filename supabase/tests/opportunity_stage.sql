@@ -334,8 +334,8 @@ BEGIN
   PERFORM pg_temp.intake('i1', 'acme');
   o_intake := pg_temp.opportunity('o_intake', 'a1', 'acme_owner', 'i1');
   PERFORM pg_temp.is((SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'opportunities' AND column_name IN ('lost_at', 'lost_by', 'lost_reason')), 'lost_at,lost_by',
-    'the opportunity keeps lost_at and lost_by, and not yet the lost reason (CRM-O1.3)');
+    WHERE table_schema = 'public' AND table_name = 'opportunities' AND column_name IN ('lost_at', 'lost_by', 'lost_reason')), 'lost_at,lost_by,lost_reason',
+    'the opportunity keeps lost_at and lost_by, and the lost reason CRM-O1.3a added (it is loaded here)');
   PERFORM pg_temp.is(public.opportunity_stage(o_open), 'qualifying', 'no intake and not marked lost is Qualifying');
   UPDATE public.opportunities SET lost_at = now(), lost_by = pg_temp.id('acme_agent') WHERE id = o_lost;
   PERFORM pg_temp.is(public.opportunity_stage(o_lost), 'lost', 'no intake, marked lost: Lost');

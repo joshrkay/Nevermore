@@ -599,6 +599,10 @@ sorts after Epic 3's last (`20261119230000`), in this order. "Epic 3 row n" is a
 | 7 | CRM-A2.4b | Renewals on screen: the account's Renewals tab and its count, Add a renewal, Start the renewal (the New opportunity form filled in), the Renewal column and view on the accounts table | 3, 6, Epic 3 row 10 | Sonnet (A) | none |
 | 8 | CRM-O1.3b | Mark won or lost (screen 26), the won or lost banner with Reopen, Record a payment, and the console's Won and Lost opening the same dialog | 4, 5 | Sonnet (A) | none |
 
+The Epic 4 merge with main (not a story row) takes `20261121150000_epic4_after_merge_records.sql`, so no other story takes it. It sorts after main's `20261121100000_merge_records.sql` (CRM-S4.3b), which
+restated `firm_closing_plan` without CRM-O1.3a's commission payments step and has `merge_accounts` leave `commission_payments` behind. It adds the step back (read with `pg_get_functiondef`, raising if its anchor
+line is gone), makes the payments' key to their placement deferrable, and restates `merge_accounts` and `merge_preview` so a removed account's commission payments move to the kept account with their placement.
+
 ### CRM-O1.2 decisions
 
 Grilled 2026-11-14 against D-10, D-206, D-216, D44, ADR 0007 and `20261119100000_crm_records.sql`. Builds as Epic 4
