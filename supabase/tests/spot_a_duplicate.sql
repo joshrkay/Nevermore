@@ -165,9 +165,25 @@
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

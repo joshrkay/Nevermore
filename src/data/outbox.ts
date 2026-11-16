@@ -39,6 +39,8 @@ export const OUTBOX_KIND_LABELS: Record<string, string> = {
   member_left: "Member left the firm",
   firm_closing: "Request to close the firm",
   export_alert: "A large or repeated export",
+  conversation_message: "Email to a contact or lead",
+  peo_message: "Bundle sent to a PEO",
 };
 
 export const outboxKindLabel = (kind: string) => OUTBOX_KIND_LABELS[kind] ?? kind;

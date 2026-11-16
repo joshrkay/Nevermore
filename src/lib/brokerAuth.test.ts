@@ -30,6 +30,28 @@ describe("where a broker goes after signing in", () => {
     }
   });
 
+  // Catches: a broker who connects their mailbox from a place to write on a contact or a lead (CRM-E1.1, D-650) landing on the queue instead of back where they were writing.
+  it("keeps a contact's page and the Leads page, with their query", () => {
+    for (const kept of ["/contacts/5f1c2a9e-0000-4000-8000-000000000003", "/contacts/c1?tab=email", "/leads", "/leads?lead=5f1c2a9e-0000-4000-8000-000000000004"]) {
+      expect(brokerNext(kept), kept).toBe(kept);
+    }
+    for (const bad of ["/contacts", "/contacts/a/b", "/contactsx/1", "/leadsx", "/leads/../advisor", "/contacts/1?x=//evil.example"]) {
+      expect(brokerNext(bad), bad).toBe("/advisor");
+    }
+  });
+
+  // Catches: a broker who connects their mailbox from the place to write on a lead's page (slice 8.5, D-603) landing on the queue instead of back on the lead.
+  it("keeps a lead's page", () => {
+    for (const kept of ["/leads/5f1c2a9e-0000-4000-8000-000000000004", "/leads/l1?x=1"]) expect(brokerNext(kept), kept).toBe(kept);
+    for (const bad of ["/leads/a/b", "/leads/..", "/leads/l1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+  });
+
+  // Catches: a broker who connects their mailbox from the inbox's banner (CRM-E1.4) landing on the queue instead of back in the inbox, with its view.
+  it("keeps the inbox, with its query", () => {
+    for (const kept of ["/inbox", "/inbox?view=new", "/inbox?view=sent&q=reyes"]) expect(brokerNext(kept), kept).toBe(kept);
+    for (const bad of ["/inboxx", "/inbox/1", "/inbox/../advisor", "/inbox?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+  });
+
   // Catches: a broker who signs in again for an Accounts export (or on an expired session) landing on the queue with the filters gone (D-223).
   it("keeps the Accounts page and an account's page, with their query", () => {
     for (const kept of [

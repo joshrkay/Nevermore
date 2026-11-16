@@ -166,9 +166,25 @@
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -786,7 +802,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.renewals') < (SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.placements'), true, 'the renewals first');
   PERFORM pg_temp.is((SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.placements') < (SELECT min(ord) FROM public.firm_closing_plan() WHERE src IN ('public.opportunities', 'public.contacts', 'public.accounts')), true, 'both before the records they stand on');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src IN ('public.accounts', 'public.contacts', 'public.opportunities', 'public.activities', 'public.record_history', 'public.referral_partners')), 6::bigint, 'and every line it had is kept');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'with every kept table');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 39::bigint, 'with every kept table (the 34 main kept, and this line''s five: bundle_links, the bundle-links bucket, peo_authorizations, peo_registrations and the contact-mail bucket)');
 END $$;
 
 
@@ -1389,7 +1405,7 @@ BEGIN
                                                               'public.activities', 'public.renewals', 'public.placements', 'public.accounts', 'public.contacts', 'public.opportunities')),
     ARRAY['public.account_labels', 'public.accounts', 'public.activities', 'public.bulk_change_records', 'public.bulk_changes', 'public.contacts', 'public.labels',
           'public.opportunities', 'public.placements', 'public.recent_records', 'public.renewals'], 'the closing plan deletes the five tables Epic 3 added beside the three records and these two');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'and keeps every table it kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 39::bigint, 'and keeps every table it kept (and the five this line added)');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() p WHERE p.action = 'delete' AND p.src IN ('public.renewals', 'public.placements')), 2::bigint, 'each line once');
 END $$;
 

@@ -170,9 +170,32 @@
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -894,7 +917,7 @@ BEGIN
   PERFORM public.set_my_table_columns(acme, 'accounts', NULL, '["name", "owner", "last_activity_at"]');
   PERFORM pg_temp.is((SELECT m.columns FROM public.my_table_columns(acme, 'accounts', NULL) m), '["name", "owner", "last_activity_at"]'::jsonb, 'the person''s column choice for the table is kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.my_table_columns(acme, 'submissions', NULL) m WHERE m.source = 'mine'), 0::bigint, 'and is not the queue''s');
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'leads', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023: There is no table called%', true, 'a table that is not on the list is still refused');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'quotes', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023: There is no table called%', true, 'a table that is not on the list is still refused');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'Accounts', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023:%', true, 'a name is exact');
   PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.list_saved_views(%L, 'accounts')$q$, acme)) LIKE '42501:%', true, 'another firm''s member reads none of Acme''s views');
@@ -940,7 +963,8 @@ BEGIN
     'industry', 'Retail', 'states_of_operation', 'OR, WA', 'current_provider', 'ADP TotalSource', 'source', 'Added by hand', 'status', 'Prospect', 'owner', 'Ann Agent',
     'main_contact', 'Ann Alpha', 'main_contact_email', 'ann@alpha-co.example', 'main_contact_phone', '503-555-0101', 'opportunity', 'Alpha sooner search',
     'opportunity_stage', 'In market', 'target_start', '2027-02-01', 'open_opportunities', 2, 'quote_requests_sent', 2, 'quotes_received', 1,
-    'earliest_quote_expires_on', '2026-12-31', 'last_activity_at', '2026-10-20T00:00:00+00:00', 'created_at', '2026-10-01T00:00:00+00:00', 'archived', false), 'a row, in words');
+    'earliest_quote_expires_on', '2026-12-31', 'last_activity_at', '2026-10-20T00:00:00+00:00', 'created_at', '2026-10-01T00:00:00+00:00', 'archived', false,
+    'renewal_date', NULL), 'a row, in words');  -- renewal_date: 20261121160000 (start_the_renewal) adds the account's nearest renewal; Alpha Co has none
   SELECT x INTO one FROM jsonb_array_elements(j -> 'rows') x WHERE x ->> 'name' = 'beta inc';
   PERFORM pg_temp.is(one ->> 'status', 'Client', 'a client');
   PERFORM pg_temp.is(one ->> 'source', 'Employer''s intake', 'the source in words');

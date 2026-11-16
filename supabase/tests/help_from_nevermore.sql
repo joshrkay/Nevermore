@@ -176,12 +176,32 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
 \i supabase/migrations/20261121150000_epic4_after_merge_records.sql
 \i supabase/migrations/20261121160000_start_the_renewal.sql
 \i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -538,7 +558,15 @@ BEGIN
     ('add a contact', format($q$SELECT public.add_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('move a contact', format($q$SELECT public.move_contact(%L, %L, false, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('change a contact', format($q$SELECT public.update_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L, 1)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
+    ('change a lead', format($q$SELECT public.update_lead(%L, 'Owen', p_firm_id => %L, p_version => 1)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), support_msg),
+    ('mark a lead Not a fit', format($q$SELECT public.mark_lead_not_fit(%L, 'other', %L)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), support_msg),
+    ('reopen a lead', format($q$SELECT public.reopen_lead(%L, %L)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), support_msg),
+    ('log a call on a lead', format($q$SELECT public.log_lead_activity('call', %L, p_outcome => 'spoke', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), support_msg),
+    ('write to a contact', format($q$SELECT public.send_conversation_message(p_contact_id => %L, p_subject => 'Hello', p_body => 'Hi', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
+    ('add a sender as a contact', format($q$SELECT public.add_sender_as_contact(%L, 'A', 'B', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
     ('change accounts in bulk', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
+    ('change leads in bulk', format($q$SELECT public.bulk_leads_change(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), support_msg),
+    ('restore leads from the bin', format($q$SELECT public.restore_leads(%L, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), support_msg),
     ('preview a bulk change', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
     ('undo a bulk change', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), support_msg),
     ('log a call', format($q$SELECT public.log_activity('call', %L, NULL, NULL, NULL, 'spoke', 'Hello', NULL, NULL, NULL, NULL, NULL, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
@@ -685,6 +713,27 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_thread_reads), 0::bigint, 'no read mark exists, so no admin email is left for the firm');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_thread_reads WHERE last_opened_by_email LIKE '%platform_admin%'), 0::bigint, 'in particular');
   RAISE NOTICE 'help_from_nevermore: the exemptions were re-examined';
+END $$;
+
+-- CRM-E1.3: a conversation opened by support stays new for the firm (D-607), as a PEO thread does, and reading it is allowed.
+-- Break caught: a support session clears the firm's "new mail" mark, so the firm's people never learn a contact wrote back, and the admin is left as who
+-- opened it.
+DO $$
+DECLARE fa uuid := pg_temp.id('alpha'); acc uuid; ct uuid; cv uuid;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.accounts (source, firm_id, owner_id, name) VALUES ('added_by_hand', fa, pg_temp.id('agent_a'), 'Support Probe') RETURNING id INTO acc;
+  INSERT INTO public.contacts (firm_id, account_id, owner_id, last_name, email) VALUES (fa, acc, pg_temp.id('agent_a'), 'Probe', 'probe@support.example') RETURNING id INTO ct;
+  INSERT INTO public.conversations (firm_id, contact_id, reply_address) VALUES (fa, ct, 'c.probe.00000000000000c1') RETURNING id INTO cv;
+  INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, status, from_address, to_addresses, subject, body_text, message_id)
+  VALUES (fa, cv, 'inbound', 'received', 'probe@support.example', '{}', 'Re', 'Hi', '<support-probe@example.test>');
+  PERFORM pg_temp.as_user('platform_admin', 'alpha-brokers');
+  PERFORM pg_temp.is(public.open_conversation(cv, NULL, fa) ->> 'last_opened_at', NULL, 'a support session opens a conversation and marks nothing');
+  PERFORM pg_temp.is(public.conversation_for(p_contact_id => ct, p_firm_id => fa) #>> '{conversation,new_mail}', 'true', 'and it is still new for the firm');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT last_opened_by FROM public.conversations WHERE id = cv), NULL::uuid, 'no admin is left as who opened it');
+  DELETE FROM public.accounts WHERE id = acc;
+  RAISE NOTICE 'help_from_nevermore: a support session leaves a conversation new';
 END $$;
 
 -- ---------- nothing is sent as anyone ----------
@@ -965,8 +1014,8 @@ END $$;
 DO $$
 BEGIN
   PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'),
-    'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions();',
-    'the firm record''s daily job also records the support sessions that ran out, and kept its other steps');
+    'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions(); select public.remove_binned_leads();',
+    'the firm record''s daily job also records the support sessions that ran out, and kept its other steps (and the lead bin''s removal, CRM-L1.1b)');
   PERFORM pg_temp.is((SELECT count(*) FROM cron.job), 1::bigint, 'and no second job was made');
   RAISE NOTICE 'help_from_nevermore: the daily job passed';
 END $$;
@@ -1076,23 +1125,26 @@ DO $$
 DECLARE
   helpers text[] := ARRAY['firm_role', 'is_firm_member', 'can_see_firm_record', 'can_read_firm_activity', 'can_read_peo_mail', 'colleague_in_my_firm',
     'intake_folder_firm_read_only', 'intake_folder_in_my_firm', 'intake_in_my_firm', 'intake_owner_in_my_firm', 'quote_request_in_my_firm',
-    'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session'];
-  reads text[] := ARRAY['opportunity_create_context', 'opportunity_activity', 'opportunity_page', 'opportunity_outcome', 'account_renewals', 'merge_preview', 'resolve_merged_record', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'duplicate_account_check', 'duplicate_contact_check', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
-    'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
+    'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session',
+    'bundle_link_folder_in_my_firm', 'bundle_link_folder_read_only'];
+  reads text[] := ARRAY['opportunity_create_context', 'opportunity_outcome', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
+    'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'opportunity_page', 'opportunity_activity', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check', 'lead_page', 'lead_activity', 'lead_activity_options',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
-    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields'];
-  writes text[] := ARRAY['opportunity_create', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin'];
+  writes text[] := ARRAY['opportunity_create', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
-    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
-    'add_to_note', 'set_task_done'];
+    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
+    'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo',
+    'close_submission_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
-  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event'];
+  own_or_platform text[] := ARRAY['admin_decide_firm', 'ask_to_join_firm', 'leave_firm', 'report_client_event', 'request_contact', 'set_peo_authorization'];
   unplaced text; stale text; lost text; weak text;
 BEGIN
   RESET ROLE;
@@ -1137,8 +1189,9 @@ BEGIN
     AND (p.schemaname || '.' || p.tablename || ' | ' || p.policyname) NOT IN (
       'public.advisor_notes | Firm members can add notes as themselves',
       'storage.objects | Firm members can store generated manuscripts',
-      'storage.objects | Firm members can remove unrecorded manuscript uploads');
-  PERFORM pg_temp.is(unplaced, NULL::text, 'no write policy asks a membership helper except the three that are guarded (the notes trigger, the manuscripts'' two policies)');
+      'storage.objects | Firm members can remove unrecorded manuscript uploads',
+      'storage.objects | Firm members can store a bundle link''s files');
+  PERFORM pg_temp.is(unplaced, NULL::text, 'no write policy asks a membership helper except the four that are guarded (the notes trigger, the manuscripts'' two policies, a bundle link''s files)');
   SELECT string_agg(p.policyname, '; ' ORDER BY p.policyname) INTO unplaced
   FROM pg_policies p
   WHERE p.schemaname = 'storage' AND p.tablename = 'objects' AND p.cmd = 'SELECT'
@@ -1160,9 +1213,11 @@ DECLARE
   guarded text[] := ARRAY['opportunity_create', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
-    'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session'];
+    'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
+    'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw',
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s, open to every admin with or without a session; the PEO list is the same for every firm',
@@ -1177,13 +1232,16 @@ DECLARE
     'admin_stop_firm_closure', 'a platform admin''s, open to every admin with or without a session',
     'admin_suspend_firm', 'a platform admin''s, open to every admin with or without a session',
     'advisor_open_quote_request_thread', 'marks a thread read: for a support session it marks nothing (tested above), so no email is left for the firm',
+    'open_conversation', 'marks a conversation read for the firm (CRM-E1.3, D-607): for a support session it marks nothing (tested above), so no admin is left as who opened it',
     'archive_chamber_session', 'changes the caller''s own intake only (user_id is the caller); a support session has no intake of the firm''s prospects',
     'consume_ai_quota', 'the caller''s own allowance',
     'end_support_session', 'the doorway itself: the admin''s own session, in the platform''s table and the firm''s record of the use',
     'export_rows', 'reads a table and records the export in the firm''s record (CRM-S3.8b); it calls refuse_support_session(firm) first, so a session can neither take rows nor write the entry (the exports block above and supabase/tests/export.sql)',
     'leave_firm', 'ends the caller''s own membership: a support session has none, so it answers "not a member"',
     'record_intake_consent', 'the caller''s own agreement as an employer; writes a row with the caller''s id',
+    'set_peo_authorization', 'the employer''s own say over which PEOs may receive their packet (M-1.1, D-623): only the intake''s own employer may call it, and a support session''s admin is not that employer',
     'report_client_event', 'the platform''s monitoring: a row with the caller''s own id, read by platform admins only',
+    'request_contact', 'a visitor''s own ask on a firm''s public link (CRM-L1.2b): it reads no membership and no role, so a support session''s admin gets nothing by it that any visitor does not; it refuses a closing firm itself and takes the firm only from the address',
     'request_firm_closure', 'asks for the owner role by name; a support session is not an owner (tested above)',
     'sign_up_firm', 'makes a new firm; touches no firm that exists',
     'start_support_session', 'the doorway itself: an admin''s, writes the platform''s table and the firm''s record of the use',

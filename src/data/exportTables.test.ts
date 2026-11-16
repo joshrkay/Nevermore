@@ -12,9 +12,10 @@ describe("what an export of each table is called", () => {
   it("keeps the words of the tables before it", () => {
     expect(exportedWords("referral_partners", 2)).toBe("Exported 2 referral partners");
     expect(exportedWords("firm_activity", 1)).toBe("Exported 1 entry in the firm's record");
+    expect(exportedWords("leads", 2)).toBe("Exported 2 leads");
   });
 
   it("names a table this version does not know as the database wrote it", () => {
-    expect(exportedWords("leads", 3)).toBe("Exported 3 rows of leads");
+    expect(exportedWords("quotes", 3)).toBe("Exported 3 rows of quotes");
   });
 });

@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import { Check, MessageCircle, PenLine, Send } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
+import ContactMeForm from "@/components/ContactMeForm";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
 
 const fadeUp = (delay: number) => ({
   initial: { opacity: 0, y: 24 },
@@ -136,6 +138,8 @@ const LandingPage = () => {
   // A page load of /#peo-partners renders the section after the browser has looked for it, so the
   // browser can't scroll there itself. Do it once the page has rendered.
   const { hash } = useLocation();
+  // At a firm's address a visitor who would rather be called than start an intake can ask the firm to contact them (CRM-L1.2b).
+  const firm = useFirmAddress();
   useEffect(() => {
     // Only a plain section id: the hash can also hold an auth redirect's #access_token=… or #error=….
     const id = hash.slice(1);
@@ -314,6 +318,16 @@ const LandingPage = () => {
           </p>
         </motion.div>
       </section>
+
+      {firm.status === "known" && (
+        <section id="contact-me" className="px-6 py-20 scroll-mt-16">
+          <div className="mx-auto max-w-xl">
+            <h2 className="text-center text-2xl md:text-3xl font-extrabold mb-3">Rather talk to someone first?</h2>
+            <p className="text-center text-muted-foreground mb-8">Leave your details and {firm.name} will get in touch. You don't need to start an intake.</p>
+            <ContactMeForm address={firm.address} firmName={firm.name} />
+          </div>
+        </section>
+      )}
 
       {/* Final CTA */}
       <section className="bg-muted px-6 py-20">

@@ -177,9 +177,32 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -596,7 +619,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-new'), 1::bigint, 'a newer one is kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.outbox_events WHERE dedupe_key = 'prune-intake-old'), 1::bigint, 'an intake-bound row is left alone, however old');
   PERFORM pg_temp.is((SELECT interval '90 days' = public.firm_activity_retention()), true, 'the window is the firm record''s');
-  PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'), 'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions();', 'it runs in the firm record''s daily job, which CRM-P1.7 gave one more step (closing the firms whose 30 days have passed) and CRM-P2.4 another (recording the support sessions that ran out)');
+  PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'), 'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions(); select public.remove_binned_leads();', 'it runs in the firm record''s daily job, which CRM-P1.7 gave one more step (closing the firms whose 30 days have passed) CRM-P2.4 another (recording the support sessions that ran out) and CRM-L1.1b another (removing leads 30 days in the bin)');
   PERFORM pg_temp.is((SELECT count(*) FROM cron.job), 1::bigint, 'and no second job was made');
   RAISE NOTICE 'leave_a_firm: outbox retention passed';
 END $$;

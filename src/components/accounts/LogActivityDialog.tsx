@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ActivityError, CALL_OUTCOMES, getActivityOptions, logActivity, OUTCOME_LABELS, updateActivity,
+  ActivityError, CALL_OUTCOMES, getActivityOptions, getLeadActivityOptions, logActivity, logLeadActivity, OUTCOME_LABELS, updateActivity,
   type ActivityItem, type ActivityType, type CallOutcome, type Logged,
 } from "@/lib/activityApi";
 import { accountKey } from "./useAccountQueries";
@@ -41,9 +41,12 @@ const failureWords = (err: unknown): string =>
  * The form in a dialog. `item` makes it an edit of that call, task or note (its kind cannot change, and a call has no follow-up); otherwise it logs a new
  * one of `kind`, with `contactId` already chosen when it was opened from a contact and `opportunityId` when it was opened from an opportunity. `userId` is the person, who is who a task is for unless they choose.
  */
-export function LogActivityDialog({ firmId, accountId, accountName, kind, contactId, opportunityId, item, userId, onClose, onSaved }: {
+export function LogActivityDialog({ firmId, accountId, leadId, accountName, kind, contactId, opportunityId, item, userId, onClose, onSaved }: {
   firmId: string;
-  accountId: string;
+  /** The account it is on, or, on a lead's page (slice 8.5, D-807), the lead: a lead's call, note or task names no contact or opportunity. */
+  accountId?: string;
+  leadId?: string;
+  /** The account's or the lead's name, for "On <name>". */
   accountName: string;
   kind: ActivityType;
   contactId?: string | null;
@@ -54,7 +57,11 @@ export function LogActivityDialog({ firmId, accountId, accountName, kind, contac
   onClose: () => void;
   onSaved: (logged: Logged | { activity: ActivityItem; followUp: null }) => void;
 }) {
-  const options = useQuery({ queryKey: [...accountKey(firmId, accountId), "options"], queryFn: () => getActivityOptions(firmId, accountId), retry: false });
+  const options = useQuery({
+    queryKey: leadId ? ["lead", firmId, leadId, "options"] : [...accountKey(firmId, accountId ?? ""), "options"],
+    queryFn: () => (leadId ? getLeadActivityOptions(firmId, leadId) : getActivityOptions(firmId, accountId ?? "")),
+    retry: false,
+  });
   const current = useMemo(() => options.data?.people ?? [], [options.data]);
   // The person a task is for, when they have left the firm: kept as the choice, named as having left, unless the editor picks someone else. Never quietly the editor.
   const departed = options.data && item?.type === "task" && item.assignee && !current.some((p) => p.id === item.assignee?.id) ? item.assignee : null;
@@ -99,11 +106,14 @@ export function LogActivityDialog({ firmId, accountId, accountName, kind, contac
         });
         onSaved({ activity: saved, followUp: null });
       } else {
-        onSaved(await logActivity(firmId, {
-          kind: k, accountId, contactId: form.contactId || null, opportunityId: form.opportunityId || null, at, outcome: k === "call" ? form.outcome : null,
-          body: form.body, title: form.title, dueOn: form.due || null, forId: k === "task" ? form.forId || null : null,
+        const common = {
+          kind: k, at, outcome: k === "call" ? form.outcome : null, body: form.body, title: form.title, dueOn: form.due || null,
+          forId: k === "task" ? form.forId || null : null,
           followUp: k === "call" && form.followUp ? { title: form.followTitle, dueOn: form.followDue || null, forId: form.followFor || null } : null,
-        }));
+        };
+        onSaved(leadId
+          ? await logLeadActivity(firmId, { ...common, leadId })
+          : await logActivity(firmId, { ...common, accountId: accountId ?? "", contactId: form.contactId || null, opportunityId: form.opportunityId || null }));
       }
     } catch (err) {
       setProblem(failureWords(err));
@@ -136,7 +146,7 @@ export function LogActivityDialog({ firmId, accountId, accountName, kind, contac
               ))}
             </div>
           )}
-          {!noteEdit && (
+          {!noteEdit && !leadId && (
             <div className="grid gap-4 sm:grid-cols-2">
               <Choice label="With" value={form.contactId} onChange={(v) => set("contactId", v)} none="No one in particular" loading={options.isPending}
                 choices={(options.data?.contacts ?? []).map((c) => ({ id: c.id, name: c.title ? `${c.name}, ${c.title}` : c.name }))} />

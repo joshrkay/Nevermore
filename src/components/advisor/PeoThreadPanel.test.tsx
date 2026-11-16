@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type {
   QuoteRequestEventRow, QuoteRequestMailAttachmentRow, QuoteRequestMessageRow, QuoteRequestNoteRow, QuoteRequestRow, QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
@@ -182,6 +182,23 @@ describe("PeoThreadPanel", () => {
       expect(hand.getByText("to dana@trinet.example")).toBeInTheDocument();
     });
 
+    // Break caught (M-2.1): a message the product sent through the advisor's mailbox read as received, or as sent when it is still queued or did not
+    // go; a failure with no reason; no delivery mark promised (ADR 0005: none is reported); or one the advisor sent offered to move off the thread.
+    it("is marked as sent from the advisor's mailbox, with who it went to and whether it went", () => {
+      const sent = { direction: "sent", to_addresses: ["dana@trinet.example"], from_name: null, from_address: "sam@acme.example", status: "sent" as const };
+      const went = open(sent);
+      expect(went.getByText("Sent from the advisor's mailbox")).toBeInTheDocument();
+      expect(went.getByText("to dana@trinet.example")).toBeInTheDocument();
+      expect(went.getByText("Sent")).toBeInTheDocument();
+      expect(went.queryByRole("button", { name: /Move it off this thread/ })).not.toBeInTheDocument();
+      cleanup();
+      expect(open({ ...sent, status: "queued" }).getByText("Queued")).toBeInTheDocument();
+      cleanup();
+      const failed = open({ ...sent, status: "failed", failure_kind: "mailbox", failure_reason: "Connect your mailbox again." });
+      expect(failed.getByText("Not sent")).toBeInTheDocument();
+      expect(failed.getByText("Connect your mailbox again.")).toBeInTheDocument();
+    });
+
     it("is marked as automatic when a machine wrote it", () => {
       const thread = open({ is_automatic: true, body_text: "Out of office" });
       expect(thread.getByText("Automatic reply")).toBeInTheDocument();
@@ -306,5 +323,20 @@ describe("PeoThreadPanel", () => {
     expect(lines.join("\n")).toContain("Admin fee per employee per month: 145.50 → 150.00");
     expect(lines.join("\n")).toContain("Reply address: — → a.b.c");
     expect(lines.join("\n")).not.toContain("Status");
+  });
+
+  // Catches: a download by the bundle link (slice 6.6b, ADR 0003) missing from the thread, credited to a person, or buried in the change log.
+  it("shows each download by the bundle link on the thread, by the link, and not in the change log", () => {
+    panel({
+      events: [
+        event({ id: 1, field: "bundle_download", old_value: null, new_value: "The packet (EAA-2026-0042-packet-v3.pdf)", changed_by: null, changed_by_email: null, changed_at: "2026-11-12T09:00:00Z" }),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));
+    const thread = screen.getByRole("list", { name: "TriNet thread, newest first" });
+    const items = within(thread).getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toContain("Downloaded The packet (EAA-2026-0042-packet-v3.pdf), by the bundle link");
+    expect(screen.queryByText(/Change log/)).not.toBeInTheDocument();
   });
 });

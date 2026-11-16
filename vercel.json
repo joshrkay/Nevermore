@@ -25,8 +25,15 @@
       ]
     },
     {
-      "source": "/(start|profile|login|auth/.*|broker/.*|firms/.*|firm/.*|settings|join|choose-firm|accounts|accounts/.*|contacts/.*|opportunities/.*|advisor|advisor/.*|manuscript|manuscript/(?!demo$).*)",
+      "source": "/(b/.*|f|start|profile|login|auth/.*|broker/.*|firms/.*|firm/.*|settings|join|choose-firm|inbox|leads|leads/.*|accounts|accounts/.*|contacts/.*|opportunities/.*|advisor|advisor/.*|manuscript|manuscript/(?!demo$).*)",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
+    },
+    {
+      "source": "/(b/.*|f)",
+      "headers": [
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
     },
     {
       "source": "/assets/(.*)",

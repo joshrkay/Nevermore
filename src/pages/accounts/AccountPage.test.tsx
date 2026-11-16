@@ -25,7 +25,9 @@ vi.mock("@/lib/accountActionsApi", () => actions);
 const listFirmMembers = vi.fn();
 vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountsApi")), listFirmMembers: (...a: unknown[]) => listFirmMembers(...a) }));
 vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
-const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn() };
+const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn(), fetchMyMailbox: vi.fn() };
+const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), getAccountMessages: vi.fn() };
+vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...conversations }));
 vi.mock("@/lib/advisorApi", () => advisor);
 
 const search = { noteRecentRecord: vi.fn() };
@@ -108,9 +110,58 @@ beforeEach(() => {
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getAccountPage.mockResolvedValue(page());
+  for (const fn of Object.values(conversations)) fn.mockReset();
+  advisor.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "dana@example.com" });
+  conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
+  conversations.listAttachableFiles.mockResolvedValue([]);
+  conversations.getAccountMessages.mockResolvedValue([]);
   renewalsClient.getAccountRenewals.mockResolvedValue({ count: 1, canChange: true, rows: [{
     id: "r1", version: 1, kind: "current_plan", withWhom: "Aetna", renewsOn: "2027-01-01", daysAway: 50, opportunity: null, notRenewedOn: null, done: false, outcome: null, madeByWin: false,
   }] });
+});
+
+describe("AccountPage: Email", () => {
+  // Catches: an account's page with no Email (CRM-E1.2's first criterion), an Email that offers contacts of another account, or that writes to someone
+  // other than the contact chosen; and coming back anywhere but here, to the same contact, after connecting a mailbox (D-650).
+  it("asks which of the account's contacts, then opens the place to write for the one chosen", async () => {
+    const user = userEvent.setup();
+    client.listAccountTab.mockResolvedValue(tabOf([contact(2), contact(1)], 2));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Email" }));
+    const dialog = await screen.findByRole("dialog", { name: "Which contact?" });
+    expect(within(dialog).getAllByRole("button", { name: /^Write to / })[0]).toHaveTextContent("Elena Marsh");
+    expect(client.listAccountTab).toHaveBeenCalledWith("f1", "a1", "contacts", { limit: 100, offset: 0 });
+    await user.click(within(dialog).getByRole("button", { name: /^Write to Elena Marsh/ }));
+    expect(await screen.findByRole("region", { name: "Emails" })).toBeInTheDocument();
+    expect(conversations.getConversation).toHaveBeenCalledWith("f1", "c1");
+  });
+
+  // Catches: the account's page not showing the mail with its contacts (CRM-E1.3: one message shown on every record it belongs to, from 6.4's
+  // account_conversation_messages), or a message not saying which contact it is with.
+  it("shows the emails with the account's contacts on its Overview, newest first, each naming its contact", async () => {
+    conversations.getAccountMessages.mockResolvedValue([
+      { id: "m2", direction: "inbound", from: "elena@harborview.example", to: [], subject: "Re: Your renewal", body: "Friday?", status: "received",
+        failureKind: null, failureReason: null, at: "2026-11-11T09:00:00+00:00", contactId: "c1" },
+      { id: "m1", direction: "outbound", from: "dana@example.com", to: ["elena@harborview.example"], subject: "Your renewal", body: "Hi", status: "sent",
+        failureKind: null, failureReason: null, at: "2026-11-10T09:00:00+00:00", contactId: "c1" },
+    ]);
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Emails with the account's contacts" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Re: Your renewal");
+    expect(items[0]).toHaveTextContent("Elena Marsh");
+    expect(items[1]).toHaveTextContent("Your renewal");
+    expect(conversations.getAccountMessages).toHaveBeenCalledWith("f1", { accountId: "a1" });
+  });
+
+  // Catches: coming back from connecting a mailbox to the account's page with the place to write closed, so the unsent message seems lost (D-653).
+  it("back from connecting a mailbox, opens the place to write for the contact being written to", async () => {
+    client.listAccountTab.mockResolvedValue(tabOf([contact(2), contact(1)], 2));
+    renderPage("/accounts/a1?email=c1");
+    const dialog = await screen.findByRole("dialog", { name: "Write to Elena Marsh" });
+    expect(await within(dialog).findByRole("region", { name: "Emails" })).toBeInTheDocument();
+    expect(conversations.getConversation).toHaveBeenCalledWith("f1", "c1");
+  });
 });
 
 describe("AccountPage: the menu's recent records", () => {
@@ -176,8 +227,9 @@ describe("AccountPage: the header and the tabs", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" })).toBeInTheDocument();
     expect(screen.getByText("Prospect")).toBeInTheDocument();
     expect(screen.getByText("Dental practice · Portland, OR · 45 employees · harborviewdental.example · Owner Dana Reyes")).toBeInTheDocument();
+    // Email is CRM-E1.2's, here since slice 6.3 ("AccountPage: Email"); New opportunity is CRM-A2.3's.
     expect(screen.getByRole("button", { name: "New opportunity" })).toBeInTheDocument();
-    for (const gone of ["Email", "Add a contact", "Restore"]) {
+    for (const gone of ["Add a contact", "Restore"]) {
       expect(screen.queryByRole("button", { name: gone }), gone).toBeNull();
       expect(screen.queryByRole("link", { name: gone }), gone).toBeNull();
     }

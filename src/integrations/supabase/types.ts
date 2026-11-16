@@ -317,6 +317,10 @@ export type Database = {
           sent_version: number | null
           // One of QUOTE_REQUEST_STATUSES (src/data/quoteRequests.ts).
           status: string
+          // M-2.3: the version a quote was given on, while quoted; older than sent_version after an update, until a new answer is recorded.
+          quoted_version?: number | null
+          // Why it was withdrawn (M-2.4), one of WITHDRAWAL_REASONS, for advisors only; cleared when a send reopens it.
+          withdrawn_reason?: string | null
         }
         Insert: never
         Update: never
@@ -389,6 +393,17 @@ export type Database = {
           session_id: string | null
           subject: string | null
           to_addresses: string[]
+          // A message the product sent through the advisor's mailbox (direction 'sent', M-2.1, 20261122140000): its state, and why it failed.
+          status?: "queued" | "sent" | "failed" | null
+          failure_kind?: "mailbox" | "refused" | "uncertain" | "unavailable" | null
+          failure_reason?: string | null
+          message_id?: string | null
+          in_reply_to?: string | null
+          message_references?: string[]
+          sender_id?: string | null
+          bundle_link_id?: number | null
+          // M-2.3: the version the PEO held when this message is an update; null on every other message.
+          update_from_version?: number | null
         }
         Insert: never
         Update: never
@@ -855,6 +870,41 @@ export type Database = {
         Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
       }
+      // The leads table's query (20261121110500): {rows, total, page, page_size}; src/lib/leadsApi.ts reads it.
+      leads_list: {
+        Args: {
+          p_firm_id: string | null
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      leads_view_counts: {
+        Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
+      // The inbox (20261122150000, CRM-E1.4): {rows, total, page, page_size}, every message on the threads the caller may see, newest first;
+      // src/lib/inboxApi.ts reads it.
+      inbox_list: {
+        Args: {
+          p_firm_id: string | null
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      inbox_view_counts: {
+        Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
       // The firm's current members by id and name, for the Owner filter (20261119130000).
       firm_member_choices: {
         Args: { p_firm_id: string | null }
@@ -1031,6 +1081,88 @@ export type Database = {
         }
         Returns: Json
       }
+      // Making a lead by hand (20261121095500): answers the lead's own fields (crm_lead_fields).
+      create_lead: {
+        Args: {
+          p_name: string
+          p_title?: string | null
+          p_business?: string | null
+          p_email?: string | null
+          p_phone?: string | null
+          p_city?: string | null
+          p_state?: string | null
+          p_employees?: number | null
+          p_current_provider?: string | null
+          p_note?: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // Writing to a contact or a lead (20261122090000): records the message queued on the record's conversation and answers it
+      // (conversation_message_fields). PT404 a record the caller may not see; PT409 Do not email, no email, a lead in the bin or converted; PT412 no mailbox.
+      send_conversation_message: {
+        Args: {
+          p_contact_id?: string | null
+          p_lead_id?: string | null
+          p_subject?: string | null
+          p_body?: string | null
+          p_cc?: string[] | null
+          p_in_reply_to?: string | null
+          p_firm_id?: string | null
+          // Files from the contact's account's files, each sent as an expiring link (20261122160000, D-605); 22023 for any other.
+          p_document_ids?: string[] | null
+        }
+        Returns: Json
+      }
+      // The files a message to this contact may carry (20261122160000): [{id, file_name, category, created_at}]; PT404 a contact the caller may not see.
+      conversation_files_for: {
+        Args: {
+          p_contact_id: string
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // A contact's or a lead's conversation, newest first: {conversation, messages, mailbox: {connected, last_send_failed}} (20261122090000).
+      conversation_for: {
+        Args: {
+          p_contact_id?: string | null
+          p_lead_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // Replies come back (20261122130000, CRM-E1.3): a conversation opened clears its new-mail mark for the firm, answering {last_opened_at}; a new sender
+      // offered on a contact's conversation added as a contact on its account (add_contact's answer); an account's or an opportunity's mail, {messages}.
+      open_conversation: {
+        Args: {
+          p_conversation_id: string
+          p_seen_through?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      add_sender_as_contact: {
+        Args: {
+          p_message_id: string
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_title?: string | null
+          p_phone?: string | null
+          p_mobile?: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      account_conversation_messages: {
+        Args: {
+          p_account_id?: string | null
+          p_opportunity_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // Adding a contact to an account and moving one (20261119170000): add_contact answers {record, previous_main}; move_contact {record, from, to, was_main,
       // activities_moved, opportunity_links_dropped, main_contact_cleared} (PT409 asks for p_confirm); the choices are the accounts it may go to; the context is what the form needs.
       add_contact: {
@@ -1178,6 +1310,18 @@ export type Database = {
       }
       bulk_accounts_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
       firm_labels: { Args: { p_firm_id?: string | null }; Returns: Json }
+      // Bulk changes to leads, their undo, the bin and Restore (20261122210000; src/lib/leadsBulkApi.ts reads them).
+      bulk_leads_preview: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_leads_change: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_leads_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
+      leads_bin: { Args: { p_firm_id: string; p_page?: number }; Returns: Json }
+      restore_leads: { Args: { p_firm_id: string; p_ids: Json }; Returns: Json }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {
@@ -1349,9 +1493,127 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      // Sending the bundle to a PEO (M-2.1, 20261122140000): the send records the message queued and answers {quote_request_id, message_id};
+      // 42501, PT423, PT404, 22023 (not authorized, answers changed since certifying, stage, addresses, subject and note), PT412 no mailbox.
+      send_to_peo: {
+        Args: { p_session_id: string; p_peo: string; p_to: string[]; p_subject: string; p_note: string }
+        Returns: Json
+      }
+      // M-2.3: the newer certified version to a PEO holding an older one, on its thread; send_to_peo's every check, then what changed under the note.
+      send_peo_update: {
+        Args: { p_session_id: string; p_peo: string; p_to: string[]; p_subject: string; p_note: string }
+        Returns: Json
+      }
+      // Joins the bundle link to the message, which writes the fixed block under the note; PT404, PT409, 22023 for a link that isn't the message's.
+      attach_peo_link: {
+        Args: { p_message_id: number; p_link_id: number; p_token: string }
+        Returns: Json
+      }
+      // ---- CRM-L2.1: a lead's page (20261122220000_lead_page.sql) ----
+      // The page in one read: {lead, can_change, can_add, in_bin, can_reopen, stages, converted}; null for a lead the caller may not see.
+      lead_page: {
+        Args: { p_firm_id: string; p_lead_id: string }
+        Returns: Json
+      }
+      // A page of the lead's calls, notes and tasks, newest first: {count, rows}; null for a lead the caller may not see.
+      lead_activity: {
+        Args: { p_firm_id: string; p_lead_id: string; p_filter?: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // The firm's members a task on the lead can be for: {contacts: [], opportunities: [], people}.
+      lead_activity_options: {
+        Args: { p_firm_id: string; p_lead_id: string }
+        Returns: Json
+      }
+      // The save of a lead's own fields from a version: {conflict: false, record} or the conflict answer. A saved change makes a New lead Working.
+      update_lead: {
+        Args: {
+          p_lead_id: string
+          p_name: string
+          p_title?: string | null
+          p_business?: string | null
+          p_email?: string | null
+          p_phone?: string | null
+          p_city?: string | null
+          p_state?: string | null
+          p_employees?: number | null
+          p_current_provider?: string | null
+          p_note?: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
+      // Not a fit with one reason from the short list; answers the lead's fields.
+      mark_lead_not_fit: {
+        Args: { p_lead_id: string; p_reason: string; p_firm_id?: string | null }
+        Returns: Json
+      }
+      // Reopens a Not a fit lead: Working again; answers the lead's fields.
+      reopen_lead: {
+        Args: { p_lead_id: string; p_firm_id?: string | null }
+        Returns: Json
+      }
+      // A call, a note or a task on a lead: {activity, follow_up}. A call on a New lead makes it Working.
+      log_lead_activity: {
+        Args: {
+          p_kind: string
+          p_lead_id: string
+          p_at?: string | null
+          p_outcome?: string | null
+          p_body?: string | null
+          p_title?: string | null
+          p_due_on?: string | null
+          p_for?: string | null
+          p_follow_up_title?: string | null
+          p_follow_up_due_on?: string | null
+          p_follow_up_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // ---- M-2.4: follow up and withdraw (20261122190000_follow_up_and_withdraw.sql) ----
+      // A follow-up queued on the PEO's thread: {quote_request_id, message_id, version}; its fresh link is then joined by attach_peo_link.
+      follow_up_peo: {
+        Args: { p_quote_request_id: number; p_to: string[]; p_subject: string; p_note: string }
+        Returns: Json
+      }
+      // Closes the quote request with its reason, revokes its link and queues the withdrawal: {quote_request_id, message_id}.
+      withdraw_from_peo: {
+        Args: { p_quote_request_id: number; p_to: string[]; p_subject: string; p_note: string; p_reason: string }
+        Returns: Json
+      }
+      // set_submission_status to Won, Lost or Archived, and one withdrawal queued on each PEO still open: {message_ids}.
+      close_submission_and_withdraw: {
+        Args: { p_session_id: string; p_status: string; p_note: string | null; p_won_quote_request_id: number | null; p_subject: string; p_body: string }
+        Returns: Json
+      }
+      // What the composer reads: {mailbox: {connected, address}, contacts: [{name, role, email}], reply_address}.
+      peo_send_context: {
+        Args: { p_session_id: string; p_peo: string }
+        Returns: Json
+      }
+      peo_registered_elsewhere: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      peo_registration_statement: {
+        Args: { p_firm_id?: string }
+        Returns: Json
+      }
+      issue_bundle_link: {
+        Args: { p_quote_request_id: number; p_version: number; p_folder: string; p_files: Json; p_open_items?: Json }
+        Returns: Json
+      }
       firm_public_name: {
         Args: { p_address: string }
         Returns: string | null
+      }
+      // A visitor on a firm's public link asks to be contacted (20261122230000, CRM-L1.2b).
+      request_contact: {
+        Args: { p_address: string; p_name: string; p_email?: string; p_phone?: string; p_business?: string; p_message?: string }
+        Returns: string
       }
       // Signing up a firm and its approval (20261116170000).
       sign_up_firm: {
@@ -1577,6 +1839,19 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json | null
       }
+      // M-1.1 (20261122100000): the employer authorizes or withdraws a PEO on their own intake; each PEO's state for the employer or the intake's firm.
+      set_peo_authorization: {
+        Args: { p_session_id: string; p_peo: string; p_authorized: boolean; p_version: string; p_text: string }
+        Returns: Json
+      }
+      peo_authorization_states: {
+        Args: { p_session_id: string }
+        Returns: { peo: string; state: string; signed_at: string | null; wording_version: string | null }[]
+      }
+      peo_authorization_version: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       prospect_submission_status: {
         Args: { p_session_id: string }
         Returns: string | null
@@ -1677,6 +1952,10 @@ export type Database = {
           p_value?: Json | null
         }
         Returns: Database["public"]["Tables"]["advisor_field_reviews"]["Row"]
+      }
+      revoke_bundle_link: {
+        Args: { p_quote_request_id: number; p_reason?: string }
+        Returns: number
       }
       revoke_chamber_session: {
         Args: { p_reason: string; p_session_id: string }

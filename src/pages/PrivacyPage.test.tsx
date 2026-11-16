@@ -60,7 +60,7 @@ describe("Privacy Policy", () => {
   it("leaves off the page a class whose wording counsel hasn't approved", () => {
     renderPage();
     const held = DATA_CLASSES.filter((c) => c.awaitingCounsel);
-    expect(held.map((c) => c.id)).toEqual(["mailbox_token"]);
+    expect(held.map((c) => c.id)).toEqual(["peo_registrations", "mailbox_token"]);
     const collect = screen.getByRole("region", { name: "What we collect" });
     for (const c of held) expect(collect).not.toHaveTextContent(c.label);
   });

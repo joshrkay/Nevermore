@@ -34,6 +34,8 @@ async function signed(body: string, over: { secret?: string; method?: string; ts
   });
 }
 
+const attUuid = (n: number) => `a0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
 const PDF = (extra = "") => ENC.encode(`%PDF-1.4\n${extra}\n%%EOF`);
 
 interface Options {
@@ -56,10 +58,12 @@ function setup(o: Options = {}) {
         ? { data: null, error: { code: "XX000" } }
         : { data: { message_id: 17, duplicate: false, held: false, held_reason: null, quote_request_id: 3, session_id: SESSION, ...o.recorded }, error: null };
     }
-    if (fn === "record_inbound_attachment") {
+    if (fn === "record_inbound_attachment" || fn === "record_conversation_attachment") {
       const known = o.attachmentStatus?.[args.p_provider_attachment_id as string];
       const status = known ?? (args.p_not_kept_reason ? "not_kept" : "pending");
-      return { data: { id: Number(String(args.p_provider_attachment_id).replace(/\D/g, "")) || 1, status }, error: null };
+      const n = Number(String(args.p_provider_attachment_id).replace(/\D/g, "")) || 1;
+      // A quote request's attachment has a number for its id; a conversation's, a uuid.
+      return { data: { id: fn === "record_inbound_attachment" ? n : attUuid(n), status }, error: null };
     }
     return { data: {}, error: null };
   });
@@ -390,6 +394,67 @@ describe("an attachment", () => {
     const t = setup({ attachments: [att("att_1", { filename: "../../etc/pass wd.pdf" })] });
     await run(t, [att("att_1")]);
     expect(t.uploads[0].path).toBe(`${SESSION}/17/1-pass_wd.pdf`);
+  });
+});
+
+// CRM-E1.3: a reply to a conversation's address (c.<name>.<16 hex>). The database decides it is a conversation's (supabase/tests/conversation_replies.sql);
+// the function only follows its answer.
+const CONV_MESSAGE = "8d0c5e8e-6b1a-4f3e-9d57-0a8f7c11aa01";
+const CONVERSATION = "1b2c3d4e-0000-4000-8000-0000000000c1";
+const FIRM = "f1f1f1f1-0000-4000-8000-0000000000f1";
+const conversationRecorded = {
+  message_id: undefined, quote_request_id: undefined, session_id: undefined,
+  conversation_message_id: CONV_MESSAGE, conversation_id: CONVERSATION, firm_id: FIRM, duplicate: false, held: false, held_reason: null,
+};
+const convLocal = "c.reyes.0123456789abcdef";
+const toConversation = (attachments: unknown[] = []) =>
+  eventBody({ to: [`${convLocal}@quotes.nevermorepeo.com`], received_for: [`${convLocal}@quotes.nevermorepeo.com`], cc: [] }, attachments);
+
+describe("a reply to a conversation's address", () => {
+  it("is recorded on the conversation the database names, and answered 200 (catches: a conversation's reply answered 500 and retried for ever)", async () => {
+    const t = setup({ recorded: conversationRecorded });
+    const res = await handleReceiveRequest(await signed(toConversation()), t.deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, duplicate: false, held: false, attachments: { stored: 0, blocked: 0, not_kept: 0, pending: 0, retry: false } });
+    expect(t.calls("record_inbound_mail")[0].p_local_parts).toEqual([convLocal]);
+    expect(t.logs).toEqual([`MAIL_RECORDED: conversation_message=${CONV_MESSAGE} duplicate=false`]);
+  });
+
+  it("has each attachment scanned and stored by PEO mail's rules, in the contact-mail bucket, and a failed scan blocks only that file " +
+     "(catches: a contact's file kept unscanned, under an intake, or lost with an infected one beside it)", async () => {
+    const files = [att("att_1"), att("att_2", { filename: "invoice.pdf" }), att("att_3", { filename: "macro.xlsm" })];
+    const t = setup({ recorded: conversationRecorded, attachments: files, files: { att_2: PDF(EICAR) } });
+    const res = await handleReceiveRequest(await signed(toConversation(files)), t.deps);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { attachments: unknown }).attachments).toEqual({ stored: 1, blocked: 1, not_kept: 1, pending: 0, retry: false });
+    expect(t.calls("record_inbound_attachment")).toEqual([]);
+    expect(t.calls("record_conversation_attachment").map((c) => [c.p_message_id, c.p_provider_attachment_id, c.p_not_kept_reason])).toEqual([
+      [CONV_MESSAGE, "att_1", null], [CONV_MESSAGE, "att_2", null], [CONV_MESSAGE, "att_3", "unsupported_type"],
+    ]);
+    expect(t.uploads).toEqual([{ bucket: "contact-mail", path: `${FIRM}/${CONVERSATION}/${CONV_MESSAGE}/${attUuid(1)}-proposal.pdf`, type: "application/octet-stream", size: PDF().length }]);
+    const finished = t.calls("finish_conversation_attachment");
+    expect(finished).toHaveLength(2);
+    expect(finished[0]).toMatchObject({ p_attachment_id: attUuid(1), p_verdict: "clean", p_bucket: "contact-mail", p_path: `${FIRM}/${CONVERSATION}/${CONV_MESSAGE}/${attUuid(1)}-proposal.pdf` });
+    expect(finished[1]).toEqual({ p_attachment_id: attUuid(2), p_verdict: "infected", p_signature: "Eicar-Test-Signature" });
+    expect(t.calls("finish_inbound_attachment")).toEqual([]);
+  });
+
+  it("keeps no address, subject, file name or text of the reply in its logs (catches: a contact's words in the function's logs)", async () => {
+    const files = [att("att_1"), att("att_2", { filename: "invoice.pdf" })];
+    const t = setup({ recorded: conversationRecorded, attachments: files, files: { att_2: PDF(EICAR) }, env: { ENGINEERING_ALERT_WEBHOOK_URL: "https://alerts.example/hook" } });
+    await handleReceiveRequest(await signed(toConversation(files)), t.deps);
+    const text = t.logs.join("\n");
+    for (const secret of ["priya", "trinet.example", "Harbor Street", "proposal.pdf", "invoice.pdf", "Proposal attached", "reyes"]) expect(text).not.toContain(secret);
+    expect(t.logs.length).toBeGreaterThan(1);
+  });
+
+  it("has the provider retry when a scanner that was reached can't answer, as PEO mail does (catches: a contact's file left unscanned for good)", async () => {
+    const t = setup({ recorded: conversationRecorded, attachments: [att("att_1")], scannerDown: true });
+    const res = await handleReceiveRequest(await signed(toConversation([att("att_1")])), t.deps);
+    expect(res.status).toBe(500);
+    expect(t.uploads).toEqual([]);
+    expect(t.calls("finish_conversation_attachment")).toEqual([]);
+    expect(t.logs).toContain(`MAIL_ATTACHMENT_RETRY: conversation_message=${CONV_MESSAGE} pending=1; the provider will retry`);
   });
 });
 

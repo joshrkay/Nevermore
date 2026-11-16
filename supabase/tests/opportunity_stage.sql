@@ -168,9 +168,32 @@
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
 
 SET client_min_messages = notice;
@@ -336,8 +359,8 @@ BEGIN
   PERFORM pg_temp.intake('i1', 'acme');
   o_intake := pg_temp.opportunity('o_intake', 'a1', 'acme_owner', 'i1');
   PERFORM pg_temp.is((SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'opportunities' AND column_name IN ('lost_at', 'lost_by', 'lost_reason')), 'lost_at,lost_by,lost_reason',
-    'the opportunity keeps lost_at and lost_by, and the lost reason CRM-O1.3a added (it is loaded here)');
+    WHERE table_schema = 'public' AND table_name = 'opportunities' AND column_name IN ('lost_at', 'lost_by', 'lost_reason', 'lost_note')), 'lost_at,lost_by,lost_note,lost_reason',
+    'the opportunity keeps lost_at and lost_by, and (from CRM-O1.3, the won/lost migration) also carries the lost reason and its note');
   PERFORM pg_temp.is(public.opportunity_stage(o_open), 'qualifying', 'no intake and not marked lost is Qualifying');
   UPDATE public.opportunities SET lost_at = now(), lost_by = pg_temp.id('acme_agent') WHERE id = o_lost;
   PERFORM pg_temp.is(public.opportunity_stage(o_lost), 'lost', 'no intake, marked lost: Lost');
@@ -407,14 +430,26 @@ BEGIN
   INSERT INTO public.submission_status_history (session_id, from_status, to_status) VALUES (pg_temp.id(intake), from_status, to_status);
 END $$;
 
--- An intake of a firm at Ready for market, certified as far as the pipeline is concerned, with its opportunity.
+-- The employer's authorization of a PEO (M-1.1, 20261122100000), written as the superuser so the sends below are allowed; the PEO is listed first if
+-- it is not (Paychex is not one of the five).
+CREATE FUNCTION pg_temp.authorize(sid uuid, peo text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO public.peos (name) SELECT peo WHERE NOT EXISTS (SELECT 1 FROM public.peos p WHERE lower(p.name) = lower(peo));
+  INSERT INTO public.peo_authorizations (session_id, peo_id, peo_name, authorized, wording_version, wording_text, signed_by)
+  SELECT sid, p.id, p.name, true, public.peo_authorization_version(), 'I authorize ' || p.name || '.', s.user_id
+  FROM public.peos p, public.chamber_sessions s WHERE lower(p.name) = lower(peo) AND s.id = sid;
+END $$;
+
+-- An intake of a firm at Ready for market, certified as far as the pipeline is concerned, with its opportunity, and the PEOs this test sends to
+-- authorized by its employer.
 CREATE FUNCTION pg_temp.ready(n text, firm text, p_account text DEFAULT 'a1') RETURNS uuid LANGUAGE plpgsql AS $$
-DECLARE sid uuid := pg_temp.intake(n, firm);
+DECLARE sid uuid := pg_temp.intake(n, firm); peo text;
 BEGIN
   PERFORM pg_temp.fmove(n, 'submitted');
   PERFORM pg_temp.fmove(n, 'under_review');
   PERFORM pg_temp.fmove(n, 'ready_for_market');
   PERFORM pg_temp.opportunity('o_' || n, p_account, 'acme_owner', n);
+  FOREACH peo IN ARRAY ARRAY['TriNet', 'Justworks', 'Insperity', 'Paychex'] LOOP PERFORM pg_temp.authorize(sid, peo); END LOOP;
   RETURN sid;
 END $$;
 

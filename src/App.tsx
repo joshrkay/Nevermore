@@ -27,12 +27,17 @@ const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 // The firm's console is only for its members; keep it out of the prospect's bundle.
 const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
 const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
+const BundleLinkPage = lazy(() => import("./pages/BundleLinkPage"));
+const FileLinkPage = lazy(() => import("./pages/FileLinkPage"));
 const SecondFactorPage = lazy(() => import("./pages/SecondFactorPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
 const AccountsPage = lazy(() => import("./pages/accounts/AccountsPage"));
+const LeadsPage = lazy(() => import("./pages/leads/LeadsPage"));
+const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
+const LeadPage = lazy(() => import("./pages/leads/LeadPage"));
 const OpportunityPage = lazy(() => import("./pages/opportunities/OpportunityPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
@@ -76,6 +81,9 @@ const AppRoutes = () => (
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
                 <Route path="/privacy" element={<PrivacyPage />} />
                 <Route path="/terms" element={<TermsPage />} />
+                {/* The bundle link a PEO opens (ADR 0003): no sign-in, the edge function checks the token. */}
+                <Route path="/b/:token" element={<BundleLinkPage />} />
+                <Route path="/f" element={<FileLinkPage />} />
                 <Route path="/manuscript" element={<ManuscriptPage />} />
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 {/* A submission by its File ID; row security decides who may read it. */}
@@ -86,6 +94,9 @@ const AppRoutes = () => (
                 <Route element={<RequireFirm><WorkspaceShell /></RequireFirm>}>
                   <Route path="/advisor" element={<AdvisorDashboardPage />} />
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
+                  <Route path="/inbox" element={<InboxPage />} />
+                  <Route path="/leads" element={<LeadsPage />} />
+                  <Route path="/leads/:id" element={<LeadPage />} />
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/contacts/:id" element={<ContactPage />} />

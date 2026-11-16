@@ -60,7 +60,7 @@ const linkNames = () => within(menu()).getAllByRole("link").map((l) => l.getAttr
 beforeEach(() => {
   clearMyFirms();
   clearOwnedFirms();
-  counts.mockReset().mockResolvedValue({ quotes: 4, inbox: 2 });
+  counts.mockReset().mockResolvedValue({ quotes: 4, inbox: 2, leads: 3 });
   api.fetchMyFirms.mockReset().mockResolvedValue([alpha]);
   api.fetchOwnedFirms.mockReset().mockResolvedValue([]);
   api.fetchIsAdmin.mockReset().mockResolvedValue(false);
@@ -74,6 +74,8 @@ describe("the menu's counts", () => {
     await renderShell();
     expect(await seen("Quotes, 4 open")).toHaveTextContent("Quotes4");
     expect(link("Inbox, 2 with new mail")).toHaveTextContent("Inbox2");
+    // Open leads beside Leads (CRM-S1.1, CRM-L1.1a).
+    expect(link("Leads, 3 open")).toHaveTextContent("Leads3");
     // Only the items that have a count carry one.
     expect(link("Reports")).toHaveTextContent(/^Reports$/);
     expect(link("Settings")).toHaveTextContent(/^Settings$/);

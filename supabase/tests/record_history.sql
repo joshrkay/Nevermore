@@ -175,9 +175,32 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -666,12 +689,12 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history), before_rows, 'creating, answering and deleting an intake writes nothing to the history');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgrelid = 'public.chamber_sessions'::regclass AND t.tgfoid = 'public.record_history_capture()'::regprocedure), 0::bigint,
     'the intake table has no history trigger');
-  PERFORM pg_temp.is((SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal), 'accounts,commission_payments,contacts,opportunities,placements,referral_partners,renewals',
-    'the only tables with the trigger are the ones that keep a history: accounts, commission payments, contacts, opportunities, placements, referral partners and renewals');
+  PERFORM pg_temp.is((SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal), 'accounts,commission_payments,contacts,leads,opportunities,placements,referral_partners,renewals',
+    'the only tables with the trigger are the ones that keep a history: accounts, commission payments, contacts, leads, opportunities, placements, referral partners and renewals');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND encode(t.tgargs, 'escape') ~ 'chamber_data'), 0::bigint, 'and no list names an intake''s answers');
   -- Nothing else writes the history: the only function that inserts into it is the capture trigger.
-  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,crm_merge_history,merge_accounts,record_history_capture',
-    'and only the capture trigger, the account labels'' trigger (CRM-S3.7b: a label is a row of its own table, not a column, so its change is written as the one field "labels") and the merge (CRM-S4.3b: it copies the removed record''s history, writes its own "merged" entry, and writes the one "labels" entry of the labels it brings) write a row');
+  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,crm_merge_history,lead_labels_history,merge_accounts,record_history_capture',
+    'and only the capture trigger, the account and lead labels'' triggers (CRM-S3.7b, CRM-L1.1b: a label is a row of its own table, not a column, so its change is written as the one field "labels") and the merge (CRM-S4.3b: it copies the removed record''s history, writes its own "merged" entry, and writes the one "labels" entry of the labels it brings) write a row');
   RAISE NOTICE 'record_history: an intake''s answers passed';
 END $$;
 

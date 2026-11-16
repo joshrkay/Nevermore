@@ -32,6 +32,7 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   proposed_start_on: null,
   admin_fee_pepm: null,
   note: null,
+  quoted_version: null,
   ...over,
 });
 
@@ -128,6 +129,18 @@ describe("QuoteRequestsPanel", () => {
     expect(within(screen.getByTestId("quote-request-7")).getByText("Sent v1, current v2")).toBeInTheDocument();
     expect(within(screen.getByTestId("quote-request-8")).queryByText(/current v/)).not.toBeInTheDocument();
     expect(within(screen.getByTestId("quote-request-9")).queryByText(/current v/)).not.toBeInTheDocument();
+  });
+
+  // M-2.3. Break caught: a quote given on the version the PEO held read as answering the newer version sent since, or the mark left on once the
+  // advisor recorded the PEO's new answer.
+  it("marks a quote as given on the older version until the advisor records a new answer", () => {
+    const quoted = { status: "quoted", quote_received_on: "2026-11-14", admin_fee_pepm: 120 } as const;
+    panel({
+      currentVersion: 2,
+      requests: [request({ ...quoted, sent_version: 2, quoted_version: 1 }), request({ ...quoted, id: 8, peo_name: "Justworks", sent_version: 2, quoted_version: 2 })],
+    });
+    expect(within(screen.getByTestId("quote-request-7")).getByText("Quote given on version 1; version 2 sent since")).toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-8")).queryByText(/Quote given on version/)).not.toBeInTheDocument();
   });
 
   it("records a send to a PEO from the catalog, or one typed in, on the date given", async () => {
@@ -320,6 +333,15 @@ describe("QuoteRequestsPanel", () => {
       expect.stringContaining("Status: — → Waiting"),
     ]);
     expect(within(history).getAllByText(/adv@example\.com/)).toHaveLength(3);
+  });
+
+  // Break caught (M-2.4): a withdrawal's reason, which only advisors see, shown as its stored code, or not shown at all.
+  it("shows why a PEO was withdrawn in the change log, in words", () => {
+    panel({ events: [event({ id: 6, field: "withdrawn_reason", old_value: null, new_value: "employer_went_elsewhere" })] });
+    const history = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet history" });
+    expect(within(history).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      expect.stringContaining("Why withdrawn: — → The employer went elsewhere"),
+    ]);
   });
 
   it("drops the fee and dates typed for a quote when the answer is changed to a decline", async () => {

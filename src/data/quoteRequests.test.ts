@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, quoteNoteKindLabel, quoteReplyDomain, replyAddress } from "./quoteRequests";
+import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
 
 describe("the receiving subdomain for reply addresses", () => {
   it("is off unless a subdomain is set", () => {
@@ -31,6 +31,12 @@ describe("a quote request's change log", () => {
     expect(describeQuoteRequestEvent({ field: "note_kind", old_value: "call", new_value: "portal_entry" })).toBe("Note kind: Call → Portal entry");
     expect(describeQuoteRequestEvent({ field: "note_noted_on", old_value: "2026-11-09", new_value: "2026-11-08" })).toBe("Note date: 2026-11-09 → 2026-11-08");
     expect(describeQuoteRequestEvent({ field: "note_body", old_value: "A", new_value: "B" })).toBe("Note text: A → B");
+  });
+
+  // Catches: a bundle link issued or revoked (slice 6.6b) shown by its column name, or with an empty "before" arrow that reads as a change.
+  it("describes a bundle link being issued and revoked in words", () => {
+    expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Issued for version 3" })).toBe("Bundle link issued for version 3");
+    expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Revoked: newer_version" })).toBe("Bundle link revoked: a newer version was sent");
   });
 
   it("describes a reply address being issued and reissued", () => {
@@ -66,5 +72,28 @@ describe("held mail", () => {
     expect(heldDaysLeft("2026-11-10T00:00:00Z", now)).toBe(29);
     expect(heldDaysLeft("2026-10-13T00:00:00Z", now)).toBe(1);
     expect(heldDaysLeft("2026-09-01T00:00:00Z", now)).toBe(0);
+  });
+});
+
+// M-2.3: which PEOs are offered the update, as the queue counts one holding an older version (an open quote request, sent or quoted).
+describe("the update a PEO is offered", () => {
+  // Break caught: no update offered to a PEO that quoted on the older version, or one offered to a PEO that declined, was withdrawn, never had the
+  // bundle, or already holds the latest.
+  it("is the version a PEO still open on the submission holds, when it is older than the latest certified", () => {
+    expect(updateFrom({ status: "sent", sent_version: 2 }, 3)).toBe(2);
+    expect(updateFrom({ status: "quoted", sent_version: 1 }, 3)).toBe(1);
+    expect(updateFrom({ status: "sent", sent_version: 3 }, 3)).toBeNull();
+    expect(updateFrom({ status: "declined", sent_version: 2 }, 3)).toBeNull();
+    expect(updateFrom({ status: "closed", sent_version: 2 }, 3)).toBeNull();
+    expect(updateFrom({ status: "sent", sent_version: null }, 3)).toBeNull();
+    expect(updateFrom(undefined, 3)).toBeNull();
+    expect(updateFrom({ status: "sent", sent_version: 2 }, null)).toBeNull();
+  });
+});
+
+// M-2.3. Break caught: the change log naming the new column by its database name when a new answer moves the version a quote was given on.
+describe("the version a quote was given on, in the change log", () => {
+  it("is named in words", () => {
+    expect(describeQuoteRequestEvent({ field: "quoted_version", old_value: "1", new_value: "2" })).toBe("Quote given on version: 1 → 2");
   });
 });

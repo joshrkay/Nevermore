@@ -47,6 +47,17 @@ describe("security headers (vercel.json)", () => {
     expect(header("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
   });
 
+  // Catches: the bundle link page (/b/<token>, ADR 0003) sending its address, token and all, in the Referer to a site it links to, or a shared
+  // cache keeping a copy of it.
+  it("sends no referrer from the bundle link page and lets no cache keep it", () => {
+    const path = "/b/Abc123_-Abc123_-Abc123_-Abc123_-Abc123_-xyz";
+    const matching = config.headers.filter((rule) => new RegExp(`^${rule.source}$`).test(path));
+    // Vercel applies every matching rule in order, so for one header the last match is what is sent.
+    const sent = (name: string) => matching.flatMap((r) => r.headers).filter((h) => h.key === name).at(-1)?.value;
+    expect(sent("Referrer-Policy")).toBe("no-referrer");
+    expect(sent("Cache-Control")).toBe("no-store");
+  });
+
   it("still caches the hashed assets for a year", () => {
     const assets = config.headers.find((rule) => rule.source === "/assets/(.*)");
     expect(assets?.headers).toContainEqual({ key: "Cache-Control", value: "public, max-age=31536000, immutable" });

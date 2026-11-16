@@ -37,8 +37,21 @@ const api = {
   correctQuoteRequestNote: vi.fn(),
   reissueQuoteRequestAddress: vi.fn(),
   recordActivity: vi.fn(),
+  fetchMyMailbox: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// Sending the bundle to a PEO (M-2.1): the send's steps and the composer's read, and the bundle link the send issues (6.6b).
+const peoSend = { loadPeoSendContext: vi.fn(), sendToPeo: vi.fn() };
+vi.mock("@/lib/peoSendApi", () => peoSend);
+// Following up and withdrawing (M-2.4), and the withdrawal offered with Won, Lost or Archived.
+const peoFollowUp = { followUpPeo: vi.fn(), withdrawFromPeo: vi.fn(), closeSubmissionAndWithdraw: vi.fn() };
+vi.mock("@/lib/peoFollowUpApi", () => peoFollowUp);
+const issueBundleLink = vi.fn();
+vi.mock("@/lib/bundleLink", () => ({ issueBundleLink: (...a: unknown[]) => issueBundleLink(...a), supabaseBundleLinkDeps: async () => ({}) }));
+vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: vi.fn() }));
+// Which PEOs the employer authorized (M-1.1): TriNet may receive the packet, Insperity was never authorized.
+const loadPeoAuthorizations = vi.fn(async (..._a: unknown[]) => [] as unknown[]);
+vi.mock("@/lib/peoAuthorizationsApi", () => ({ loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a) }));
 // The account that holds the submission (D-213), as the database answers it: its id and name, or null.
 const submissionAccount = vi.fn();
 vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
@@ -979,7 +992,9 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.addNote).toHaveBeenCalledWith("s1", "Called the CFO"));
   });
 
-  describe("a save that fails (CRM-S2.3)", () => {
+  // Each renders the whole page and scans it by role: about 2 s alone, past the 5 s default under the full parallel run once each PEO card has its
+  // Send button (6.6), so these have more time.
+  describe("a save that fails (CRM-S2.3)", { timeout: 20_000 }, () => {
     // Catches: a failed save that says nothing beside the button (a toast that is gone in seconds), says the network's own words, clears what the person typed, or
     // leaves focus on the page where the button was.
     it("keeps a note's text, says in plain words beside its button that it was not saved, and puts focus back on the button", async () => {
@@ -1647,6 +1662,31 @@ describe("AdvisorSubmissionPage", () => {
     invalidate.mockRestore();
   });
 
+  // M-1.1, D-608. Break caught: the advisor can't see who may receive the packet on the submission's page; asking the employer to add a PEO names
+  // answers (so it reads as a question about the intake), or sends without the advisor reading it.
+  it("shows who may receive the packet, and asks the employer to add a PEO through Ask the prospect, naming no answers", async () => {
+    loadPeoAuthorizations.mockResolvedValue([
+      { peo: "Insperity", state: "not_asked", signedAt: null, wordingVersion: null },
+      { peo: "TriNet", state: "authorized", signedAt: "2026-11-14T10:00:00Z", wordingVersion: "2026-11-draft-1" },
+    ]);
+    // An answer marked Needs follow-up, which a plain request would start with: the ask to add a PEO must name none.
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "ready_for_market",
+      reviews: { pay_frequency: {
+        field: "pay_frequency", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+      } } as SubmissionDetail["reviews"],
+    }));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Who may receive the packet" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Ask the employer to add Insperity" }));
+    const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    expect(message.value).toMatch(/^We'd like to send your packet to Insperity\./);
+    expect(api.requestInformation).not.toHaveBeenCalled();
+    api.requestInformation.mockResolvedValue(undefined);
+    fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", message.value, [], []));
+  });
+
   it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {
     api.loadSubmission.mockResolvedValue(detail({
       pipelineStatus: "sent_to_carrier",
@@ -1901,7 +1941,7 @@ describe("AdvisorSubmissionPage", () => {
       expect(justworks).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
       expect(justworks).toHaveTextContent("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
       // Complete: its one main action is the bundle, beside its files.
-      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Download Workers' compensation application data", "Download bundle"]);
+      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Download Workers' compensation application data", "Download bundle", "Send to Justworks"]);
     });
 
     it("turns what a PEO still needs into a draft in Ask the prospect, for the advisor to edit and send: the click sends nothing", async () => {
@@ -2179,6 +2219,117 @@ describe("AdvisorSubmissionPage", () => {
         await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
         expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
         await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      // Catches (M-2.1): no way to send a PEO its bundle from the submission page, a send of another PEO's bundle or another version, or a link issued
+      // for anything but the quote request the send made, with that PEO's own plan and the certified answers.
+      it("sends a PEO its bundle from its card, issuing the link from that PEO's plan for the quote request the send made", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        peoSend.sendToPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 41 });
+        issueBundleLink.mockResolvedValue({ url: "https://app.example/b/x", expiresAt: "2026-12-16T00:00:00Z", version: 1, notIncluded: [], id: 3, token: "t" });
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Send to Justworks" }));
+        const form = await within(justworks).findByRole("form", { name: "Send to Justworks" });
+        fireEvent.change(within(form).getByLabelText("Other addresses"), { target: { value: "quotes@justworks.example" } });
+        fireEvent.change(within(form).getByLabelText("Your note"), { target: { value: "Here it is." } });
+        fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+        await waitFor(() => expect(peoSend.sendToPeo).toHaveBeenCalledTimes(1));
+        const sent = peoSend.sendToPeo.mock.calls[0][0] as { sessionId: string; peo: string; to: string[]; issueLink: (id: number) => Promise<unknown> };
+        expect([sent.sessionId, sent.peo, sent.to]).toEqual(["s1", "Justworks", ["quotes@justworks.example"]]);
+        await expect(sent.issueLink(7)).resolves.toEqual({ id: 3, token: "t" });
+        const [input] = issueBundleLink.mock.calls[0] as [{ quoteRequestId: number; plan: { peo: string; version: number }; answers: { version: number } }];
+        expect([input.quoteRequestId, input.plan.peo, input.plan.version, input.answers.version]).toEqual([7, "Justworks", 1, 1]);
+      });
+
+      // Catches (M-2.3): a PEO holding an older certified version left with only a first send on its card, so the update is never offered there, or
+      // the offer made to a PEO that already holds the latest.
+      it("offers the update on the card of a PEO holding an older version, and a plain send where it holds the latest", async () => {
+        peoSend.sendToPeo.mockClear();
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 2, submission: { ...detail().submission!, version: 2 },
+          quoteRequests: [
+            { id: 7, session_id: "s1", peo_name: "Justworks", status: "quoted", sent_version: 1, sent_on: "2026-11-02", quoted_version: 1,
+              quote_received_on: "2026-11-05", quote_expires_on: "2026-12-05", proposed_start_on: null, admin_fee_pepm: 110, note: null },
+            { id: 8, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 2, sent_on: "2026-11-10", quoted_version: null,
+              quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null },
+          ],
+        }));
+        renderPage();
+        const card = async (name: string) => (await within(await panel()).findByRole("heading", { name })).closest("article")!;
+        const justworks = await card("Justworks");
+        expect(within(justworks).getByText("Justworks has version 1. Version 2 is certified.")).toBeInTheDocument();
+        expect(within(justworks).getByRole("button", { name: "Send version 2 to Justworks" })).toBeInTheDocument();
+        const trinet = await card("TriNet");
+        expect(within(trinet).getByRole("button", { name: "Send to TriNet" })).toBeInTheDocument();
+        expect(peoSend.sendToPeo).not.toHaveBeenCalled();
+      });
+
+      // Catches (M-2.2): no way to send several PEOs at once from the submission page, or one offered over PEOs the panel doesn't list (one with
+      // no profile, one no longer listed), or ticking a PEO that isn't ready (TriNet misses answers and a document and fails its headcount check).
+      it("offers to send several PEOs at once, each listed PEO with a profile, the ready ones ticked", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        renderPage();
+        await within(await panel()).findByRole("heading", { name: "Justworks" });
+        fireEvent.click(within(await panel()).getByRole("button", { name: "Send to several PEOs" }));
+        const several = await within(await panel()).findByRole("region", { name: "Send to several PEOs" });
+        expect(within(several).getAllByRole("checkbox").map((b) => [b.getAttribute("aria-label") ?? b.closest("label")!.textContent, (b as HTMLInputElement).checked])).toEqual([
+          ["Justworks", true],
+          ["TriNet", false],
+        ]);
+      });
+
+      // Catches (M-2.4): no way to follow up with or withdraw from a PEO the product sent to, a follow-up to people the PEO was never sent to, or its
+      // fresh link issued from another PEO's plan or for another quote request.
+      it("offers Follow up and Withdraw on the card of a PEO sent through the product, the follow-up's link from that PEO's plan", async () => {
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 1, submission: { ...detail().submission!, version: 1 },
+          quoteRequests: [{ id: 7, session_id: "s1", peo_name: "Justworks", status: "sent", sent_version: 1, sent_on: "2026-11-03",
+            quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null, withdrawn_reason: null }],
+          quoteRequestMessages: [{ id: 41, quote_request_id: 7, session_id: "s1", direction: "sent", status: "sent", from_address: "adv@example.com",
+            to_addresses: ["quotes@justworks.example"], subject: "Acme: EAA-1, version 1", recorded_at: "2026-11-03T10:00:00Z" }] as unknown as SubmissionDetail["quoteRequestMessages"],
+        }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoFollowUp.followUpPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 52 });
+        issueBundleLink.mockResolvedValue({ url: "https://app.example/b/x", expiresAt: "2026-12-16T00:00:00Z", version: 1, notIncluded: [], id: 4, token: "u" });
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).getByRole("button", { name: "Withdraw from Justworks" })).toBeInTheDocument();
+        fireEvent.click(within(justworks).getByRole("button", { name: "Follow up with Justworks" }));
+        const form = await within(justworks).findByRole("form", { name: "Follow up with Justworks" });
+        expect(within(form).getByLabelText("To")).toHaveValue("quotes@justworks.example");
+        fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+        await waitFor(() => expect(peoFollowUp.followUpPeo).toHaveBeenCalledTimes(1));
+        const sent = peoFollowUp.followUpPeo.mock.calls[0][0] as { quoteRequestId: number; issueLink: (id: number) => Promise<unknown> };
+        expect(sent.quoteRequestId).toBe(7);
+        await expect(sent.issueLink(7)).resolves.toEqual({ id: 4, token: "u" });
+        const [input] = issueBundleLink.mock.calls[0] as [{ quoteRequestId: number; plan: { peo: string; version: number } }];
+        expect([input.quoteRequestId, input.plan.peo, input.plan.version]).toEqual([7, "Justworks", 1]);
+      });
+
+      // Catches (M-2.4): the console's stage control archiving a submission with no withdrawal offered to the PEO the product sent it to. (Won and Lost are marked on
+      // the opportunity, D-470, whose dialog has no withdrawal yet: D-1717, D-1719.)
+      it("offers the withdrawal when the status is changed to Archived, and sends it with the move", async () => {
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 1, submission: { ...detail().submission!, version: 1 },
+          quoteRequests: [{ id: 7, session_id: "s1", peo_name: "Justworks", status: "sent", sent_version: 1, sent_on: "2026-11-03",
+            quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null, withdrawn_reason: null }],
+          quoteRequestMessages: [{ id: 41, quote_request_id: 7, session_id: "s1", direction: "sent", status: "sent", from_address: "adv@example.com",
+            to_addresses: ["quotes@justworks.example"], subject: "Acme: EAA-1, version 1", recorded_at: "2026-11-03T10:00:00Z" }] as unknown as SubmissionDetail["quoteRequestMessages"],
+        }));
+        peoFollowUp.closeSubmissionAndWithdraw.mockResolvedValue({ messageIds: [52] });
+        renderPage();
+        const status = await panelOf("Status");
+        fireEvent.change(within(status).getByLabelText("Change status to"), { target: { value: "archived" } });
+        expect(within(status).getByRole("checkbox", { name: "Send a withdrawal to Justworks" })).toBeChecked();
+        fireEvent.click(within(status).getByRole("button", { name: "Update status" }));
+        await waitFor(() => expect(peoFollowUp.closeSubmissionAndWithdraw).toHaveBeenCalledTimes(1));
+        expect(peoFollowUp.closeSubmissionAndWithdraw.mock.calls[0][0]).toMatchObject({ sessionId: "s1", status: "archived", subject: "Re: Acme: EAA-1, version 1" });
+        expect(api.setStatus).not.toHaveBeenCalled();
       });
 
       // Catches: a send recorded from the bundle's "Sent this to ...?" question leaving the Quotes count one short for a minute.

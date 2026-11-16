@@ -13,8 +13,8 @@ import {
   type PeoCompletenessEntry,
 } from "@/data/peoCompleteness";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
-import { formatDay } from "@/data/quoteRequests";
-import { documentFile, type QuoteRequestRow } from "@/lib/advisorApi";
+import { formatDay, updateFrom } from "@/data/quoteRequests";
+import { documentFile, type QuoteRequestMessageRow, type QuoteRequestRow } from "@/lib/advisorApi";
 import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import type { PipelineStatus } from "@/data/advisor";
 import type { ChamberSubmission } from "@/data/manuscript";
@@ -22,6 +22,10 @@ import BundleDownload from "@/components/BundleDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
 import { PanelFailed, PlaceholderLines, RecordLoading } from "@/components/workspace/states";
 import RecordSendPrompt from "./RecordSendPrompt";
+import FollowUpOrWithdraw from "./FollowUpOrWithdraw";
+import SendToPeo from "./SendToPeo";
+import SendToSeveralPeos from "./SendToSeveralPeos";
+import { peoLinkIssuer } from "@/lib/peoLinkIssuer";
 import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
 import CensusDownload from "@/components/CensusDownload";
@@ -54,6 +58,8 @@ interface PeoNeedsPanelProps {
   stage: PipelineStatus;
   /** After a send is recorded from a bundle's prompt. */
   onSendRecorded: () => void;
+  /** The PEO threads' mail: a PEO sent to through the product can be followed up or withdrawn from on its card (M-2.4). */
+  mail?: readonly QuoteRequestMessageRow[];
 }
 
 const chip = "inline-flex items-center text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -91,7 +97,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   fileId: string;
   companyName: string;
   builtFrom: BuiltFrom;
-  bundle: Pick<PeoNeedsPanelProps, "catalog" | "submission" | "sessionId" | "stage" | "onSendRecorded">;
+  bundle: Pick<PeoNeedsPanelProps, "catalog" | "submission" | "sessionId" | "stage" | "onSendRecorded" | "mail">;
 }) => {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -104,6 +110,10 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   const supplement = supplementFor(peo, { certified: certified.intake.extraAnswers, fileId, version: certified.version, companyName });
   // The same for every PEO: no profile asks anything else of it.
   const application = workersCompApplication({ intake: certified.intake, fileId, version: certified.version, changedSince: certified.changedSince });
+  // The newest message the product sent on this PEO's thread: who a follow-up or a withdrawal goes to, and the subject it answers.
+  const lastSent = sent
+    ? (bundle.mail ?? []).filter((m) => m.quote_request_id === sent.id && m.direction === "sent").sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0]
+    : undefined;
   return (
     <article aria-labelledby={`${id}-name`} className="bg-card border border-border rounded-xl p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -182,6 +192,45 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           </div>
         )}
       </div>
+      {/* M-2.1: the bundle sent from the advisor's own mailbox, by link, on this PEO's quote request. The link is issued from the same plan as the
+          download, for the quote request the send made, and carries the certified answers as JSON. */}
+      {bundle.submission && (
+        <SendToPeo
+          sessionId={bundle.sessionId}
+          peo={peo.name}
+          companyName={companyName}
+          fileId={fileId}
+          version={certified.version}
+          updateFrom={updateFrom(sent, certified.version)}
+          openItems={c.toQuote.map((i) => i.label)}
+          returnTo={`/advisor/submissions/${bundle.sessionId}`}
+          issueLink={peoLinkIssuer({
+            audience: "advisor", peo, catalog: bundle.catalog, intake: certified.intake, documents: certified.documents,
+            submission: bundle.submission, fileId, version: certified.version, changedSince: certified.changedSince, today,
+          })}
+          onSent={bundle.onSendRecorded}
+          onSendYourself={() => setAsking(true)}
+        />
+      )}
+      {/* M-2.4: on the PEO's own thread, once the product has sent it something and while its quote request is open. */}
+      {bundle.submission && sent && (sent.status === "sent" || sent.status === "quoted") && lastSent && (
+        <FollowUpOrWithdraw
+          quoteRequestId={sent.id}
+          peo={peo.name}
+          companyName={companyName}
+          fileId={fileId}
+          version={sent.sent_version}
+          certifiedVersion={certified.version}
+          sentOn={sent.sent_on}
+          lastSent={{ to: lastSent.to_addresses ?? [], subject: lastSent.subject }}
+          returnTo={`/advisor/submissions/${bundle.sessionId}`}
+          issueLink={peoLinkIssuer({
+            audience: "advisor", peo, catalog: bundle.catalog, intake: certified.intake, documents: certified.documents,
+            submission: bundle.submission, fileId, version: certified.version, changedSince: certified.changedSince, today,
+          })}
+          onDone={bundle.onSendRecorded}
+        />
+      )}
       {asking && (
         <RecordSendPrompt
           sessionId={bundle.sessionId}
@@ -203,9 +252,9 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
  * apart, what it needs only before signing, with its eligibility checks as warnings beside it, and drafts an
  * information request from what is missing. Nothing here ranks a PEO or sends anything.
  */
-const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom, submission, sessionId, stage, onSendRecorded }: PeoNeedsPanelProps) => {
+const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom, submission, sessionId, stage, onSendRecorded, mail }: PeoNeedsPanelProps) => {
   const today = localToday();
-  const bundle = { catalog, submission, sessionId, stage, onSendRecorded };
+  const bundle = { catalog, submission, sessionId, stage, onSendRecorded, mail };
   const body = () => {
     if (!certified) return <p className="text-sm text-muted-foreground">Available once the prospect has certified their intake: each PEO's list is built from what they certified.</p>;
     if (certified.cantTell) {
@@ -253,6 +302,19 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
             : `From version ${certified.version ?? "on record"}, the prospect's last certification.`}{" "}
           Alphabetical in each group. Nothing here is a ranking.
         </p>
+        {/* M-2.2: one note, each chosen PEO sent its own message, link and open items by the same send as its card's. */}
+        {submission && (
+          <SendToSeveralPeos
+            sessionId={sessionId}
+            certified={certified}
+            catalog={catalog}
+            submission={submission}
+            fileId={fileId}
+            companyName={companyName}
+            returnTo={`/advisor/submissions/${sessionId}`}
+            onSent={onSendRecorded}
+          />
+        )}
         {group("Complete", groups.complete)}
         {group("Something missing", groups.missing)}
         <div className="space-y-1">

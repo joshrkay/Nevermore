@@ -425,9 +425,32 @@ END $$;
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried
@@ -472,7 +495,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT string_agg(p.oid::regprocedure::text, ' ' ORDER BY p.oid::regprocedure::text) FROM pg_proc p
     WHERE p.pronamespace = 'public'::regnamespace AND (p.proname LIKE 'export%' OR p.proname IN ('signed_in_within', 'caller_last_sign_in_at'))),
     'caller_last_sign_in_at() export_limits() export_rows(uuid,text,jsonb,jsonb) export_source_accounts(uuid,jsonb,jsonb,integer) export_source_firm_activity(uuid,jsonb,jsonb,integer) '
-    'export_source_referral_partners(uuid,jsonb,jsonb,integer) export_table_registry()', 'only Epic 3''s export functions are left');
+    'export_source_leads(uuid,jsonb,jsonb,integer) export_source_referral_partners(uuid,jsonb,jsonb,integer) export_table_registry()', 'only Epic 3''s export functions are left (and the leads'' reader, CRM-L1.1b)');
 END $$;
 
 -- Break caught: the carried entries can't be read or exported the way Epic 3's own are (the count not returned, or not exported).

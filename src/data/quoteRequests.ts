@@ -107,11 +107,46 @@ export function olderVersionNote(
   return `Sent v${r.sent_version}, current v${currentVersion}`;
 }
 
+/**
+ * The version a PEO holds when it is offered the update (M-2.3): a quote request still open on the submission (sent or quoted, as the queue's "A PEO
+ * has an older version" counts it) that was sent an older version than the latest certified. Null when there is no update to offer.
+ */
+export function updateFrom(r: { status: string; sent_version: number | null } | undefined, currentVersion: number | null): number | null {
+  if (!r || (r.status !== "sent" && r.status !== "quoted")) return null;
+  if (r.sent_version === null || currentVersion === null || r.sent_version >= currentVersion) return null;
+  return r.sent_version;
+}
+
+/**
+ * "Quote given on version 1; version 2 sent since" (M-2.3): a quoted request's quote was given on an older version than the one sent since, until the
+ * advisor records the PEO's new answer (quote_requests.quoted_version, 20261122180000). Null otherwise.
+ */
+export function quotedOnOlderNote(r: { status: string; sent_version: number | null; quoted_version?: number | null }): string | null {
+  if (r.status !== "quoted" || r.quoted_version == null || r.sent_version === null || r.quoted_version >= r.sent_version) return null;
+  return `Quote given on version ${r.quoted_version}; version ${r.sent_version} sent since`;
+}
+
+/** Why a PEO was withdrawn (quote_requests.withdrawn_reason), for advisors only; the database's list, compared by schemaSync.test.ts. */
+export const WITHDRAWAL_REASONS = [
+  // sync:begin withdrawal_reasons
+  "employer_went_elsewhere", "prospect_withdrew_peo", "peo_not_a_fit", "other",
+  // sync:end withdrawal_reasons
+] as const;
+export type WithdrawalReason = (typeof WITHDRAWAL_REASONS)[number];
+
+export const WITHDRAWAL_REASON_LABELS: Record<WithdrawalReason, string> = {
+  employer_went_elsewhere: "The employer went elsewhere",
+  prospect_withdrew_peo: "The prospect withdrew this PEO",
+  peo_not_a_fit: "The PEO is not a fit",
+  other: "Other",
+};
+
 const FIELD_NAMES: Record<string, string> = {
   status: "Status",
   peo_name: "PEO",
   sent_on: "Sent on",
   sent_version: "Version sent",
+  quoted_version: "Quote given on version",
   quote_received_on: "Received on",
   quote_expires_on: "Expires on",
   proposed_start_on: "Proposed start",
@@ -121,6 +156,7 @@ const FIELD_NAMES: Record<string, string> = {
   note_kind: "Note kind",
   note_noted_on: "Note date",
   note_body: "Note text",
+  withdrawn_reason: "Why withdrawn",
 };
 
 // A message moved on or off a thread (story M-3.3): the event names the message by id and carries nothing from it.
@@ -132,6 +168,7 @@ const MAIL_EVENT_LABELS: Record<string, string> = {
 const shown = (field: string, value: string | null) => {
   if (value === null) return "—";
   if (field === "note_kind") return quoteNoteKindLabel(value);
+  if (field === "withdrawn_reason" && value in WITHDRAWAL_REASON_LABELS) return WITHDRAWAL_REASON_LABELS[value as WithdrawalReason];
   return field === "status" && isQuoteRequestStatus(value) ? QUOTE_REQUEST_LABELS[value] : value;
 };
 
@@ -141,8 +178,26 @@ const shown = (field: string, value: string | null) => {
  */
 export const isChangeLogEvent = (e: { field: string }) => e.field !== "underwriter_question";
 
+// Why a bundle link stopped working (bundle_links.revoked_reason, 20261122110000), in words.
+const BUNDLE_LINK_REVOKED: Record<string, string> = {
+  replaced: "a new link replaced it",
+  newer_version: "a newer version was sent",
+  withdrawn: "the quote request was withdrawn",
+  submission_closed: "the submission was closed",
+  authorization_withdrawn: "the employer withdrew this PEO",
+  revoked_by_advisor: "revoked by an advisor",
+};
+
+/** "Issued for version 3" or "Revoked: <reason>", as the database logs a bundle link (slice 6.6b). */
+const describeBundleLinkEvent = (v: string) => {
+  const reason = /^Revoked: (\w+)$/.exec(v)?.[1];
+  if (reason) return `Bundle link revoked: ${BUNDLE_LINK_REVOKED[reason] ?? reason}`;
+  return `Bundle link ${v.charAt(0).toLowerCase()}${v.slice(1)}`;
+};
+
 /** One line for a recorded change to a quote request, or a correction to one of its notes. */
 export function describeQuoteRequestEvent(e: { field: string; old_value: string | null; new_value: string | null }): string {
+  if (e.field === "bundle_link") return describeBundleLinkEvent(e.new_value ?? "");
   if (e.field in MAIL_EVENT_LABELS) return `${MAIL_EVENT_LABELS[e.field]} (message ${e.new_value ?? "?"})`;
   return `${FIELD_NAMES[e.field] ?? e.field}: ${shown(e.field, e.old_value)} → ${shown(e.field, e.new_value)}`;
 }

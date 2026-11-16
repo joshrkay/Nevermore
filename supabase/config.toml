@@ -9,3 +9,13 @@ verify_jwt = false
 # the function checks the webhook's own signature (RESEND_INBOUND_WEBHOOK_SECRET) instead of a JWT.
 [functions.receive-mail]
 verify_jwt = false
+
+# The page a PEO opens from an advisor's send (/b/<token>, ADR 0003), with no sign-in: the function answers only a live link's
+# token, which it hashes before asking the database as the service role.
+[functions.bundle-link]
+verify_jwt = false
+
+# A file link on a message to a contact (/f#<token>, D-605), with no sign-in: the function answers only a live link's token, which it hashes before
+# asking the database as the service role.
+[functions.message-file]
+verify_jwt = false

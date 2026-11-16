@@ -53,6 +53,8 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
   };
   const { visible, quoted } = splitQuotedText(m.body_text ?? "");
   const byHand = m.direction === "sent_by_hand";
+  // Sent by the product through the advisor's own mailbox (M-2.1): it shows whether it went; no delivery or bounce is reported for it (ADR 0005).
+  const sentByUs = m.direction === "sent";
 
   const open = async (a: ThreadAttachment) => {
     setOpening(a.id);
@@ -71,15 +73,21 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {showPeo && <span className={`${badge} bg-foreground text-background font-semibold`}>{entry.peo}</span>}
-        <span className={`${badge} font-semibold ${byHand ? "bg-secondary/15 text-secondary" : m.is_automatic ? "bg-muted text-muted-foreground" : "bg-success/15 text-success"}`}>
-          {byHand ? "Sent by hand" : m.is_automatic ? "Automatic reply" : "Received"}
+        <span className={`${badge} font-semibold ${byHand || sentByUs ? "bg-secondary/15 text-secondary" : m.is_automatic ? "bg-muted text-muted-foreground" : "bg-success/15 text-success"}`}>
+          {sentByUs ? "Sent from the advisor's mailbox" : byHand ? "Sent by hand" : m.is_automatic ? "Automatic reply" : "Received"}
         </span>
+        {sentByUs && (
+          <span className={`${badge} font-semibold ${m.status === "failed" ? "bg-destructive/15 text-destructive" : "bg-muted"}`}>
+            {m.status === "failed" ? "Not sent" : m.status === "queued" ? "Queued" : "Sent"}
+          </span>
+        )}
         <span className="font-medium text-sm">{m.from_name ?? m.from_address}</span>
         {m.from_name && <span className="font-mono text-xs text-muted-foreground">{m.from_address}</span>}
         {m.new_sender && <span className={`${badge} bg-warning/15 text-warning font-semibold`}>New sender</span>}
         <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(entry.at)}</span>
       </div>
-      {byHand && m.to_addresses.length > 0 && <p className="text-xs text-muted-foreground">to {m.to_addresses.join(", ")}</p>}
+      {(byHand || sentByUs) && m.to_addresses.length > 0 && <p className="text-xs text-muted-foreground">to {m.to_addresses.join(", ")}</p>}
+      {sentByUs && m.status === "failed" && m.failure_reason && <p role="alert" className="text-xs text-destructive">{m.failure_reason}</p>}
       {m.subject && <p className="text-sm font-semibold">{m.subject}</p>}
       <p className="text-sm whitespace-pre-wrap break-words">{visible || "(no text)"}</p>
       {m.body_truncated && <p className="text-xs text-muted-foreground">This message was long, so only its first part is kept.</p>}
@@ -111,7 +119,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
           })}
         </ul>
       )}
-      {moving === "closed" ? (
+      {sentByUs ? null : moving === "closed" ? (
         <button onClick={() => setMoving("asking")} className="text-xs text-muted-foreground underline py-2">Not for this quote request? Move it off this thread</button>
       ) : (
         <div className="border border-border rounded-md p-3 space-y-2 text-sm">
@@ -152,6 +160,16 @@ const Entry = ({ entry, showPeo, prospectUserId, corrected, onMoved }: { entry: 
         </div>
         <p className="text-sm whitespace-pre-wrap break-words">{n.body}</p>
         {corrected && <p className="text-xs text-muted-foreground">Corrected: the earlier text is in the change log.</p>}
+      </div>
+    );
+  }
+  if (entry.kind === "download") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {peo}
+        <span className={`${badge} bg-muted font-semibold`}>Download</span>
+        <span>{`Downloaded ${entry.file}, by the bundle link.`}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(entry.at)}</span>
       </div>
     );
   }

@@ -18,10 +18,11 @@ import {
   YEAR_MAX,
   MONEY_MAX,
 } from "@/data/chamberValidation";
-import { FIELD_KINDS } from "@/data/provenance";
+import { FIELD_KINDS, FIELD_LABELS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
+import { PEO_AUTHORIZATION_VERSION, PEO_SEND_NOTICE } from "@/data/legalWording";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
@@ -33,8 +34,9 @@ import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
-import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES, WITHDRAWAL_REASONS } from "@/data/quoteRequests";
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
+import { MAIL_ADDRESS_PATTERN } from "../../supabase/functions/_shared/mailAddress";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
@@ -266,6 +268,12 @@ describe("server and client intake rules agree", () => {
     expect(counted).toEqual([...FUNNEL_STEPS]);
   });
 
+  // CRM-E1.2a (20261122090000): the one address rule. Break caught: the database takes a CC or a person's address that the send-mail
+  // function's message builder then refuses (a message queued that can never go), or the builder puts in a header what the database never checked.
+  it("holds the same address rule in the database and the message builder", () => {
+    expect(quoted(blocks("mail_address_pattern").join("\n"))).toEqual([MAIL_ADDRESS_PATTERN.source]);
+  });
+
   it("knows every kind of email the outbox holds, and which of them go to the prospect", () => {
     expect(quoted(blocks("outbox_kinds").join("\n")).sort()).toEqual(Object.keys(OUTBOX_KIND_LABELS).sort());
     expect(quoted(blocks("prospect_outbox_kinds").join("\n")).sort()).toEqual([...PROSPECT_KINDS].sort());
@@ -278,6 +286,11 @@ describe("server and client intake rules agree", () => {
   it("holds the same quote request statuses, and records sends at the same stages", () => {
     expect(quoted(blocks("quote_request_statuses").join("\n"))).toEqual([...QUOTE_REQUEST_STATUSES]);
     expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
+  });
+
+  // M-2.4 (20261122190000): why a PEO was withdrawn, the four the withdrawal form offers and the database accepts.
+  it("holds the same reasons a PEO is withdrawn for", () => {
+    expect(quoted(blocks("withdrawal_reasons").join("\n"))).toEqual([...WITHDRAWAL_REASONS]);
   });
 
   // The record of who did what (20261116160001): the kinds of entry the table accepts and the page names.
@@ -627,6 +640,24 @@ describe("server and client intake rules agree", () => {
   // A prospect agrees to the wording in src/data/intakeConsent.ts; the database refuses any other version.
   it("asks for agreement to the consent version the database requires", () => {
     expect(quoted(blocks("intake_consent_version").join("\n"))).toEqual([INTAKE_CONSENT_VERSION]);
+  });
+
+  // M-1.1: the employer authorizes a PEO under the wording in src/data/legalWording.ts; the database refuses any other version (EA005).
+  it("asks for authorization under the PEO authorization version the database requires", () => {
+    expect(quoted(blocks("peo_authorization_version").join("\n"))).toEqual([PEO_AUTHORIZATION_VERSION]);
+  });
+
+  // M-2.1, D-12: every message to a PEO carries the line in src/data/legalWording.ts; the database's copy (public.peo_send_notice) must be it, word for
+  // word, so the email says what the composer previews and counsel's text stays one change.
+  it("puts the legal-wording module's line on every message to a PEO", () => {
+    expect(quoted(blocks("peo_send_notice").join("\n"))).toEqual([PEO_SEND_NOTICE]);
+  });
+
+  // M-2.3, D-1612: an update names what changed by each answer's label, the one the advisor's field review shows (FIELD_LABELS); the database writes
+  // it, so its copy (public.intake_field_labels) must be the same labels in the same order. The census is counted, never named, so it is left out.
+  it("names what changed in an update by the labels the field review shows", () => {
+    const server = [...blocks("intake_field_labels").join("\n").matchAll(/\('(\w+)', '((?:[^']|'')+)'\)/g)].map((m) => [m[1], m[2].replace(/''/g, "'")]);
+    expect(server).toEqual(Object.entries(FIELD_LABELS).filter(([key]) => key !== "census"));
   });
 });
 

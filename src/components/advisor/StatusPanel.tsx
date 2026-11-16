@@ -11,7 +11,9 @@ import {
   prospectStatusAfter,
   type PipelineStatus,
 } from "@/data/advisor";
-import { setStatus, type StatusHistoryRow } from "@/lib/advisorApi";
+import { setStatus, type QuoteRequestMessageRow, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
+import { closingWithdrawalNote, peoNames, replySubject } from "@/data/peoFollowUp";
+import { closeSubmissionAndWithdraw } from "@/lib/peoFollowUpApi";
 import { getOpportunityOfSubmission } from "@/lib/opportunityPageApi";
 import { ConsoleCloseDialog } from "./ConsoleCloseDialog";
 import { PipelineBadge } from "./PipelineBadge";
@@ -26,6 +28,11 @@ interface StatusPanelProps {
   /** The prospect has certified it at least once. Until then it can only be archived. */
   certifiedOnce: boolean;
   history: StatusHistoryRow[];
+  /** The submission's quote requests and the PEO threads' mail: archiving it offers one withdrawal to each PEO still open that the product sent to (M-2.4). Won and Lost are marked on the opportunity (D-470, D-1717). */
+  quoteRequests?: readonly QuoteRequestRow[];
+  mail?: readonly QuoteRequestMessageRow[];
+  /** The company, which the withdrawal's default text names. */
+  companyName?: string;
   onChanged: () => void;
   /** An opportunity was won or lost from here: the page asks again what holds its outcome (the accounts table, the opportunity's own page, the submission's read) for this firm. */
   onOutcomeChanged?: (firmId: string) => void;
@@ -37,7 +44,7 @@ const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[
 const optionLabel = (current: PipelineStatus, s: PipelineStatus) =>
   current === "archived" && s === "submitted" ? `${PIPELINE_LABELS[s]} (reopen)` : PIPELINE_LABELS[s];
 
-const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, onChanged, onOutcomeChanged }: StatusPanelProps) => {
+const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, quoteRequests = [], mail = [], companyName = "this employer", onChanged, onOutcomeChanged }: StatusPanelProps) => {
   // Only the next steps from where the intake is now, as the database allows (one step at a time; a
   // never-certified intake can only be archived).
   const options = nextPipelineStatuses(status, certifiedOnce);
@@ -73,6 +80,14 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
     : lookup.state === "failed" ? "Couldn't read this submission's opportunity, so it can't be marked won or lost from here."
     : lookup.state === "none" ? "This submission's opportunity isn't one you can open (it may belong to an account you can't see), so it can't be marked won or lost from here. Ask its owner or an owner of the firm."
     : null;
+  // M-2.4: the PEOs an Archived move closes that the product wrote to (a send recorded by hand has no thread to answer), each told once, on its own thread.
+  // Won and Lost close on the opportunity (D-470), whose dialog does not offer the withdrawal yet (D-1717, D-1719).
+  const sentByUs = (q: QuoteRequestRow) => mail.filter((m) => m.quote_request_id === q.id && m.direction === "sent");
+  const stillOpen = next === "archived" ? quoteRequests.filter((q) => (q.status === "sent" || q.status === "quoted") && sentByUs(q).length > 0) : [];
+  const newest = stillOpen.flatMap(sentByUs).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
+  const [tell, setTell] = useState(true);
+  const [tellSubject, setTellSubject] = useState<string | null>(null);
+  const [tellBody, setTellBody] = useState(closingWithdrawalNote({ companyName }));
   const seen = prospectStatusAfter(next, history);
   const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
   // While withdrawn, the prospect sees it once they certify again, and certifying at "information
@@ -100,7 +115,12 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
     setSaving(true);
     failure.clear();
     try {
-      await setStatus(sessionId, next, note);
+      if (stillOpen.length > 0 && tell && next === "archived") {
+        await closeSubmissionAndWithdraw({
+          sessionId, status: next, note, wonQuoteRequestId: null,
+          subject: tellSubject ?? replySubject(newest?.subject ?? null, companyName), body: tellBody,
+        });
+      } else await setStatus(sessionId, next, note);
       setNote("");
       toast.success(`Status changed to ${PIPELINE_LABELS[next]}.`);
       onChanged();
@@ -146,6 +166,37 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
               <>{" "}<button type="button" onClick={() => setAttempt((n) => n + 1)} className="underline underline-offset-2">Try again</button></>
             )}
           </p>
+        )}
+        {stillOpen.length > 0 && (
+          <fieldset className="space-y-2 border border-border rounded-md p-3">
+            <legend className="text-xs font-medium px-1">Tell the PEOs still open</legend>
+            <label className="flex items-start gap-2 text-sm min-h-11">
+              <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} className="mt-1" />
+              <span>{`Send a withdrawal to ${peoNames(stillOpen.map((q) => q.peo_name))}`}</span>
+            </label>
+            <p className="text-xs text-muted-foreground">Written once, it goes on each PEO's own thread from your mailbox. Their links stop working either way.</p>
+            {tell && (
+              <>
+                <label htmlFor="withdrawal-subject" className="block text-xs text-muted-foreground">Subject</label>
+                <input
+                  id="withdrawal-subject"
+                  value={tellSubject ?? replySubject(newest?.subject ?? null, companyName)}
+                  maxLength={300}
+                  onChange={(e) => setTellSubject(e.target.value)}
+                  className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+                />
+                <label htmlFor="withdrawal-body" className="block text-xs text-muted-foreground">The withdrawal</label>
+                <textarea
+                  id="withdrawal-body"
+                  value={tellBody}
+                  onChange={(e) => setTellBody(e.target.value)}
+                  maxLength={50000}
+                  rows={5}
+                  className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+                />
+              </>
+            )}
+          </fieldset>
         )}
         {closesOnOpportunity && !closeBlocked && <p className="text-xs text-muted-foreground">Marking it {next} opens its opportunity's dialog, where you choose how it ended.</p>}
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>

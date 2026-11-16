@@ -92,6 +92,25 @@ only through `advisor_add_referral_partner()` and `advisor_update_referral_partn
   `documents` read policies (`is_withheld_document_file`). `document_scanning.sql` covers both, and that a prospect
   can't store a file directly or record a verdict.
 
+### The bundle link a PEO opens (slice 6.6b, ADR 0003)
+
+- The first place the product gives Restricted data to someone with no account. `/b/<token>` posts the token to the edge
+  function `bundle-link` (no JWT check at the gateway, `supabase/config.toml`), which works as the service role. The
+  token is 32 random bytes (256 bits); the database keeps only its SHA-256 (`bundle_links.token_hash`, listed among the
+  stored secrets in `data_isolation.sql`), and the function hashes the token itself before asking `bundle_link_open` or
+  `bundle_link_file`, so the token is never sent to the database and never logged (`handler.test.ts`). A link lasts 30
+  days, one is live per quote request, and revoking it (newer version, withdrawal, the employer withdrawing the PEO, the
+  advisor) stops it at once; every open and download also asks `peo_authorized`.
+- Files go through a 60-second signed link the function makes after the database's check and follows itself, passing the
+  bytes on: the browser never receives a link, a bucket or a path (the one exception in `fileLinks.test.ts`). The answer
+  never carries the intake's id.
+- Guessing: 20 tokens that open nothing in an hour from one address (its SHA-256, never the address) and that address is
+  refused for the hour; a live link's own use never counts (`bundle_links.sql`).
+- The page is unindexed (`seo.ts` private route, `vercel.json` X-Robots-Tag), sends no Referer and is kept in no cache
+  (`vercel.json` and every answer of the function: `Referrer-Policy: no-referrer`, `Cache-Control: no-store`).
+- **Known limit:** the host's request log (Vercel's, for the page) sees the path `/b/<token>`, token included, as it sees
+  every address requested. The token is not in the function's own log or in the database. See SR-36.
+
 ### The checks can't quietly fall behind
 
 `data_isolation.sql` fails when:
@@ -171,6 +190,7 @@ expiry.
 | SR-33 | Low | chamber-extract, document-extract and resend-webhook read whole request bodies before checking their size; resend-webhook has the gateway's JWT check off, so anyone could send it one. (2026-11-06 hardening pass.) | **Fixed**: refused with 413 while reading (`_shared/body.ts`, shared with document-upload): 256 KB, 4 KB and 256 KB, each well above the largest real request (`body.test.ts`, handler tests). |
 | SR-34 | Low | Any verified prospect could read the outbox's run counts (sent, retrying, dead) from dispatch-outbox, showing other prospects' email volume and whether the provider was failing. (2026-11-06 hardening pass.) | **Fixed**: counts go to the service role only; the browser gets `{ ok: true }`, which it never read (`dispatch.test.ts`). |
 | SR-35 | Low | A clamd scan that timed out while still connecting left the late connection open, and it went on to send the whole file to clamd after the scan was recorded as unavailable. (2026-11-06 hardening pass.) | **Fixed**: a late connection is closed and sent nothing (`malwareScan.test.ts`). |
+| SR-36 | Low | The bundle link's token is in the page's address, `/b/<token>`, so the host's request log (Vercel) records it, as it records every path; anyone who can read that log could open a live link for up to 30 days. (Slice 6.6b, D-645.) | **Accepted** (OPS). The log is the platform's, read by Nevermore's operators only; the token is not in the function's log, the database or a Referer, and a link is revoked or replaced on a newer version, a withdrawal and the employer withdrawing the PEO. Revisit if the log is ever shared beyond operators: moving the token to the address's fragment (`#`) would keep it out of the request entirely. |
 
 Up to SR-17, no finding is open. Re-test evidence for each fixed finding is the catalogue and closed-intake checks in
 `data_isolation.sql`, which fail with the fix migration left out.

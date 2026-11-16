@@ -11,6 +11,7 @@ import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
 import PeoNeedsPanel from "@/components/advisor/PeoNeedsPanel";
+import PacketRecipientsPanel from "@/components/advisor/PacketRecipientsPanel";
 import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
@@ -287,6 +288,7 @@ const Detail = ({
             stage={detail.pipelineStatus}
             onSendRecorded={quotesChanged}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
+            mail={detail.quoteRequestMessages}
           />
           <PeoThreadPanel
             prospectUserId={detail.userId}
@@ -323,6 +325,8 @@ const Detail = ({
             needsAction={detail.needsAction}
             onChanged={reload}
           />
+          {/* M-1.1: which PEOs the employer authorized; another is asked for through Ask the prospect, naming no answers (D-608). */}
+          <PacketRecipientsPanel sessionId={detail.id} onAsk={(message) => askProspect(message, [])} />
           <InformationRequestPanel
             // A sent request starts the next one afresh, from the fields marked Needs follow-up; until then the
             // panel follows the marks as they change.
@@ -363,6 +367,9 @@ const Detail = ({
             certified={detail.certified}
             certifiedOnce={!!detail.submission?.signer_name}
             history={detail.history}
+            quoteRequests={detail.quoteRequests}
+            mail={detail.quoteRequestMessages}
+            companyName={detail.data.company_name ?? "this employer"}
             onChanged={quotesChanged}
             onOutcomeChanged={outcomeChanged}
           />

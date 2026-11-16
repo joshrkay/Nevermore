@@ -94,7 +94,7 @@ export async function listRecordHistory(
     from: row.from_value,
     to: row.to_value,
     ...causeOf(row.cause, row.cause_peo),
-    mergedFrom: row.merged_from,
+    mergedFrom: row.merged_from ?? null,
   }));
   const last = entries[entries.length - 1];
   return { entries, next: entries.length === limit && last ? { at: last.at, entryKey: last.entryKey } : null };

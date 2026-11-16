@@ -218,12 +218,32 @@
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
 \i supabase/migrations/20261121150000_epic4_after_merge_records.sql
 \i supabase/migrations/20261121160000_start_the_renewal.sql
 \i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -538,6 +558,10 @@ BEGIN
   -- A quote request on prospect A's submission, once it is ready for market (20261110090000), so it and its
   -- history have rows to protect.
   PERFORM public.set_submission_status(pa_cert, 'ready_for_market', 'Reviewed');
+  -- Prospect A authorizes TriNet (M-1.1, 20261122100000), so the send is allowed and the authorizations have a row to protect.
+  PERFORM pg_temp.become('prospect_a');
+  PERFORM public.set_peo_authorization(pa_cert, 'TriNet', true, public.peo_authorization_version(), 'I authorize TriNet to receive my packet.');
+  PERFORM pg_temp.become('advisor');
   PERFORM public.advisor_record_quote_send(pa_cert, 'TriNet', NULL);
   -- A note on it (20261111090000), so the notes have a row to protect.
   PERFORM public.advisor_add_quote_request_note(
@@ -563,6 +587,9 @@ BEGIN
   INSERT INTO public.advisor_notes (session_id, body) VALUES (pb_cert, 'Payroll looks complete');
   PERFORM public.review_submission_field(pb_cert, 'company_name', 'verified');
   PERFORM public.set_submission_status(pb_cert, 'ready_for_market', 'Reviewed');
+  PERFORM pg_temp.become('prospect_b');
+  PERFORM public.set_peo_authorization(pb_cert, 'Justworks', true, public.peo_authorization_version(), 'I authorize Justworks to receive my packet.');
+  PERFORM pg_temp.become('agent_b');
   PERFORM public.advisor_record_quote_send(pb_cert, 'Justworks', NULL);
   PERFORM public.advisor_add_quote_request_note(
     (SELECT id FROM public.quote_requests WHERE session_id = pb_cert), 'call', current_date, 'Their rep emailed');
@@ -770,6 +797,42 @@ BEGIN
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
     -- CRM-S1.2b: the owner's last opened record.
     INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
+    -- CRM-L1.3a: two leads, one owned by the firm's agent and one with none, a note on the owned one, and a label on it.
+    INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES (fid, agent, 'Fixture lead ' || f, 'added_by_hand');
+    INSERT INTO public.leads (firm_id, name, source) VALUES (fid, 'Fixture unowned lead ' || f, 'added_by_hand');
+    INSERT INTO public.activities (firm_id, lead_id, kind, body) SELECT fid, l.id, 'note', 'Fixture lead note' FROM public.leads l WHERE l.firm_id = fid AND l.owner_id = agent;
+    INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT fid, l.id, b.id FROM public.leads l, public.labels b WHERE l.firm_id = fid AND l.owner_id = agent AND b.firm_id = fid;
+    -- CRM-E1.2a: a conversation with each account's contact, each with one message.
+    INSERT INTO public.conversations (firm_id, contact_id, reply_address)
+    SELECT fid, c.id, 'c.fixture.' || substr(md5(c.id::text), 1, 16) FROM public.contacts c WHERE c.firm_id = fid;
+    INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id)
+    SELECT fid, v.id, 'outbound', 'agent@example.test', ARRAY['c@example.test'], 'Fixture', 'Fixture mail', '<' || v.id || '@example.test>'
+    FROM public.conversations v WHERE v.firm_id = fid;
+    -- 6.6b: a bundle link on the firm's quote request (its issue is one more event on the quote request), a file of it in the bucket, and a guess
+    -- that missed.
+    INSERT INTO public.bundle_links (firm_id, quote_request_id, session_id, version, token_hash, folder, files, expires_at)
+    SELECT fid, q.id, q.session_id, 1, encode(extensions.digest('fixture-' || f, 'sha256'), 'hex'), gen_random_uuid(), '[{"name": "packet.pdf", "what": "The packet"}]', now() + interval '30 days'
+    FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END);
+    INSERT INTO storage.objects (bucket_id, name)
+    SELECT 'bundle-links', b.quote_request_id || '/' || b.folder || '/1-packet.pdf' FROM public.bundle_links b WHERE b.firm_id = fid;
+    INSERT INTO public.bundle_link_misses (address_hash) VALUES (encode(extensions.digest('192.0.2.' || f, 'sha256'), 'hex'));
+    -- CRM-E1.3: a file stored on each of those messages, and its bytes in the contact-mail bucket.
+    INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+    SELECT fid, m.id, 'att-' || m.id, 'fixture.pdf', 1, 'stored', 'clean', 'contact-mail', fid || '/' || m.conversation_id || '/' || m.id || '/fixture.pdf'
+    FROM public.conversation_messages m WHERE m.firm_id = fid;
+    INSERT INTO storage.objects (bucket_id, name)
+    SELECT 'contact-mail', a.storage_path FROM public.conversation_message_attachments a WHERE a.firm_id = fid;
+    -- 6.3: a file link on each of those messages, naming a document of the firm's, and one download of it.
+    INSERT INTO public.conversation_message_files (firm_id, message_id, n, document_id, file_name, token_hash, issued_at, expires_at)
+    SELECT fid, m.id, 1, (SELECT d.id FROM public.documents d JOIN public.chamber_sessions s ON s.id = d.session_id WHERE s.firm_id = fid ORDER BY d.id LIMIT 1), 'fixture.xlsx',
+           encode(extensions.digest('file-fixture-' || m.id, 'sha256'), 'hex'), now(), now() + interval '30 days'
+    FROM public.conversation_messages m WHERE m.firm_id = fid;
+    INSERT INTO public.conversation_file_downloads (firm_id, file_id) SELECT fid, f.id FROM public.conversation_message_files f WHERE f.firm_id = fid;
+    -- 6.10: a registration of the firm's certified intake with a PEO, as a send writes it.
+    INSERT INTO public.peos (name) SELECT 'Fixture PEO' WHERE NOT EXISTS (SELECT 1 FROM public.peos WHERE name = 'Fixture PEO');
+    INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, fein, employer_name, employer_state, file_id, version)
+    SELECT fid, p.id, p.name, '12345678' || CASE f WHEN 'a' THEN '1' ELSE '2' END, 'Fixture employer ' || f, 'NY', 'EAA-FIXTURE-' || upper(f), 1
+    FROM public.peos p WHERE p.name = 'Fixture PEO';
     -- CRM-S4.3b: a merged-away account's pointer to the owned account.
     INSERT INTO public.merged_records (firm_id, kind, removed_id, kept_id, removed_name) VALUES (fid, 'account', gen_random_uuid(), acc1, 'Fixture merged account');
   END LOOP;
@@ -816,8 +879,10 @@ INSERT INTO matrix VALUES
   ('public.information_requests',                       '{}', '{"A":1,"B":1}'),
   -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
   -- members' alone. The prospect never sees a quote request, even on their own submission.
+  -- Which PEOs each employer authorized (M-1.1, 20261122100000): the employer reads their own and the firm's members theirs; one each here.
+  ('public.peo_authorizations',                         '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
   ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
-  ('public.quote_request_events',                       '{}', '{"A":6,"B":6}'),
+  ('public.quote_request_events',                       '{}', '{"A":7,"B":7}'),
   ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
   ('public.quote_request_addresses',                    '{}', '{"A":2,"B":2}'),
   -- Mail on a quote request reaches the firm's members, and so does held mail addressed to their firm (CRM-P2.1c): one of each for
@@ -918,9 +983,9 @@ INSERT INTO matrix VALUES
 
 -- ---- CRM-E1.5: calls, notes and tasks (20261119180000) ----
 -- Read by whoever may see their account (supabase/tests/calls_notes_tasks.sql); written by nobody through the API. Each firm has a note on each account and a
--- task on the owned one: the first firm's members see all three, the second's agent the two on the owned account.
+-- task on the owned one, and a note on the owned lead (CRM-L1.3a): the first firm's members see all four, the second's agent the three on what they own.
 INSERT INTO matrix VALUES
-  ('public.activities',                                 '{"agent_b":2}', '{"A":3,"B":3}');
+  ('public.activities',                                 '{"agent_b":3}', '{"A":4,"B":4}');
 
 -- ---- CRM-A2.4a: placements and renewals (20261120110000) ----
 -- Read by whoever may see their account (supabase/tests/placements_renewals.sql); written by nobody through the API. Each firm has a placement and two renewals
@@ -940,6 +1005,42 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
+-- ---- CRM-L1.3a: leads (20261121090000) ----
+-- Read by level through can_see_firm_record (supabase/tests/leads.sql), written by nobody through the API. Each firm has two, one owned by its agent and one
+-- with no owner: the first firm's members see both, the second's agent only their own and its owner both. Labels on leads are closed to the API.
+INSERT INTO matrix VALUES
+  ('public.leads',                                      '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('public.lead_labels',                                '{}', NULL);
+-- ---- CRM-E1.2a: conversations with contacts and leads (20261122090000) ----
+-- Read by the level rule as calls, notes and tasks are (supabase/tests/conversations.sql), written by no API role. Each firm has one with each account's
+-- contact, each with a message: the first firm's members see both, the second's agent the one on the account they own and its owner both.
+INSERT INTO matrix VALUES
+  ('public.conversations',                              '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('public.conversation_messages',                      '{"agent_b":1}', '{"A":2,"B":2}');
+-- ---- 6.6b: the bundle link (20261122110000) ----
+-- Closed to the API, the service role included: issued and revoked through functions, opened by the edge function through two functions
+-- (supabase/tests/bundle_links.sql). A link's files are stored by a firm's member under its own quote request and read by nobody through the API.
+INSERT INTO matrix VALUES
+  ('public.bundle_links',                               '{"service":0}', NULL),
+  ('public.bundle_link_misses',                         '{"service":0}', NULL),
+  ('storage.objects WHERE bucket_id = ''bundle-links''', '{}', NULL);
+-- ---- CRM-E1.3: replies come back (20261122130000) ----
+-- A received message's files, and their bytes in the contact-mail bucket: read by whoever reads the message (supabase/tests/conversation_replies.sql), written
+-- by no API role. Each firm's two fixture messages carry one stored file each: as for the messages, the second firm's agent reads the one they may see.
+INSERT INTO matrix VALUES
+  ('public.conversation_message_attachments',           '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('storage.objects WHERE bucket_id = ''contact-mail''', '{"agent_b":1}', '{"A":2,"B":2}');
+-- ---- 6.3 CRM-E1.2b: file links on contact mail (20261122160000) ----
+-- Closed to the API, the service role included: written by send_conversation_message and claim_conversation_mail, opened by the edge function message-file
+-- through conversation_file_open (supabase/tests/conversation_files.sql).
+INSERT INTO matrix VALUES
+  ('public.conversation_message_files',                 '{"service":0}', NULL),
+  ('public.conversation_file_downloads',                '{"service":0}', NULL);
+-- ---- 6.10 Q-2.1: the registration record (20261122200000) ----
+-- Closed to the API, the service role included: written by a send (register_peo_send), read through peo_registration_statement (the firm's own) and
+-- peo_registered_elsewhere (no firm named) (supabase/tests/peo_registrations.sql).
+INSERT INTO matrix VALUES
+  ('public.peo_registrations',                          '{"service":0}', NULL);
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
@@ -1263,6 +1364,8 @@ INSERT INTO callable VALUES
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
+  ('request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)', 'anyone', NULL,
+                                                                     'a visitor on a firm''s public link asks to be contacted (CRM-L1.2b): makes one lead of the firm the ADDRESS names, never one the caller names; capped per firm and overall, a repeat email is the same ask (supabase/tests/request_contact.sql)'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
   ('is_source_code(p_code text)',              'anyone',  NULL, 'pure: whether a referral or campaign code is well formed; the intake source check constraints call it as the writer'),
   ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
@@ -1281,6 +1384,9 @@ INSERT INTO callable VALUES
   ('record_intake_consent(p_version text, p_text text)', 'own', NULL, 'records the caller''s own agreement'),
   ('prospect_submission_status(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s shared status; null for anyone else''s'),
   ('prospect_information_request(p_session_id uuid)', 'own', NULL, 'the advisor''s open request on the caller''s own intake; null for anyone else''s'),
+  ('set_peo_authorization(p_session_id uuid, p_peo text, p_authorized boolean, p_version text, p_text text)', 'own', NULL, 'the employer authorizes or withdraws a PEO on their own intake; 42501 for everyone else (supabase/tests/peo_authorizations.sql)'),
+  ('peo_authorization_states(p_session_id uuid)', 'own', NULL, 'each PEO''s state on the caller''s own intake, or one of their firm''s; PT404 for anyone else''s (4e)'),
+  ('peo_authorization_version()', 'anyone', NULL, 'a constant: the version of the PEO authorization wording in force'),
   ('record_manuscript_download(p_session_id uuid)', 'own', NULL, 'records a download of the caller''s own certified intake''s Manuscript; nothing for anyone else''s'),
   ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
   ('is_own_final_manuscript(p_name text)',     'helper',  NULL, 'the manuscripts read policy calls it as the caller; true only for the file of the caller''s own final Manuscript'),
@@ -1327,6 +1433,30 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_correct_quote_request_note(0, ''call'', current_date, ''probe'')', 'correcting a quote request note'),
   ('advisor_reissue_quote_request_address(p_quote_request_id bigint)', 'advisor',
                                                                      'SELECT public.advisor_reissue_quote_request_address(0)', 'revoking and reissuing a quote request''s reply address'),
+  ('send_to_peo(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.send_to_peo(gen_random_uuid(), ''Probe PEO'', ARRAY[''peo@peo.example''], ''S'', ''N'')', 'sending the bundle to a PEO (6.6)'),
+  ('send_peo_update(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.send_peo_update(gen_random_uuid(), ''Probe PEO'', ARRAY[''peo@peo.example''], ''S'', ''N'')', 'sending a PEO the newer certified version (6.8)'),
+  ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)', 'advisor',
+                                                                     'SELECT public.attach_peo_link(0, 0, ''probe'')', 'joining the bundle link to a message to a PEO (6.6)'),
+  ('follow_up_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.follow_up_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'')', 'following up with a PEO on its thread (6.9)'),
+  ('withdraw_from_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text, p_reason text)', 'advisor',
+                                                                     'SELECT public.withdraw_from_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'', ''other'')', 'withdrawing a submission from a PEO (6.9)'),
+  ('close_submission_and_withdraw(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_subject text, p_body text)', 'advisor',
+                                                                     'SELECT public.close_submission_and_withdraw(gen_random_uuid(), ''lost'', NULL, NULL, ''S'', ''N'')', 'marking a submission Won, Lost or Archived with one withdrawal to every PEO still open (6.9)'),
+  ('peo_send_context(p_session_id uuid, p_peo text)', 'advisor',
+                                                                     'SELECT public.peo_send_context(gen_random_uuid(), ''Probe PEO'')', 'what the composer of a send to a PEO reads (6.6)'),
+  ('peo_registered_elsewhere(p_session_id uuid)', 'advisor',
+                                                                     'SELECT public.peo_registered_elsewhere(gen_random_uuid())', 'the PEOs another firm registered this intake''s employer with, and when, never who (Q-2.2, 6.10)'),
+  ('peo_registration_statement(p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for takes its statement of its own registrations, the FEIN by its last four digits (Q-2.1, 6.10); 42501 for anyone who is no member of that firm, PT423 for a support session'),
+  ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)', 'advisor',
+                                                                     'SELECT public.issue_bundle_link(0, 1, gen_random_uuid(), ''[{"name": "a.pdf", "what": "A"}]'')', 'issuing the bundle link a PEO opens (6.6b)'),
+  ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', 'advisor',
+                                                                     'SELECT public.revoke_bundle_link(0)', 'revoking a quote request''s bundle link (6.6b)'),
+  ('bundle_link_folder_in_my_firm(p_name text)', 'own', NULL, 'the bundle-links storage policy calls it as the caller: whether a file''s first folder is a quote request of a firm the caller currently belongs to, outside a support session; false for anyone else'),
+  ('bundle_link_folder_read_only(p_name text)', 'own', NULL, 'the bundle-links storage policy calls it as the caller: whether that quote request''s firm is closing; false for anyone else'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
@@ -1393,6 +1523,14 @@ INSERT INTO callable VALUES
    'a current member of the firm (an owner, for the firm''s record) takes the rows of a listed table that they may see and the same statement records the export; refuses a support session first (PT423), then every caller who is not a member of that firm at this address (42501); never an intake''s answers, a census or a FEIN');
 -- CRM-A1.1b (20261119130000_accounts_table_query.sql): the accounts table's query, and the firm's members for the Owner filter (supabase/tests/accounts_query.sql).
 INSERT INTO callable VALUES
+  ('inbox_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads one page of the inbox: the messages on the PEO threads and on the conversations with contacts and leads they may see, by their level, in that firm only (CRM-E1.4); 42501 for every caller who is not a member of that firm at this address'),
+  ('inbox_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
+   'the count behind each view tab of the inbox, for the messages the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
+  ('leads_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads one page of the leads they may see, by their level, in that firm only, never the bin''s (CRM-L1.1a); 42501 for every caller who is not a member of that firm at this address'),
+  ('leads_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
+   'the count behind each view tab of the leads table, for the leads the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
   ('accounts_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
    'a current member of the firm (or a support session at its address) reads one page of the accounts they may see, by their level, in that firm only; 42501 for every caller who is not a member of that firm at this address; archived accounts only when a filter asks'),
   ('accounts_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
@@ -1421,6 +1559,20 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
+  ('create_lead(p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for makes a lead of that firm, owned by its maker (or, by the level rule, by someone they may choose), New and Added by hand (CRM-L1.2a); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
+  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid, p_document_ids uuid[])', 'own', NULL,
+   'a current member of the firm the call acts for, with a connected mailbox, writes to a contact or lead they may see (CRM-E1.2a): the message is recorded queued on the record''s conversation and its id queued on the outbox; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a contact or lead the caller may not see, the same as for one that is not there, PT409 for Do not email, no email, a lead in the bin or converted, PT412 with no mailbox, 22023 for a field the rules refuse'),
+  ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) reads the conversation of a contact or lead they may see, newest first, and whether their own mailbox is connected; PT404 for a record the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
+  ('conversation_files_for(p_contact_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) lists the files a message to a contact they may see may carry: its account''s own, past the virus check (6.3, D-605); PT404 for a contact the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
+  ('add_sender_as_contact(p_message_id uuid, p_first_name text, p_last_name text, p_title text, p_phone text, p_mobile text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for adds the new sender of a received message on a contact''s conversation they may see as a contact on that account, through add_contact and all its rules (CRM-E1.3); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a message the caller may not see, the same as for one that is not there, PT409 for a lead''s conversation or a sender not offered'),
+  ('open_conversation(p_conversation_id uuid, p_seen_through timestamp with time zone, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for marks a conversation they may see opened for the whole firm, through what the page showed (CRM-E1.3, D-607); a support session marks nothing; PT404 for a conversation the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
+  ('account_conversation_messages(p_account_id uuid, p_opportunity_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) reads the messages of the conversations of an account''s contacts, for an account or an opportunity (and its account) they may see (CRM-E1.3); PT404 for a record the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
   ('add_contact(p_account_id uuid, p_first_name text, p_last_name text, p_title text, p_email text, p_phone text, p_mobile text, p_owner_id uuid, p_is_main boolean, p_do_not_email boolean, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the account, adds a contact to it (owned by its maker or, by the level rule, by someone they may choose), taking over as the account''s one main contact when asked; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field or an owner the rules refuse'),
   ('move_contact(p_contact_id uuid, p_to_account_id uuid, p_confirm boolean, p_firm_id uuid)', 'own', NULL,
@@ -1453,7 +1605,18 @@ INSERT INTO callable VALUES
   ('bulk_accounts_undo(p_change_id uuid, p_firm_id uuid)', 'own', NULL,
    'the member who made a bulk change undoes it within ten minutes, once, putting back every record nobody has changed since; PT404 for anyone else and for a change of another firm, as for one that is not there; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
   ('firm_labels(p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm');
+   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm'),
+  -- CRM-L1.1b (20261122210000_leads_bulk_and_bin.sql; supabase/tests/leads_bulk.sql): bulk changes to leads, their undo, the bin and Restore.
+  ('bulk_leads_preview(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for is told what a bulk change would do to the leads they name or the table''s filters select: how many change, how many already are as asked, and the leads that are skipped (the level rule, converted, Not a fit), named, with the reason; it changes nothing; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session; another firm''s lead is just not available'),
+  ('bulk_leads_change(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for changes the owner, the status, Not a fit, a field or a label of up to 1,000 leads, or deletes them to the bin, those the level rule gives them, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT413 for more than 1,000; another firm''s lead is just not available'),
+  ('bulk_leads_undo(p_change_id uuid, p_firm_id uuid)', 'own', NULL,
+   'the member who made a bulk change of leads undoes it within ten minutes, once, putting back every lead nobody has changed since; PT404 for anyone else and for a change of another firm; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
+  ('leads_bin(p_firm_id uuid, p_page integer)', 'own', NULL,
+   'an owner of the firm the call acts for (or a support session) reads a page of that firm''s leads in the bin, each with the day it is removed for good; 42501 for everyone else'),
+  ('restore_leads(p_firm_id uuid, p_ids jsonb)', 'own', NULL,
+   'an owner of the firm the call acts for takes leads of that firm out of the bin; 42501 for everyone else, PT423 for a closing firm and a support session; another firm''s lead is just not available');
 -- CRM-E1.5 (20261119180000_calls_notes_tasks.sql; supabase/tests/calls_notes_tasks.sql): calls, notes and tasks on an account.
 INSERT INTO callable VALUES
   ('log_activity(p_kind text, p_account_id uuid, p_contact_id uuid, p_opportunity_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
@@ -1528,6 +1691,22 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for, who may change an account by the level rule, clears its possible-duplicate mark; 42501 for anyone who is no member of that firm or may not change it, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('resolve_merged_record(p_firm_id uuid, p_kind text, p_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for is led from the old address of a merged-away account or contact to the record it became, when they may see that record; NULL for anyone else, the same as for an address that was never merged; 42501 for anyone who is no member of that firm');
+-- CRM-L2.1 (20261122220000_lead_page.sql; supabase/tests/lead_page.sql): a lead's page, its save, Not a fit and Reopen, and its calls, notes and tasks.
+INSERT INTO callable VALUES
+  ('lead_page(p_firm_id uuid, p_lead_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads the page of a lead they may see, by the level rule (one in the bin an owner''s or support''s); NULL, the same as for a lead that is not there, for anyone else'),
+  ('lead_activity(p_firm_id uuid, p_lead_id uuid, p_filter text, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for a page of the lead''s calls, notes and tasks; NULL for anyone else'),
+  ('lead_activity_options(p_firm_id uuid, p_lead_id uuid)', 'own', NULL,
+   'the firm''s current members a task on a lead they may see can be for; NULL for anyone else'),
+  ('update_lead(p_lead_id uuid, p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for saves a lead''s own fields from a version, by the level rule on its owner; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see, the same as for one that is not there, 55000 for one Converted, Not a fit or in the bin'),
+  ('mark_lead_not_fit(p_lead_id uuid, p_reason text, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for marks a lead Not a fit with a reason, by the level rule; refused as update_lead is'),
+  ('reopen_lead(p_lead_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for reopens a Not a fit lead, by the level rule; refused as update_lead is'),
+  ('log_lead_activity(p_kind text, p_lead_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the lead, logs a call, a note or a task on it; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see or that is not there, 55000 for one Converted, Not a fit or in the bin');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -1602,7 +1781,15 @@ BEGIN
     format('SELECT count(*) FROM public.intake_stored_files(%L, %L)', sid, pg_temp.id('prospect_a')),
     format('SELECT public.complete_intake_deletion(%L, 0)', nobody),
     format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody),
-    'SELECT public.record_census_template_scan(0, ''failed'', NULL)'
+    'SELECT public.record_census_template_scan(0, ''failed'', NULL)',
+    'SELECT count(*) FROM public.claim_conversation_mail(1, 5, 600)',
+    format('SELECT public.complete_conversation_mail(%L, 1, ''probe'')', nobody),
+    format('SELECT public.fail_conversation_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody),
+    format('SELECT public.record_conversation_attachment(%L, ''probe'', ''x.pdf'', NULL, 1, NULL)', nobody),
+    format('SELECT public.finish_conversation_attachment(%L, ''clean'', NULL, ''contact-mail'', ''x'')', nobody),
+    'SELECT count(*) FROM public.claim_peo_mail(1, 5, 600)',
+    format('SELECT public.complete_peo_mail(%L, 1, ''probe'')', nobody),
+    format('SELECT public.fail_peo_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody)
   ] LOOP
     FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
       PERFORM pg_temp.become(who);
@@ -1971,12 +2158,26 @@ $$;
 
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_record_quote_send', 'advisor', 'by_id', $$SELECT public.advisor_record_quote_send({sid}, 'Probe PEO', NULL)::text$$),
+  ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
   ('advisor_correct_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_correct_quote_request_note({note}, 'call', current_date, 'probe')::text$$),
   ('advisor_reissue_quote_request_address', 'advisor', 'by_id', $$SELECT public.advisor_reissue_quote_request_address({qr})::text$$),
+  ('issue_bundle_link', 'advisor', 'by_id', $$SELECT public.issue_bundle_link({qr}, 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
+  ('revoke_bundle_link', 'advisor', 'by_id', $$SELECT public.revoke_bundle_link({qr})::text$$),
+  -- M-2.1: a member gets past the firm to the PEO's authorization (22023), the writer of the message to its link (22023), another member to the writer (PT409).
+  ('send_to_peo', 'advisor', 'by_id', $$SELECT public.send_to_peo({sid}, 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  -- M-2.3: a member gets past the firm to the PEO's own quote request (PT409: nothing was sent to it yet).
+  ('send_peo_update', 'advisor', 'by_id', $$SELECT public.send_peo_update({sid}, 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('attach_peo_link', 'advisor', 'by_id', $$SELECT public.attach_peo_link({peomsg}::bigint, 0, 'probe')::text$$),
+  -- M-2.4: a member gets past the firm to the PEO's authorization or the mailbox (22023, PT412); the closing withdrawal to the status rules.
+  ('follow_up_peo', 'advisor', 'by_id', $$SELECT public.follow_up_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('withdraw_from_peo', 'advisor', 'by_id', $$SELECT public.withdraw_from_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
+  ('close_submission_and_withdraw', 'advisor', 'by_id', $$SELECT public.close_submission_and_withdraw({sid}, 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
+  ('peo_send_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_send_context({sid}, 'Probe PEO'))$$),
+  ('peo_registered_elsewhere', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_registered_elsewhere({sid}))$$),
   ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
   ('set_submission_needs_action', 'advisor', 'by_id', $$SELECT public.set_submission_needs_action({sid}, true, 'probe')::text$$),
   ('review_submission_field', 'advisor', 'by_id', $$SELECT public.review_submission_field({sid}, 'company_name', 'follow_up')::text$$),
@@ -2081,6 +2282,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 -- and a non-member are refused (the page asks for the firm it is at); the firm's own members, an agent who owns none included, are served.
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('accounts_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.accounts_list({firm}) -> 'rows')::text$$),
+  ('inbox_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.inbox_list({firm}) -> 'rows')::text$$),
+  ('inbox_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.inbox_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
+  ('leads_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.leads_list({firm}) -> 'rows')::text$$),
+  ('leads_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.leads_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('accounts_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.accounts_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('firm_member_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.firm_member_choices({firm})$$);
 -- CRM-S5.2: the history of a referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
@@ -2101,6 +2306,25 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.update_account({acct}, 'Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, {firm}, 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false\}$'),
   ('create_account', 'advisor', 'by_id',
    $$SELECT public.create_account('Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
+  ('create_lead', 'advisor', 'by_id',
+   $$SELECT public.create_lead('Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
+  -- A member with a mailbox records a queued message; one with none stops at it (PT412), past the firm and the record, which is what is probed here.
+  ('send_conversation_message', 'advisor', 'by_id',
+   $$SELECT public.send_conversation_message(p_contact_id => {acontact}, p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"status": "queued"|PT412'),
+  ('conversation_for', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.conversation_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('conversation_files_for', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.conversation_files_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$'),
+  -- 6.10: the firm's statement of its own registrations, by the firm the call names.
+  ('peo_registration_statement', 'advisor', 'by_id',
+   $$SELECT public.peo_registration_statement({firm}) ->> 'firm'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.+'),
+  -- CRM-E1.3: the conversation of that contact, a new sender's message on it, and its account's mail.
+  ('open_conversation', 'advisor', 'by_id',
+   $$SELECT public.open_conversation({aconv}, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_opened_at": "'),
+  ('add_sender_as_contact', 'advisor', 'by_id',
+   $$SELECT public.add_sender_as_contact({anewmsg}, 'Probe', 'Sender', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_name": "Sender"'),
+  ('account_conversation_messages', 'advisor', 'by_id',
+   $$SELECT jsonb_array_length(public.account_conversation_messages(p_account_id => {acct}, p_firm_id => {firm}) -> 'messages')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:[1-9]'),
   ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
@@ -2203,6 +2427,17 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.delete_commission_payment({pay}, {firm}, (SELECT version FROM public.commission_payments WHERE id = {pay}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"deleted": true'),
   ('set_placement_commission', 'advisor', 'by_id',
    $$SELECT public.set_placement_commission({plc}, {firm}, (SELECT version FROM public.placements WHERE id = {plc}), 'flat', 100, NULL)::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false');
+-- CRM-L2.1: a lead's page ({alead} is the firm's lead owned by its agent, the member). The save's version may be stale, which is an answer, not a refusal.
+-- Not a fit and Reopen meet the member's lead as it is: marked (an answer) and refused as not Not a fit (55000), past every guard of firm and sight.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('lead_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_page({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('lead_activity', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_activity({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('lead_activity_options', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_activity_options({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('update_lead', 'advisor', 'by_id', $$SELECT public.update_lead({alead}, 'Probe', p_firm_id => {firm}, p_version => 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": (false|true)'),
+  ('mark_lead_not_fit', 'advisor', 'by_id', $$SELECT public.mark_lead_not_fit({alead}, 'other', {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"not_fit_reason": "other"'),
+  ('reopen_lead', 'advisor', 'by_id', $$SELECT public.reopen_lead({alead}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^55000$'),
+  ('log_lead_activity', 'advisor', 'by_id', $$SELECT public.log_lead_activity('note', {alead}, p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"type": "note"');
+
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -2248,6 +2483,7 @@ BEGIN
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1)),
       (f, 'acct', (SELECT a.id::text FROM public.accounts a WHERE a.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1)),
       (f, 'acontact', (SELECT c.id::text FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
+      (f, 'aconv', (SELECT v.id::text FROM public.conversations v JOIN public.contacts c ON c.id = v.contact_id JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'rnw', (SELECT x.id::text FROM public.renewals x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'peo_placement' ORDER BY x.created_at, x.id LIMIT 1)),
@@ -2255,7 +2491,8 @@ BEGIN
       (f, 'opp', (SELECT o.id::text FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id WHERE o.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1)),
       (f, 'plc', (SELECT x.id::text FROM public.placements x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'pay', (SELECT x.id::text FROM public.commission_payments x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY x.created_at, x.id LIMIT 1)),
-      (f, 'merged', (SELECT m.removed_id::text FROM public.merged_records m WHERE m.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY m.merged_at, m.removed_id LIMIT 1));
+      (f, 'merged', (SELECT m.removed_id::text FROM public.merged_records m WHERE m.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY m.merged_at, m.removed_id LIMIT 1)),
+      (f, 'alead', (SELECT l.id::text FROM public.leads l WHERE l.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND l.owner_id IS NOT NULL ORDER BY l.created_at, l.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2269,6 +2506,20 @@ BEGIN
     VALUES ('advisor_notification', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), 'probe-dead-' || f, '{}', 'dead')
     RETURNING id::text INTO qr;
     INSERT INTO fprobe_ids VALUES (f, 'evt', qr);
+    -- CRM-E1.3: a reply from someone new on that conversation, offered as a contact.
+    INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, status, new_sender, from_address, to_addresses, subject, body_text, message_id)
+    SELECT v.firm_id, v.id, 'inbound', 'received', true, 'stranger-' || f || '@example.test', '{}', 'Re', 'Probe', '<stranger-' || f || '@example.test>'
+    FROM public.conversations v WHERE v.id = (SELECT x.v::uuid FROM fprobe_ids x WHERE x.firm = f AND x.k = 'aconv')
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'anewmsg', qr);
+    -- A message the product sends to a PEO (M-2.1), written by the firm's member and waiting for its bundle link: written the same way.
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, to_addresses, subject, body_text,
+                                               status, message_id, sender_id)
+    SELECT '<probe-' || f || '@acme.example>', q.id, q.session_id, 'sent', 'probe@acme.example', ARRAY['peo@peo.example'], 'Probe', 'Probe',
+           'queued', '<probe-' || f || '@acme.example>', pg_temp.id(CASE f WHEN 'a' THEN 'advisor' ELSE 'agent_b' END)
+    FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'peomsg', qr);
   END LOOP;
 END $$;
 
@@ -2278,6 +2529,25 @@ SELECT CASE v.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END,
        CASE v.name WHEN 'Agent view' THEN 'view' WHEN 'Owner view' THEN 'oview' ELSE 'sview' END, v.id::text
 FROM public.saved_views v
 WHERE v.name IN ('Agent view', 'Owner view', 'Shared view');
+
+-- ---- CRM-L1.1b: the leads' bulk changes, the bin and Restore. {lead} is each firm's lead owned by its agent (the positive control of the bulk changes); the
+-- bin and Restore are an owner's. A bulk change sets the lead's city to a new word each time, so each call changes it (and the undo has something to put back).
+INSERT INTO fprobe_ids
+SELECT CASE l.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END, 'lead', l.id::text
+FROM public.leads l
+WHERE l.name IN ('Fixture lead a', 'Fixture lead b');
+INSERT INTO fprobe (fn, who, shape, call, refused, positive) VALUES
+  ('bulk_leads_preview', 'advisor', 'by_id',
+   $$SELECT NULLIF(public.bulk_leads_preview({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'will_change', '0')$$,
+   ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], ARRAY['advisor', 'agent_b']),
+  ('bulk_leads_change', 'advisor', 'by_id',
+   $$SELECT NULLIF(public.bulk_leads_change({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'changed', '0')$$,
+   ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], ARRAY['advisor', 'agent_b']),
+  ('bulk_leads_undo', 'advisor', 'by_id',
+   $$SELECT public.bulk_leads_undo((public.bulk_leads_change({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'change_id')::uuid, {firm}) ->> 'restored'$$,
+   ARRAY['42501', 'PT404', 'P0002'], ARRAY['advisor', 'agent_b']),
+  ('leads_bin', 'admin', 'by_id', $$SELECT public.leads_bin({firm}) ->> 'total'$$, ARRAY['42501', 'PT404', 'P0002'], ARRAY['admin', 'owner_b']),
+  ('restore_leads', 'admin', 'by_id', $$SELECT public.restore_leads({firm}, jsonb_build_array({lead}::text)) ->> 'unavailable'$$, ARRAY['42501', 'PT404', 'P0002'], ARRAY['admin', 'owner_b']);
 
 DO $$
 DECLARE
@@ -2459,7 +2729,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|rnw|rdel|opp|plc|pay|merged)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg|rnw|rdel|opp|plc|pay|merged|alead|lead)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3195,6 +3465,9 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.manuscript_versions', 'firm', 'by intake',
    $m$INSERT INTO public.manuscript_versions (session_id, version, file_id, storage_path, pdf_sha256, certified_data_hash, certified_signed_at, generated_by)
       VALUES ({intake}, 99, 'EAA-PROBE', {intake} || '/v99-probe.pdf', repeat('a', 64), 'h', now(), {u}) RETURNING ctid::text$m$),
+  -- M-1.1 (20261122100000): which PEOs the employer authorized, appended and never changed, written only through set_peo_authorization.
+  ('public.peo_authorizations', 'firm', 'by intake; the employer reads their own',
+   $m$INSERT INTO public.peo_authorizations (session_id, peo_id, peo_name, authorized, wording_version, wording_text, signed_by) SELECT {intake}, p.id, p.name, true, 'v', 'probe {tag}', {u} FROM public.peos p ORDER BY p.id LIMIT 1 RETURNING ctid::text$m$),
   ('public.profiles', 'firm', 'by the owner of an intake of the firm, or a colleague; a person reads their own',
    $m$SELECT ctid::text FROM public.profiles WHERE user_id = {u}$m$),
   ('public.quote_request_addresses', 'firm', 'by quote request',
@@ -3328,6 +3601,65 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
    $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.leads', 'firm', 'its own firm_id; read by level, written by no API role',
+   $m$INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}', 'added_by_hand') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.lead_labels', 'firm', 'its own firm_id, a lead and a label of that firm; closed to the API',
+   $m$WITH l AS (INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Lead {tag}') RETURNING id, firm_id) INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT l.firm_id, d.id, l.id FROM l, public.leads d WHERE d.firm_id = {firm} ORDER BY d.created_at, d.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
+-- ---- CRM-E1.2a: conversations with contacts and leads (20261122090000) ----
+-- A conversation is with a contact (or a lead) of its own firm, by a foreign key on the pair; a message is on a conversation of its own firm. Read by level,
+-- so (as for contacts) one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.conversations', 'firm', 'its own firm_id, and a contact or lead of that firm; read by the level rule, written by no API role',
+   $m$WITH c AS (INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'conv-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING id, firm_id) INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(c.id::text), 1, 16) FROM c RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(random()::text), 1, 16) FROM public.contacts c WHERE c.firm_id = {firm} LIMIT 1$m$),
+  ('public.conversation_messages', 'firm', 'its own firm_id, and a conversation of that firm; read by whoever reads the conversation, written by no API role',
+   $m$WITH c AS (INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'msg-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING id, firm_id), v AS (INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(c.id::text), 1, 16) FROM c RETURNING id, firm_id) INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) SELECT v.firm_id, v.id, 'outbound', 'probe@example.test', ARRAY['probe@example.test'], 'Probe', 'Probe', '<' || v.id || '@example.test>' FROM v RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) SELECT v.firm_id, v.id, 'outbound', 'probe@example.test', ARRAY['probe@example.test'], 'Probe', 'Probe', '<' || gen_random_uuid() || '@example.test>' FROM public.conversations v WHERE v.firm_id = {firm} LIMIT 1$m$);
+-- ---- 6.6b: the bundle link (20261122110000) ----
+-- A link: its own firm_id and a quote request of that firm. A link's file: by the quote request its first folder names. Neither is read by any
+-- member through the API, so no positive control; every other caller reads, changes and deletes none, and a non-member stores none.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.bundle_links', 'firm', 'its own firm_id and a quote request of that firm; closed to the API',
+   $m$INSERT INTO public.bundle_links (firm_id, quote_request_id, session_id, version, token_hash, folder, files, expires_at) VALUES ({firm}, {qr}, {intake}, 1, encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), gen_random_uuid(), '[]', now() + interval '30 days') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('storage.objects WHERE bucket_id = ''bundle-links''', 'firm', 'by the quote request in the folder; stored by a member, read by nobody through the API',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('bundle-links', {qr} || '/00000000-0000-4000-8000-000000000000/1-probe-{tag}.pdf') RETURNING ctid::text$m$, false,
+   'name = {qr} || ''/00000000-0000-4000-8000-000000000000/1-moved-{tag}.pdf''');
+-- ---- 6.3 CRM-E1.2b: file links on contact mail (20261122160000) ----
+-- A message's file link: its own firm_id and a message of that firm (a foreign key on the pair), naming a document. A download: its own firm_id and a link.
+-- Neither is read by any member through the API (conversation_for names the files; the edge function opens a link), so no positive control.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.conversation_message_files', 'firm', 'its own firm_id and a message of that firm; closed to the API',
+   $m$INSERT INTO public.conversation_message_files (firm_id, message_id, n, document_id, file_name) SELECT m.firm_id, m.id, 9, (SELECT d.id FROM public.documents d JOIN public.chamber_sessions s ON s.id = d.session_id WHERE s.firm_id = {firm} ORDER BY d.id LIMIT 1), 'probe-{tag}.pdf' FROM public.conversation_messages m WHERE m.firm_id = {firm} ORDER BY m.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.conversation_file_downloads', 'firm', 'its own firm_id and a file link of that firm; closed to the API',
+   $m$INSERT INTO public.conversation_file_downloads (firm_id, file_id) SELECT f.firm_id, f.id FROM public.conversation_message_files f WHERE f.firm_id = {firm} ORDER BY f.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
+-- ---- 6.10 Q-2.1: the registration record (20261122200000) ----
+-- A registration: its own firm_id. Read by no member through the API (the statement and the warning are functions), so no positive control; appended
+-- only, so no caller changes, moves or deletes one, and a non-member writes none.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.peo_registrations', 'firm', 'its own firm_id; closed to the API, appended only',
+   $m$WITH p AS (INSERT INTO public.peos (name) VALUES ('Probe PEO {tag}') RETURNING id, name) INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, fein, file_id, version) SELECT {firm}, p.id, p.name, '987654321', 'EAA-PROBE-{tag}', 1 FROM p RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, file_id, version) VALUES ({firm}, (SELECT min(p.id) FROM public.peos p), 'Probe PEO', 'EAA-PROBE-{tag}', 1)$m$);
+-- ---- CRM-E1.3: replies come back (20261122130000) ----
+-- A received file is on a message of its own firm, by a foreign key on the pair; its bytes are read by whoever reads its message, so (as for the messages)
+-- one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.conversation_message_attachments', 'firm', 'its own firm_id, and a message of that firm; read by whoever reads the message, written by no API role',
+   $m$SELECT pg_temp.contact_mail_file({firm}, '{tag}', false)$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status) SELECT m.firm_id, m.id, 'x-{tag}', 'x.pdf', 1, 'pending' FROM public.conversation_messages m WHERE m.firm_id = {firm} LIMIT 1$m$),
+  ('storage.objects WHERE bucket_id = ''contact-mail''', 'firm', 'by the message of the file recorded as stored, read as its conversation is',
+   $m$SELECT pg_temp.contact_mail_file({firm}, '{tag}', true)$m$, false,
+   'name = {firm} || ''/moved-{tag}.pdf''',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('contact-mail', {firm} || '/x-{tag}.pdf')$m$);
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -3337,7 +3669,8 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
 -- SET clause that moves a row to another firm (move_to). Both are tried as callers who must be refused (5b).
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
-  'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
+  'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests',
+  'public.peo_authorizations');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
   'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures', 'public.support_sessions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
@@ -3359,6 +3692,7 @@ UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_message
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM public.bulk_changes c JOIN public.accounts a ON a.firm_id = c.firm_id WHERE c.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.bulk_change_records';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT d.firm_id, d.id, l.id FROM public.leads d JOIN public.labels l ON l.firm_id = d.firm_id WHERE d.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.lead_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO public.account_labels (firm_id, account_id, label_id) SELECT a.firm_id, a.id, l.id FROM public.accounts a JOIN public.labels l ON l.firm_id = a.firm_id WHERE a.firm_id = {firm} LIMIT 1$m$ WHERE src = 'public.account_labels';
 UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
   WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
@@ -3377,10 +3711,30 @@ INSERT INTO registry (src, scope, why, names_intakes) VALUES
   ('public.ai_global_usage', 'closed', 'rate limits', false), ('public.ai_ip_log', 'closed', 'rate limits', false), ('public.ai_request_log', 'closed', 'rate limits', false),
   ('public.broker_mailboxes', 'closed', 'encrypted tokens', false), ('public.email_delivery_events', 'closed', 'delivery log', false),
   ('public.email_suppressions', 'closed', 'do-not-send list', false), ('public.intake_milestones', 'closed', 'read as counts through a function', false),
-  ('public.outbox_events', 'closed', 'queued email', false), ('public.submission_reference_counters', 'closed', 'File ID sequence', false),
+  ('public.outbox_events', 'closed', 'queued email', false), ('public.bundle_link_misses', 'closed', 'the guessing limit: hashed addresses, an hour', false), ('public.submission_reference_counters', 'closed', 'File ID sequence', false),
   ('storage.objects WHERE bucket_id = ''quarantine''', 'closed', 'uploads whose malware scan has not passed: the service role''s', false);
 
 -- ---------- 5b. the probe: two firms, one row each, from every caller ----------
+-- CRM-E1.3: a stored file on a new message of a new conversation with a new contact of the firm (on its first owned account); the attachment's ctid, or the
+-- stored object's.
+CREATE FUNCTION pg_temp.contact_mail_file(firm uuid, tag text, want_object boolean) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE ct uuid; cv uuid; msg uuid; path text; r text;
+BEGIN
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email)
+  SELECT a.firm_id, a.id, 'Probe', 'file-' || tag || '@example.test' FROM public.accounts a WHERE a.firm_id = firm AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1
+  RETURNING id INTO ct;
+  INSERT INTO public.conversations (firm_id, contact_id, reply_address) VALUES (firm, ct, 'c.probe.' || substr(md5(ct::text), 1, 16)) RETURNING id INTO cv;
+  INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, status, from_address, to_addresses, subject, body_text, message_id)
+  VALUES (firm, cv, 'inbound', 'received', 'probe@example.test', '{}', 'Probe', 'Probe', '<' || cv || '@example.test>') RETURNING id INTO msg;
+  path := firm || '/' || cv || '/' || msg || '/probe-' || tag || '.pdf';
+  INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  VALUES (firm, msg, 'probe-' || tag, 'probe.pdf', 1, 'stored', 'clean', 'contact-mail', path) RETURNING ctid::text INTO r;
+  IF want_object THEN
+    INSERT INTO storage.objects (bucket_id, name) VALUES ('contact-mail', path) RETURNING ctid::text INTO r;
+  END IF;
+  RETURN r;
+END $$;
+
 -- Makes a row of the registry's make_row for one firm ('a' or 'b') as the superuser and returns its ctid. Each row hangs off a
 -- new intake of that firm owned by a new person, so no caller owns anything the probe makes.
 CREATE FUNCTION pg_temp.store_peo_mail(msg bigint, intake uuid, tag text) RETURNS text LANGUAGE plpgsql AS $$
@@ -3908,6 +4262,32 @@ SELECT unnest(ARRAY[
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
 INSERT INTO fn_class (fn, class, why) VALUES
+  ('issue_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm issues its bundle link; the same refusal for another firm''s quote request as for one that does not exist (4e; supabase/tests/bundle_links.sql)'),
+  ('revoke_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm revokes its link; the same refusal for another firm''s quote request as for one that does not exist (4e)'),
+  ('send_to_peo', 'firm_scoped', 'a current member of the intake''s firm, with a connected mailbox, sends its bundle to a PEO the employer authorized (M-2.1); the same refusal for another firm''s intake as for one that does not exist (4e; supabase/tests/peo_send.sql)'),
+  ('send_peo_update', 'firm_scoped', 'a current member of the intake''s firm sends a PEO holding an older version the newer one, through send_to_peo and every check of it (M-2.3); the same refusal for another firm''s intake as for one that does not exist (4e; supabase/tests/peo_update.sql)'),
+  ('attach_peo_link', 'firm_scoped', 'the advisor who wrote a message to a PEO joins its bundle link to it; the same refusal for another firm''s message as for one that does not exist (4e)'),
+  ('peo_send_context', 'firm_scoped', 'a current member of the intake''s firm reads their own mailbox, the PEO''s contacts and the reply address for the composer; PT404 for another firm''s intake (4e)'),
+  ('follow_up_peo', 'firm_scoped', 'a current member of the quote request''s firm, with a connected mailbox, follows up with a PEO the employer authorized (M-2.4); the same refusal for another firm''s quote request as for one that does not exist (4e; supabase/tests/follow_up_and_withdraw.sql)'),
+  ('withdraw_from_peo', 'firm_scoped', 'a current member of the quote request''s firm, with a connected mailbox, withdraws it from its PEO (M-2.4); the same refusal for another firm''s quote request as for one that does not exist (4e)'),
+  ('close_submission_and_withdraw', 'firm_scoped', 'a current member of the intake''s firm marks it Won, Lost or Archived through set_submission_status and sends the PEOs still open one withdrawal (M-2.4); another firm''s intake is refused as one that does not exist (4e)'),
+  ('record_peo_thread_message', 'service_only', 'records a follow-up or withdrawal on a PEO''s thread, inside follow_up_peo, withdraw_from_peo and close_submission_and_withdraw, which check first; no API role can call it'),
+  ('peo_registered_elsewhere', 'firm_scoped', 'a current advisor of the intake''s firm reads the PEOs another firm registered the same employer with, and when, never which firm (Q-2.2); PT404 for another firm''s intake, so no firm asks about an employer it doesn''t hold (4e; supabase/tests/peo_registrations.sql)'),
+  ('peo_registration_statement', 'firm_scoped', 'a current member of the firm reads its own registrations, never another firm''s; refuses a support session (4e; supabase/tests/peo_registrations.sql)'),
+  ('register_peo_send', 'service_only', 'the send''s own writer of its registration, called inside send_to_peo; no API role can call it'),
+  ('claim_peo_mail', 'service_only', 'the send-mail function claims PEO messages whose link has joined them, with the token; no API role can call it'),
+  ('complete_peo_mail', 'service_only', 'the send-mail function records a sent PEO message, for the attempt that holds its claim; no API role can call it'),
+  ('fail_peo_mail', 'service_only', 'the send-mail function records a failed attempt at a PEO message, retried or final; no API role can call it'),
+  ('peo_mail_ended', 'trigger', 'a PEO message whose outbox event died by another path (the reaper) is marked failed as uncertain, inside that write'),
+  ('peo_mail_requeued', 'trigger', 'the Outbox page''s retry of a dead PEO message puts the message back in the queue, inside that write'),
+  ('bundle_link_folder_in_my_firm', 'own', 'storage policy helper: whether a bundle link file''s folder is a quote request of a firm the caller belongs to'),
+  ('bundle_link_folder_read_only', 'own', 'storage policy helper: whether that quote request''s firm is closing'),
+  ('bundle_link_open', 'service_only', 'the bundle-link edge function opens a link by its token''s hash: no API role but the service role can call it (supabase/tests/bundle_links.sql)'),
+  ('bundle_link_file', 'service_only', 'the bundle-link edge function finds a live link''s file and logs the download: the service role only'),
+  ('bundle_link_revoke', 'service_only', 'what M-1.1, M-2.3 and M-2.4 call inside their own guarded write: no API role can call it'),
+  ('bundle_link_address_refused', 'service_only', 'the guessing limit, asked by the two functions above; no API role can call it'),
+  ('bundle_link_miss', 'service_only', 'counts a guess that missed, for the two functions above; no API role can call it'),
+  ('log_bundle_link_change', 'trigger', 'a trigger function: a link issued or revoked is on its quote request''s timeline'),
   ('invite_member', 'firm_scoped', 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_invitations.sql)'),
   ('remove_member', 'firm_scoped', 'a current owner of the firm ends a member''s membership now; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_members.sql)'),
   ('suspend_member', 'firm_scoped', 'a current owner of the firm suspends a member; refused for every other caller (4e; supabase/tests/firm_members.sql)'),
@@ -3958,6 +4338,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
   ('opportunity_stage', 'service_only', 'an opportunity''s stage, worked out from its submission''s pipeline stage; answers for any opportunity by id, so no API role can call it: a query that has decided the caller may see the opportunity asks it');
+-- M-1.1 (20261122100000): the employer's PEO authorizations.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('peo_authorized', 'service_only', 'whether the employer authorized a PEO, for any intake by id, so no API role can call it: the functions that send ask it after their own checks (M-1.1)'),
+  ('assert_peo_authorized', 'service_only', 'refuses a send to a PEO the employer never authorized or withdrew; for any intake by id, so no API role can call it: advisor_record_quote_send asks it after its firm check (M-1.1)'),
+  ('peo_authorization_version', 'public', 'a constant: the version of the PEO authorization wording in force'),
+  ('set_peo_authorization', 'own', 'the employer authorizes or withdraws a PEO on their own intake; refused for everyone else, the intake''s firm included (supabase/tests/peo_authorizations.sql)'),
+  ('peo_authorization_states', 'firm_scoped', 'each PEO''s state on one intake: its employer, or a current member of its firm; the same refusal as a submission that does not exist for everyone else (4e)');
 
 -- CRM-Q1.1b (20261119110000_chain_at_certification.sql; supabase/tests/chain_at_certification.sql): the chain made when an intake is first certified.
 INSERT INTO fn_class (fn, class, why) VALUES
@@ -3984,6 +4371,20 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_activity_options', 'firm_scoped', 'the contacts, opportunities and members the log form offers, for someone who may see the account; nothing for anyone else (4e)'),
   ('activities_guard', 'trigger', 'the note rule (D-200) and the account rule of calls, notes and tasks, held by the table whoever writes: a note''s text only by its writer within a day, additions only appended, an account only by following its contact or opportunity; not executable through the API'),
   ('can_edit_activity', 'service_only', 'whether the caller may change a call, note or task as their own (a note: its writer within a day; else the writer, the person it is for or whoever the level rule gives the account); the reading functions answer it as can_edit; no API role can call it (D-200)');
+-- CRM-L2.1 (20261122220000_lead_page.sql; supabase/tests/lead_page.sql): a lead's page and its writes.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('lead_page', 'firm_scoped', 'a current member of the firm who may see the lead (by level) reads its page; the same nothing for another firm''s lead as for one that is not there (4e)'),
+  ('lead_activity', 'firm_scoped', 'the same for a page of the lead''s calls, notes and tasks (4e)'),
+  ('lead_activity_options', 'firm_scoped', 'the firm''s members the log form offers, for someone who may see the lead; nothing for anyone else (4e)'),
+  ('update_lead', 'firm_scoped', 'a current member of the firm the call acts for saves a lead''s own fields from a version, when the level rule gives it them; refused for another firm''s lead as for one that is not there (4e)'),
+  ('mark_lead_not_fit', 'firm_scoped', 'the same for marking a lead Not a fit (4e)'),
+  ('reopen_lead', 'firm_scoped', 'the same for reopening a Not a fit lead (4e)'),
+  ('log_lead_activity', 'firm_scoped', 'a current member of the firm the call acts for, who may see the lead, logs a call, note or task on it; another firm''s lead is as not there (4e)'),
+  ('lead_visible', 'service_only', 'whether the caller may see a lead: the leads table''s own row rule, for the functions that read past it; no API role can call it'),
+  ('lead_status_began', 'service_only', 'when a lead last became a status, from its history, for the page''s status bar; no API role can call it'),
+  ('lead_to_change', 'service_only', 'the lead a write acts on, held, after the sight and level checks; no API role can call it'),
+  ('activity_record_seen', 'service_only', 'whether the caller may see the account or lead a call, note or task is on; no API role can call it'),
+  ('activity_lead_read_only', 'service_only', 'why a call, note or task on a lead can''t be changed (the lead is read, not changed); no API role can call it');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('contact_page', 'firm_scoped', 'a current member of the firm who may see the contact''s account (by level) reads its page; the same nothing for another firm''s contact as for one that is not there (4e)'),
   ('contact_activity', 'firm_scoped', 'the same for a page of the contact''s calls, notes and tasks (4e)'),
@@ -4004,6 +4405,21 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('create_account', 'firm_scoped', 'a current member of the firm the call acts for makes an account of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
+  ('create_lead', 'firm_scoped', 'a current member of the firm the call acts for makes a lead of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
+  ('send_conversation_message', 'firm_scoped', 'a current member of the firm the call acts for writes to a contact or lead of that firm they may see; the same refusal for another firm''s record as for one that does not exist (4e; supabase/tests/conversations.sql)'),
+  ('conversation_for', 'firm_scoped', 'a current member reads the conversation of a contact or lead of that firm they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
+  ('open_conversation', 'firm_scoped', 'a current member marks a conversation of that firm they may see opened for the firm; the same refusal for another firm''s as for one that does not exist (4e)'),
+  ('add_sender_as_contact', 'firm_scoped', 'a current member adds the new sender of a message on a contact''s conversation of that firm as a contact on its account, through add_contact; the same refusal for another firm''s message as for one that does not exist (4e)'),
+  ('account_conversation_messages', 'firm_scoped', 'a current member reads the mail of an account or opportunity of that firm they may see; the same refusal for another firm''s as for one that does not exist (4e)'),
+  ('record_conversation_attachment', 'service_only', 'the receive-mail function records a received message''s attachment, pending its scan; no API role can call it'),
+  ('finish_conversation_attachment', 'service_only', 'the receive-mail function settles a received attachment by its scan; no API role can call it'),
+  ('claim_conversation_mail', 'service_only', 'the send-mail function claims queued messages with what it needs to send them; no API role can call it'),
+  ('complete_conversation_mail', 'service_only', 'the send-mail function records a sent message, for the attempt that holds its claim; no API role can call it'),
+  ('fail_conversation_mail', 'service_only', 'the send-mail function records a failed attempt, retried or final, for the attempt that holds its claim; no API role can call it'),
+  ('conversation_files_for', 'firm_scoped', 'a current member lists the files a message to a contact of that firm they may see may carry; the same refusal for another firm''s contact as for one that does not exist (4e; supabase/tests/conversation_files.sql)'),
+  ('conversation_file_allowed', 'service_only', 'whether a file may go with a message to a contact (D-605): the send and the list ask it; no API role can call it'),
+  ('conversation_file_open', 'service_only', 'the message-file edge function opens a file link by its token''s hash and logs the download: the service role only (supabase/tests/conversation_files.sql)'),
+  ('conversation_mail_ended', 'trigger', 'a message whose outbox event died by another path (the reaper) is marked failed as uncertain, inside that write; no API role can run it'),
   ('add_contact', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, adds a contact to it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
   ('move_contact', 'firm_scoped', 'a current member of the firm the call acts for moves a contact to another account of that firm by the level rule; another firm''s contact or account is as not there (4e)'),
   ('contact_move_choices', 'firm_scoped', 'the firm''s accounts a contact may be moved to, to a member of that firm who may see the contact (4e)'),
@@ -4055,6 +4471,21 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('crm_absorb_contact', 'service_only', 'moves one contact''s calls, notes, tasks and main-contact links to another and deletes it, inside a merge; no API role can call it'),
   ('crm_merge_accounts_problem', 'service_only', 'why two accounts can''t be merged by this caller, in words; asked by the merge and its preview; no API role can call it'),
   ('crm_merge_contacts_problem', 'service_only', 'why two contacts can''t be merged by this caller, in words; asked by the merge and its preview; no API role can call it');
+
+-- CRM-L1.1b (20261122210000_leads_bulk_and_bin.sql; supabase/tests/leads_bulk.sql): bulk changes to leads, their undo, the bin, Restore, the nightly removal and export.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('bulk_leads_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what a bulk change would do to the leads of that firm they may see; another firm''s lead is just not available (4e)'),
+  ('bulk_leads_change', 'firm_scoped', 'the same for doing it, to the leads the level rule gives the caller, all or none; another firm''s lead is just not available (4e)'),
+  ('bulk_leads_undo', 'firm_scoped', 'the member who made a bulk change of their firm''s leads puts it back within ten minutes; as not there for anyone else''s and another firm''s (4e)'),
+  ('leads_bin', 'firm_scoped', 'an owner of the firm the call acts for (or Nevermore support) reads that firm''s leads in the bin; refused for anyone else (4e)'),
+  ('restore_leads', 'firm_scoped', 'an owner of the firm the call acts for takes that firm''s leads out of the bin; another firm''s lead is just not available (4e)'),
+  ('bulk_leads_resolve', 'service_only', 'the leads a bulk change is for, from ids or from the table''s filters, at most 1,000, as the caller may see them, the bin left out; no API role can call it'),
+  ('bulk_lead_outcome', 'service_only', 'what a bulk change does to one lead (change, already as asked, skipped with its reason): the preview and the change ask it; no API role can call it'),
+  ('lead_set_field', 'service_only', 'writes one optional standard field of a lead for a bulk change or its undo, after the checks; no API role can call it'),
+  ('lead_labels_history', 'trigger', 'writes one history entry for a lead when a label is put on or taken off, inside the write that did it; not executable through the API'),
+  ('export_source_leads', 'service_only', 'the leads'' reader, run by export_rows after its checks: the leads the caller may see, the bin left out; no API role can call it'),
+  ('remove_binned_leads', 'service_only', 'the nightly removal of every firm''s leads 30 days in the bin, a step of the firm record''s daily job; only the service role can call it');
+
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('search_records', 'firm_scoped', 'a current member of the firm the call acts for finds that firm''s accounts, contacts, opportunities and quotes by level, never an intake''s answers; nothing of another firm (4e)'),
@@ -4110,6 +4541,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
   ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller owns or is a firm member of (4h)'),
+  ('request_contact', 'platform_wide', 'a visitor on a firm''s public link asks to be contacted: callable by anyone, signed out included, and writes one lead of the firm the address names; no firm is chosen by the caller and nothing of a firm is read back (CRM-L1.2b, supabase/tests/request_contact.sql)'),
   ('archive_chamber_session', 'own', 'the prospect''s Start over, on their own intake'),
   ('record_intake_consent', 'own', 'the caller''s own agreement'),
   ('prospect_final_manuscript', 'own', 'the prospect''s own final Manuscript'),
@@ -4207,6 +4639,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
   ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
   ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)'),
+  ('inbox_list', 'firm_scoped', 'one page of the inbox: the firm named (a current member of it at this address), the messages on the threads they may see, never another firm''s (4e; supabase/tests/inbox.sql)'),
+  ('inbox_view_counts', 'firm_scoped', 'the inbox''s view counts, for the firm named only (4e)'),
+  ('leads_list', 'firm_scoped', 'one page of the leads table: the firm named (a current member of it at this address), the leads they may see by level, never another firm''s (4e; supabase/tests/leads_query.sql)'),
+  ('leads_view_counts', 'firm_scoped', 'the leads table''s view counts, for the firm named only (4e)'),
   ('accounts_list', 'firm_scoped', 'one page of the accounts table: the firm named (a current member of it at this address), the accounts they may see by level, never another firm''s (4e; supabase/tests/accounts_query.sql)'),
   ('accounts_view_counts', 'firm_scoped', 'the count of each view of the accounts table: the same firm and the same accounts as the list (4e; supabase/tests/accounts_query.sql)'),
   ('firm_member_choices', 'firm_scoped', 'the firm''s current members by id and name, to a member of that firm at this address (4e; supabase/tests/accounts_query.sql)');
@@ -4350,16 +4786,45 @@ CREATE TEMP TABLE secret_columns (tbl text NOT NULL, col text NOT NULL, kind tex
 INSERT INTO secret_columns VALUES
   ('public.broker_mailboxes', 'token_ciphertext', 'ciphertext', 'a broker''s mailbox refresh token, sealed by the mailbox function; only the sending function reads it back'),
   ('public.broker_mailboxes', 'token_iv', 'ciphertext', 'the sealing''s initialisation vector, kept with the ciphertext it belongs to'),
-  ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept');
+  ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept'),
+  ('public.bundle_links', 'token_hash', 'hash', 'the SHA-256 of a bundle link''s token (6.6b, ADR 0003); the token is answered once to the advisor who issues it and never kept'),
+  ('public.conversation_message_files', 'token_hash', 'hash', 'the SHA-256 of a file link''s token (6.3, D-605); the token is answered only to send-mail, which puts it in the message, and never kept');
 -- The functions the API roles can run that name a secret's table, each swept below as every caller with a statement that calls it.
 CREATE TEMP TABLE secret_readers (fn text PRIMARY KEY, call text NOT NULL);
 INSERT INTO secret_readers VALUES
   ('my_mailbox()', $$SELECT public.my_mailbox()::text$$),
+  -- CRM-E1.2a: the send reads the caller's own mailbox address, the read whether it is connected; neither returns the token.
+  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid, p_document_ids uuid[])',
+   $$SELECT public.send_conversation_message(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} AND c.email IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1), p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm_a})::text$$),
+  ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)',
+   $$SELECT public.conversation_for(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} ORDER BY c.created_at, c.id LIMIT 1), p_firm_id => {firm_a})::text$$),
   ('firm_pending_invitations(p_firm_id uuid)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.firm_pending_invitations({firm_a}) f$$),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.invite_member({firm_a}, 'secret-probe@example.test', 'agent', NULL, repeat('b', 64)) f$$),
   ('resend_invitation(p_invitation_id uuid, p_token_hash text)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.resend_invitation({inv_a}, repeat('a', 64)) f$$),
   ('cancel_invitation(p_invitation_id uuid)', $$SELECT public.cancel_invitation({inv_a})::text$$),
+  ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)',
+   $$SELECT public.issue_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
+  ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', $$SELECT public.revoke_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1))::text$$),
+  -- M-2.1: the send and the composer read the caller's own mailbox address, never its token; joining a link reads its hash to check the token given,
+  -- and answers neither.
+  ('send_to_peo(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.send_to_peo((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  -- M-2.3: the update reads only what send_to_peo reads, and the two certified versions' answers to name what changed by label, never a value.
+  ('send_peo_update(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.send_peo_update((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('peo_send_context(p_session_id uuid, p_peo text)',
+   $$SELECT public.peo_send_context((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO')::text$$),
+  ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)',
+   $$SELECT public.attach_peo_link((SELECT m.id FROM public.quote_request_messages m WHERE m.firm_id = {firm_a} AND m.direction = 'sent' LIMIT 1), (SELECT b.id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 'probe')::text$$),
+  -- M-2.4: a follow-up reads the caller's mailbox address and the newest link's revoke reason; a withdrawal and the closing withdrawal the address. None
+  -- answers a token or its hash.
+  ('follow_up_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.follow_up_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('withdraw_from_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text, p_reason text)',
+   $$SELECT public.withdraw_from_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
+  ('close_submission_and_withdraw(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_subject text, p_body text)',
+   $$SELECT public.close_submission_and_withdraw((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
   ('accept_invitation(p_token_hash text, p_firm_address text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.accept_invitation(repeat('c', 64), (SELECT address FROM public.firms WHERE id = {firm_a})) f$$);
 
@@ -4575,7 +5040,7 @@ BEGIN
   FROM callable c JOIN pg_proc p ON p.pronamespace = 'public'::regnamespace AND p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' = c.fn
   -- firm_public_name is on the list on purpose (CRM-P1.3a): it is the one thing a firm address shows before sign-in: a firm's name, and nothing else (D-27).
   WHERE p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');
-  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
+  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid), request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)' THEN
     RAISE EXCEPTION 'FAIL: SECURITY DEFINER functions signed-out callers can run changed: %', missing;
   END IF;
 
@@ -4589,8 +5054,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['bundle-links', 'contact-mail', 'documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the bundle-links, contact-mail, documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table

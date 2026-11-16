@@ -41,6 +41,14 @@ describe("the Settings page", () => {
     ]);
   });
 
+  // Catches: Settings telling a person the product reads replies in their mailbox, which it never does (send only: docs/adr/0005, CRM-E1.1).
+  it("describes the Mailbox as the one you write from, which Nevermore only sends from", async () => {
+    const list = await renderPage("agent");
+    const mailbox = list.getByRole("link", { name: /Mailbox/ });
+    expect(mailbox).toHaveTextContent(/only sends/);
+    expect(mailbox).not.toHaveTextContent(/read/i);
+  });
+
   it("leaves Activity out for an agent or a lead, who would only be turned away", async () => {
     for (const role of ["agent", "lead"]) {
       const list = await renderPage(role);
@@ -55,6 +63,18 @@ describe("the Settings page", () => {
     const list = await renderPage("owner");
     expect(list.getByRole("link", { name: /Invitations/ })).toHaveAttribute("href", "https://alpha.nevermorepeo.com/firm/invitations");
     expect(list.getByRole("link", { name: /Outbox/ })).toHaveAttribute("href", "/advisor/outbox");
+  });
+
+  // Catches (Q-2.1): a firm with no way to take its statement of registrations, or a Nevermore support session offered a download it can't make (D-128).
+  it("offers every member the firm's statement of registrations with PEOs, and support none", async () => {
+    for (const role of ["agent", "lead", "owner"]) {
+      await renderPage(role);
+      const section = screen.getByRole("region", { name: "Registrations with PEOs" });
+      expect(within(section).getByRole("button", { name: "Download the statement (CSV)" })).toBeInTheDocument();
+      document.body.innerHTML = "";
+    }
+    await renderPage("support");
+    expect(screen.queryByRole("region", { name: "Registrations with PEOs" })).not.toBeInTheDocument();
   });
 
   it("keeps Invitations inside the app at a firm's address", async () => {
