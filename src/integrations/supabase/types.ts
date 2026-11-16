@@ -1481,6 +1481,19 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: Json | null
       }
+      // M-1.1 (20261122100000): the employer authorizes or withdraws a PEO on their own intake; each PEO's state for the employer or the intake's firm.
+      set_peo_authorization: {
+        Args: { p_session_id: string; p_peo: string; p_authorized: boolean; p_version: string; p_text: string }
+        Returns: Json
+      }
+      peo_authorization_states: {
+        Args: { p_session_id: string }
+        Returns: { peo: string; state: string; signed_at: string | null; wording_version: string | null }[]
+      }
+      peo_authorization_version: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       prospect_submission_status: {
         Args: { p_session_id: string }
         Returns: string | null

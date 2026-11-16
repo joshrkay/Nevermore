@@ -25,6 +25,9 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 
+// The employer's PEOs (M-1.1) are tested on their own (src/components/MyPacketRecipients.test.tsx); here, only that the profile carries them.
+vi.mock("@/components/MyPacketRecipients", () => ({ default: () => <section aria-label="Who can receive my packet" /> }));
+
 const { default: ProfilePage } = await import("./ProfilePage");
 
 const save = async (phone: string) => {
@@ -88,5 +91,17 @@ describe("ProfilePage save", () => {
     db.update.mockResolvedValue({ error: null });
     await save("555-0100");
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Profile updated"));
+  });
+});
+
+describe("ProfilePage, who can receive my packet", () => {
+  // M-1.1, D-608. Break caught: the employer has nowhere after certifying to add a PEO or withdraw one.
+  it("carries the employer's PEOs, to add or withdraw at any time", async () => {
+    render(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("region", { name: "Who can receive my packet" })).toBeInTheDocument();
   });
 });

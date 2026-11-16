@@ -13,6 +13,10 @@ const auth = {
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+// The employer's PEO boxes are tested on their own (src/components/PacketRecipients.test.tsx); here, only where they appear.
+vi.mock("@/components/PacketRecipients", () => ({
+  default: ({ sessionId, heading }: { sessionId: string; heading: string }) => <section aria-label={heading} data-session={sessionId} />,
+}));
 
 const { default: ReckoningTab } = await import("./ReckoningTab");
 const { CONSENT_TEXT_VERSION } = await import("@/data/certification");
@@ -176,6 +180,16 @@ describe("ReckoningTab certification", () => {
     expect(screen.getByText("File ID: EAA-2026-S1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Download your packet/ })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(toast.success).toHaveBeenCalled();
+  });
+
+  // M-1.1, D-608. Break caught: the employer who has just certified is told they're all set without being asked which PEOs may receive the packet.
+  it("asks which PEOs may receive the packet right after certifying", async () => {
+    mount();
+    checkAll();
+    fillSigner();
+    sign();
+    fireEvent.click(submitButton());
+    expect(await screen.findByRole("region", { name: "Which PEOs may receive your packet?" })).toHaveAttribute("data-session", "s1");
   });
 
   it("shows an error, not a confirmation, when the submission can't be saved", async () => {
@@ -443,6 +457,19 @@ describe("ReckoningTab on an intake that is already certified", () => {
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.queryByText("Click to sign digitally")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Generate your packet/ })).not.toBeInTheDocument();
+  });
+
+  // M-1.1, D-608. Break caught: after certifying, the employer is never asked which PEOs may receive the packet, so nothing could ever be sent; or
+  // the question is asked of another intake.
+  it("asks which PEOs may receive the packet once it is certified", () => {
+    mountWith({ status: "certified", submission });
+    expect(screen.getByRole("region", { name: "Which PEOs may receive your packet?" })).toHaveAttribute("data-session", "s1");
+  });
+
+  // Break caught: the question is asked before there is a certified packet to send.
+  it("does not ask before the intake is certified", () => {
+    mountWith({ status: "stale", submission });
+    expect(screen.queryByRole("region", { name: "Which PEOs may receive your packet?" })).not.toBeInTheDocument();
   });
 
   it("offers certification again once the answers have changed", () => {
