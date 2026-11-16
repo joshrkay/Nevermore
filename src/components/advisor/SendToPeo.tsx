@@ -7,6 +7,8 @@ import { DRAFT_WORDING_NOTICE } from "@/data/legalWording";
 import { peoSendBlockPreview, peoSendSubject } from "@/data/peoSend";
 import { quoteReplyDomain, replyAddress } from "@/data/quoteRequests";
 import { loadPeoSendContext, sendToPeo, type PeoSend, type PeoSendContext } from "@/lib/peoSendApi";
+import { loadRegisteredElsewhere } from "@/lib/peoRegistrationsApi";
+import { registeredElsewhereWords } from "@/data/peoRegistrations";
 
 export interface SendToPeoProps {
   sessionId: string;
@@ -45,6 +47,8 @@ const SendToPeo = (p: SendToPeoProps) => {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [queued, setQueued] = useState<string | null>(null);
+  // Q-2.2 (D-604): another firm registered this employer with this PEO, and when; never who. It warns and never blocks the send.
+  const [elsewhere, setElsewhere] = useState<string | null>(null);
   const replyDomain = quoteReplyDomain();
   const { beforeSend, choice } = useFirstSend({
     returnTo: p.returnTo,
@@ -59,6 +63,8 @@ const SendToPeo = (p: SendToPeoProps) => {
       (c) => !cancelled && setContext(c),
       (err) => !cancelled && setProblem(failureWords(err, "We couldn't load the PEO's contacts.")),
     );
+    // Unread, there is simply no warning: the send never waits on it.
+    loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(registeredElsewhereWords(rows, p.peo)), () => undefined);
     return () => {
       cancelled = true;
     };
@@ -98,6 +104,7 @@ const SendToPeo = (p: SendToPeoProps) => {
           }}
         >
           <MailboxForWriting returnTo={p.returnTo} />
+          {elsewhere && <p role="note" className="text-xs text-warning">{elsewhere}</p>}
           {context && context.contacts.length > 0 && (
             <fieldset className="space-y-1">
               <legend className="text-xs text-muted-foreground">{`To, at ${p.peo}`}</legend>

@@ -14,6 +14,7 @@ import { closingDate, requestFirmClosure, withdrawFirmClosure } from "@/lib/clos
 import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
 import { LoadFailed } from "@/components/workspace/states";
 import { SaveFailed } from "@/components/workspace/form";
+import RegistrationStatement from "@/components/advisor/RegistrationStatement";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -126,6 +127,14 @@ const AdvisorSettingsPage = () => {
           </li>
         ))}
       </ul>
+
+      {/* Q-2.1: the firm's proof of when it submitted each employer to each PEO. A download, so a support session is not offered it (D-128). */}
+      {firm && !isSupport && (
+        <section aria-labelledby="registrations-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="registrations-heading" className="font-semibold">Registrations with PEOs</h2>
+          <RegistrationStatement firmId={firm.id} />
+        </section>
+      )}
 
       {firm && !isSupport && (
         <section aria-labelledby="leave-heading" className="mt-8 rounded-lg border border-border bg-card p-4">

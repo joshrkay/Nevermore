@@ -12,6 +12,8 @@ import { bundleSummary, planBundle, type BundleSource } from "@/data/submissionB
 import { peoLinkIssuer } from "@/lib/peoLinkIssuer";
 import { loadPeoSendContext, sendToPeo, type PeoSendContext } from "@/lib/peoSendApi";
 import { loadPeoAuthorizations, type PeoAuthorizationState } from "@/lib/peoAuthorizationsApi";
+import { loadRegisteredElsewhere, type RegisteredElsewhere } from "@/lib/peoRegistrationsApi";
+import { registeredElsewhereWords } from "@/data/peoRegistrations";
 
 export interface SendToSeveralPeosProps {
   sessionId: string;
@@ -60,6 +62,8 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   const [subject, setSubject] = useState(peoSendSubject(p.companyName, p.fileId, p.certified.version));
   const [note, setNote] = useState("");
   const [authorizations, setAuthorizations] = useState<PeoAuthorizationState[] | null>(null);
+  // Q-2.2 (D-604): the PEOs another firm registered this employer with, and when; never who. It warns and never stops a PEO.
+  const [elsewhere, setElsewhere] = useState<RegisteredElsewhere[]>([]);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [busy, setBusy] = useState(false);
   // No "Send from your own mail" here: each PEO has its own reply address to put in CC, so that is done one PEO at a time, on its card (D-1604).
@@ -83,6 +87,8 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     let cancelled = false;
     // The employer's say for each PEO (M-1.1). Unread, the database still refuses a send without it, and the result says so.
     loadPeoAuthorizations(p.sessionId).then((rows) => !cancelled && setAuthorizations(rows), () => undefined);
+    // Unread, there is simply no warning: no send waits on it.
+    loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(rows), () => undefined);
     for (const peo of peoNames.split("\n").filter(Boolean)) {
       loadPeoSendContext(p.sessionId, peo).then(
         (c) => !cancelled && setContexts((now) => ({ ...now, [peo]: c })),
@@ -150,6 +156,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     setStep("choose");
     setContexts({});
     setAuthorizations(null);
+    setElsewhere([]);
     setOutcomes([]);
   };
 
@@ -199,6 +206,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
               const plan = planBundle(sourceOf(c));
               const items = plan.missing.map((m) => m.label);
               const stop = stopOf(c);
+              const registered = registeredElsewhereWords(elsewhere, c.peo);
               return (
                 <li key={c.peo}>
                   <article aria-labelledby={`${id}-${c.entry.peo.id ?? c.peo}`} className="rounded-md bg-muted p-2 space-y-0.5">
@@ -208,6 +216,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
                     <p className="text-xs">{bundleSummary(plan)}</p>
                     <p className="text-xs">{`Open items: ${items.length > 0 ? items.join("; ") : "none"}`}</p>
                     {c.notMet.length > 0 && <p className="text-xs text-warning">{`${c.notMet.join("; ")}. ${NOT_MET_NOTE}`}</p>}
+                    {registered && <p role="note" className="text-xs text-warning">{registered}</p>}
                     {stop && <p className="text-xs text-destructive">{`Won't be sent: ${stop}`}</p>}
                   </article>
                 </li>

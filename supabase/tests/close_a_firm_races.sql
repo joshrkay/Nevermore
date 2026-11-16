@@ -173,6 +173,7 @@
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
 \i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

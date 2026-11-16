@@ -1360,6 +1360,14 @@ export type Database = {
         Args: { p_session_id: string; p_peo: string }
         Returns: Json
       }
+      peo_registered_elsewhere: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      peo_registration_statement: {
+        Args: { p_firm_id?: string }
+        Returns: Json
+      }
       issue_bundle_link: {
         Args: { p_quote_request_id: number; p_version: number; p_folder: string; p_files: Json; p_open_items?: Json }
         Returns: Json

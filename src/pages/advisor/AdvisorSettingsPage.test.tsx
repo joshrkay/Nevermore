@@ -65,6 +65,18 @@ describe("the Settings page", () => {
     expect(list.getByRole("link", { name: /Outbox/ })).toHaveAttribute("href", "/advisor/outbox");
   });
 
+  // Catches (Q-2.1): a firm with no way to take its statement of registrations, or a Nevermore support session offered a download it can't make (D-128).
+  it("offers every member the firm's statement of registrations with PEOs, and support none", async () => {
+    for (const role of ["agent", "lead", "owner"]) {
+      await renderPage(role);
+      const section = screen.getByRole("region", { name: "Registrations with PEOs" });
+      expect(within(section).getByRole("button", { name: "Download the statement (CSV)" })).toBeInTheDocument();
+      document.body.innerHTML = "";
+    }
+    await renderPage("support");
+    expect(screen.queryByRole("region", { name: "Registrations with PEOs" })).not.toBeInTheDocument();
+  });
+
   it("keeps Invitations inside the app at a firm's address", async () => {
     firmAddress = { status: "known", address: "alpha", name: "Alpha" };
     const list = await renderPage("owner");

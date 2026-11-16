@@ -328,6 +328,16 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: `${DELETED_WITH_INTAKE} Kept when a firm closes, as its intakes are.`,
   },
   {
+    id: "peo_registrations",
+    label: "Registrations with PEOs",
+    sensitivity: "restricted",
+    examples: "Each time a firm sends an employer's packet to a PEO: which firm, which PEO, the employer's FEIN (or its name and state when it gave none), the File ID, the version and when. It is the firm's proof of when it submitted the employer. Another firm sending the same employer to the same PEO is told that one exists and when, never which firm.",
+    stored: { tables: ["peo_registrations"], buckets: [], elsewhere: [] },
+    retention: "Kept: a registration is evidence of a send that happened. It stays when the intake is deleted and when the firm closes (D-1634, D-1635).",
+    deletion: "Never changed or deleted, by anyone, a platform admin included: the table refuses it. Read only through the firm's own statement (the FEIN by its last four digits) and the warning, which names no firm.",
+    awaitingCounsel: "How long a registration is kept once its intake is deleted or its firm has closed, and what an employer who asks for deletion is told about it, is counsel's to set (QP-D4).",
+  },
+  {
     id: "mailbox_token",
     label: "Advisor mailbox connection",
     sensitivity: "restricted",
