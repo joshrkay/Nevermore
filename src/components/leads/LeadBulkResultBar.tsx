@@ -13,6 +13,8 @@ const madeWords = ({ action, outcome }: LeadBulkMade): string => {
   const n = leadsWords(outcome.changed);
   switch (action.action) {
     case "delete": return `Moved ${n} to the bin.`;
+    case "label_add": return `Put the label ${outcome.label ?? action.name} on ${n}.`;
+    case "label_remove": return `Took the label ${outcome.label ?? action.name} off ${n}.`;
     case "field": return `Set ${LEAD_FIELD_WORDS[action.field]} on ${n}.`;
     case "owner": return `Gave ${n} to ${outcome.ownerName ?? "the person chosen"}.`;
     case "status": return `Set ${n} to ${LEAD_STATUS_LABELS[action.status]}.`;

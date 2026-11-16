@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import type { BulkOutcome, BulkSelection } from "@/lib/bulkChangeApi";
+import { firmLabels, type BulkOutcome, type BulkSelection } from "@/lib/bulkChangeApi";
 import { applyLeadsBulk, previewLeadsBulk, type LeadBulkAction } from "@/lib/leadsBulkApi";
 import { LEAD_NOT_FIT_REASON_LABELS, LEAD_STATUS_LABELS } from "@/data/leads";
 import { LEAD_NOT_FIT_REASONS } from "@/lib/leadsApi";
@@ -38,6 +38,12 @@ const actionOf = (kind: LeadBulkKind, choice: string, value: string): LeadBulkAc
     case "delete": return { action: "delete" };
     case "status": return choice === "new" || choice === "working" ? { action: "status", status: choice } : null;
     case "owner": return choice ? { action: "owner", ownerId: choice } : null;
+    // For a label the choice is the mode and the value its word.
+    case "label": {
+      const name = value.trim();
+      if (!name) return null;
+      return { action: choice === "label_remove" ? "label_remove" : "label_add", name };
+    }
     case "field": {
       const field = LEAD_BULK_FIELDS.find((f) => f === choice);
       if (!field) return null;
@@ -71,6 +77,7 @@ export function LeadBulkDialog({ firmId, kind, selection, count, onClose, onMade
   onMade: (made: LeadBulkMade) => void;
 }) {
   const [choice, setChoice] = useState("");
+  const labels = useQuery({ queryKey: ["bulk-labels", firmId], queryFn: () => firmLabels(firmId), enabled: kind === "label", retry: false, gcTime: 0 });
   const people = useQuery({ queryKey: ["bulk-owner-choices", firmId], queryFn: () => listFirmMembers(firmId), enabled: kind === "owner", retry: false, staleTime: 60_000 });
   const [value, setValue] = useState("");
   const wanted = actionOf(kind, choice, value);
@@ -154,6 +161,29 @@ export function LeadBulkDialog({ firmId, kind, selection, count, onClose, onMade
                   type={choice === "phone" ? "tel" : choice === "email" ? "email" : "text"} aria-describedby="lead-bulk-value-help" />
               )}
               <p id="lead-bulk-value-help" className="text-xs text-muted-foreground">Leave it blank to clear the field.</p>
+            </div>
+          </div>
+        )}
+        {kind === "label" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label htmlFor="lead-bulk-mode" className="text-sm font-medium">Change</label>
+              <select id="lead-bulk-mode" className={SELECT} value={choice || "label_add"} onChange={(e) => { setChoice(e.target.value); setValue(""); }} autoFocus>
+                <option value="label_add">Add a label</option>
+                <option value="label_remove">Remove a label</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="lead-bulk-label" className="text-sm font-medium">Label</label>
+              {choice === "label_remove" ? (
+                <select id="lead-bulk-label" className={SELECT} value={value} onChange={(e) => setValue(e.target.value)} disabled={labels.isPending}>
+                  <option value="">{labels.isPending ? "Loading labels" : labels.data?.length === 0 ? "The firm has no labels yet" : "Choose a label"}</option>
+                  {(labels.data ?? []).map((l) => <option key={l.id} value={l.name}>{l.name}</option>)}
+                </select>
+              ) : (
+                <Input id="lead-bulk-label" value={value} onChange={(e) => setValue(e.target.value)} list="lead-bulk-label-words" autoComplete="off" maxLength={40} />
+              )}
+              <datalist id="lead-bulk-label-words">{(labels.data ?? []).map((l) => <option key={l.id} value={l.name} />)}</datalist>
             </div>
           </div>
         )}

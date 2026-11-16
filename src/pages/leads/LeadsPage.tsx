@@ -23,7 +23,8 @@ import type { BulkSelection } from "@/lib/bulkChangeApi";
 // (src/pages/accounts/AccountsPage.tsx). The address holds the page, sort, filters, view and search; the database cuts the pages (D-44) and decides which leads
 // the person may see (D-809). New lead (CRM-L1.2a) opens over the page.
 //
-// Not here, and where it goes: selecting rows, bulk changes, the bin and export (slice 8.4), a lead's page (8.5) and Convert (8.6), Import (Epic 9).
+// Selecting rows, the bulk bar (D-811), Undo, the bin with Restore (an owner's, D-806) and export are CRM-L1.1b's (slice 8.4, D-1641 to D-1649).
+// Not here, and where it goes: a lead's page (8.5) and Convert (8.6), the Label column and filter (D-1648), Import (Epic 9).
 
 const NEW_LEAD_BUTTON = "inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 

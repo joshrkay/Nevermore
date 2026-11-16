@@ -1179,6 +1179,18 @@ export type Database = {
       }
       bulk_accounts_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
       firm_labels: { Args: { p_firm_id?: string | null }; Returns: Json }
+      // Bulk changes to leads, their undo, the bin and Restore (20261122210000; src/lib/leadsBulkApi.ts reads them).
+      bulk_leads_preview: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_leads_change: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      bulk_leads_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
+      leads_bin: { Args: { p_firm_id: string; p_page?: number }; Returns: Json }
+      restore_leads: { Args: { p_firm_id: string; p_ids: Json }; Returns: Json }
       // A table taken out, with its record in the same step (20261119090000): one value, {table, label, columns, rows, count, skipped, exportedAt}.
       // src/lib/exportApi.ts reads it. p_ids is null for a whole table, or a list of the records' ids for a selection.
       export_rows: {

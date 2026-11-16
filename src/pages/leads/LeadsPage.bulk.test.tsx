@@ -202,6 +202,30 @@ describe("the leads' bulk bar (CRM-L1.1b)", () => {
     expect(bulk.applyLeadsBulk).toHaveBeenCalledWith("f1", { action: "field", field: "employees", value: 40 }, { ids: ["l1", "l2"] });
     expect(await screen.findByText("Set Employees on 2 leads.")).toBeInTheDocument();
   });
+
+  // Catches (D-805, D-811): Label not putting the firm's word on the leads, or not offering the firm's own words to take off.
+  it("adds a label typed in, and takes off one the firm has", async () => {
+    const user = userEvent.setup();
+    firmLabels.mockResolvedValue([{ id: "b1", name: "Hot" }]);
+    bulk.previewLeadsBulk.mockResolvedValue(outcome({ label: "Hot" }));
+    bulk.applyLeadsBulk.mockResolvedValue(outcome({ label: "Hot", changeId: "c1", undoUntil: "2026-11-16T10:10:00Z" }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Label" }));
+    let d = await screen.findByRole("dialog", { name: "Label: 2 leads" });
+    await user.type(within(d).getByLabelText("Label"), "Hot");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 leads" }));
+    expect(bulk.applyLeadsBulk).toHaveBeenLastCalledWith("f1", { action: "label_add", name: "Hot" }, { ids: ["l1", "l2"] });
+    expect(await screen.findByText("Put the label Hot on 2 leads.")).toBeInTheDocument();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Label" }));
+    d = await screen.findByRole("dialog", { name: "Label: 2 leads" });
+    await user.selectOptions(within(d).getByLabelText("Change"), "label_remove");
+    await user.selectOptions(await within(d).findByLabelText("Label"), "Hot");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 leads" }));
+    expect(bulk.applyLeadsBulk).toHaveBeenLastCalledWith("f1", { action: "label_remove", name: "Hot" }, { ids: ["l1", "l2"] });
+    expect(await screen.findByText("Took the label Hot off 2 leads.")).toBeInTheDocument();
+  });
 });
 
 describe("the bin (CRM-L1.1b, D-806)", () => {

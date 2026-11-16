@@ -102,7 +102,7 @@ REVOKE ALL ON FUNCTION public.labels_kept_while_on_a_lead() FROM PUBLIC, anon, a
 CREATE TRIGGER labels_kept_while_on_a_lead BEFORE DELETE ON public.labels FOR EACH ROW EXECUTE FUNCTION public.labels_kept_while_on_a_lead();
 
 -- ---------- 2. What a bulk change asks for, checked ----------
--- The optional standard fields Set a field offers on a lead (D-1646): never the name (required), the status, its reason and the source (the product's, or
+-- The optional standard fields Set a field offers on a lead (D-1643): never the name (required), the status, its reason and the source (the product's, or
 -- their own actions), the owner (its own action) or the note (a page's long text). Kept in step with src/lib/leadsBulkApi.ts.
 CREATE FUNCTION public.lead_bulk_fields()
 RETURNS text[]
