@@ -55,4 +55,12 @@ SQL, `leads_bulk.sql` against the migration (script: each mutant applied, run, f
 - survived, then caught by a test from mutation (2): "leads in the bin selectable by id" (the change's own lock also left them out; the preview did not) -> §1 "nor offered by the preview"; "the filters ignored for all that match" -> §8 adds an Oregon lead the search finds and the filter does not ("gave 3, expected 2").
 - survived, equivalent (1): "anyone undoes" (dropping `actor_id = auth.uid()`): the next check, that the maker's own membership is current and the caller's, refuses anyone else the same way. Both checks kept, as bulk_accounts_undo has them.
 
-Front end (5): Nevermore support offered the changes -> red "offers Nevermore support none of the changes" (a test from mutation: written, seen green, then the mutant seen red); "all that match" sent as ids -> red "sends the table's filters, not ids, for all that match" (the same); the bin offered to a non-owner -> red "is offered to an owner only"; the undo sent to the accounts' function -> red "makes the change and undoes it with the leads' functions".
+Front end (4): Nevermore support offered the changes -> red "offers Nevermore support none of the changes" (a test from mutation: written, seen green, then the mutant seen red); "all that match" sent as ids -> red "sends the table's filters, not ids, for all that match" (the same); the bin offered to a non-owner -> red "is offered to an owner only"; the undo sent to the accounts' function -> red "makes the change and undoes it with the leads' functions".
+
+## The gate (lane/8.4, port 5436)
+
+- `npm run lint`: 0 errors (15 warnings, all in files this slice did not touch).
+- `npm run typecheck:functions`: clean.
+- `npm test`: 6,000 tests in 292 files; 5,998 passed in the full run, 2 timed out under load from the other lanes (`AccountPage.test.tsx` "stops loading by itself after 500 rows", 20 s; `AdvisorDashboardPage.test.tsx` "offers exactly the operators", 5 s), files this slice does not touch; both files then pass alone (354 of 354).
+- `npm run build`: built.
+- `supabase/tests/run.sh` (every SQL test): all 99 passed.
