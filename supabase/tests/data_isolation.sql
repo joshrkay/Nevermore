@@ -241,6 +241,7 @@
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
@@ -1604,7 +1605,18 @@ INSERT INTO callable VALUES
   ('bulk_accounts_undo(p_change_id uuid, p_firm_id uuid)', 'own', NULL,
    'the member who made a bulk change undoes it within ten minutes, once, putting back every record nobody has changed since; PT404 for anyone else and for a change of another firm, as for one that is not there; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
   ('firm_labels(p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm');
+   'a current member of the firm the call acts for reads the firm''s own list of labels; 42501 for anyone who is no member of that firm'),
+  -- CRM-L1.1b (20261122210000_leads_bulk_and_bin.sql; supabase/tests/leads_bulk.sql): bulk changes to leads, their undo, the bin and Restore.
+  ('bulk_leads_preview(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for is told what a bulk change would do to the leads they name or the table''s filters select: how many change, how many already are as asked, and the leads that are skipped (the level rule, converted, Not a fit), named, with the reason; it changes nothing; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session; another firm''s lead is just not available'),
+  ('bulk_leads_change(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for changes the owner, the status, Not a fit, a field or a label of up to 1,000 leads, or deletes them to the bin, those the level rule gives them, all or none; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT413 for more than 1,000; another firm''s lead is just not available'),
+  ('bulk_leads_undo(p_change_id uuid, p_firm_id uuid)', 'own', NULL,
+   'the member who made a bulk change of leads undoes it within ten minutes, once, putting back every lead nobody has changed since; PT404 for anyone else and for a change of another firm; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session'),
+  ('leads_bin(p_firm_id uuid, p_page integer)', 'own', NULL,
+   'an owner of the firm the call acts for (or a support session) reads a page of that firm''s leads in the bin, each with the day it is removed for good; 42501 for everyone else'),
+  ('restore_leads(p_firm_id uuid, p_ids jsonb)', 'own', NULL,
+   'an owner of the firm the call acts for takes leads of that firm out of the bin; 42501 for everyone else, PT423 for a closing firm and a support session; another firm''s lead is just not available');
 -- CRM-E1.5 (20261119180000_calls_notes_tasks.sql; supabase/tests/calls_notes_tasks.sql): calls, notes and tasks on an account.
 INSERT INTO callable VALUES
   ('log_activity(p_kind text, p_account_id uuid, p_contact_id uuid, p_opportunity_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
@@ -2518,6 +2530,25 @@ SELECT CASE v.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END,
 FROM public.saved_views v
 WHERE v.name IN ('Agent view', 'Owner view', 'Shared view');
 
+-- ---- CRM-L1.1b: the leads' bulk changes, the bin and Restore. {lead} is each firm's lead owned by its agent (the positive control of the bulk changes); the
+-- bin and Restore are an owner's. A bulk change sets the lead's city to a new word each time, so each call changes it (and the undo has something to put back).
+INSERT INTO fprobe_ids
+SELECT CASE l.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END, 'lead', l.id::text
+FROM public.leads l
+WHERE l.name IN ('Fixture lead a', 'Fixture lead b');
+INSERT INTO fprobe (fn, who, shape, call, refused, positive) VALUES
+  ('bulk_leads_preview', 'advisor', 'by_id',
+   $$SELECT NULLIF(public.bulk_leads_preview({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'will_change', '0')$$,
+   ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], ARRAY['advisor', 'agent_b']),
+  ('bulk_leads_change', 'advisor', 'by_id',
+   $$SELECT NULLIF(public.bulk_leads_change({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'changed', '0')$$,
+   ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], ARRAY['advisor', 'agent_b']),
+  ('bulk_leads_undo', 'advisor', 'by_id',
+   $$SELECT public.bulk_leads_undo((public.bulk_leads_change({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'change_id')::uuid, {firm}) ->> 'restored'$$,
+   ARRAY['42501', 'PT404', 'P0002'], ARRAY['advisor', 'agent_b']),
+  ('leads_bin', 'admin', 'by_id', $$SELECT public.leads_bin({firm}) ->> 'total'$$, ARRAY['42501', 'PT404', 'P0002'], ARRAY['admin', 'owner_b']),
+  ('restore_leads', 'admin', 'by_id', $$SELECT public.restore_leads({firm}, jsonb_build_array({lead}::text)) ->> 'unavailable'$$, ARRAY['42501', 'PT404', 'P0002'], ARRAY['admin', 'owner_b']);
+
 DO $$
 DECLARE
   e record;
@@ -2698,7 +2729,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg|rnw|rdel|opp|plc|pay|merged|alead)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg|rnw|rdel|opp|plc|pay|merged|alead|lead)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -4440,6 +4471,21 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('crm_absorb_contact', 'service_only', 'moves one contact''s calls, notes, tasks and main-contact links to another and deletes it, inside a merge; no API role can call it'),
   ('crm_merge_accounts_problem', 'service_only', 'why two accounts can''t be merged by this caller, in words; asked by the merge and its preview; no API role can call it'),
   ('crm_merge_contacts_problem', 'service_only', 'why two contacts can''t be merged by this caller, in words; asked by the merge and its preview; no API role can call it');
+
+-- CRM-L1.1b (20261122210000_leads_bulk_and_bin.sql; supabase/tests/leads_bulk.sql): bulk changes to leads, their undo, the bin, Restore, the nightly removal and export.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('bulk_leads_preview', 'firm_scoped', 'a current member of the firm the call acts for is told what a bulk change would do to the leads of that firm they may see; another firm''s lead is just not available (4e)'),
+  ('bulk_leads_change', 'firm_scoped', 'the same for doing it, to the leads the level rule gives the caller, all or none; another firm''s lead is just not available (4e)'),
+  ('bulk_leads_undo', 'firm_scoped', 'the member who made a bulk change of their firm''s leads puts it back within ten minutes; as not there for anyone else''s and another firm''s (4e)'),
+  ('leads_bin', 'firm_scoped', 'an owner of the firm the call acts for (or Nevermore support) reads that firm''s leads in the bin; refused for anyone else (4e)'),
+  ('restore_leads', 'firm_scoped', 'an owner of the firm the call acts for takes that firm''s leads out of the bin; another firm''s lead is just not available (4e)'),
+  ('bulk_leads_resolve', 'service_only', 'the leads a bulk change is for, from ids or from the table''s filters, at most 1,000, as the caller may see them, the bin left out; no API role can call it'),
+  ('bulk_lead_outcome', 'service_only', 'what a bulk change does to one lead (change, already as asked, skipped with its reason): the preview and the change ask it; no API role can call it'),
+  ('lead_set_field', 'service_only', 'writes one optional standard field of a lead for a bulk change or its undo, after the checks; no API role can call it'),
+  ('lead_labels_history', 'trigger', 'writes one history entry for a lead when a label is put on or taken off, inside the write that did it; not executable through the API'),
+  ('export_source_leads', 'service_only', 'the leads'' reader, run by export_rows after its checks: the leads the caller may see, the bin left out; no API role can call it'),
+  ('remove_binned_leads', 'service_only', 'the nightly removal of every firm''s leads 30 days in the bin, a step of the firm record''s daily job; only the service role can call it');
+
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO fn_class (fn, class, why) VALUES
   ('search_records', 'firm_scoped', 'a current member of the firm the call acts for finds that firm''s accounts, contacts, opportunities and quotes by level, never an intake''s answers; nothing of another firm (4e)'),

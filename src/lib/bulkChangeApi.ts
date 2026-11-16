@@ -49,7 +49,8 @@ export class BulkChangeError extends Error {
 
 type DbError = { code?: string; message?: string };
 
-function refusal(error: DbError, fallback: string): Error {
+/** A bulk function's refusal in the page's kinds and words (the leads' bulk functions refuse the same way: leadsBulkApi.ts). */
+export function refusal(error: DbError, fallback: string): Error {
   const ended = classifyApiError({ message: error.message ?? "", code: error.code }, "");
   if (ended.unauthenticated) return ended;
   const words = error.message || fallback;
@@ -86,7 +87,9 @@ const undoSchema = z.object({
   restored: z.number().int().min(0),
   skipped: z.array(skippedSchema),
   gone: z.number().int().min(0),
-  opportunities: z.object({ restored: z.number().int().min(0), skipped: z.number().int().min(0), gone: z.number().int().min(0) }),
+  // A lead's undo hands over no opportunities: none reads as none.
+  opportunities: z.object({ restored: z.number().int().min(0), skipped: z.number().int().min(0), gone: z.number().int().min(0) })
+    .default({ restored: 0, skipped: 0, gone: 0 }),
 });
 
 export interface SkippedAccount {
@@ -144,7 +147,8 @@ function selection(selected: BulkSelection): { p_filters: Json | null; p_ids: Js
   return { p_filters: selected.filters as unknown as Json, p_ids: null };
 }
 
-function outcome(data: unknown, fallback: string): BulkOutcome {
+/** A preview's or a change's answer in the page's shape (the leads' answer has the same shape). */
+export function outcome(data: unknown, fallback: string): BulkOutcome {
   const parsed = previewSchema.safeParse(data);
   if (!parsed.success) throw new BulkChangeError("failed", fallback);
   const d = parsed.data;
@@ -182,6 +186,11 @@ export async function applyBulkChange(firmId: string, change: BulkAction, select
 export async function undoBulkChange(firmId: string, changeId: string): Promise<UndoOutcome> {
   const { data, error } = await supabase.rpc("bulk_accounts_undo", { p_change_id: changeId, p_firm_id: firmId });
   if (error) throw refusal(error, "Couldn't undo that change. Try again.");
+  return undoOutcome(data);
+}
+
+/** An undo's answer in the page's shape (a lead's undo answers the same way). */
+export function undoOutcome(data: unknown): UndoOutcome {
   const parsed = undoSchema.safeParse(data);
   if (!parsed.success) throw new BulkChangeError("failed", "Couldn't undo that change. Try again.");
   return parsed.data as UndoOutcome;

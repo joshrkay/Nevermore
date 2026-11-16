@@ -10,7 +10,7 @@ import { classifyApiError } from "@/lib/advisorApi";
 // and its refusals into the page's shape and words. The CSV and the button are CRM-S3.8a's.
 
 /** The tables that can be exported today, in the order of the database's list (`export_table_registry`; src/lib/exportApi.test.ts compares them): a later table is added to both. */
-export const EXPORT_TABLES = ["referral_partners", "firm_activity", "accounts"] as const;
+export const EXPORT_TABLES = ["referral_partners", "firm_activity", "accounts", "leads"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** A value in a row: text, a number, a yes or no, or nothing. A column never holds anything else. */
@@ -50,7 +50,7 @@ export class ExportError extends Error {
 export interface ExportRequest {
   firmId: string;
   table: ExportTable;
-  /** The table's own filters, as the page shows them (`{}` for none): referral partners take `kind` and `search`; the firm's record `person`, `kind`, `from` and `to`; accounts `filters` (the table's own, as listAccounts sends them), `search` and `time_zone`. */
+  /** The table's own filters, as the page shows them (`{}` for none): referral partners take `kind` and `search`; the firm's record `person`, `kind`, `from` and `to`; accounts and leads `filters` (the table's own, as listAccounts and listLeads send them), `search` and `time_zone`. */
   filters?: Record<string, Json>;
   /** The ids of the records selected, to export only them (at most 1,000); leave out for every row that matches the filters. */
   ids?: string[];

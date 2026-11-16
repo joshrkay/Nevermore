@@ -199,6 +199,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
@@ -564,6 +565,8 @@ BEGIN
     ('write to a contact', format($q$SELECT public.send_conversation_message(p_contact_id => %L, p_subject => 'Hello', p_body => 'Hi', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
     ('add a sender as a contact', format($q$SELECT public.add_sender_as_contact(%L, 'A', 'B', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
     ('change accounts in bulk', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
+    ('change leads in bulk', format($q$SELECT public.bulk_leads_change(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), support_msg),
+    ('restore leads from the bin', format($q$SELECT public.restore_leads(%L, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), support_msg),
     ('preview a bulk change', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
     ('undo a bulk change', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), support_msg),
     ('log a call', format($q$SELECT public.log_activity('call', %L, NULL, NULL, NULL, 'spoke', 'Hello', NULL, NULL, NULL, NULL, NULL, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
@@ -1011,8 +1014,8 @@ END $$;
 DO $$
 BEGIN
   PERFORM pg_temp.is((SELECT command FROM cron.job WHERE jobname = 'prune-firm-activity'),
-    'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions();',
-    'the firm record''s daily job also records the support sessions that ran out, and kept its other steps');
+    'select public.prune_firm_activity(); select public.prune_firm_outbox_events(); select public.close_due_firms(); select public.settle_support_sessions(); select public.remove_binned_leads();',
+    'the firm record''s daily job also records the support sessions that ran out, and kept its other steps (and the lead bin''s removal, CRM-L1.1b)');
   PERFORM pg_temp.is((SELECT count(*) FROM cron.job), 1::bigint, 'and no second job was made');
   RAISE NOTICE 'help_from_nevermore: the daily job passed';
 END $$;
@@ -1127,7 +1130,7 @@ DECLARE
   reads text[] := ARRAY['opportunity_create_context', 'opportunity_outcome', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'opportunity_page', 'opportunity_activity', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check', 'lead_page', 'lead_activity', 'lead_activity_options',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
-    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement'];
+    'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin'];
   writes text[] := ARRAY['opportunity_create', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
@@ -1137,7 +1140,7 @@ DECLARE
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo',
     'close_submission_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
-    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity'];
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1214,7 +1217,7 @@ DECLARE
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
     'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw',
-    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment'];
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s, open to every admin with or without a session; the PEO list is the same for every firm',
