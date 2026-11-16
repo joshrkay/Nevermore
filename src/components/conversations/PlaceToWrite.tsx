@@ -5,24 +5,30 @@ import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { PlaceholderLines } from "@/components/workspace/states";
 import { formatDay } from "@/data/accountPage";
-import { getConversation, listAttachableFiles, openConversation, sendConversationMessage, workTheQueue, type ConversationMessage } from "@/lib/conversationApi";
+import {
+  getConversation, getLeadConversation, listAttachableFiles, openConversation, sendConversationMessage, workTheQueue, type ConversationMessage,
+} from "@/lib/conversationApi";
 import { useDraft } from "./useDraft";
 
-/** Who the place to write writes to: a contact (a lead's page mounts the same place to write with slice 8.5, D-603). */
-export interface Recipient {
-  contactId: string;
+/** Who the place to write writes to: a contact, or a lead (its page mounts the same place to write, slice 8.5, D-603). */
+export type Recipient = {
   name: string;
   email: string | null;
   doNotEmail: boolean;
-  /** The account whose files a message may carry (D-605). */
-  accountId: string;
-}
+} & (
+  /** A contact, and the account whose files a message may carry (D-605). */
+  | { contactId: string; accountId: string; leadId?: never }
+  /** A lead: it has no account, so a message carries no file (D-685). */
+  | { leadId: string; contactId?: never; accountId?: never }
+);
 
 export interface PlaceToWriteProps {
   firmId: string;
   recipient: Recipient;
   /** The page to come back to after connecting a mailbox (brokerNext keeps it, D-650). */
   returnTo: string;
+  /** The section's id, for a link to it (a lead's Email, slice 8.5). */
+  anchorId?: string;
 }
 
 /** Which way a message went and where it is: received, on its way (recorded, queued), sent, or didn't go (D-632). */
@@ -31,12 +37,19 @@ const statusWords = (m: ConversationMessage) =>
 
 export const conversationKey = (firmId: string, contactId: string) => ["conversation", firmId, contactId] as const;
 
+/** The record a recipient is, for the conversation's key and the draft's: a contact's id, or "lead:<id>". */
+const recordOf = (r: Recipient): string => (r.leadId !== undefined ? `lead:${r.leadId}` : r.contactId);
+
 /**
  * The place to write on a contact's page, and in the account's and the opportunity's Email (story CRM-E1.2, slice 6.3): the conversation newest first,
  * sent and received, and a subject and a message sent through `send_conversation_message`.
  */
-const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
-  const query = useQuery({ queryKey: conversationKey(firmId, recipient.contactId), queryFn: () => getConversation(firmId, recipient.contactId) });
+const PlaceToWrite = ({ firmId, recipient, returnTo, anchorId }: PlaceToWriteProps) => {
+  const record = recordOf(recipient);
+  const query = useQuery({
+    queryKey: conversationKey(firmId, record),
+    queryFn: () => (recipient.leadId !== undefined ? getLeadConversation(firmId, recipient.leadId) : getConversation(firmId, recipient.contactId)),
+  });
   // Showing the conversation is opening it: its new-mail mark is cleared for the firm through the newest message shown, never past it (6.4, D-607).
   const newest = query.data?.newMail ? query.data.messages[0]?.at : undefined;
   const conversationId = query.data?.conversationId;
@@ -47,7 +60,7 @@ const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
   // Do not email and no address are the database's refusals too (PT409); here they hide the place to write and say why.
   const writable = hasAddress && !recipient.doNotEmail;
   // What is written is kept across leaving the page to connect a mailbox and coming back (D-653).
-  const [draft, setDraft, clearDraft] = useDraft(`draft:conversation:${recipient.contactId}`);
+  const [draft, setDraft, clearDraft] = useDraft(`draft:conversation:${record}`);
   const { subject, body } = draft;
   const setSubject = (s: string) => setDraft((d) => ({ ...d, subject: s }));
   const setBody = (b: string) => setDraft((d) => ({ ...d, body: b }));
@@ -61,9 +74,9 @@ const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
   const canWrite = query.data?.mailbox.connected === true && writable;
   // The files the database lets go with a message to this contact (D-605): the account's own, past the virus check, ones the agent may open.
   const files = useQuery({
-    queryKey: [...conversationKey(firmId, recipient.contactId), "files"],
-    queryFn: () => listAttachableFiles(firmId, recipient.contactId),
-    enabled: canWrite,
+    queryKey: [...conversationKey(firmId, record), "files"],
+    queryFn: () => listAttachableFiles(firmId, recipient.contactId as string),
+    enabled: canWrite && recipient.contactId !== undefined,
   });
   const [chosen, setChosen] = useState<string[]>([]);
 
@@ -76,7 +89,8 @@ const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
     setSending(true);
     setRefused(null);
     try {
-      await sendConversationMessage(firmId, { contactId: recipient.contactId, subject, body, inReplyTo: replyingTo?.id ?? null, documentIds: chosen });
+      const to = recipient.leadId !== undefined ? { leadId: recipient.leadId } : { contactId: recipient.contactId };
+      await sendConversationMessage(firmId, { ...to, subject, body, inReplyTo: replyingTo?.id ?? null, documentIds: chosen });
     } catch (err) {
       // Nothing was recorded: what was written stays, and the database's words say why.
       setRefused(failureWords(err, "We couldn't send that. Check your connection and try again."));
@@ -89,7 +103,7 @@ const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
     // The queue is worked at once, as a signed-in person may (D-638), so the message doesn't wait for the minute schedule; then the conversation is
     // asked again for its state.
     await workTheQueue();
-    await queryClient.invalidateQueries({ queryKey: conversationKey(firmId, recipient.contactId) });
+    await queryClient.invalidateQueries({ queryKey: conversationKey(firmId, record) });
     setSending(false);
   };
   const submit = (e: FormEvent) => {
@@ -97,7 +111,7 @@ const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
     void beforeSend(send);
   };
   return (
-    <section aria-label="Emails" className="border border-border rounded-xl p-4 space-y-4">
+    <section id={anchorId} aria-label="Emails" className="border border-border rounded-xl p-4 space-y-4 scroll-mt-6">
       <h2 className="text-lg font-semibold">Emails</h2>
       {!query.data && (
         <div role="status" aria-label="Loading emails">

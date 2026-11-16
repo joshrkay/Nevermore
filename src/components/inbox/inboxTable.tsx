@@ -46,12 +46,12 @@ const fieldsWith = (owners: readonly FieldChoice[] | undefined) =>
 const KIND_WORDS: Record<InboxRow["kind"], string> = { peo: "a PEO", contact: "a contact", lead: "a lead" };
 
 /**
- * The record a message opens on (CRM-E1.4): a contact's page; a PEO thread's submission, whose page holds the thread; a lead has no page of its own until
- * slice 8.5, so the Leads page, searched to the lead (D-696).
+ * The record a message opens on (CRM-E1.4): a contact's page; a PEO thread's submission, whose page holds the thread; a lead's page (slice 8.5, which replaced
+ * D-696's Leads page searched to the lead).
  */
 export const recordPath = (row: InboxRow): string => {
   if (row.kind === "peo") return `/advisor/submissions/${row.session_id}`;
-  if (row.kind === "lead") return `/leads?${new URLSearchParams({ q: row.lead_name ?? "" })}`;
+  if (row.kind === "lead") return `/leads/${row.lead_id}`;
   return `/contacts/${row.contact_id}`;
 };
 

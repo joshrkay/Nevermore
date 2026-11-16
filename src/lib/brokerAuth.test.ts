@@ -40,6 +40,12 @@ describe("where a broker goes after signing in", () => {
     }
   });
 
+  // Catches: a broker who connects their mailbox from the place to write on a lead's page (slice 8.5, D-603) landing on the queue instead of back on the lead.
+  it("keeps a lead's page", () => {
+    for (const kept of ["/leads/5f1c2a9e-0000-4000-8000-000000000004", "/leads/l1?x=1"]) expect(brokerNext(kept), kept).toBe(kept);
+    for (const bad of ["/leads/a/b", "/leads/..", "/leads/l1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+  });
+
   // Catches: a broker who connects their mailbox from the inbox's banner (CRM-E1.4) landing on the queue instead of back in the inbox, with its view.
   it("keeps the inbox, with its query", () => {
     for (const kept of ["/inbox", "/inbox?view=new", "/inbox?view=sent&q=reyes"]) expect(brokerNext(kept), kept).toBe(kept);

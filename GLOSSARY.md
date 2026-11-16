@@ -788,6 +788,12 @@ _Avoid_: redirect, tombstone
 **Contact me** (code: `request_contact`; story CRM-L1.2b, D-1660 to D-1669):
 A visitor's request, on a firm's public link, to be contacted: the section "Rather talk to someone first?" on the landing page at a firm's address (and nowhere on the bare domain), for someone who starts no intake. It makes one **Lead** of the firm the address names (the firm is never named by the browser), with the source **Firm's link**, the status New and **no Record owner**, so only owners see it until one gives it to someone. The visitor gives a name and an email or a phone, and may add a business and a message, which the lead keeps in its note. Asking again with the same email within a day makes no second lead and tells the visitor the same thing; a firm's link takes 20 requests an hour and all firms' links together 200, past which the visitor is told to try again later and nothing is made. A closing firm takes none, and an address no firm holds, a refused firm's or a closed firm's takes none and says no firm holds it. No email is sent to the firm yet.
 
+**Reopen** (a lead; code: `reopen_lead`; story CRM-L2.1, D-1652):
+The one change a **Not a fit** lead takes: it becomes **Working** again and its reason is cleared, both moves kept in its history. Offered on the Not a fit banner of the lead's page to whoever the level rule lets change the lead. Until then a Not a fit lead, like a Converted one or one in the bin, is read, not changed: its fields, its calls, notes and tasks and its status stay as they are.
+
+**Converting makes** (a lead's page; story CRM-L2.1, D-1653):
+What the lead's page says converting would make, before converting (CRM-L2.2) is done: an account named after the lead's business (its name when it has none), a contact named after the person unless the lead's name is its business's (no person, no contact), and an opportunity named "<account> – PEO search".
+
 **Label**:
 A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records). The same word in other letters is the same label (the first spelling stays); a label is at most 40 characters. It is made the first time a bulk change puts it on an account, and an archived account takes no new one. Putting one on or taking one off is one entry in the account's history ("Labels changed from nothing to VIP"). Renaming or deleting a label is Settings' (Epic 9). The Accounts table shows each account's labels and can be filtered and sorted by them.
 _Avoid_: tag, category

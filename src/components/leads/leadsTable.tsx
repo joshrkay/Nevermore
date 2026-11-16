@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { US_STATE_CODES } from "@/data/chamberValidation";
 import { formatDay, locationOf } from "@/data/accountPage";
 import { LEAD_NOT_FIT_REASON_LABELS, LEAD_SOURCE_LABELS, LEAD_STATUS_LABELS } from "@/data/leads";
@@ -13,8 +14,8 @@ import type { ViewCount } from "@/lib/tableQuery";
 // The leads table (story CRM-L1.1a, slice 8.3, screen 14) as a workspace table: its columns, views, filters and the two calls to the database. The frame
 // (src/components/workspace/table/) does the rest, as it does for the accounts table (src/components/accounts/accountsTable.tsx).
 //
-// Not here, and where it goes: selecting rows, bulk changes, the bin and export (slice 8.4, D-811), the Convert row action (slice 8.6), the lead's page and
-// the name as its link (slice 8.5), labels (8.4) and custom fields (Epic 9).
+// Not here, and where it goes: selecting rows, bulk changes, the bin and export (slice 8.4, D-811), the Convert row action (slice 8.6),
+// labels (8.4) and custom fields (Epic 9). The name links to the lead's page (slice 8.5).
 
 type Fields = typeof LEAD_FIELDS;
 
@@ -66,7 +67,7 @@ const leadColumns: ColumnDefinition<LeadRow, keyof Fields>[] = [
     text: (row) => row.name,
     cell: (row) => (
       <>
-        <p className="font-medium text-foreground">{row.name}</p>
+        <p><Link to={`/leads/${row.id}`} className="font-medium text-foreground hover:text-primary">{row.name}</Link></p>
         {row.title && <p className="text-xs text-muted-foreground">{row.title}</p>}
       </>
     ),

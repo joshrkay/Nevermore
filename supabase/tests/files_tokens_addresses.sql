@@ -188,6 +188,7 @@
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 SET client_min_messages = notice;
 

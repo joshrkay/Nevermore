@@ -1382,6 +1382,70 @@ export type Database = {
         Args: { p_message_id: number; p_link_id: number; p_token: string }
         Returns: Json
       }
+      // ---- CRM-L2.1: a lead's page (20261122220000_lead_page.sql) ----
+      // The page in one read: {lead, can_change, can_add, in_bin, can_reopen, stages, converted}; null for a lead the caller may not see.
+      lead_page: {
+        Args: { p_firm_id: string; p_lead_id: string }
+        Returns: Json
+      }
+      // A page of the lead's calls, notes and tasks, newest first: {count, rows}; null for a lead the caller may not see.
+      lead_activity: {
+        Args: { p_firm_id: string; p_lead_id: string; p_filter?: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      // The firm's members a task on the lead can be for: {contacts: [], opportunities: [], people}.
+      lead_activity_options: {
+        Args: { p_firm_id: string; p_lead_id: string }
+        Returns: Json
+      }
+      // The save of a lead's own fields from a version: {conflict: false, record} or the conflict answer. A saved change makes a New lead Working.
+      update_lead: {
+        Args: {
+          p_lead_id: string
+          p_name: string
+          p_title?: string | null
+          p_business?: string | null
+          p_email?: string | null
+          p_phone?: string | null
+          p_city?: string | null
+          p_state?: string | null
+          p_employees?: number | null
+          p_current_provider?: string | null
+          p_note?: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
+      // Not a fit with one reason from the short list; answers the lead's fields.
+      mark_lead_not_fit: {
+        Args: { p_lead_id: string; p_reason: string; p_firm_id?: string | null }
+        Returns: Json
+      }
+      // Reopens a Not a fit lead: Working again; answers the lead's fields.
+      reopen_lead: {
+        Args: { p_lead_id: string; p_firm_id?: string | null }
+        Returns: Json
+      }
+      // A call, a note or a task on a lead: {activity, follow_up}. A call on a New lead makes it Working.
+      log_lead_activity: {
+        Args: {
+          p_kind: string
+          p_lead_id: string
+          p_at?: string | null
+          p_outcome?: string | null
+          p_body?: string | null
+          p_title?: string | null
+          p_due_on?: string | null
+          p_for?: string | null
+          p_follow_up_title?: string | null
+          p_follow_up_due_on?: string | null
+          p_follow_up_for?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // ---- M-2.4: follow up and withdraw (20261122190000_follow_up_and_withdraw.sql) ----
       // A follow-up queued on the PEO's thread: {quote_request_id, message_id, version}; its fresh link is then joined by attach_peo_link.
       follow_up_peo: {

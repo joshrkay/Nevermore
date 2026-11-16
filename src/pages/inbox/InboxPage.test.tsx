@@ -49,8 +49,8 @@ const row = (over: Partial<InboxRow> = {}): InboxRow => ({
   owner: "u1", owner_name: "Dana Reyes", ...over,
 });
 
-// Where the Leads page was opened: a lead has no page of its own until slice 8.5, so its message opens the Leads page searched to it.
-const LeadsAt = () => <p>{`The Leads page, ${useLocation().search}`}</p>;
+// Which lead's page was opened (slice 8.5: a lead's message opens its page, D-696 as 8.5 changed it).
+const LeadAt = () => <p>{`A lead's page, ${useLocation().pathname}`}</p>;
 
 const renderAt = (url = "/inbox", ws: Workspace = workspace()) =>
   render(
@@ -61,7 +61,7 @@ const renderAt = (url = "/inbox", ws: Workspace = workspace()) =>
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/contacts/:id" element={<p>A contact's page</p>} />
             <Route path="/advisor/submissions/:id" element={<p>A submission's page</p>} />
-            <Route path="/leads" element={<LeadsAt />} />
+            <Route path="/leads/:id" element={<LeadAt />} />
           </Routes>
         </MemoryRouter>
       </WorkspaceContext.Provider>
@@ -182,15 +182,15 @@ describe("the inbox (CRM-E1.4)", () => {
     expect(openConversation).not.toHaveBeenCalled();
   });
 
-  // Catches: a lead's message opened nowhere (a lead has no page yet) or as a contact's, or its conversation's mark left on.
-  it("opens a lead's message on the Leads page, searched to that lead, clearing its conversation's new mark", async () => {
+  // Catches: a lead's message opened nowhere, on the Leads page now that a lead has a page (slice 8.5), or as a contact's, or its conversation's mark left on.
+  it("opens a lead's message on the lead's page, clearing its conversation's new mark", async () => {
     listInbox.mockResolvedValue({
       rows: [row({ id: "c:m5", kind: "lead", thread_id: "v5", lead_id: "l5", lead_name: "Ana Ortiz", contact_id: null, contact_name: null, account_id: null, account_name: "Ortiz Plumbing", first_line: "Call me." })],
       total: 1,
     });
     renderAt();
     await userEvent.click(await screen.findByText("Call me."));
-    expect(await screen.findByText("The Leads page, ?q=Ana+Ortiz")).toBeInTheDocument();
+    expect(await screen.findByText("A lead's page, /leads/l5")).toBeInTheDocument();
     expect(openConversation).toHaveBeenCalledWith("f1", "v5", "2026-11-10T10:00:00Z");
   });
 });
