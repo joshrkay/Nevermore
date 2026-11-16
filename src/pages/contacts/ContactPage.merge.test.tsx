@@ -120,7 +120,8 @@ describe("a contact's old address", () => {
     renderPage();
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/contacts/c2"));
     expect(merge.resolveMergedRecord).toHaveBeenCalledWith("f1", "contact", "c1");
-    expect(await screen.findByRole("status")).toHaveTextContent("merged into Priya Abel");
+    // The page holds other live notes too (the place to write says "Loading emails"), so the merge note is found by its words.
+    await waitFor(() => expect(screen.getAllByRole("status").some((s) => /merged into Priya Abel/.test(s.textContent ?? ""))).toBe(true));
   });
 
   // Catches: a contact that was never merged being answered with anything but "not available".
