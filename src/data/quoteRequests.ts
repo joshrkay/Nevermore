@@ -9,7 +9,7 @@ export const QUOTE_REQUEST_STATUSES = ["sent", "acknowledged", "question_open", 
 export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
 
 export const QUOTE_REQUEST_LABELS: Record<QuoteRequestStatus, string> = {
-  sent: "Waiting",
+  sent: "Sent",
   acknowledged: "Acknowledged",
   question_open: "Question open",
   quoted: "Quoted",

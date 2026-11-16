@@ -21,7 +21,7 @@ describe("a quote request's event as a sentence", () => {
 // CRM-Q3.1: "The wait keeps counting" while a PEO has acknowledged or has a question open. Break caught: the days vanishing from the status the day a PEO replies.
 describe("a quote request status with the days it has waited", () => {
   it("counts the days from the send while it is Sent, Acknowledged or has a question open, and for no other status", () => {
-    expect(quoteStatusWords("sent", "Waiting", "2026-11-10", "2026-11-13")).toBe("Sent · 3 days");
+    expect(quoteStatusWords("sent", "Sent", "2026-11-10", "2026-11-13")).toBe("Sent · 3 days");
     expect(quoteStatusWords("acknowledged", "Acknowledged", "2026-11-10", "2026-11-13")).toBe("Acknowledged · 3 days");
     expect(quoteStatusWords("question_open", "Question open", "2026-11-12", "2026-11-13")).toBe("Question open · 1 day");
     expect(quoteStatusWords("acknowledged", "Acknowledged", "2026-11-13", "2026-11-13")).toBe("Acknowledged · today");

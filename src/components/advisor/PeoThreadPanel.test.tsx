@@ -111,7 +111,7 @@ describe("PeoThreadPanel", () => {
     const thread = screen.getByRole("list", { name: "TriNet thread, newest first" });
     const items = within(thread).getAllByRole("listitem").map((li) => li.textContent ?? "");
     expect(items).toHaveLength(5);
-    expect(items[0]).toContain("Waiting → Quoted");
+    expect(items[0]).toContain("Sent → Quoted");
     expect(items[1]).toContain("Second message");
     expect(items[2]).toContain("Proposal attached.");
     expect(items[3]).toContain("Dana called about loss runs.");

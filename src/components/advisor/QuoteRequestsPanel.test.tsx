@@ -117,7 +117,7 @@ describe("QuoteRequestsPanel", () => {
     });
     const trinet = screen.getByTestId("quote-request-7");
     expect(within(trinet).getByText("TriNet")).toBeInTheDocument();
-    expect(within(trinet).getByText("Waiting")).toBeInTheDocument();
+    expect(within(trinet).getByText("Sent")).toBeInTheDocument();
     expect(within(trinet).getByText("Sent Nov 10, 2026 · version 1")).toBeInTheDocument();
     const justworks = screen.getByTestId("quote-request-8");
     expect(within(justworks).getByText("Quoted")).toBeInTheDocument();
@@ -334,7 +334,7 @@ describe("QuoteRequestsPanel", () => {
     expect(within(history).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
       expect.stringContaining("Note kind: Call → Portal entry"),
       expect.stringContaining("Admin fee per employee per month: 145.50 → 150.00"),
-      expect.stringContaining("Status: — → Waiting"),
+      expect.stringContaining("Status: — → Sent"),
     ]);
     expect(within(history).getAllByText(/adv@example\.com/)).toHaveLength(3);
   });

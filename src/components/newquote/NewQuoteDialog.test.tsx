@@ -73,6 +73,15 @@ beforeEach(() => {
 });
 
 describe("New quote is step 1 only (founder's direction, D-1763)", () => {
+  // Break caught (D-1831): New quote fills the whole window (a full-width, full-height grid whose rows stretch, leaving a blank gap between the title and the first field) instead of a dialog of sensible width that is as tall as its content, over the page it was opened from.
+  it("is a dialog of a sensible width, as tall as its content, not the whole window", async () => {
+    const { dialog } = await open();
+    expect(dialog).toHaveClass("max-w-2xl");
+    expect(dialog).not.toHaveClass("w-screen");
+    expect(dialog).not.toHaveClass("h-[100dvh]");
+    expect(dialog).toHaveClass("max-h-[90vh]", "overflow-y-auto");
+  });
+
   // Catches: a steps bar or step 2 to 4 screens of New quote's own (the intake is the existing /start chamber, opened later for the opportunity), or a Continue that leads nowhere (D-402).
   it("shows the account step and Save and close, with no steps bar and no Continue", async () => {
     const { dialog } = await open();

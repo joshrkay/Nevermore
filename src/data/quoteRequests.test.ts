@@ -115,7 +115,7 @@ describe("the older-version note", () => {
 // N-1.2. Break caught: a new status shown by its database word ("question_open") on the log of a quote request.
 describe("the change log's new statuses", () => {
   it("names Acknowledged and Question open in words", () => {
-    expect(describeQuoteRequestEvent({ field: "status", old_value: "sent", new_value: "acknowledged" })).toBe("Status: Waiting → Acknowledged");
+    expect(describeQuoteRequestEvent({ field: "status", old_value: "sent", new_value: "acknowledged" })).toBe("Status: Sent → Acknowledged");
     expect(describeQuoteRequestEvent({ field: "status", old_value: "acknowledged", new_value: "question_open" })).toBe("Status: Acknowledged → Question open");
   });
 });
