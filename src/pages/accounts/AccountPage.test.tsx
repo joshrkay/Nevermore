@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setSignedInUser } from "@/lib/signedInUser";
 import { toast } from "sonner";
 import type { AccountConflict, AccountPage as Page } from "@/lib/accountPageApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
@@ -12,7 +13,7 @@ import { allStatuses, expectStatusesOutsideBusy, spoken } from "@/test/loading";
 // it, what the files are) are tested in supabase/tests/account_page.sql; here the client answers and the page draws it.
 
 const signOut = vi.fn();
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "dana@example.com" }, signOut }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFiles: vi.fn(), updateAccount: vi.fn(), getSubmissionAccount: vi.fn() };
@@ -101,6 +102,8 @@ const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
+  // The app's identity boundary says who is signed in; these pages render without it.
+  setSignedInUser("u1");
   for (const fn of [...Object.values(client), ...Object.values(renewalsClient), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();

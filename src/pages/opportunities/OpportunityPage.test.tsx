@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSignedInUser } from "@/lib/signedInUser";
 import type { OpportunityActivityRow, OpportunityConflict, OpportunityPage as Page } from "@/lib/opportunityPageApi";
 import type { ActivityItem } from "@/lib/activityApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
@@ -95,6 +96,8 @@ const renderPage = (path = "/opportunities/o1", ws: Workspace = workspace()) => 
 };
 
 beforeEach(() => {
+  // The app's identity boundary says who is signed in; this page renders without it.
+  setSignedInUser("u1");
   for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(activity), listFirmMembers, listAccountOwners, search.noteRecentRecord, signOut]) fn.mockReset();
   peoCatalogRows = [];
   vi.mocked(toast.success).mockReset();
