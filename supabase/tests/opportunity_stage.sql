@@ -163,6 +163,12 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121100000_merge_records.sql
 SET client_min_messages = notice;
 
 SET client_min_messages = notice;
@@ -746,7 +752,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt(format($q$SELECT * FROM public.record_history_list(%L, 'opportunities', %L)$q$, acme, o::text)), '42501', 'a signed-out caller is refused');
   PERFORM pg_temp.as_owner();
   SELECT string_agg(a, ',' ORDER BY a) INTO cols FROM (SELECT unnest(p.proargnames[(p.pronargs + 1):]) a FROM pg_proc p WHERE p.oid = 'public.record_history_list(uuid,text,text,integer,timestamptz,uuid)'::regprocedure) x;
-  PERFORM pg_temp.is(cols, 'at,cause,cause_peo,change_id,entry_key,field,from_value,kind,to_value,who,who_kind', 'the columns are the history''s, with the cause and its PEO, and no actor id or email');
+  PERFORM pg_temp.is(cols, 'at,cause,cause_peo,change_id,entry_key,field,from_value,kind,merged_from,to_value,who,who_kind', 'the columns are the history''s, with the cause and its PEO and the merged-away record it came from, and no actor id or email');
   RAISE NOTICE 'opportunity_stage: reading it passed';
 END $$;
 
