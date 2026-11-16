@@ -178,6 +178,8 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -527,6 +529,7 @@ BEGIN
     ('move a contact', format($q$SELECT public.move_contact(%L, %L, false, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('change a contact', format($q$SELECT public.update_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L, 1)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
     ('write to a contact', format($q$SELECT public.send_conversation_message(p_contact_id => %L, p_subject => 'Hello', p_body => 'Hi', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
+    ('add a sender as a contact', format($q$SELECT public.add_sender_as_contact(%L, 'A', 'B', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
     ('change accounts in bulk', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
     ('preview a bulk change', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
     ('undo a bulk change', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), support_msg),
@@ -674,6 +677,27 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_thread_reads), 0::bigint, 'no read mark exists, so no admin email is left for the firm');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_thread_reads WHERE last_opened_by_email LIKE '%platform_admin%'), 0::bigint, 'in particular');
   RAISE NOTICE 'help_from_nevermore: the exemptions were re-examined';
+END $$;
+
+-- CRM-E1.3: a conversation opened by support stays new for the firm (D-607), as a PEO thread does, and reading it is allowed.
+-- Break caught: a support session clears the firm's "new mail" mark, so the firm's people never learn a contact wrote back, and the admin is left as who
+-- opened it.
+DO $$
+DECLARE fa uuid := pg_temp.id('alpha'); acc uuid; ct uuid; cv uuid;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.accounts (source, firm_id, owner_id, name) VALUES ('added_by_hand', fa, pg_temp.id('agent_a'), 'Support Probe') RETURNING id INTO acc;
+  INSERT INTO public.contacts (firm_id, account_id, owner_id, last_name, email) VALUES (fa, acc, pg_temp.id('agent_a'), 'Probe', 'probe@support.example') RETURNING id INTO ct;
+  INSERT INTO public.conversations (firm_id, contact_id, reply_address) VALUES (fa, ct, 'c.probe.00000000000000c1') RETURNING id INTO cv;
+  INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, status, from_address, to_addresses, subject, body_text, message_id)
+  VALUES (fa, cv, 'inbound', 'received', 'probe@support.example', '{}', 'Re', 'Hi', '<support-probe@example.test>');
+  PERFORM pg_temp.as_user('platform_admin', 'alpha-brokers');
+  PERFORM pg_temp.is(public.open_conversation(cv, NULL, fa) ->> 'last_opened_at', NULL, 'a support session opens a conversation and marks nothing');
+  PERFORM pg_temp.is(public.conversation_for(p_contact_id => ct, p_firm_id => fa) #>> '{conversation,new_mail}', 'true', 'and it is still new for the firm');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT last_opened_by FROM public.conversations WHERE id = cv), NULL::uuid, 'no admin is left as who opened it');
+  DELETE FROM public.accounts WHERE id = acc;
+  RAISE NOTICE 'help_from_nevermore: a support session leaves a conversation new';
 END $$;
 
 -- ---------- nothing is sent as anyone ----------
@@ -1067,8 +1091,8 @@ DECLARE
     'intake_folder_firm_read_only', 'intake_folder_in_my_firm', 'intake_in_my_firm', 'intake_owner_in_my_firm', 'quote_request_in_my_firm',
     'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session',
     'bundle_link_folder_in_my_firm', 'bundle_link_folder_read_only'];
-  reads text[] := ARRAY['firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'conversation_for', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
-    'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
+  reads text[] := ARRAY['firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'conversation_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
+    'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields'];
   writes text[] := ARRAY['add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
@@ -1077,7 +1101,7 @@ DECLARE
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
-    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
+    'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
@@ -1151,7 +1175,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
     'issue_bundle_link', 'revoke_bundle_link'];
@@ -1169,6 +1193,7 @@ DECLARE
     'admin_stop_firm_closure', 'a platform admin''s, open to every admin with or without a session',
     'admin_suspend_firm', 'a platform admin''s, open to every admin with or without a session',
     'advisor_open_quote_request_thread', 'marks a thread read: for a support session it marks nothing (tested above), so no email is left for the firm',
+    'open_conversation', 'marks a conversation read for the firm (CRM-E1.3, D-607): for a support session it marks nothing (tested above), so no admin is left as who opened it',
     'archive_chamber_session', 'changes the caller''s own intake only (user_id is the caller); a support session has no intake of the firm''s prospects',
     'consume_ai_quota', 'the caller''s own allowance',
     'end_support_session', 'the doorway itself: the admin''s own session, in the platform''s table and the firm''s record of the use',

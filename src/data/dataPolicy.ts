@@ -483,11 +483,12 @@ export const DATA_CLASSES: DataClass[] = [
   {
     id: "conversations",
     label: "A firm's mail with its contacts and leads",
-    sensitivity: "confidential",
-    examples: "For each contact and each lead the firm writes to (CRM-E1.2), one conversation and its reply address, and each message on it: who it was from and to (with any CC), its subject and text, its Message-ID and the message it answers, who in the firm wrote it, when, and whether it was queued, sent (with Google's or Microsoft's id) or failed and why. Sent through the writer's own mailbox (ADR 0005); never a file (D-605), and never anything read from a mailbox.",
-    stored: { tables: ["conversations", "conversation_messages"], buckets: [], elsewhere: ["the writer's own Sent folder, at Google or Microsoft"] },
+    // Restricted since replies are received (CRM-E1.3, D-667): a contact's reply can carry a census or a payroll file.
+    sensitivity: "restricted",
+    examples: "For each contact and each lead the firm writes to (CRM-E1.2), one conversation and its reply address, and each message on it: who it was from and to (with any CC), its subject and text, its Message-ID and the message it answers, who in the firm wrote it, when, and whether it was queued, sent (with Google's or Microsoft's id) or failed and why. Sent through the writer's own mailbox (ADR 0005); never a file (D-605), and never anything read from a mailbox. Replies to the conversation's address (CRM-E1.3): who sent each (address and name), to and CC, subject, plain text, its Message-ID and the one it answers, whether it is automatic, the firm's own copy, or from someone new, and when anyone in the firm last opened the conversation; each file on a reply, by name, type and size, with what became of it (kept once scanned clean, blocked with the scanner's signature, or not kept and why), and the bytes of a clean one.",
+    stored: { tables: ["conversations", "conversation_messages", "conversation_message_attachments"], buckets: ["contact-mail"], elsewhere: ["the writer's own Sent folder, at Google or Microsoft", "Resend, which receives the replies", "The malware scanner, while it checks a received file (docs/adr/0002)"] },
     retention: "Kept as long as the contact or lead it is with: a contact's goes with its account, a lead's with the lead (when it leaves the bin for good, D-806). A copy stays in the writer's own Sent folder, which is theirs, not the product's.",
-    deletion: "With the account or the lead it is with, and closing a firm (CRM-P1.7) deletes all of them with its other data. No one edits a message once it is recorded. A person who is deleted leaves the messages they wrote, with no writer named.",
+    deletion: "With the account or the lead it is with, and closing a firm (CRM-P1.7) deletes all of them with its other data. No one edits a message once it is recorded. A person who is deleted leaves the messages they wrote, with no writer named. A received file's row goes with its message; its bytes stay in the contact-mail bucket, unreadable to anyone once the row is gone, until storage is cleaned up (D-667).",
   },
   {
     id: "recent_records",
