@@ -15,6 +15,9 @@ const api = { fetchMyFirms: vi.fn(), fetchOwnedFirms: vi.fn(), fetchIsAdmin: vi.
 vi.mock("@/lib/advisorApi", () => api);
 // The shell's Settings page also holds the "Leave this firm" action, which reaches the database through its own module (tested in AdvisorSettingsLeave.test.tsx).
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: vi.fn() } }));
+// The support session the person is in, when they are: the shell reads it through useMySupportSession.
+let supportSession: { id: string; isOpen: boolean; endsAt: string } | null = null;
+vi.mock("@/hooks/useOwnedFirms", async () => ({ ...(await vi.importActual<object>("@/hooks/useOwnedFirms")), useMySupportSession: () => supportSession }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
@@ -56,6 +59,7 @@ beforeEach(() => {
   clearMyFirms();
   clearOwnedFirms();
   firmAddress = { status: "none" };
+  supportSession = null;
   auth.user = { id: "u1", email: "sam@example.com", user_metadata: {} };
   auth.signOut.mockReset();
   api.fetchMyFirms.mockReset().mockResolvedValue([alpha]);
@@ -66,6 +70,26 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the workspace menu", () => {
+  it("holds the search box above the sections (CRM-S1.2a)", async () => {
+    await renderAt("/advisor");
+    const box = screen.getByRole("searchbox", { name: /search/i });
+    expect(box).toBeInTheDocument();
+    expect(box.compareDocumentPosition(menu()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no search box once the support hour is over, though the menu stays (CRM-S1.2a)", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha Advisory" };
+    api.fetchMyFirms.mockResolvedValue([{ ...alpha, role: "support" }]);
+    supportSession = { id: "s1", isOpen: true, endsAt: new Date(Date.now() + 3_600_000).toISOString() };
+    const view = await renderAt("/advisor");
+    expect(screen.getByRole("searchbox", { name: /search/i })).toBeInTheDocument();
+    view.unmount();
+    supportSession = { id: "s1", isOpen: true, endsAt: new Date(Date.now() - 1000).toISOString() };
+    await renderAt("/advisor");
+    expect(screen.getByText("The support hour has ended")).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  });
+
   it("holds Quotes, Inbox, Leads, Accounts and Reports, then Settings, and none of the sections that aren't built yet", async () => {
     await renderAt("/advisor");
     expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"]);

@@ -1,9 +1,11 @@
 import { useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { accountKey } from "@/components/accounts/useAccountQueries";
+import { GoToKept, MergedNote } from "@/components/accounts/MergedAddress";
+import { useMergedAddress } from "@/components/accounts/useMergedAddress";
 import { ContactDetailsPanel } from "@/components/contacts/ContactDetails";
 import PlaceToWrite from "@/components/conversations/PlaceToWrite";
 import { contactName } from "@/data/accountPage";
@@ -12,6 +14,7 @@ import { ContactActivity, ContactOpportunities } from "@/components/contacts/Con
 import { contactKey, useContactPageQuery } from "@/components/contacts/useContactQueries";
 import { LoadFailed, NotAvailable, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useAuth } from "@/hooks/useAuth";
 import type { ContactFields, ContactPage as Page } from "@/lib/contactPageApi";
 
@@ -31,6 +34,11 @@ const ContactPage = () => {
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
+  const navigate = useNavigate();
+  // An address that finds no contact may be one that was merged away (CRM-S4.3a, D-203): the database says where it leads, if the person may see that.
+  const merged = useMergedAddress(firmId, "contact", id, query.data === null);
+  // The contact is now among the menu search's recent records (CRM-S1.2a): noted once its page has loaded.
+  useNoteOpened(firmId, "contact", id, query.data?.contact.id === id);
 
   // The saved fields go on the page at once (the reload that follows confirms them); every list of the contact is asked again, since a save adds to its history, and
   // the account's lists too, since a contact's main mark and name are on them.
@@ -52,7 +60,11 @@ const ContactPage = () => {
   }
   const page = query.data;
   // The same answer for a contact that is gone, another firm's, or one whose account the person's level does not reach.
-  if (!page) return <Frame><NotAvailable noun="contact" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
+  if (!page) {
+    if (merged.isLoading) return <Frame><ContactLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;
+    if (merged.data) return <GoToKept record={merged.data} />;
+    return <Frame><NotAvailable noun="contact" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
+  }
 
   const { contact } = page;
   // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024). On an archived account nothing
@@ -60,6 +72,7 @@ const ContactPage = () => {
   const canAct = firmId !== null && !isSupport;
   const body = (
     <>
+      <MergedNote />
       {contact.account.archived && (
         <div role="note" className="mb-6 flex items-center gap-3 rounded-xl border border-border bg-muted/40 p-4 text-sm">
           <Archive className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -97,6 +110,9 @@ const ContactPage = () => {
           person={workspace.person}
           canAdd={page.canAdd}
           canMove={page.canMove}
+          canMerge={page.canChange}
+          // The contact this page is about is gone when it was the one removed: the kept contact's page takes its place.
+          onContactsMerged={({ kept, removed }) => { if (removed.id === contact.id) navigate(`/contacts/${kept.id}`, { replace: true }); }}
           alsoRefresh={contactKey(firmId, id)}
         >{body}</AccountActionsProvider>
       ) : body}

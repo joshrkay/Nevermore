@@ -65,7 +65,7 @@ const row = (over: Partial<AccountRow> = {}): AccountRow => ({
   states_of_operation: [], current_provider: null, source: "employer_intake", status: "prospect", archived: false, archived_at: null,
   created_at: "2026-10-28T10:00:00Z", owner: "u1", owner_name: "Dana Reyes", main_contact_id: null, main_contact_name: null,
   main_contact_email: null, main_contact_phone: null, opportunity_id: null, opportunity_name: null, opportunity_stage: null, target_start: null, open_opportunities: 1,
-  quote_requests_sent: 0, quotes_received: 0, waiting_on_peo: false, earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", labels: [], ...over,
+  quote_requests_sent: 0, quotes_received: 0, waiting_on_peo: false, earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", labels: [], renewal_date: null, ...over,
 });
 const rows = [
   row(),
@@ -121,7 +121,9 @@ describe("the bulk bar", () => {
     const user = userEvent.setup();
     renderAt();
     await selectTwo(user);
-    expect(within(bar()!).getAllByRole("button").map((b) => b.textContent)).toEqual(["Change owner", "Set a field", "Label", "Archive", "Export", "Clear"]);
+    // Exactly two chosen also offers Merge (CRM-S4.3a), once the database has said the person may change both.
+    await within(bar()!).findByRole("button", { name: "Merge" });
+    expect(within(bar()!).getAllByRole("button").map((b) => b.textContent)).toEqual(["Change owner", "Set a field", "Label", "Archive", "Merge", "Export", "Clear"]);
   });
 
   // Catches (D-24, ADR 0024): Nevermore support being offered a change of anything.

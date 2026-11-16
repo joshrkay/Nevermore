@@ -213,7 +213,10 @@ describe("server and client intake rules agree", () => {
   });
 
   it("counts the same open items in the advisor queue as Review and The Manuscript list (US-2.2a)", () => {
-    expect(quoted(blocks("open_item_statuses").join("\n"))).toEqual([...OPEN_ITEM_STATUSES]);
+    // Each copy is checked on its own: the queue's and the one an opportunity's intake summary repeats for a single intake (CRM-O1.1a).
+    const copies = blocks("open_item_statuses");
+    expect(copies.length).toBeGreaterThanOrEqual(2);
+    for (const copy of copies) expect(quoted(copy)).toEqual([...OPEN_ITEM_STATUSES]);
   });
 
   it("caps a needs-advisor-action note as the database does (F-4.3)", () => {

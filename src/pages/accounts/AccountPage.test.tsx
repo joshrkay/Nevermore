@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setSignedInUser } from "@/lib/signedInUser";
 import { toast } from "sonner";
 import type { AccountConflict, AccountPage as Page } from "@/lib/accountPageApi";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
@@ -12,7 +13,7 @@ import { allStatuses, expectStatusesOutsideBusy, spoken } from "@/test/loading";
 // it, what the files are) are tested in supabase/tests/account_page.sql; here the client answers and the page draws it.
 
 const signOut = vi.fn();
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "dana@example.com" }, signOut }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFiles: vi.fn(), updateAccount: vi.fn(), getSubmissionAccount: vi.fn() };
@@ -26,6 +27,9 @@ const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn(), fetchMyMailbox:
 const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), getAccountMessages: vi.fn() };
 vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...conversations }));
 vi.mock("@/lib/advisorApi", () => advisor);
+
+const search = { noteRecentRecord: vi.fn() };
+vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
 
 const { default: AccountPage } = await import("./AccountPage");
 const { AccountError } = await import("@/lib/accountPageApi");
@@ -98,6 +102,8 @@ const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
+  // The app's identity boundary says who is signed in; these pages render without it.
+  setSignedInUser("u1");
   for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
@@ -150,6 +156,31 @@ describe("AccountPage: Email", () => {
     const dialog = await screen.findByRole("dialog", { name: "Write to Elena Marsh" });
     expect(await within(dialog).findByRole("region", { name: "Emails" })).toBeInTheDocument();
     expect(conversations.getConversation).toHaveBeenCalledWith("f1", "c1");
+  });
+});
+
+describe("AccountPage: the menu's recent records", () => {
+  // Catches: a record that never reaches the search box's "last five opened" because no page notes it (CRM-S1.2a).
+  it("notes the account as opened once its page has loaded, once", async () => {
+    search.noteRecentRecord.mockReset().mockResolvedValue(true);
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await waitFor(() => expect(search.noteRecentRecord).toHaveBeenCalledWith("f1", "account", "a1"));
+    expect(search.noteRecentRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("notes nothing for a page that isn't there, and shows the page whatever the note does", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    client.getAccountPage.mockResolvedValue(null);
+    renderPage();
+    await screen.findByText(/isn.t available|not available|couldn.t find|can.t be found/i);
+    expect(search.noteRecentRecord).not.toHaveBeenCalled();
+  });
+
+  it("is not stopped by a failing note", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
   });
 });
 

@@ -35,6 +35,7 @@ jobs:
       # stripping, so tsconfig.functions.json bans what stripping cannot run (enums, namespaces,
       # parameter properties, a type imported without `type`).
       - run: npm run typecheck:functions
+      - run: npm run typecheck:app
       - run: npm test
       - run: npm run build
 

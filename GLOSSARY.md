@@ -630,16 +630,36 @@ _Avoid_: unsubscribed (that is a recipient's own choice, recorded by the mail pr
 One search for one account and one start date. Every submission sits on one, and so every quote request. Its name is offered as the start month and "PEO search" ("March 2027 PEO search"), or "PEO search" when no start is known. It holds at most one intake; next year's renewal is a new opportunity on the same account. Its **Opportunity stage** is worked out, never stored (D-206): Qualifying (no intake), Intake under way (draft, submitted, under review, information requested), Ready to send (ready for market), In market (sent to PEOs), Quoted, Won, and Lost (lost or archived, or marked lost with no intake). It is open until it is won or lost.
 _Avoid_: deal, search (on its own), case
 
+**Contacts on this search** (code: `contacts` of `opportunity_page(firm, opportunity)`; story CRM-O1.1a, D-429):
+The people an opportunity's page lists: its main contact (marked Main) and the contact made from its intake's prospect (marked "fills in the intake"), one row for each person, so the usual case, where the prospect is the main contact, is one row with both marks. An account's other contacts are not on the search; there is no per-opportunity list of contacts or roles.
+_Avoid_: opportunity contacts (as if there were a list kept per opportunity), participants
+
+**Opportunity activity** (code: `opportunity_activity(firm, opportunity, filter, limit, offset)`; story CRM-O1.1a, D-427):
+Everything that happened on one opportunity, newest first: the **Call**s, **Note**s and **Task**s that name it, the events of its quote requests (sent, quoted, declined, closed) and its **Record history** with its **Stage change**s. Filtered All, Calls, Notes, Tasks or Changes; the quote requests' events and the history are the Changes. A call, note or task logged on an opportunity is still on its account, so it is **Last activity** of the account too.
+_Avoid_: timeline, feed
+
 **Main contact**:
 The one contact of an account that is the person to deal with first; an account has at most one, by a constraint (D-29), and an opportunity's main contact is a contact on the same account. Making a new contact the main contact makes it the only one: the old main contact is unticked in the same step, and the person is told who it was. An account made from a submission starts with its prospect as its main contact (D-214).
 _Avoid_: primary contact, lead contact
 
-**Account status** (code: `account_status(account)`; story CRM-Q1.1a, CRM-A1.3, D-197):
-Whether an account is a prospect account or a client, worked out each time it is asked and never stored: `prospect` until one of its opportunities' submissions is won, then `client`; a won submission put away (archived straight from won: its last move into archived from another stage was from won, D-216) stays won, so its account stays a client, until it is reopened (Former client arrives with the placement record in Epic 4). Nobody sets it. Not callable by the browser: a query that has decided the caller may see the account asks it.
+**Account status** (code: `account_status(account)`; story CRM-Q1.1a, CRM-A1.3, CRM-A2.4a, D-197, D-451):
+Whether an account is a prospect account, a client or a **Former client**, worked out each time it is asked and never stored: a `client` while it has a **Placement** not ended or, with no placement at all, a won submission (one won before the placement record existed; a won submission put away, archived straight from won, stays won, D-216, until it is reopened); a `former_client` when it has placements and all of them have ended, whatever its submissions say (D-455); otherwise a `prospect`. Nobody sets it: adding a PEO placement's renewal by hand, marking a renewal "Didn't renew" and its undo move it. Not callable by the browser: a query that has decided the caller may see the account asks it.
 _Avoid_: account type, lifecycle stage
 
+**Placement** (code: `placements`; story CRM-A2.4a, D-446, D-447):
+What a firm placed for an account with a PEO: the PEO's name (at most 80 characters), the start date if known, the broker of record, and when it ended. A placement a win makes (CRM-O1.3a) also holds the opportunity that was won and the quote request the employer took; one the firm made before the product is made, with no opportunity and no quote, in the same step as a renewal of a PEO placement added by hand. A placement not ended makes its account a client; it ends when its renewal is marked "Didn't renew" and begins again when that is undone. Read by whoever may see its account, written only through functions, with a history and a version. A win also records the **Commission basis** expected, with the number and the figure for a year, all optional together; the commission received is **Commission payment**s.
+_Avoid_: policy, contract, sale, win (a win is the opportunity's outcome, the placement is what it leaves)
+
+**Renewal** (code: `renewals`; story CRM-A2.4a, D-446 to D-454):
+A date an account's cover comes up: what renews (a PEO placement, or the employer's current plan, which makes no placement), with whom (at most 80 characters), the date, the placement it came from and the opportunity working it (at most one, set by "Start the renewal"). Added by hand by anyone who may see the account, or made by a win; edited or deleted by whoever may change the account, except that one a win made is deleted only by reopening that win. It is **done** when its working opportunity is Won or when it is marked "Didn't renew" with a day (`not_renewed_on`), which ends the placement it came from; done is worked out and never stored beyond that day, and undoing "Didn't renew" brings the renewal and the placement back. Days away is worked out each time from today: "in 45 days", "today", "12 days ago". The accounts table's Renewal column is the date of an account's nearest renewal not done, and the built-in view "Renewing in 120 days" keeps the accounts with one on or before 120 days from today, overdue included, soonest first.
+_Avoid_: expiry (a quote expires, a renewal comes up), policy end
+
+**Former client** (story CRM-A2.4a, D-197, D-451):
+An account that has placements and every one of them has ended. A status of the account, worked out from its placements and never set; an account that places again (a new placement not ended, by a win or by hand) is a client again, and undoing "Didn't renew" reopens the placement and brings the account back.
+_Avoid_: lost client, churned
+
 **Opportunity stage** (code: `opportunity_stage(opportunity)`, `opportunity_stage_of(pipeline stage)`; stories CRM-Q1.1a, CRM-O1.2, D-206, D-408):
-Where an opportunity is, worked out each time it is asked and never stored, with one exception. With an intake it follows the submission's **Pipeline stage**: `intake_under_way` (draft, submitted, under review, information requested), `ready_to_send` (ready for market), `in_market` (sent to PEOs), `quoted`, `won`, and `lost` (lost or archived, except that a submission archived straight from won stays `won`: D-216). What decides is the last move into archived from another stage; marking or clearing "needs action" on an archived submission writes a history row from archived to archived, which is not a move. With no intake it is `qualifying`, or `lost` when an agent marked it so: that one fact is kept on the opportunity (`lost_at`, `lost_by`; the lost reason comes with CRM-O1.3), so there is one truth for each opportunity, never two. An opportunity marked lost is refused an intake ("This opportunity was marked lost. Reopen it before starting a quote.") and one that has an intake is lost through its submission. A pipeline stage the mapping does not know is refused, never answered with nothing, so a stage added to the pipeline fails a test until it is mapped. An agent sets the stage by hand only while there is no intake; after that it follows the intake, a send, a quote, and Mark won or lost. On screen: Qualifying, Intake under way, Ready to send, In market, Quoted, Won, Lost. Under it the page says what would move it on (`whatMovesItOn`, D-414): "Waiting for Lucia to certify", "Send to a PEO to move to In market". Every change of stage is in the opportunity's history, with who or what caused it (see **Stage change**). Not callable by the browser: the page's read asks it after deciding the person may see the opportunity (D-416).
+Where an opportunity is, worked out each time it is asked and never stored, with one exception. With an intake it follows the submission's **Pipeline stage**: `intake_under_way` (draft, submitted, under review, information requested), `ready_to_send` (ready for market), `in_market` (sent to PEOs), `quoted`, `won`, and `lost` (lost or archived, except that a submission archived straight from won stays `won`: D-216). What decides is the last move into archived from another stage; marking or clearing "needs action" on an archived submission writes a history row from archived to archived, which is not a move. With no intake it is `qualifying`, or `lost` when an agent marked it so: that one fact is kept on the opportunity (`lost_at`, `lost_by`, with the **Lost reason**), so there is one truth for each opportunity, never two. An opportunity marked lost is refused an intake ("This opportunity was marked lost. Reopen it before starting a quote.") and one that has an intake is lost through its submission. A pipeline stage the mapping does not know is refused, never answered with nothing, so a stage added to the pipeline fails a test until it is mapped. An agent sets the stage by hand only while there is no intake; after that it follows the intake, a send, a quote, and Mark won or lost. On screen: Qualifying, Intake under way, Ready to send, In market, Quoted, Won, Lost. Under it the page says what would move it on (`whatMovesItOn`, D-414): "Waiting for Lucia to certify", "Send to a PEO to move to In market". Every change of stage is in the opportunity's history, with who or what caused it (see **Stage change**). Not callable by the browser: the page's read asks it after deciding the person may see the opportunity (D-416).
 _Avoid_: status (an account has a status, an opportunity a stage), pipeline stage (that is the submission's own)
 
 **Stage change** (code: kind `stage_changed` of `record_history_list`; story CRM-O1.2, D-412, D-413):
@@ -647,7 +667,7 @@ A move of an opportunity's submission that changes the opportunity's stage, show
 _Avoid_: stage history, transition, activity
 
 **Move cause** (code: `submission_status_history.cause`, `cause_quote_request_id`; story CRM-O1.2, D-412, ADR 0026):
-Why a submission moved when no person chose the move: `quote_send` (a send recorded while it was Ready for market moved it to Sent to PEOs) or `quote_recorded` (a quote recorded while it was Sent to PEOs moved it to Quoted), with the quote request that caused it. Null for a person's own move. The move names the person who recorded the send or the quote as who made it, and an arriving email never makes one (PRD 7).
+Why a submission moved when no person chose the move: `quote_send` (a send recorded while it was Ready for market moved it to Sent to PEOs) or `quote_recorded` (a quote recorded while it was Sent to PEOs moved it to Quoted) or `quote_taken` (the quote the employer took, on a win), with the quote request that caused it. Null for a person's own move. The move names the person who recorded the send or the quote as who made it, and an arriving email never makes one (PRD 7).
 _Avoid_: reason (a Lost reason is something else), trigger, automation
 
 **Web domain** (code: `web_domain_of(website)`, `accounts.web_domain`; story CRM-Q1.1a, D-193):
@@ -675,7 +695,7 @@ An account put away without deleting it. It is in no view of the Accounts table 
 _Avoid_: closed, inactive, hidden, soft-deleted
 
 **Deleting an account** (code: `delete_account`; story CRM-A1.1c, D-204, D-219, D-233):
-Removing an account together with its contacts, its calls, notes and tasks, and their history. Allowed to whoever the level rule gives the account, and refused (PT409) for an account that has **any opportunity**: an opportunity is another person's work (it has its own owner, and may hold an intake, a submission and quote requests), so a delete never removes one and never chooses between them. The person is offered **Archive** instead. This also keeps every submission and every quote request on an opportunity (CRM-Q1.3). An email (Epic 6) will refuse a delete the same way.
+Removing an account together with its contacts, its calls, notes and tasks, its placements and renewals, and their history. Allowed to whoever the level rule gives the account, and refused (PT409) for an account that has **any opportunity**: an opportunity is another person's work (it has its own owner, and may hold an intake, a submission and quote requests), so a delete never removes one and never chooses between them. The person is offered **Archive** instead. This also keeps every submission and every quote request on an opportunity (CRM-Q1.3). An email (Epic 6) will refuse a delete the same way.
 _Avoid_: erase, purge, remove (a member is removed, an account is deleted)
 
 **Change of owner** (code: `change_account_owner`; story CRM-A1.1c, D-209, D-214):
@@ -718,11 +738,23 @@ What the search box asks the database: the **Accounts**, **Contacts**, **Opportu
 _Avoid_: find, lookup, filter (a filter narrows a table's list; search names records across kinds)
 
 **Recent record** (code: `recent_records`, `note_recent_record`, `my_recent_records`; story CRM-S1.2b, D-214):
-One of the last records a person opened in a firm, kept per person and per firm (the last 20), for the search box's "last five opened". Opening a record puts it at the top; only a record the person may see is noted; one they may no longer see is passed over; Nevermore support notes none; closing a firm deletes them.
+One of the last records a person opened in a firm, kept per person and per firm (the last 20), for the search box's "last five opened". Opening a record puts it at the top; only a record the person may see is noted; one they may no longer see is passed over; Nevermore support notes none; closing a firm deletes them. The workspace pages that show an account or a contact note it as opened (story CRM-S1.2a, D-620).
+
+**Menu search** (code: `MenuSearch`, `useNoteOpened`; story CRM-S1.2a, D-620 to D-624):
+The search box in the workspace menu. Empty, it lists the person's last five **recent records**; from two characters it shows the **Search** answer in groups of up to five, each result opening its record (an opportunity opens its submission until it has a page), with "See all accounts" when more than five accounts were found, and, when nothing matches, "Nothing matches" with a New account button that opens the New account form named with the words typed.
+_Avoid_: global search, omnibox, quick find
 
 **Chain at certification** (code: `make_intake_chain`, the trigger `chamber_sessions_chain`; story CRM-Q1.1b, D-192):
 The step that makes an intake's **chain** the first time an employer certifies it, in the same transaction as the certification, so a certification that cannot make its chain fails and a submission is never left without one. It reads the answers of the intake's latest certification (never the working copy, never the FEIN, the census or anything about an employee): the account (the legal name, address and website, state of the headquarters, states of operation, employees, industry, and current provider when the employer said they have one; owned by nobody; source Employer's intake), marked a **Possible duplicate** of the earliest account the **Duplicate match** finds, never merged and never asked of the employer; the contact (the prospect's name from their profile, or the signer's name when the profile has none, with their email and phone, the main contact, linked to the prospect, left out only when they have neither an email nor a phone); and the opportunity (named for the start month as typed and "PEO search", or "PEO search" alone; its main contact the prospect's contact; owned by nobody; holding the intake). It is written in the intake's firm whatever state the firm is in, since certifying is the employer's act and not a member's: a closing firm's chain is deleted with the rest when the closing ends, and a suspended firm's members read nothing until the suspension is lifted. Certifying again, or the step run again, finds the chain that is there and changes nothing; one lock per firm orders two chains made at once, so the second sees the first. The step is also the one CRM-Q1.3 calls for the submissions that exist.
 _Avoid_: auto-create, sync, conversion (a lead's conversion is CRM-L2.2)
+
+**Duplicate warning** (code: `duplicate_account_check`, `duplicate_contact_check`, `DuplicateWarning`; story CRM-S4.2, D-601 to D-604):
+What New account and Add a contact say while the person types, when the **Duplicate match** finds records of the firm that may be the same: for an account its website, or its name with a state; for a contact its email. It names each record the person may see with its owner and why it matched, and a link that opens it in a new tab; it never stops the save, and it offers no merge. A check that fails shows nothing.
+_Avoid_: duplicate error, duplicate check (a check is the database's question; the warning is what the person sees)
+
+**Masked match** (story CRM-S4.2, D-602):
+A duplicate the person may not see (an account by their level, a contact by its account's). It says only that one exists and whom to ask: the account's owner, or the firm's owners when it has none or theirs has left. It never names the record, links to it, says which field matched or counts how many there are.
+_Avoid_: hidden duplicate, redacted record
 
 **Possible duplicate**:
 A mark on an account that the duplicate match found may be a business the firm already has, made when an employer's intake or the bringing-in of existing submissions created it. Nothing is merged by guesswork: an agent merges it or keeps it separate, which clears the mark. The employer is never asked.
@@ -730,11 +762,28 @@ _Avoid_: duplicate (on its own: it is a question, not a finding)
 
 **Merge**:
 Two accounts, two contacts or two leads made one. For each field that differs the person picks the value to keep; everything attached to the one removed moves to the one kept; the one removed is deleted, its history moves to the kept record marked as from the merged record, its old address leads to the kept record, and the merge is recorded on the kept record. Anyone allowed to change both can merge them. There is no unmerge. Two accounts that each hold an intake can be merged: both intakes stay, each on its own opportunity.
+In the database (code: `merge_accounts`, `merge_contacts`, `merge_preview`; story CRM-S4.3b, D-203, D-210, D-640 to D-649): the person names the record to keep and the one to remove, the version each was at when they chose, and for each field that differs which value to keep (a field they leave out keeps the kept record's value, or takes the removed one's when the kept one is blank). An account's contacts, opportunities (with their intakes and quotes), calls, notes, tasks, labels, placements and renewals move to the kept account; two contacts of the two accounts that are the same prospect become one. Two contacts merge only when they are on the same account. Both must be ones the person may change by the **Level rule**, the kept account must not be archived, a closing firm and a Nevermore support session are refused, and a record changed since the person chose refuses the merge. The kept record's history shows each entry copied from the removed record marked as from it, and one "Merged" entry.
 _Avoid_: combine, dedupe
 
 **Lead** (the record; code: `leads`; stories CRM-L1.x and CRM-L2.x, D-803 to D-809):
 A person and their business the firm is not quoting yet: one row holding who (name, title, email, phone) and which business (its name, state, city, employees, current provider), with its **Record owner**, its source (Added by hand, Import, Referral partner, Firm's link) and its status. It is not in the chain: it has no account, contact or opportunity until it is converted, which copies it into them and moves its calls, notes and tasks onto the account. Its status is **New** when made, **Working** after its first logged call, saved change or by hand, **Not a fit** with a reason from a short list (too small, wrong industry, not interested, bad contact details, other) and reopenable, or **Converted**, set only by converting, with the records it made, after which it never changes. Seen by the level rule as an account is. Deleting puts it in the bin (`deleted_at`), seen only by owners, for 30 days. Every change of its fields and status is in its history. Not the **lead** role (Owner, lead, agent): on a screen the record is "lead" in a table of leads, the role "team lead".
 _Avoid_: prospect (the employer who fills in an intake), contact (a person at an account)
+
+**Keep separate** (code: `account_keep_separate`; story CRM-S4.3b, D-193):
+Taking the **Possible duplicate** mark off an account: the person has decided the two accounts are different businesses. Nothing is merged and nothing else changes; the account's history shows the mark taken off. Whoever may change the account may.
+_Avoid_: dismiss, ignore
+
+**Merge dialog** (story CRM-S4.3a, D-665 to D-667):
+The screen where a person merges two accounts or two contacts of one account: both records side by side, one choice for each field that differs (each starts on what the database would do for a field left alone), what will happen in words, and the warning that a merge can't be split again. It shows the database's reason instead of the button when the person may not merge them.
+_Avoid_: merge wizard, conflict screen
+
+**Possible duplicate banner** (story CRM-S4.3a, D-661):
+The note at the top of an account marked **Possible duplicate**, naming the other account, with Merge and **Keep separate** for whoever may change the account.
+_Avoid_: duplicate warning (that is what New account and Add a contact say while typing)
+
+**Merged-into address** (table `merged_records`, code: `resolve_merged_record`; story CRM-S4.3b, D-203):
+What the database keeps of a record that was merged away: which record it became (an account or a contact, by id, with the name it had). The removed record's old address leads to the kept record, also when that one is merged later, for a person who may see the kept record; for anyone else it leads nowhere, as a record that does not exist.
+_Avoid_: redirect, tombstone
 
 **Label**:
 A word from the firm's own list, made by typing it, that can be put on any number of accounts (later on other records). The same word in other letters is the same label (the first spelling stays); a label is at most 40 characters. It is made the first time a bulk change puts it on an account, and an archived account takes no new one. Putting one on or taking one off is one entry in the account's history ("Labels changed from nothing to VIP"). Renaming or deleting a label is Settings' (Epic 9). The Accounts table shows each account's labels and can be filtered and sorted by them.
@@ -749,7 +798,7 @@ For ten minutes after a **Bulk change**, and once, the person who made it can pu
 _Avoid_: revert, rollback
 
 **Call**, **Note**, **Task**:
-What an agent logs on an account or a contact (later on a lead or an opportunity). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
+What an agent logs on an account, a contact or an opportunity (later on a lead). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
 **Follow-up task**:
@@ -966,16 +1015,32 @@ _Avoid_: status, state, session status
 Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, ready for market, sent to PEOs and quoted, to won, lost or archived. Advisors move it one step at a time, along the allow-list in `docs/ADVISOR_ACCESS.md`; an archived intake is reopened as submitted. Two moves are made by recording something instead (ADR 0026): a send recorded while it is Ready for market moves it to Sent to PEOs, and a quote recorded while it is Sent to PEOs moves it to Quoted, each in the same transaction as the record and only from that exact stage (see **Move cause**).
 _Avoid_: status, intake status, workflow status
 
+**Lost reason** (code: `opportunities.lost_reason`, `lost_note`; story CRM-O1.3a, D-468):
+Why a search was lost, asked when it is marked lost: stayed with current provider, price, went direct to a PEO, no decision, or other (other needs a note saying why; any note is at most 500 characters). Kept on the opportunity while it is lost, whether the loss is the submission's (it has an intake) or the opportunity's own (it has none), and cleared by a reopen; the **Record history** keeps it. Nothing is chosen from outside the list.
+_Avoid_: lost because, loss code, status reason
+
+**Close reason** (code: `quote_requests.close_reason`; story CRM-O1.3a, D-464):
+Why a quote request was closed by a win or a loss: `went_elsewhere` ("the employer went elsewhere": another quote was chosen) or `search_ended` (the opportunity was lost). Empty for a quote request an advisor closed by hand and for one that is not closed; sending the packet to that PEO again opens the request and clears it. A quote that declined stays declined and is never closed by either.
+_Avoid_: reason closed, withdrawn
+
+**Commission basis** (code: `placements.commission_basis`, `commission_rate`, `commission_expected_yearly`; story CRM-O1.3a, Q-4.1, D-466):
+How the commission a placement expects is worked out: `share` (a percent of the PEO's admin fee, per employee per month: typed as 20 for 20%, above 0 and at most 100), `per_employee` (dollars per employee per month, above 0) or `flat` (dollars a year, above 0), with the figure expected a year, which the dialog works out ((percent / 100) x admin fee x employees x 12, or per employee x employees x 12, or the flat figure; to the cent) and the person may overwrite. All optional, and a yearly figure needs its basis. Kept as typed, in dollars and cents.
+_Avoid_: commission rate (the rate is only the number), fee, split
+
+**Commission payment** (code: `commission_payments`; story CRM-O1.3a, Q-4.1, D-467):
+Commission the firm received against a placement: the day, an amount above zero (to the cent) and a note (at most 500). Seen only by the firm, never by a prospect or a PEO: read by whoever may see the account, recorded, edited and deleted only through functions by whoever may change the opportunity the placement was won on (for a placement the firm made by hand, whoever may change its account), each from a version, with a history. A win's placement with payments is not deleted by a reopen ("Delete its payments first").
+_Avoid_: payout, invoice, receipt
+
 **Won**:
-The pipeline stage of a submission whose employer took one of its quotes, which the submission names.
+The pipeline stage of a submission whose employer took one of its quotes, which the submission names. A submission on an opportunity is marked won only through the opportunity (`opportunity_mark_won`: the quote chosen, the other open quotes closed, the placement and its renewal made, all or none), and reopened only by `opportunity_reopen` (ADR 0027).
 _Avoid_: closed, placed, converted
 
 **Lost**:
-The pipeline stage of a submission whose search ended without the employer taking a quote.
+The pipeline stage of a submission whose search ended without the employer taking a quote. A submission on an opportunity is marked lost only through the opportunity (`opportunity_mark_lost`, with a **Lost reason**), which closes its open quotes with the reason `search_ended`.
 _Avoid_: closed, dead, rejected (a PEO declines; a submission is lost)
 
 **Quote request status**:
-Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn by an advisor or by the prospect withdrawing that PEO's market authorization, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is a quote request note and doesn't change its status; nor does a message arriving on the thread.
+Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn by an advisor or by the prospect withdrawing that PEO's market authorization, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A closed request may carry a **Close reason**. A question from the PEO's underwriter is a quote request note and doesn't change its status; nor does a message arriving on the thread.
 _Avoid_: status, pipeline stage, quote status
 
 **Also heard**:

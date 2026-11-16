@@ -171,8 +171,15 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261121090000_leads.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_create_lead.sql
+\i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
@@ -186,6 +193,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -530,6 +538,14 @@ BEGIN
     ('archive an account', format($q$SELECT public.archive_account(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('restore an account', format($q$SELECT public.restore_account(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('delete an account', format($q$SELECT public.delete_account(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
+    ('add a renewal', format($q$SELECT public.add_renewal(%L, 'current_plan', 'Carrier', current_date, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
+    ('change a renewal', format($q$SELECT public.update_renewal(%L, 'Carrier', current_date, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), support_msg),
+    ('delete a renewal', format($q$SELECT public.delete_renewal(%L, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), support_msg),
+    ('mark a renewal not renewed', format($q$SELECT public.mark_renewal_not_renewed(%L, current_date, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), support_msg),
+    ('undo a renewal not renewed', format($q$SELECT public.undo_renewal_not_renewed(%L, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), support_msg),
+    ('merge two accounts', format($q$SELECT public.merge_accounts(%L, %L, '{}'::jsonb, 1, 1, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
+    ('merge two contacts', format($q$SELECT public.merge_contacts(%L, %L, '{}'::jsonb, 1, 1, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
+    ('keep two accounts separate', format($q$SELECT public.account_keep_separate(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('change an accounts owner', format($q$SELECT public.change_account_owner(%L, NULL, false, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('add a contact', format($q$SELECT public.add_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
     ('move a contact', format($q$SELECT public.move_contact(%L, %L, false, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), support_msg),
@@ -1098,7 +1114,7 @@ DECLARE
     'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session',
     'bundle_link_folder_in_my_firm', 'bundle_link_folder_read_only'];
   reads text[] := ARRAY['firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
-    'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
+    'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement'];
   writes text[] := ARRAY['add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
@@ -1109,7 +1125,7 @@ DECLARE
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo',
-    'close_submission_and_withdraw'];
+    'close_submission_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1182,7 +1198,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
     'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw'];

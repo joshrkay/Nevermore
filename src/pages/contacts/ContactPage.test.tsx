@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setSignedInUser } from "@/lib/signedInUser";
 import { toast } from "sonner";
 import type { ContactConflict, ContactPage as Page } from "@/lib/contactPageApi";
 import type { ActivityItem } from "@/lib/activityApi";
@@ -31,6 +32,8 @@ const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn
 vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...conversations }));
 const fetchMyMailbox = vi.fn();
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), fetchMyMailbox: () => fetchMyMailbox() }));
+const search = { noteRecentRecord: vi.fn() };
+vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
 
 const { default: ContactPage } = await import("./ContactPage");
 const { ContactError } = await import("@/lib/contactApi");
@@ -83,6 +86,8 @@ const invalidated = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c)
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
+  // The app's identity boundary says who is signed in; these pages render without it.
+  setSignedInUser("u1");
   for (const fn of [...Object.values(client), ...Object.values(activity), ...Object.values(contacts), listFirmMembers, listAccountOwners, signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
@@ -95,6 +100,31 @@ beforeEach(() => {
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
   activity.getActivityOptions.mockResolvedValue({ contacts: [{ id: "c1", name: "Elena Marsh", title: null }], opportunities: [], people: [{ id: "u1", name: "Dana Reyes" }] });
+});
+
+describe("ContactPage: the menu's recent records", () => {
+  // Catches: a record that never reaches the search box's "last five opened" because no page notes it (CRM-S1.2a).
+  it("notes the contact as opened once its page has loaded, once", async () => {
+    search.noteRecentRecord.mockReset().mockResolvedValue(true);
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await waitFor(() => expect(search.noteRecentRecord).toHaveBeenCalledWith("f1", "contact", "c1"));
+    expect(search.noteRecentRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("notes nothing for a page that isn't there, and shows the page whatever the note does", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    client.getContactPage.mockResolvedValue(null);
+    renderPage();
+    await screen.findByText(/isn.t available|not available|couldn.t find|can.t be found/i);
+    expect(search.noteRecentRecord).not.toHaveBeenCalled();
+  });
+
+  it("is not stopped by a failing note", async () => {
+    search.noteRecentRecord.mockReset().mockRejectedValue(new Error("down"));
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
+  });
 });
 
 describe("ContactPage: the header", () => {

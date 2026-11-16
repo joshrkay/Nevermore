@@ -121,7 +121,7 @@ function DeleteDialog({ firmId, account, onClose, onDone, onArchiveInstead }: Di
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {account.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This deletes the account with its contacts, calls, notes and tasks, and cannot be undone. An account that has opportunities can only be archived.
+            This deletes the account with its contacts, calls, notes, tasks, placements and renewals, and cannot be undone. An account that has opportunities can only be archived.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <Problem message={problem} />

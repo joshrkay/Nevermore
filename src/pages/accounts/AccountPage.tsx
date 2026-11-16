@@ -1,7 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
+import { ACCOUNTS_TABLE } from "@/components/accounts/accountsTable";
 import { AccountMenu } from "@/components/accounts/AccountMenu";
 import { restoreWithWords } from "@/components/accounts/restoreWithWords";
 import { Button } from "@/components/ui/button";
@@ -10,10 +11,15 @@ import { AccountOverview } from "@/components/accounts/AccountOverview";
 import { AccountTabPanel } from "@/components/accounts/AccountTabPanel";
 import { TAB_IDS, TAB_LABELS, type TabId } from "@/components/accounts/accountColumns";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
+import { DuplicateBanner } from "@/components/accounts/DuplicateBanner";
+import { MergeDialog } from "@/components/accounts/MergeDialog";
+import { GoToKept, MergedNote } from "@/components/accounts/MergedAddress";
+import { useMergedAddress } from "@/components/accounts/useMergedAddress";
 import { accountKey, useAccountPageQuery } from "@/components/accounts/useAccountQueries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadFailed, NotAvailable, PlaceholderPanel, PlaceholderLines, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useAuth } from "@/hooks/useAuth";
 import { listAccountTab, type AccountFields, type AccountPage as Page } from "@/lib/accountPageApi";
 import EmailAContact, { type ContactChoice } from "@/components/conversations/EmailAContact";
@@ -42,6 +48,12 @@ const AccountPage = () => {
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
+  // An address that finds no account may be one that was merged away (CRM-S4.3a, D-203): the database says where it leads, if the person may see that.
+  const merged = useMergedAddress(firmId, "account", id, query.data === null);
+  // Merging this account with the one the banner names (CRM-S4.3a): the other account's id while the dialog is open.
+  const [merging, setMerging] = useState<string | null>(null);
+  // The account is now among the menu search's recent records (CRM-S1.2a): noted once its page has loaded.
+  useNoteOpened(firmId, "account", id, query.data?.account.id === id);
 
   // The saved fields go on the page at once (the reload that follows confirms them); every list of the account is asked again, since a save adds to its history.
   const saved = useCallback((fields: AccountFields) => {
@@ -65,7 +77,11 @@ const AccountPage = () => {
   }
   const page = query.data;
   // The same answer for an account that is gone, another firm's, or one the person's level does not reach.
-  if (!page) return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
+  if (!page) {
+    if (merged.isLoading) return <Frame><AccountLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;
+    if (merged.data) return <GoToKept record={merged.data} />;
+    return <Frame><NotAvailable noun="account" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
+  }
 
   const { account, tabs } = page;
   const actionAccount = {
@@ -90,6 +106,7 @@ const AccountPage = () => {
   const archived = account.archivedAt !== null;
   const body = (
     <>
+      <MergedNote />
       <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
         <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
         <span aria-hidden="true"> / </span>
@@ -103,6 +120,16 @@ const AccountPage = () => {
             <Button variant="outline" size="sm" onClick={() => void restoreWithWords(firmId, actionAccount).then((ok) => ok && done("restored"))}>Restore</Button>
           )}
         </div>
+      )}
+      {account.possibleDuplicateOf && firmId && (
+        <DuplicateBanner
+          firmId={firmId}
+          accountId={account.id}
+          mark={account.possibleDuplicateOf}
+          canAct={page.canChange && !isSupport}
+          onMerge={setMerging}
+          onKeptSeparate={() => void queryClient.invalidateQueries({ queryKey: accountKey(firmId, id) })}
+        />
       )}
       <AccountHeader
         account={account}
@@ -147,8 +174,27 @@ const AccountPage = () => {
       </Tabs>
     </>
   );
+  const dialog = merging && firmId ? (
+    <MergeDialog
+      firmId={firmId}
+      kind="account"
+      keptId={merging}
+      removedId={account.id}
+      onClose={() => setMerging(null)}
+      onMerged={({ kept, removed }) => {
+        setMerging(null);
+        void queryClient.invalidateQueries({ queryKey: accountKey(firmId, kept.id) });
+        void queryClient.invalidateQueries({ queryKey: accountKey(firmId, removed.id) });
+        // The Accounts table still lists the removed account.
+        void queryClient.invalidateQueries({ queryKey: ["table", firmId, ACCOUNTS_TABLE.id] });
+        // This page's account is gone when it was the one removed: the kept account's page takes its place.
+        if (removed.id === account.id) navigate(`/accounts/${kept.id}`, { replace: true });
+      }}
+    />
+  ) : null;
   return (
     <Frame>
+      {dialog}
       {canAct ? <AccountActionsProvider
           firmId={firmId}
           accountId={id}
@@ -157,6 +203,7 @@ const AccountPage = () => {
           person={workspace.person}
           canAdd={!archived}
           canMove={page.canChange}
+          canMerge={page.canChange}
           startWithContactForm={params.get("addContact") === "1"}
           onStarted={() => setParams((p) => { const next = new URLSearchParams(p); next.delete("addContact"); return next; }, { replace: true })}
         >{body}</AccountActionsProvider> : body}

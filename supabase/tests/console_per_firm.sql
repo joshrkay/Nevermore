@@ -163,8 +163,15 @@
 \i supabase/migrations/20261119230000_search_everywhere.sql
 \i supabase/migrations/20261119240000_contact_page.sql
 \i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
 \i supabase/migrations/20261121090000_leads.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_create_lead.sql
+\i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
@@ -178,6 +185,7 @@
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
