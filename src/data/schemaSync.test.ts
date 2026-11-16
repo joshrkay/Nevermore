@@ -32,6 +32,7 @@ import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
+import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
 import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
@@ -249,6 +250,11 @@ describe("server and client intake rules agree", () => {
 
   it("offers the referral partner kinds the database accepts", () => {
     expect(quoted(blocks("referral_partner_kinds").join("\n"))).toEqual([...REFERRAL_PARTNER_KINDS]);
+  });
+
+  // New opportunity's Source box offers the words the database accepts (D-439, CRM-A2.3): one list in each place, the same words in the same order.
+  it("offers the opportunity sources the database accepts", () => {
+    expect(quoted(blocks("opportunity_sources").join("\n"))).toEqual([...OPPORTUNITY_SOURCES]);
   });
 
   it("counts the funnel's steps, in order, for each source", () => {

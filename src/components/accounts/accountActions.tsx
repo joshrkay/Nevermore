@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import type { ContactRow } from "@/lib/accountPageApi";
 import { ActivityError, setTaskDone, type ActivityItem, type ActivityType, type Logged } from "@/lib/activityApi";
@@ -8,6 +9,7 @@ import { AddContactDialog } from "./AddContactDialog";
 import { AddToNoteDialog } from "./AddToNoteDialog";
 import { LogActivityDialog } from "./LogActivityDialog";
 import { MoveContactDialog } from "./MoveContactDialog";
+import { NewOpportunityDialog } from "./NewOpportunityDialog";
 import { accountKey } from "./useAccountQueries";
 
 // What a person can do to an account's calls, notes and tasks (story CRM-E1.5), offered to the places that draw them (the header's buttons, a contact's
@@ -19,6 +21,7 @@ type Open =
   | { mode: "edit"; item: ActivityItem }
   | { mode: "add"; item: ActivityItem }
   | { mode: "contact" }
+  | { mode: "opportunity" }
   | { mode: "move"; contact: ContactRow }
   | null;
 
@@ -41,6 +44,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, as the page arrives
   }, []);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   // Every list of the account is asked again: a new row belongs in the Activity tab, its count and the Overview, and a task's state in each.
   const alsoKey = alsoRefresh?.join("\u0000");
   const refresh = useCallback(() => {
@@ -54,6 +58,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
     edit: (item) => setOpen({ mode: "edit", item }),
     addTo: (item) => setOpen({ mode: "add", item }),
     addContact: () => setOpen({ mode: "contact" }),
+    newOpportunity: () => setOpen({ mode: "opportunity" }),
     canMove,
     move: (contact) => setOpen({ mode: "move", contact }),
     setDone: async (task, done) => {
@@ -87,6 +92,13 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
       )}
       {open?.mode === "contact" && (
         <AddContactDialog firmId={firmId} accountId={accountId} person={person} onClose={close} onAdded={refresh} />
+      )}
+      {open?.mode === "opportunity" && (
+        <NewOpportunityDialog
+          firmId={firmId} accountId={accountId} person={person} onClose={close}
+          // Saving opens the new opportunity's own page (D-442, CRM-O1.1b's route); the account's lists are asked again for when the person comes back.
+          onCreated={(made) => { close(); refresh(); navigate(`/opportunities/${made.id}`); }}
+        />
       )}
       {open?.mode === "move" && (
         <MoveContactDialog

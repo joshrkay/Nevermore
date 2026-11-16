@@ -162,13 +162,14 @@ describe("AccountPage: from one account to another", () => {
 });
 
 describe("AccountPage: the header and the tabs", () => {
-  // Catches: a header that leaves out a fact the screen shows, or shows buttons that belong to later stories (D-186, no dead buttons).
+  // Catches: a header that leaves out a fact the screen shows, or shows buttons that belong to later stories (D-186, no dead buttons). New opportunity is no longer one of them: it is built (CRM-A2.3, D-436).
   it("shows the name, status, industry, location, employees, website and owner, and no button that does nothing", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" })).toBeInTheDocument();
     expect(screen.getByText("Prospect")).toBeInTheDocument();
     expect(screen.getByText("Dental practice · Portland, OR · 45 employees · harborviewdental.example · Owner Dana Reyes")).toBeInTheDocument();
-    for (const gone of ["Email", "New opportunity", "Add a contact", "Restore"]) {
+    expect(screen.getByRole("button", { name: "New opportunity" })).toBeInTheDocument();
+    for (const gone of ["Email", "Add a contact", "Restore"]) {
       expect(screen.queryByRole("button", { name: gone }), gone).toBeNull();
       expect(screen.queryByRole("link", { name: gone }), gone).toBeNull();
     }
@@ -643,14 +644,14 @@ describe("AccountPage: the states", () => {
     expectStatusesOutsideBusy();
   });
 
-  // Catches: an empty list that is blank, or one that points at an action that does not exist yet. Add a contact exists since CRM-A2.2 (AccountContacts.test.tsx).
+  // Catches: an empty list that is blank, or one that points at an action that does not exist yet. Add a contact exists since CRM-A2.2 (AccountContacts.test.tsx) and New opportunity since CRM-A2.3 (AccountNewOpportunity.test.tsx).
   it("says a new account's lists in one line each, with no action that does not exist yet", async () => {
     client.getAccountPage.mockResolvedValue(page({}, { contacts: tabOf([]), opportunities: tabOf([]), quotes: tabOf([]), files: tabOf([]), activity: tabOf([change(2, { kind: "created", field: null, from: null, to: null })], 1) }));
     renderPage();
     expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
     expect(screen.getByText("No opportunities yet.")).toBeInTheDocument();
     expect(screen.getByText("No quotes yet.")).toBeInTheDocument();
-    for (const gone of [/New opportunity/, /New quote/]) {
+    for (const gone of [/New quote/]) {
       expect(screen.queryByRole("button", { name: gone })).toBeNull();
       expect(screen.queryByRole("link", { name: gone })).toBeNull();
     }

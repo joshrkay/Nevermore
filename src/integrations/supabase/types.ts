@@ -1024,6 +1024,26 @@ export type Database = {
       move_contact: { Args: { p_contact_id: string; p_to_account_id: string; p_confirm?: boolean; p_firm_id?: string | null }; Returns: Json }
       contact_move_choices: { Args: { p_firm_id: string | null; p_contact_id: string; p_search?: string }; Returns: { id: string; name: string }[] }
       add_contact_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
+      // New opportunity on an account (20261120130000): the context is what the form needs ({account: {id, name, archived, employees}, main_contact, contacts, partners, owners});
+      // opportunity_create makes it (stage Qualifying, no intake) and answers {record} with its stage and referral_partner_code.
+      opportunity_create_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
+      opportunity_create: {
+        Args: {
+          p_account_id: string
+          p_name: string | null
+          p_target_start: string | null
+          p_employees: number | null
+          p_main_contact_id: string | null
+          p_expected_close: string | null
+          p_value: number | null
+          p_source: string | null
+          p_referral_partner_code: string | null
+          p_next_step: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // Archive, restore and delete an account, and change its owner (20261119160000): archive and restore answer {changed, record}; delete {deleted, name}
       // (PT409 for an account that has an opportunity); the owner change {record, owner, opportunities_changed, opportunities_skipped}.
       archive_account: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }

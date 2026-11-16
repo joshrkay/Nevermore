@@ -216,6 +216,7 @@
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1458,6 +1459,12 @@ INSERT INTO callable VALUES
    'the same for a page of the opportunity''s calls, notes and tasks, its quote requests'' events and its record history with its stage changes, newest first, narrowed to all, calls, notes, tasks or changes; PT404 as the page'),
   ('update_opportunity(p_opportunity_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_next_step text, p_owner_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
    'a current member of the firm the call acts for saves an opportunity''s own fields from a version, by the level rule on the opportunity''s own owner (an agent their own, a lead their team''s, an owner the firm''s, one with no owner an owner''s), never its stage or account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity that is not there or whose account the caller may not see, 55000 on an archived account');
+-- CRM-A2.3 (20261120130000_opportunity_create.sql; supabase/tests/opportunity_create.sql): New opportunity on an account.
+INSERT INTO callable VALUES
+  ('opportunity_create(p_account_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_referral_partner_code text, p_next_step text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the account, makes an opportunity on it (stage Qualifying, no intake), owned by its maker or, by the level rule, by someone they may choose who can see the account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field, a source, a referral partner, a contact or an owner the rules refuse'),
+  ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
+   'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2093,13 +2100,17 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('undo_renewal_not_renewed', 'advisor', 'by_id',
    $$SELECT public.undo_renewal_not_renewed({rnw}, {firm}, (SELECT version FROM public.renewals WHERE id = {rnw}))::text$$, ARRAY['42501', 'PT404', 'P0002', '22023'], '"conflict": false'),
   ('delete_renewal', 'advisor', 'by_id', $$SELECT public.delete_renewal({rdel}, {firm}, (SELECT version FROM public.renewals WHERE id = {rdel}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true');
--- CRM-O1.1a: the opportunity's page, its activity and its save ({opp} is an opportunity of the firm's owned account). The reads refuse whoever may not see the
+-- CRM-O1.1a and CRM-A2.3 (opportunity_create makes one on {acct}, the firm's account owned by its agent): the opportunity's page, its activity and its save ({opp} is an opportunity of the firm's owned account). The reads refuse whoever may not see the
 -- account with the one answer; the save's version is the opportunity's current one, read as the caller.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('opportunity_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_page({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
   ('opportunity_activity', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_activity({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
   ('update_opportunity', 'advisor', 'by_id',
-   $$SELECT public.update_opportunity({opp}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, (SELECT version FROM public.opportunities WHERE id = {opp}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false');
+   $$SELECT public.update_opportunity({opp}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, (SELECT version FROM public.opportunities WHERE id = {opp}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false'),
+  ('opportunity_create', 'advisor', 'by_id',
+   $$SELECT public.opportunity_create({acct}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"name": "Probe search"'),
+  ('opportunity_create_context', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.opportunity_create_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -3877,6 +3888,10 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_page', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads its page; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)'),
   ('opportunity_activity', 'firm_scoped', 'the same for a page of its calls, notes, tasks, quote requests'' events and record history (4e)'),
   ('update_opportunity', 'firm_scoped', 'a current member of the firm the call acts for saves an opportunity''s own fields from a version, when the level rule gives it them; refused for another firm''s opportunity as for one that is not there (4e)');
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('opportunity_create', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, makes an opportunity on it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
+  ('opportunity_owner_choices', 'service_only', 'the firm''s current people an opportunity of an account may be given to by the level rule and who sees the account, for any firm and account owner by id, so no API role can call it: the form''s read, opportunity_create_context, asks it once the caller is known to see the account'),
+  ('opportunity_create_context', 'firm_scoped', 'an account''s name, archived state, employees and contacts, the firm''s referral partners and the people who may own a new opportunity, to a member of the firm who may see the account (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),

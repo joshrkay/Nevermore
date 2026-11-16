@@ -95,6 +95,13 @@ export function AddContactButton() {
   return <Button type="button" size="sm" onClick={actions.addContact}>Add contact</Button>;
 }
 
+/** "New opportunity" over an account's opportunities (CRM-A2.3, screen 25). Nothing without actions (a Nevermore support session, an archived account). */
+export function NewOpportunityButton() {
+  const actions = useAccountActions();
+  if (!actions?.canAdd) return null;
+  return <Button type="button" size="sm" onClick={actions.newOpportunity}>New opportunity</Button>;
+}
+
 /** The empty Contacts list: "No contacts yet." and, where a contact can be added (not in a Nevermore support session, not on an archived account), "Add a contact". */
 export function ContactsEmpty({ words }: { words: string }) {
   const actions = useAccountActions();
