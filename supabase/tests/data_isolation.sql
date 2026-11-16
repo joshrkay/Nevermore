@@ -222,6 +222,7 @@
 \i supabase/migrations/20261122110000_bundle_links.sql
 \i supabase/migrations/20261122130000_conversation_replies.sql
 \i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122150000_inbox.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1430,6 +1431,10 @@ INSERT INTO callable VALUES
    'a current member of the firm (an owner, for the firm''s record) takes the rows of a listed table that they may see and the same statement records the export; refuses a support session first (PT423), then every caller who is not a member of that firm at this address (42501); never an intake''s answers, a census or a FEIN');
 -- CRM-A1.1b (20261119130000_accounts_table_query.sql): the accounts table's query, and the firm's members for the Owner filter (supabase/tests/accounts_query.sql).
 INSERT INTO callable VALUES
+  ('inbox_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads one page of the inbox: the messages on the PEO threads and on the conversations with contacts and leads they may see, by their level, in that firm only (CRM-E1.4); 42501 for every caller who is not a member of that firm at this address'),
+  ('inbox_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
+   'the count behind each view tab of the inbox, for the messages the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
   ('leads_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
    'a current member of the firm (or a support session at its address) reads one page of the leads they may see, by their level, in that firm only, never the bin''s (CRM-L1.1a); 42501 for every caller who is not a member of that firm at this address'),
   ('leads_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
@@ -2076,6 +2081,8 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 -- and a non-member are refused (the page asks for the firm it is at); the firm's own members, an agent who owns none included, are served.
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('accounts_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.accounts_list({firm}) -> 'rows')::text$$),
+  ('inbox_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.inbox_list({firm}) -> 'rows')::text$$),
+  ('inbox_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.inbox_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('leads_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.leads_list({firm}) -> 'rows')::text$$),
   ('leads_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.leads_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('accounts_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.accounts_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
@@ -4201,6 +4208,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('queue_list_submissions', 'firm_scoped', 'one page of the queue, filtered and sorted, with its total: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
   ('queue_view_counts', 'firm_scoped', 'the count of each view of the queue: the caller''s own firm only, through advisor_list_submissions (4e; supabase/tests/queue_query.sql)'),
   ('menu_counts', 'firm_scoped', 'the numbers on the menu: the caller''s own firm only, through is_firm_member (4e; supabase/tests/menu_counts.sql)'),
+  ('inbox_list', 'firm_scoped', 'one page of the inbox: the firm named (a current member of it at this address), the messages on the threads they may see, never another firm''s (4e; supabase/tests/inbox.sql)'),
+  ('inbox_view_counts', 'firm_scoped', 'the inbox''s view counts, for the firm named only (4e)'),
   ('leads_list', 'firm_scoped', 'one page of the leads table: the firm named (a current member of it at this address), the leads they may see by level, never another firm''s (4e; supabase/tests/leads_query.sql)'),
   ('leads_view_counts', 'firm_scoped', 'the leads table''s view counts, for the firm named only (4e)'),
   ('accounts_list', 'firm_scoped', 'one page of the accounts table: the firm named (a current member of it at this address), the accounts they may see by level, never another firm''s (4e; supabase/tests/accounts_query.sql)'),

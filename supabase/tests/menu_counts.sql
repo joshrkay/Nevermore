@@ -181,6 +181,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122110000_bundle_links.sql
 \i supabase/migrations/20261122130000_conversation_replies.sql
 \i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122150000_inbox.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -311,12 +312,20 @@ CREATE FUNCTION pg_temp.queue_inbox_rows() RETURNS bigint LANGUAGE sql AS $$
   SELECT jsonb_array_length(public.queue_list_submissions('[{"field":"has_new_peo_mail","op":"is","value":true}]') -> 'rows') $$;
 CREATE FUNCTION pg_temp.queue_inbox_view() RETURNS bigint LANGUAGE sql AS $$
   SELECT total FROM public.queue_view_counts('[{"name":"Inbox","filters":[{"field":"has_new_peo_mail","op":"is","value":true}]}]') $$;
--- Every way of asking the queue for new mail gives one number; the menu's Inbox must be it.
+-- The threads with new mail the inbox's New view lists (CRM-E1.4): what the menu's Inbox opens, so its number must be theirs (D-695).
+CREATE FUNCTION pg_temp.inbox_new_threads() RETURNS bigint LANGUAGE sql AS $$
+  SELECT count(DISTINCT (e ->> 'kind') || (e ->> 'thread_id'))
+  FROM jsonb_array_elements(public.inbox_list(NULL, '[{"field":"is_new","op":"is","value":true}]') -> 'rows') e $$;
+-- The menu's Inbox is the threads the inbox's New view lists; and every way of asking the queue for new PEO mail still gives one number (D-8: the queue's own
+-- filter keeps working, counting intakes).
 CREATE FUNCTION pg_temp.inbox_agrees() RETURNS void LANGUAGE plpgsql AS $$
 DECLARE m bigint := (public.menu_counts() ->> 'inbox')::bigint;
 BEGIN
-  IF m IS DISTINCT FROM pg_temp.queue_inbox_total() OR m IS DISTINCT FROM pg_temp.queue_inbox_rows() OR m IS DISTINCT FROM pg_temp.queue_inbox_view() THEN
-    RAISE EXCEPTION 'FAIL: the menu says % with new mail, the queue filter says % (rows %, view tab %)', m, pg_temp.queue_inbox_total(), pg_temp.queue_inbox_rows(), pg_temp.queue_inbox_view();
+  IF m IS DISTINCT FROM pg_temp.inbox_new_threads() THEN
+    RAISE EXCEPTION 'FAIL: the menu says % threads with new mail, the inbox''s New view lists %', m, pg_temp.inbox_new_threads();
+  END IF;
+  IF pg_temp.queue_inbox_total() IS DISTINCT FROM pg_temp.queue_inbox_rows() OR pg_temp.queue_inbox_total() IS DISTINCT FROM pg_temp.queue_inbox_view() THEN
+    RAISE EXCEPTION 'FAIL: the queue''s new-mail filter says % (rows %, view tab %)', pg_temp.queue_inbox_total(), pg_temp.queue_inbox_rows(), pg_temp.queue_inbox_view();
   END IF;
 END $$;
 
@@ -383,7 +392,9 @@ END $$;
 -- ---------- 1. what the numbers are ----------
 -- Catches: a count that includes quoted or declined requests as open, that counts held or automatic mail as new, or that counts mail already opened.
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":2,"leads":0}'::jsonb, 'firm A: four sent requests (two on s1), two intakes with new mail (s1, s2)');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":3,"leads":0}'::jsonb, 'firm A: four sent requests (two on s1), three threads with new mail (s1''s two, s2''s)');
+-- Catches: the queue's own new-mail filter changed with the menu (D-8): it still marks intakes, two.
+SELECT pg_temp.is(pg_temp.queue_inbox_total(), 2::bigint, 'the queue''s filter still lists the two intakes with new PEO mail');
 -- Catches: a count that grew a key a caller does not know, or lost one: later stories add keys; callers read by name.
 SELECT pg_temp.is((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(pg_temp.menu()) k), ARRAY['inbox', 'leads', 'quotes'], 'the answer holds exactly the counts the menu shows today');
 -- Catches: the count and the queue's mark drifting apart (the reason the rule is defined once).
@@ -396,10 +407,10 @@ SELECT pg_temp.is((public.queue_list_submissions('[{"field":"waiting_on_peo","op
 -- Catches: opening a thread that leaves the menu counting it; or the menu counting a thread the queue no longer marks.
 SELECT pg_temp.as_user('a1', 'alpha-brokers');
 SELECT public.advisor_open_quote_request_thread(id) FROM public.quote_requests WHERE session_id = pg_temp.id('s2');
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 'opening s2''s thread takes it out of the Inbox');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":2,"leads":0}'::jsonb, 'opening s2''s thread takes it out of the Inbox; s1''s two stay');
 SELECT pg_temp.inbox_agrees();
 SELECT public.advisor_open_quote_request_thread(id) FROM public.quote_requests WHERE session_id = pg_temp.id('s1') AND peo_name = 'TriNet';
-SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 's1 stays: its other request still has unread mail (one intake, counted once)');
+SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":1,"leads":0}'::jsonb, 's1''s other thread still has unread mail (each thread counted once)');
 SELECT pg_temp.inbox_agrees();
 SELECT public.advisor_open_quote_request_thread(id) FROM public.quote_requests WHERE session_id = pg_temp.id('s1') AND peo_name = 'Justworks';
 SELECT pg_temp.is(pg_temp.menu(), '{"quotes":4,"inbox":0,"leads":0}'::jsonb, 'once every thread is opened the Inbox is empty and the quotes stay');
