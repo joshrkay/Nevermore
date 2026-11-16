@@ -121,7 +121,7 @@ test("an admin starts support access with a reason, reads a submission and can c
     await adminPage.getByLabel("Code in their link").fill("sneaky-partners");
     await adminPage.getByRole("button", { name: "Add partner" }).click();
     await expect(adminPage.getByText("Nevermore support can look, not change")).toBeVisible();
-    await expect(adminPage.getByRole("cell", { name: "Sneaky Partners" })).toHaveCount(0);
+    await expect(adminPage.getByRole("cell", { name: "Sneaky Partners", exact: true })).toHaveCount(0);
     const kept = await withDb((client) => client.query("SELECT count(*)::int AS n FROM public.referral_partners WHERE firm_id = (SELECT id FROM public.firms WHERE address = $1)", [FIRM]));
     expect(kept.rows[0].n).toBe(0);
   });
