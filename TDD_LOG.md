@@ -60,3 +60,20 @@ request and response, with Google and Microsoft faked at `fetch`. One failing te
 | 54 | send-mail: claims nothing and names the missing setting (reply domain, mailbox key) without its value | passed at once (the gate came with cycle 43, where the reply address needed the domain). Seen red by dropping the domain check: `AssertionError: expected 200 to be 503` | green |
 | 55 | send-mail: a Gmail answer with no readable id still marks the message sent, with our Message-ID | `SyntaxError: Unexpected token 'o', "ok" is not valid JSON` | green |
 | 56 | dataPolicy (existing): every table has a data class | `× data classification against the schema > classifies the table conversation_messages` (and conversations) | green |
+
+After the merge of 6.6a: its `20261122100000` sorts after this slice's migration and restated `firm_closing_plan()` from before 6.2, so
+data_isolation and close_a_firm would have lost the conversations' lines; `20261122100500_conversations_closing.sql` restates the list with both (D-639).
+
+## Mutations (each rule broken by hand, the test run, the code put back)
+
+Killed, 19 of 19. SQL (`conversations.sql`): Do not email allowed; a lead in the bin written to; a converted lead written to; a subject with a line
+break; eleven in CC; no outbox event; a colleague's contact written to; completion without the attempt fence; a gone message's event left waiting;
+any failure read as Reconnect; a retry marking the message failed; References without the answered message's own. send-mail: Reply-To with the
+writer first; In-Reply-To on every message; a changed mailbox still sending; a lost answer retried; 401 read as a refused message; the address rule
+skipped. Earlier, inside cycles 13, 15, 36, 53 and 54: grants widened, every address named `x`, the write guard removed, a scope added to the refresh,
+the reply-domain check removed.
+
+## Not test-driven (no seam sees them)
+
+The minute schedule of send-mail in the migration (pg_cron and pg_net are absent from the test database: it logs a notice there), the four indexes and
+the table comments, `index.ts` (Deno wiring), `types.ts`, the glossary, the build doc and the env example.
