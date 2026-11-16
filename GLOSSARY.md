@@ -115,6 +115,17 @@ _Avoid_: cancellation, decline (a decline is the PEO's answer)
 **Closing withdrawal** (code: `close_submission_and_withdraw`; M-2.4, D-1624):
 The one **Withdrawal** the Status panel offers when a submission is marked Won, Lost or Archived: written once, sent on the thread of each PEO the move closes that the product sent to, never the winner. The advisor can untick it; the links of every PEO but the winner are revoked either way (reason submission_closed).
 
+**Registration** (code: `peo_registrations`, `register_peo_send`, `peo_registration_statement`, `RegistrationStatement`; Q-2.1, slice 6.10, D-1630 to D-1639):
+The record every **Send to a PEO** writes in its own transaction: the firm, the PEO, who the employer is (its FEIN, or its name and headquarters' state where it gave none), the File ID, the version sent and when. It is the firm's proof of when it submitted the employer to the PEO. Nobody changes or deletes one, a platform admin and the table's owner included; it stays when the intake is deleted and when the firm closes. A firm takes the **Registration statement** of its own; no one reads the table itself.
+_Avoid_: claim, lock, ownership, protection
+
+**Registration statement** (Q-2.1, D-1636):
+A firm's dated CSV of its own **Registrations**, oldest first, from Settings: who it is for and the moment it was taken, then each registration's time, PEO, employer, state, the FEIN's last four digits (never all nine: a file taken out of the product holds no FEIN, D-48), File ID and version. Not offered to a support session.
+
+**Registered elsewhere** (code: `peo_registered_elsewhere`; Q-2.2, D-604, D-1637):
+What an advisor is told before a send, on the PEO's card and in the review of a send to several: "Another firm registered this employer with this PEO on Nov 3." It names no firm and never blocks the send. The same employer is the same FEIN where both have one, and otherwise the same name (case, spaces and punctuation aside) in the same state. It answers only for an intake the caller's own firm holds.
+_Avoid_: duplicate, conflict, already submitted by
+
 **Fixed block** (M-2.1, D-674):
 What the database writes under the advisor's note on a send to a PEO, which the advisor can't edit: the link and the day it stops working, the File ID and version, the open items, the advisor's name, firm and phone, and the draft line from the legal-wording module.
 _Avoid_: signature, footer

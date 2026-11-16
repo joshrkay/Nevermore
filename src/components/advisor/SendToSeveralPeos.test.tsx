@@ -20,6 +20,8 @@ vi.mock("@/lib/peoSendApi", () => ({
 }));
 const loadPeoAuthorizations = vi.fn();
 vi.mock("@/lib/peoAuthorizationsApi", () => ({ loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a) }));
+const loadRegisteredElsewhere = vi.fn();
+vi.mock("@/lib/peoRegistrationsApi", () => ({ loadRegisteredElsewhere: (...a: unknown[]) => loadRegisteredElsewhere(...a) }));
 const issueBundleLink = vi.fn();
 vi.mock("@/lib/bundleLink", () => ({ issueBundleLink: (...a: unknown[]) => issueBundleLink(...a), supabaseBundleLinkDeps: async () => ({}) }));
 
@@ -75,8 +77,24 @@ describe("SendToSeveralPeos", () => {
       mailbox: { connected: true, address: "sam@acme.example" }, contacts: contacts[peo] ?? [], reply_address: null,
     }));
     loadPeoAuthorizations.mockReset().mockResolvedValue(authorized("Justworks", "Oasis", "TriNet"));
+    loadRegisteredElsewhere.mockReset().mockResolvedValue([]);
     sendToPeo.mockReset().mockImplementation(async (s: { peo: string }) => ({ quoteRequestId: s.peo.length, messageId: 40 + s.peo.length }));
     issueBundleLink.mockReset().mockResolvedValue({ id: 9, token: "t", url: "https://app.example/b/t", expiresAt: "2026-12-16T00:00:00Z", version: 3, notIncluded: [] });
+  });
+
+  // Break caught (Q-2.2, D-604): a PEO another firm already registered this employer with is sent without the advisor being told, the review names
+  // the firm or puts the warning on the wrong PEO, or the PEO is held back: the warning never stops a send.
+  it("in the review, tells of each PEO another firm registered this employer with and when, naming nobody, and still sends it", async () => {
+    loadRegisteredElsewhere.mockResolvedValue([{ peo: "Oasis", registered_at: "2026-11-03T15:00:00Z" }]);
+    const region = await open();
+    fireEvent.change(await within(region).findByLabelText("Your note"), { target: { value: "Here it is." } });
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    const oasis = await within(region).findByRole("article", { name: "Oasis" });
+    expect(await within(oasis).findByText("Another firm registered this employer with this PEO on Nov 3.")).toBeInTheDocument();
+    expect(within(region).getByRole("article", { name: "Justworks" })).not.toHaveTextContent("Another firm");
+    expect(loadRegisteredElsewhere).toHaveBeenCalledWith("s1");
+    fireEvent.click(within(region).getByRole("button", { name: "Send to 2 PEOs" }));
+    await waitFor(() => expect(sendToPeo).toHaveBeenCalledTimes(2));
   });
 
   // Break caught: a PEO that isn't ready (something missing to quote, or an eligibility check not met) ticked by default and sent without the

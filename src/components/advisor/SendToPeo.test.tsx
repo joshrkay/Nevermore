@@ -14,6 +14,8 @@ vi.mock("@/lib/peoSendApi", () => ({
   loadPeoSendContext: (...a: unknown[]) => loadPeoSendContext(...a),
   sendToPeo: (...a: unknown[]) => sendToPeo(...a),
 }));
+const loadRegisteredElsewhere = vi.fn();
+vi.mock("@/lib/peoRegistrationsApi", () => ({ loadRegisteredElsewhere: (...a: unknown[]) => loadRegisteredElsewhere(...a) }));
 
 const { default: SendToPeo } = await import("./SendToPeo");
 
@@ -30,6 +32,30 @@ describe("SendToPeo", () => {
     fetchMyMailbox.mockReset();
     loadPeoSendContext.mockReset();
     sendToPeo.mockReset();
+    loadRegisteredElsewhere.mockReset();
+    loadRegisteredElsewhere.mockResolvedValue([]);
+  });
+
+  // Break caught (Q-2.2, D-604): an advisor sends an employer another firm already registered with this PEO without being told, is told who, is told
+  // of a registration with another PEO, or is stopped from sending.
+  it("tells the advisor another firm registered this employer with this PEO and when, naming nobody, and still sends", async () => {
+    loadPeoSendContext.mockResolvedValue(CONNECTED);
+    fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    sendToPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 41 });
+    loadRegisteredElsewhere.mockResolvedValue([
+      { peo: "Insperity", registered_at: "2026-11-03T15:00:00Z" },
+      { peo: "TriNet", registered_at: "2026-10-01T15:00:00Z" },
+    ]);
+    render(<SendToPeo {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send to Insperity" }));
+    const form = await screen.findByRole("form", { name: "Send to Insperity" });
+    expect(await within(form).findByText("Another firm registered this employer with this PEO on Nov 3.")).toBeInTheDocument();
+    expect(loadRegisteredElsewhere).toHaveBeenCalledWith("s1");
+    expect(form).not.toHaveTextContent("Oct 1");
+    fireEvent.click(within(form).getByRole("checkbox", { name: /Dana Lee/ }));
+    fireEvent.change(within(form).getByLabelText("Your note"), { target: { value: "Dana, here is Reyes Bakery." } });
+    fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sendToPeo).toHaveBeenCalledTimes(1));
   });
 
   // Break caught: a send that goes to nobody the advisor chose, without their note, or skips the bundle link; or a contact picked and a typed

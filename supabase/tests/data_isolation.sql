@@ -227,6 +227,7 @@
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -799,6 +800,11 @@ BEGIN
            encode(extensions.digest('file-fixture-' || m.id, 'sha256'), 'hex'), now(), now() + interval '30 days'
     FROM public.conversation_messages m WHERE m.firm_id = fid;
     INSERT INTO public.conversation_file_downloads (firm_id, file_id) SELECT fid, f.id FROM public.conversation_message_files f WHERE f.firm_id = fid;
+    -- 6.10: a registration of the firm's certified intake with a PEO, as a send writes it.
+    INSERT INTO public.peos (name) SELECT 'Fixture PEO' WHERE NOT EXISTS (SELECT 1 FROM public.peos WHERE name = 'Fixture PEO');
+    INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, fein, employer_name, employer_state, file_id, version)
+    SELECT fid, p.id, p.name, '12345678' || CASE f WHEN 'a' THEN '1' ELSE '2' END, 'Fixture employer ' || f, 'NY', 'EAA-FIXTURE-' || upper(f), 1
+    FROM public.peos p WHERE p.name = 'Fixture PEO';
   END LOOP;
 END $$;
 
@@ -989,6 +995,11 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.conversation_message_files',                 '{"service":0}', NULL),
   ('public.conversation_file_downloads',                '{"service":0}', NULL);
+-- ---- 6.10 Q-2.1: the registration record (20261122200000) ----
+-- Closed to the API, the service role included: written by a send (register_peo_send), read through peo_registration_statement (the firm's own) and
+-- peo_registered_elsewhere (no firm named) (supabase/tests/peo_registrations.sql).
+INSERT INTO matrix VALUES
+  ('public.peo_registrations',                          '{"service":0}', NULL);
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
@@ -1389,6 +1400,10 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.close_submission_and_withdraw(gen_random_uuid(), ''lost'', NULL, NULL, ''S'', ''N'')', 'marking a submission Won, Lost or Archived with one withdrawal to every PEO still open (6.9)'),
   ('peo_send_context(p_session_id uuid, p_peo text)', 'advisor',
                                                                      'SELECT public.peo_send_context(gen_random_uuid(), ''Probe PEO'')', 'what the composer of a send to a PEO reads (6.6)'),
+  ('peo_registered_elsewhere(p_session_id uuid)', 'advisor',
+                                                                     'SELECT public.peo_registered_elsewhere(gen_random_uuid())', 'the PEOs another firm registered this intake''s employer with, and when, never who (Q-2.2, 6.10)'),
+  ('peo_registration_statement(p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for takes its statement of its own registrations, the FEIN by its last four digits (Q-2.1, 6.10); 42501 for anyone who is no member of that firm, PT423 for a support session'),
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)', 'advisor',
                                                                      'SELECT public.issue_bundle_link(0, 1, gen_random_uuid(), ''[{"name": "a.pdf", "what": "A"}]'')', 'issuing the bundle link a PEO opens (6.6b)'),
   ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', 'advisor',
@@ -2022,6 +2037,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('withdraw_from_peo', 'advisor', 'by_id', $$SELECT public.withdraw_from_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
   ('close_submission_and_withdraw', 'advisor', 'by_id', $$SELECT public.close_submission_and_withdraw({sid}, 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
   ('peo_send_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_send_context({sid}, 'Probe PEO'))$$),
+  ('peo_registered_elsewhere', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_registered_elsewhere({sid}))$$),
   ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
   ('set_submission_needs_action', 'advisor', 'by_id', $$SELECT public.set_submission_needs_action({sid}, true, 'probe')::text$$),
   ('review_submission_field', 'advisor', 'by_id', $$SELECT public.review_submission_field({sid}, 'company_name', 'follow_up')::text$$),
@@ -2159,6 +2175,9 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT jsonb_typeof(public.conversation_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
   ('conversation_files_for', 'advisor', 'by_id',
    $$SELECT jsonb_typeof(public.conversation_files_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$'),
+  -- 6.10: the firm's statement of its own registrations, by the firm the call names.
+  ('peo_registration_statement', 'advisor', 'by_id',
+   $$SELECT public.peo_registration_statement({firm}) ->> 'firm'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.+'),
   -- CRM-E1.3: the conversation of that contact, a new sender's message on it, and its account's mail.
   ('open_conversation', 'advisor', 'by_id',
    $$SELECT public.open_conversation({aconv}, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_opened_at": "'),
@@ -3374,6 +3393,14 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.conversation_file_downloads', 'firm', 'its own firm_id and a file link of that firm; closed to the API',
    $m$INSERT INTO public.conversation_file_downloads (firm_id, file_id) SELECT f.firm_id, f.id FROM public.conversation_message_files f WHERE f.firm_id = {firm} ORDER BY f.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- 6.10 Q-2.1: the registration record (20261122200000) ----
+-- A registration: its own firm_id. Read by no member through the API (the statement and the warning are functions), so no positive control; appended
+-- only, so no caller changes, moves or deletes one, and a non-member writes none.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.peo_registrations', 'firm', 'its own firm_id; closed to the API, appended only',
+   $m$WITH p AS (INSERT INTO public.peos (name) VALUES ('Probe PEO {tag}') RETURNING id, name) INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, fein, file_id, version) SELECT {firm}, p.id, p.name, '987654321', 'EAA-PROBE-{tag}', 1 FROM p RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.peo_registrations (firm_id, peo_id, peo_name, file_id, version) VALUES ({firm}, (SELECT min(p.id) FROM public.peos p), 'Probe PEO', 'EAA-PROBE-{tag}', 1)$m$);
 -- ---- CRM-E1.3: replies come back (20261122130000) ----
 -- A received file is on a message of its own firm, by a foreign key on the pair; its bytes are read by whoever reads its message, so (as for the messages)
 -- one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
@@ -3998,6 +4025,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('withdraw_from_peo', 'firm_scoped', 'a current member of the quote request''s firm, with a connected mailbox, withdraws it from its PEO (M-2.4); the same refusal for another firm''s quote request as for one that does not exist (4e)'),
   ('close_submission_and_withdraw', 'firm_scoped', 'a current member of the intake''s firm marks it Won, Lost or Archived through set_submission_status and sends the PEOs still open one withdrawal (M-2.4); another firm''s intake is refused as one that does not exist (4e)'),
   ('record_peo_thread_message', 'service_only', 'records a follow-up or withdrawal on a PEO''s thread, inside follow_up_peo, withdraw_from_peo and close_submission_and_withdraw, which check first; no API role can call it'),
+  ('peo_registered_elsewhere', 'firm_scoped', 'a current advisor of the intake''s firm reads the PEOs another firm registered the same employer with, and when, never which firm (Q-2.2); PT404 for another firm''s intake, so no firm asks about an employer it doesn''t hold (4e; supabase/tests/peo_registrations.sql)'),
+  ('peo_registration_statement', 'firm_scoped', 'a current member of the firm reads its own registrations, never another firm''s; refuses a support session (4e; supabase/tests/peo_registrations.sql)'),
+  ('register_peo_send', 'service_only', 'the send''s own writer of its registration, called inside send_to_peo; no API role can call it'),
   ('claim_peo_mail', 'service_only', 'the send-mail function claims PEO messages whose link has joined them, with the token; no API role can call it'),
   ('complete_peo_mail', 'service_only', 'the send-mail function records a sent PEO message, for the attempt that holds its claim; no API role can call it'),
   ('fail_peo_mail', 'service_only', 'the send-mail function records a failed attempt at a PEO message, retried or final; no API role can call it'),
