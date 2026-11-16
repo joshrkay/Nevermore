@@ -953,8 +953,8 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "member_left", "firm_closing", "export_alert"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "lead_from_link", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "lead_from_link", "member_left", "firm_closing", "export_alert"]);
     // The emails that link to the intake need the app's address; the confirmation and the firm's own notices (no link) don't.
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["member_left", "firm_closing", "export_alert", "prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
@@ -1183,6 +1183,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blockedKinds(noSender, null).map((b) => [b.kind, b.problem])).toEqual([
       ["advisor_notification", "EMAIL_FROM is not set to a valid sender address"],
       ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
+      ["lead_from_link", "EMAIL_FROM is not set to a valid sender address"],
       ["member_left", "EMAIL_FROM is not set to a valid sender address"],
       ["firm_closing", "EMAIL_FROM is not set to a valid sender address"],
       ["export_alert", "EMAIL_FROM is not set to a valid sender address"],
@@ -1199,6 +1200,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blocked).toEqual([
       { kind: "advisor_notification", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "lead_from_link", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
@@ -1209,6 +1211,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
     expect(blockedKinds(config, "RESEND_API_KEY is not set")).toEqual([
       { kind: "advisor_notification", problem: "RESEND_API_KEY is not set" },
       { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
+      { kind: "lead_from_link", problem: "RESEND_API_KEY is not set" },
       { kind: "member_left", problem: "RESEND_API_KEY is not set" },
       { kind: "firm_closing", problem: "RESEND_API_KEY is not set" },
       { kind: "export_alert", problem: "RESEND_API_KEY is not set" },
@@ -1216,7 +1219,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[5].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[6].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1232,7 +1235,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(8);
+    expect(note).toHaveBeenCalledTimes(9);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
@@ -1900,5 +1903,74 @@ describe("what an export alert says about why the owners are told", () => {
     expect(summary.sent).toBe(1);
     expect(sent[0].message.subject).toBe("A member exported 1,234 rows from Acme Brokers");
     expect(sent[0].message.text).toContain("A member exported Referral partners (1,234 rows) from Acme Brokers on 2026-11-19 14:05 UTC.");
+  });
+});
+
+// The email to a firm's owners when a visitor on the firm's link asks to be contacted (slice 8.7b, D-1670 to D-1672). A firm's own email like the export alert, but it
+// links to the lead, so it needs the app's address as well as a sender.
+const LEAD = "6f1c2a52-6b0e-4b52-9f3d-0a1b2c3d4e5f";
+const leadFromLinkRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-lead",
+  kind: "lead_from_link",
+  session_id: null,
+  firm_id: FIRM,
+  attempts: 1,
+  pending_send: null,
+  payload: { visitor_name: "Pat Visitor", business: "Visitor Co", firm_name: "Acme Brokers", lead_id: LEAD, requested_at: "2026-11-22T14:05:09Z" },
+  ...over,
+});
+
+describe("dispatching the email about a visitor who asked the firm to contact them", () => {
+  // Catches: the owners are not the ones told (the intake members' list, or nobody), the words differ, or the link does not open the lead.
+  it("tells the firm's current owners, in the product's words, with a link to the lead", async () => {
+    const ownerRecipients = vi.fn(async () => ["owner@firm-a.example", "owner2@firm-a.example"]);
+    const { deps, sent } = harness({ ownerRecipients });
+    const summary = await dispatchEvents([leadFromLinkRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(ownerRecipients).toHaveBeenCalledWith(FIRM);
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    const { message } = sent[0];
+    expect(message.to).toEqual(["owner@firm-a.example", "owner2@firm-a.example"]);
+    expect(message.subject).toBe("Pat Visitor asked Acme Brokers to contact them");
+    expect(message.text).toContain(`https://app.example.com/leads/${LEAD}`);
+  });
+});
+
+describe("the lead email's settings", () => {
+  // Catches: the email is sent with a link that points nowhere (no app address), or is held back with no reason shown on the Outbox page.
+  it("waits with the reason when the app's address is not set, and is never claimed", async () => {
+    const noUrl = configFrom({ ...env, APP_BASE_URL: "" });
+    expect(sendableKinds(noUrl)).not.toContain("lead_from_link");
+    expect(blockedKinds(noUrl, null)).toContainEqual({ kind: "lead_from_link", problem: "APP_BASE_URL is not set to an https URL" });
+    const { deps, sent } = harness({ config: noUrl });
+    await dispatchEvents([leadFromLinkRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-lead", "not_configured", 60, 1, false);
+  });
+
+  // Catches: a payload that can't be read is retried for ever (or sent half-empty) instead of given up on.
+  it("gives up for good on a payload it cannot read", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([leadFromLinkRow({ payload: { visitor_name: "Pat Visitor", firm_name: "Acme Brokers" } })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+    expect(deps.fail).toHaveBeenCalledWith("evt-lead", "invalid_payload", null, 1, false);
+  });
+
+  // Catches: an event with no firm is looked up by a null id and the owners of nothing are told.
+  it("gives up on an event that names no firm", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([leadFromLinkRow({ firm_id: null })], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(1);
+  });
+
+  // Catches: nobody is told when the firm has no owner at the time of sending, and the alert is thrown away rather than kept waiting.
+  it("keeps waiting when the firm has no owner to tell", async () => {
+    const { deps, sent } = harness({ ownerRecipients: vi.fn(async () => []) });
+    const summary = await dispatchEvents([leadFromLinkRow()], deps);
+    expect(sent).toHaveLength(0);
+    expect(summary.dead).toBe(0);
+    expect(deps.fail).toHaveBeenCalledWith("evt-lead", "no_recipients", expect.anything(), 1, false);
   });
 });

@@ -298,7 +298,9 @@ async function check(call, ref, appBaseUrl, resend) {
           signal: AbortSignal.timeout(30_000),
         });
         const body = parseJson(await res.text());
-        functions[fn] = { status: res.status, ourError: body?.error === "Unauthorized" };
+        // The function's own words: the 401 of a signed-in one, or the public contact-request's 400 (no token) or 503 (no Turnstile secret).
+        const ours = ["Unauthorized", ...(fn === "contact-request" ? ["Confirm you are not a robot, then try again.", "Asking to be contacted isn't available right now"] : [])];
+        functions[fn] = { status: res.status, ourError: ours.includes(body?.error) };
       } catch {
         functions[fn] = { status: 0, ourError: false };
       }

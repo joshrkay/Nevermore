@@ -1082,6 +1082,7 @@ $$;
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

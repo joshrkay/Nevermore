@@ -7,11 +7,13 @@ import {
   parseDraftExpiryReminder,
   parseExportAlert,
   parseInformationRequest,
+  parseLeadFromLink,
   parsePeoMailArrived,
   parseProspectConfirmation,
   renderAdvisorNotification,
   renderDraftExpiryReminder,
   renderInformationRequest,
+  renderLeadFromLink,
   renderPeoMailArrived,
   renderProspectConfirmation,
 } from "./messages";
@@ -505,5 +507,63 @@ describe("export alert", () => {
     expect(parseExportAlert({ ...epic3, table_label: null, table: "referral_partners" })).toBeNull();
     const { table_label: _gone, ...noWords } = epic3;
     expect(parseExportAlert(noWords)).toBeNull();
+  });
+});
+
+// The owners' email when a visitor on the firm's link asks to be contacted (slice 8.7b, D-1670 to D-1672): the visitor's name, the business if given, the
+// firm, the lead's id and when. Never the visitor's email, phone or message.
+const LEAD_ID = "6f1c2a52-6b0e-4b52-9f3d-0a1b2c3d4e5f";
+const leadPayload = { visitor_name: "Pat Visitor", business: "Visitor Co", firm_name: "Acme Brokers", lead_id: LEAD_ID, requested_at: "2026-11-22T14:05:09Z" };
+
+describe("lead from the firm's link: reading the payload", () => {
+  // Catches: the parser lets the visitor's contact details or message through (they would be rendered), or reads a field wrongly.
+  it("reads the name, business, firm, lead and time, and nothing else", () => {
+    expect(parseLeadFromLink({ ...leadPayload, email: "pat@visitor.test", phone: "555-0142", message: "Call me", note: "secret" })).toEqual({
+      visitorName: "Pat Visitor", business: "Visitor Co", firmName: "Acme Brokers", leadId: LEAD_ID, requestedAt: "2026-11-22T14:05:09Z",
+    });
+  });
+
+  it("reads no business as none", () => {
+    expect(parseLeadFromLink({ ...leadPayload, business: null })?.business).toBeNull();
+  });
+});
+
+describe("lead from the firm's link: a payload it cannot read", () => {
+  // Catches: a payload missing the name, firm, lead or time (or holding a lead id that is not an id, which would make a broken or hostile link) is rendered anyway instead of given up on.
+  it.each([
+    ["no name", { ...leadPayload, visitor_name: "  " }],
+    ["no firm", { ...leadPayload, firm_name: undefined }],
+    ["no lead", { ...leadPayload, lead_id: undefined }],
+    ["a lead id that is not an id", { ...leadPayload, lead_id: "../../advisor" }],
+    ["no time", { ...leadPayload, requested_at: null }],
+    ["a time that is not a time", { ...leadPayload, requested_at: "yesterday" }],
+    ["not an object", "nope"],
+  ])("gives up on %s", (_why, payload) => {
+    expect(parseLeadFromLink(payload)).toBeNull();
+  });
+});
+
+describe("lead from the firm's link: the email", () => {
+  const url = "https://app.example/leads/" + LEAD_ID;
+  const n = { visitorName: "Pat Visitor", business: "Visitor Co", firmName: "Acme Brokers", leadId: LEAD_ID, requestedAt: "2026-11-22T14:05:09Z" };
+
+  // Catches: the owners' email words it another way than the product's ("<Name> asked <Firm> to contact them"), or leaves out the business, the time or the link to the lead.
+  it("says who asked which firm to contact them, names the business and the time, and links to the lead", () => {
+    const m = renderLeadFromLink(n, { leadUrl: url });
+    expect(m.subject).toBe("Pat Visitor asked Acme Brokers to contact them");
+    expect(m.text).toContain("Pat Visitor asked Acme Brokers to contact them.");
+    expect(m.text).toContain("Business: Visitor Co");
+    expect(m.text).toContain("Asked: 2026-11-22 14:05 UTC");
+    expect(m.text).toContain(url);
+    expect(m.html).toContain(`href="${url}"`);
+    expect(m.text).toContain("contact details and message are on the lead, not in this email");
+  });
+
+  // Catches: no business leaves a "Business: null" line, or a name with markup runs in the html.
+  it("leaves out a business that was not given, and escapes what the visitor typed", () => {
+    expect(renderLeadFromLink({ ...n, business: null }, { leadUrl: url }).text).not.toContain("Business");
+    const m = renderLeadFromLink({ ...n, visitorName: "<b>Evil</b>" }, { leadUrl: url });
+    expect(m.html).not.toContain("<b>Evil</b>");
+    expect(m.html).toContain("&lt;b&gt;Evil&lt;/b&gt;");
   });
 });

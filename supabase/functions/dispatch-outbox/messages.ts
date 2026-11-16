@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert" | "lead_from_link";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -77,6 +77,18 @@ export interface ExportAlert {
   exportsInHour: number;
   /** When the database took the rows, as `YYYY-MM-DDTHH:MM:SSZ` (UTC). */
   exportedAt: string;
+}
+
+/** The notice to a firm's owners that a visitor on the firm's link asked to be contacted (public.request_contact): who, which firm, which lead and when. Never the visitor's email, phone or message. */
+export interface LeadFromLink {
+  visitorName: string;
+  /** The visitor's business, when they gave one. */
+  business: string | null;
+  firmName: string;
+  /** The lead's id, for the link to /leads/<id>. */
+  leadId: string;
+  /** When the lead was made, as `YYYY-MM-DDTHH:MM:SSZ` (UTC). */
+  requestedAt: string;
 }
 
 export interface ProspectConfirmation {
@@ -241,6 +253,20 @@ export function parseExportAlert(raw: unknown): ExportAlert | null {
   if (typeof exportsInHour !== "number" || !Number.isInteger(exportsInHour) || exportsInHour < 1) return null;
   if (typeof large !== "boolean") return null;
   return { memberEmail, firmName, tableLabel, rowCount, large, exportsInHour, exportedAt };
+}
+
+const LEAD_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The lead alert's fields, or null without all of them. Only these are ever read: the visitor's email, phone and message never reach an email. */
+export function parseLeadFromLink(raw: unknown): LeadFromLink | null {
+  const p = asObject(raw);
+  const visitorName = p && oneLine(p.visitor_name, 200);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const requestedAt = p && oneLine(p.requested_at, 20);
+  const leadId = p && typeof p.lead_id === "string" ? p.lead_id : null;
+  if (!p || !visitorName || !firmName || !leadId || !LEAD_ID_SHAPE.test(leadId)) return null;
+  if (requestedAt === null || !CERTIFIED_AT.test(requestedAt) || !Number.isFinite(Date.parse(requestedAt))) return null;
+  return { visitorName, business: oneLine(p.business, 200), firmName, leadId, requestedAt };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -514,6 +540,35 @@ export function renderExportAlert(n: ExportAlert): RenderedEmail {
   const detail = "Every export is in the firm's record of who did what, which an owner can read.";
   const text = [headline, "", ...why, "", detail, "", SIGN_OFF].join("\n");
   const html = layout(subject, headline, `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>${why.map((w) => `<p style="margin:0 0 16px;">${escapeHtml(w)}</p>`).join("")}<p style="margin:0;">${escapeHtml(detail)}</p>`);
+  return { subject, text, html };
+}
+
+export interface LeadContext {
+  /** Where an owner opens the lead (/leads/<id>), behind sign-in. */
+  leadUrl: string;
+}
+
+/**
+ * The email to a firm's owners when a visitor on the firm's link asked to be contacted: who, their business if given, when, and a link to the lead. The visitor's
+ * email address, phone and message stay in the product behind sign-in; none of them is in the payload or in this email.
+ */
+export function renderLeadFromLink(n: LeadFromLink, ctx: LeadContext): RenderedEmail {
+  const headline = `${n.visitorName} asked ${n.firmName} to contact them.`;
+  const subject = `${n.visitorName} asked ${n.firmName} to contact them`;
+  const details: [string, string][] = [
+    ...(n.business ? ([["Business", n.business]] as [string, string][]) : []),
+    ["Asked", utcStamp(n.requestedAt)],
+  ];
+  const footnote = "Their contact details and message are on the lead, not in this email. Opening the lead needs your sign-in.";
+  const text = [headline, "", ...details.map(([label, value]) => `${label}: ${value}`), "", "Open the lead:", ctx.leadUrl, "", footnote, "", SIGN_OFF].join("\n");
+  const html = layout(
+    subject,
+    headline,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
+<table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
+${button(ctx.leadUrl, "Open the lead")}
+${small(footnote)}`,
+  );
   return { subject, text, html };
 }
 

@@ -195,6 +195,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1228,7 +1229,7 @@ DECLARE
     'record_intake_consent', 'the caller''s own agreement as an employer; writes a row with the caller''s id',
     'set_peo_authorization', 'the employer''s own say over which PEOs may receive their packet (M-1.1, D-623): only the intake''s own employer may call it, and a support session''s admin is not that employer',
     'report_client_event', 'the platform''s monitoring: a row with the caller''s own id, read by platform admins only',
-    'request_contact', 'a visitor''s own ask on a firm''s public link (CRM-L1.2b): it reads no membership and no role, so a support session''s admin gets nothing by it that any visitor does not; it refuses a closing firm itself and takes the firm only from the address',
+    'request_contact', 'a visitor''s own ask on a firm''s public link (CRM-L1.2b), reached only by the contact-request function as the service role after the captcha (D-1673): it reads no membership and no role, so a support session''s admin gets nothing by it that any visitor does not; it refuses a closing firm itself and takes the firm only from the address',
     'request_firm_closure', 'asks for the owner role by name; a support session is not an owner (tested above)',
     'sign_up_firm', 'makes a new firm; touches no firm that exists',
     'start_support_session', 'the doorway itself: an admin''s, writes the platform''s table and the firm''s record of the use',

@@ -470,6 +470,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261122200000_peo_registrations.sql
 \i supabase/migrations/20261122200500_main_merged.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,
