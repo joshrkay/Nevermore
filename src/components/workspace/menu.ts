@@ -1,7 +1,6 @@
-import { BarChart3, Building2, FileText, Mail, Settings, UserPlus, type LucideIcon } from "lucide-react";
+import { BarChart3, Building2, FileText, Mail, Plus, Settings, UserPlus, type LucideIcon } from "lucide-react";
 
-// The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: the sections not built yet (New quote,
-// Home) are not listed until the stories that build them (CRM-Q2.1, CRM-H1), so the menu has no dead buttons. Leads arrived with CRM-L1.1a.
+// The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: the sections not built yet (Home) are not listed until the story that builds it (CRM-H1), so the menu has no dead buttons. Leads arrived with CRM-L1.1a.
 
 /** The numbers the menu shows beside an item (story CRM-S1.1c, D-39; open leads, CRM-L1.1a). */
 export type MenuCountKey = "quotes" | "inbox" | "leads";
@@ -52,6 +51,12 @@ export const SETTINGS_PATH = "/settings";
 export const MAILBOX_PATH = "/advisor/mailbox";
 /** The inbox's page (CRM-E1.4). */
 export const INBOX_PATH = "/inbox";
+
+/** The address of New quote (CRM-Q2.1, D-1709). Step 1 is at this address; once there is an opportunity the address names it (`/new-quote/<id>`). */
+export const NEW_QUOTE_PATH = "/new-quote";
+
+/** New quote leads the menu on every page (CRM-Q2.1). It is an action more than a section, so it is drawn apart from the sections and never marked current. */
+export const NEW_QUOTE_ITEM = { label: "New quote", to: NEW_QUOTE_PATH, icon: Plus } as const;
 
 export const MENU_ITEMS: MenuItem[] = [
   {

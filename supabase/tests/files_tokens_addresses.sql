@@ -200,6 +200,7 @@
 \i supabase/migrations/20261122250000_convert_lead.sql
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

@@ -1078,6 +1078,8 @@ export type Database = {
           p_current_provider: string | null
           p_owner_id?: string | null
           p_firm_id?: string | null
+          // Added by hand unless said; New quote's step 1 says 'new_quote' (20261123130000).
+          p_source?: string
         }
         Returns: Json
       }

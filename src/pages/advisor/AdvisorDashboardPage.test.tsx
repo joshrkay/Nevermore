@@ -2991,16 +2991,17 @@ describe("AdvisorDashboardPage", () => {
     };
 
     // Catches: an empty queue at the bare address being worded as a filter that excluded everything, or offering "Clear filters" with nothing to clear.
-    it("says nothing yet, in one sentence with no action, when the address is bare and no rows come back", async () => {
+    it("says nothing yet, in one sentence with New quote as its one action, when the address is bare and no rows come back", async () => {
       listQueue.mockResolvedValue([]);
       renderAt();
       expect(await screen.findByText("Submissions appear here once a prospect has started filling in an intake.")).toBeInTheDocument();
       expect(clearFilters()).toBeNull();
       expect(screen.queryByText(/match/)).not.toBeInTheDocument();
-      expect(offersToCreate()).toBeNull();
-      // There is no "create a submission" a member can do yet (New quote arrives with CRM-Q2.1), so the empty state has no action at all.
+      // New quote is how a member makes a submission (CRM-Q2.1, D-160): the empty state's primary action, opening New quote over the queue. Nothing else is offered.
+      expect(offersToCreate()).toBe(within(tableBody()).getByRole("link", { name: "New quote" }));
+      expect(within(tableBody()).getByRole("link", { name: "New quote" })).toHaveAttribute("href", "/new-quote");
       expect(within(tableBody()).queryAllByRole("button")).toHaveLength(0);
-      expect(within(tableBody()).queryAllByRole("link")).toHaveLength(0);
+      expect(within(tableBody()).queryAllByRole("link")).toHaveLength(1);
     });
 
     // Catches: the empty state replacing the table, so the column headers and the toolbar vanish and the page jumps.

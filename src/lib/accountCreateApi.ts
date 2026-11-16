@@ -22,10 +22,12 @@ export interface NewAccount {
   currentProvider: string;
   /** The person chosen as the owner; null leaves it to the database, which makes the maker the owner (D-214). */
   ownerId: string | null;
+  /** Where the account came from, when it is not Added by hand: step 1 of New quote says `new_quote` (D-211, D-1760). Left out, the database makes it Added by hand. */
+  source?: "new_quote";
 }
 
 /**
- * Makes the account in the firm and answers it as saved: its id, its first version, its source (always Added by hand, D-211). A refusal is an `AccountError`:
+ * Makes the account in the firm and answers it as saved: its id, its first version, its source (Added by hand, or New quote when step 1 of New quote says so, D-211). A refusal is an `AccountError`:
  * `invalid` (the database says what is wrong, in words), `notAllowed` (the owner chosen is not one the person may choose), `readOnly` (a closing firm, Nevermore
  * support) or `failed`.
  */
@@ -45,6 +47,7 @@ export async function createAccount(firmId: string, account: NewAccount): Promis
     p_current_provider: account.currentProvider,
     p_owner_id: account.ownerId,
     p_firm_id: firmId,
+    ...(account.source ? { p_source: account.source } : {}),
   });
   if (error) throw refusal(error, SAVE_FALLBACK);
   const parsed = fieldsSchema.safeParse(data);

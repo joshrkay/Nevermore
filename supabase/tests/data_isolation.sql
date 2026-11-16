@@ -248,6 +248,7 @@
 \i supabase/migrations/20261122250000_convert_lead.sql
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1562,7 +1563,7 @@ INSERT INTO callable VALUES
    'the id and name of the account that holds a submission, for someone who may see that account; NULL for anyone else'),
   ('update_account(p_account_id uuid, p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_firm_id uuid, p_version integer)', 'own', NULL,
    'a current member of the firm the call acts for saves an account''s own fields from a version, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
-  ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+  ('create_account(p_name text, p_trade_name text, p_website text, p_phone text, p_street text, p_city text, p_state text, p_postal_code text, p_industry text, p_employees integer, p_states_of_operation text[], p_current_provider text, p_owner_id uuid, p_firm_id uuid, p_source text)', 'own', NULL,
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
   ('create_lead(p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes a lead of that firm, owned by its maker (or, by the level rule, by someone they may choose), New and Added by hand (CRM-L1.2a); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),

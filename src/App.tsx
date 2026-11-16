@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createBrowserRouter, Route, RouterProvider, Routes } from "react-router-dom";
+import { createBrowserRouter, Route, RouterProvider } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -15,6 +15,7 @@ import FirmAddressGate from "./components/FirmAddressGate";
 import { FirmAddressProvider } from "@/hooks/useFirmAddress";
 import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
 import HomeRoute from "./components/HomeRoute";
+import { BackgroundRoutes } from "./components/newquote/BackgroundRoutes";
 import WorkspaceShell from "./components/workspace/WorkspaceShell";
 import AuthPage from "./pages/AuthPage";
 import AuthCallbackPage from "./pages/AuthCallbackPage";
@@ -67,7 +68,7 @@ const AppRoutes = () => (
             <Suspense fallback={null}>
               <AuthRedirectGate>
               <FirmAddressGate>
-              <Routes>
+              <BackgroundRoutes>
                 <Route path="/" element={<HomeRoute />} />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
@@ -101,6 +102,9 @@ const AppRoutes = () => (
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/contacts/:id" element={<ContactPage />} />
                   <Route path="/opportunities/:id" element={<OpportunityPage />} />
+                  {/* New quote is drawn by the shell (NewQuoteHost), over the page it was opened from or, opened alone, by itself (D-1709): these routes draw nothing. */}
+                  <Route path="/new-quote" element={null} />
+                  <Route path="/new-quote/:opportunityId" element={null} />
                   <Route path="/advisor/outbox" element={<AdvisorOutboxPage />} />
                   <Route path="/advisor/funnel" element={<AdvisorFunnelPage />} />
                   <Route path="/advisor/partners" element={<AdvisorPartnersPage />} />
@@ -115,7 +119,7 @@ const AppRoutes = () => (
                 <Route path="/advisor/held" element={<RequirePlatformAdmin><AdvisorHeldMailPage /></RequirePlatformAdmin>} />
                 <Route path="/advisor/firms" element={<RequirePlatformAdmin><AdvisorFirmsPage /></RequirePlatformAdmin>} />
                 <Route path="*" element={<NotFound />} />
-              </Routes>
+              </BackgroundRoutes>
               </FirmAddressGate>
               </AuthRedirectGate>
             </Suspense>
