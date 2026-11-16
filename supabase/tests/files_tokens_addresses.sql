@@ -171,6 +171,7 @@
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

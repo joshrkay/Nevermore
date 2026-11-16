@@ -219,6 +219,7 @@
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -771,6 +772,12 @@ BEGIN
     INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id)
     SELECT fid, v.id, 'outbound', 'agent@example.test', ARRAY['c@example.test'], 'Fixture', 'Fixture mail', '<' || v.id || '@example.test>'
     FROM public.conversations v WHERE v.firm_id = fid;
+    -- CRM-E1.3: a file stored on each of those messages, and its bytes in the contact-mail bucket.
+    INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+    SELECT fid, m.id, 'att-' || m.id, 'fixture.pdf', 1, 'stored', 'clean', 'contact-mail', fid || '/' || m.conversation_id || '/' || m.id || '/fixture.pdf'
+    FROM public.conversation_messages m WHERE m.firm_id = fid;
+    INSERT INTO storage.objects (bucket_id, name)
+    SELECT 'contact-mail', a.storage_path FROM public.conversation_message_attachments a WHERE a.firm_id = fid;
   END LOOP;
 END $$;
 
@@ -942,6 +949,12 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.conversations',                              '{"agent_b":1}', '{"A":2,"B":2}'),
   ('public.conversation_messages',                      '{"agent_b":1}', '{"A":2,"B":2}');
+-- ---- CRM-E1.3: replies come back (20261122130000) ----
+-- A received message's files, and their bytes in the contact-mail bucket: read by whoever reads the message (supabase/tests/conversation_replies.sql), written
+-- by no API role. Each firm's two fixture messages carry one stored file each: as for the messages, the second firm's agent reads the one they may see.
+INSERT INTO matrix VALUES
+  ('public.conversation_message_attachments',           '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('storage.objects WHERE bucket_id = ''contact-mail''', '{"agent_b":1}', '{"A":2,"B":2}');
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
@@ -1432,6 +1445,12 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for, with a connected mailbox, writes to a contact or lead they may see (CRM-E1.2a): the message is recorded queued on the record''s conversation and its id queued on the outbox; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a contact or lead the caller may not see, the same as for one that is not there, PT409 for Do not email, no email, a lead in the bin or converted, PT412 with no mailbox, 22023 for a field the rules refuse'),
   ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for (or a support session at its address) reads the conversation of a contact or lead they may see, newest first, and whether their own mailbox is connected; PT404 for a record the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
+  ('add_sender_as_contact(p_message_id uuid, p_first_name text, p_last_name text, p_title text, p_phone text, p_mobile text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for adds the new sender of a received message on a contact''s conversation they may see as a contact on that account, through add_contact and all its rules (CRM-E1.3); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a message the caller may not see, the same as for one that is not there, PT409 for a lead''s conversation or a sender not offered'),
+  ('open_conversation(p_conversation_id uuid, p_seen_through timestamp with time zone, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for marks a conversation they may see opened for the whole firm, through what the page showed (CRM-E1.3, D-607); a support session marks nothing; PT404 for a conversation the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
+  ('account_conversation_messages(p_account_id uuid, p_opportunity_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) reads the messages of the conversations of an account''s contacts, for an account or an opportunity (and its account) they may see (CRM-E1.3); PT404 for a record the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
   ('add_contact(p_account_id uuid, p_first_name text, p_last_name text, p_title text, p_email text, p_phone text, p_mobile text, p_owner_id uuid, p_is_main boolean, p_do_not_email boolean, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the account, adds a contact to it (owned by its maker or, by the level rule, by someone they may choose), taking over as the account''s one main contact when asked; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field or an owner the rules refuse'),
   ('move_contact(p_contact_id uuid, p_to_account_id uuid, p_confirm boolean, p_firm_id uuid)', 'own', NULL,
@@ -1550,7 +1569,9 @@ BEGIN
     'SELECT public.record_census_template_scan(0, ''failed'', NULL)',
     'SELECT count(*) FROM public.claim_conversation_mail(1, 5, 600)',
     format('SELECT public.complete_conversation_mail(%L, 1, ''probe'')', nobody),
-    format('SELECT public.fail_conversation_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody)
+    format('SELECT public.fail_conversation_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody),
+    format('SELECT public.record_conversation_attachment(%L, ''probe'', ''x.pdf'', NULL, 1, NULL)', nobody),
+    format('SELECT public.finish_conversation_attachment(%L, ''clean'', NULL, ''contact-mail'', ''x'')', nobody)
   ] LOOP
     FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
       PERFORM pg_temp.become(who);
@@ -2059,6 +2080,13 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.send_conversation_message(p_contact_id => {acontact}, p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"status": "queued"|PT412'),
   ('conversation_for', 'advisor', 'by_id',
    $$SELECT jsonb_typeof(public.conversation_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  -- CRM-E1.3: the conversation of that contact, a new sender's message on it, and its account's mail.
+  ('open_conversation', 'advisor', 'by_id',
+   $$SELECT public.open_conversation({aconv}, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_opened_at": "'),
+  ('add_sender_as_contact', 'advisor', 'by_id',
+   $$SELECT public.add_sender_as_contact({anewmsg}, 'Probe', 'Sender', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_name": "Sender"'),
+  ('account_conversation_messages', 'advisor', 'by_id',
+   $$SELECT jsonb_array_length(public.account_conversation_messages(p_account_id => {acct}, p_firm_id => {firm}) -> 'messages')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:[1-9]'),
   ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
@@ -2148,6 +2176,7 @@ BEGIN
       (f, 'note', (SELECT n.id::text FROM public.quote_request_notes n WHERE n.quote_request_id = qr::bigint ORDER BY n.id LIMIT 1)),
       (f, 'acct', (SELECT a.id::text FROM public.accounts a WHERE a.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1)),
       (f, 'acontact', (SELECT c.id::text FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
+      (f, 'aconv', (SELECT v.id::text FROM public.conversations v JOIN public.contacts c ON c.id = v.contact_id JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
@@ -2163,6 +2192,12 @@ BEGIN
     VALUES ('advisor_notification', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), 'probe-dead-' || f, '{}', 'dead')
     RETURNING id::text INTO qr;
     INSERT INTO fprobe_ids VALUES (f, 'evt', qr);
+    -- CRM-E1.3: a reply from someone new on that conversation, offered as a contact.
+    INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, status, new_sender, from_address, to_addresses, subject, body_text, message_id)
+    SELECT v.firm_id, v.id, 'inbound', 'received', true, 'stranger-' || f || '@example.test', '{}', 'Re', 'Probe', '<stranger-' || f || '@example.test>'
+    FROM public.conversations v WHERE v.id = (SELECT x.v::uuid FROM fprobe_ids x WHERE x.firm = f AND x.k = 'aconv')
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'anewmsg', qr);
   END LOOP;
 END $$;
 
@@ -2353,7 +2388,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -3232,6 +3267,18 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_
    $m$WITH c AS (INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'msg-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING id, firm_id), v AS (INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(c.id::text), 1, 16) FROM c RETURNING id, firm_id) INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) SELECT v.firm_id, v.id, 'outbound', 'probe@example.test', ARRAY['probe@example.test'], 'Probe', 'Probe', '<' || v.id || '@example.test>' FROM v RETURNING ctid::text$m$, false,
    'firm_id = {firm}',
    $m$INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) SELECT v.firm_id, v.id, 'outbound', 'probe@example.test', ARRAY['probe@example.test'], 'Probe', 'Probe', '<' || gen_random_uuid() || '@example.test>' FROM public.conversations v WHERE v.firm_id = {firm} LIMIT 1$m$);
+-- ---- CRM-E1.3: replies come back (20261122130000) ----
+-- A received file is on a message of its own firm, by a foreign key on the pair; its bytes are read by whoever reads its message, so (as for the messages)
+-- one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.conversation_message_attachments', 'firm', 'its own firm_id, and a message of that firm; read by whoever reads the message, written by no API role',
+   $m$SELECT pg_temp.contact_mail_file({firm}, '{tag}', false)$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status) SELECT m.firm_id, m.id, 'x-{tag}', 'x.pdf', 1, 'pending' FROM public.conversation_messages m WHERE m.firm_id = {firm} LIMIT 1$m$),
+  ('storage.objects WHERE bucket_id = ''contact-mail''', 'firm', 'by the message of the file recorded as stored, read as its conversation is',
+   $m$SELECT pg_temp.contact_mail_file({firm}, '{tag}', true)$m$, false,
+   'name = {firm} || ''/moved-{tag}.pdf''',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('contact-mail', {firm} || '/x-{tag}.pdf')$m$);
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -3287,6 +3334,26 @@ INSERT INTO registry (src, scope, why, names_intakes) VALUES
   ('storage.objects WHERE bucket_id = ''quarantine''', 'closed', 'uploads whose malware scan has not passed: the service role''s', false);
 
 -- ---------- 5b. the probe: two firms, one row each, from every caller ----------
+-- CRM-E1.3: a stored file on a new message of a new conversation with a new contact of the firm (on its first owned account); the attachment's ctid, or the
+-- stored object's.
+CREATE FUNCTION pg_temp.contact_mail_file(firm uuid, tag text, want_object boolean) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE ct uuid; cv uuid; msg uuid; path text; r text;
+BEGIN
+  INSERT INTO public.contacts (firm_id, account_id, last_name, email)
+  SELECT a.firm_id, a.id, 'Probe', 'file-' || tag || '@example.test' FROM public.accounts a WHERE a.firm_id = firm AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1
+  RETURNING id INTO ct;
+  INSERT INTO public.conversations (firm_id, contact_id, reply_address) VALUES (firm, ct, 'c.probe.' || substr(md5(ct::text), 1, 16)) RETURNING id INTO cv;
+  INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, status, from_address, to_addresses, subject, body_text, message_id)
+  VALUES (firm, cv, 'inbound', 'received', 'probe@example.test', '{}', 'Probe', 'Probe', '<' || cv || '@example.test>') RETURNING id INTO msg;
+  path := firm || '/' || cv || '/' || msg || '/probe-' || tag || '.pdf';
+  INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  VALUES (firm, msg, 'probe-' || tag, 'probe.pdf', 1, 'stored', 'clean', 'contact-mail', path) RETURNING ctid::text INTO r;
+  IF want_object THEN
+    INSERT INTO storage.objects (bucket_id, name) VALUES ('contact-mail', path) RETURNING ctid::text INTO r;
+  END IF;
+  RETURN r;
+END $$;
+
 -- Makes a row of the registry's make_row for one firm ('a' or 'b') as the superuser and returns its ctid. Each row hangs off a
 -- new intake of that firm owned by a new person, so no caller owns anything the probe makes.
 CREATE FUNCTION pg_temp.store_peo_mail(msg bigint, intake uuid, tag text) RETURNS text LANGUAGE plpgsql AS $$
@@ -3904,6 +3971,11 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('create_lead', 'firm_scoped', 'a current member of the firm the call acts for makes a lead of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
   ('send_conversation_message', 'firm_scoped', 'a current member of the firm the call acts for writes to a contact or lead of that firm they may see; the same refusal for another firm''s record as for one that does not exist (4e; supabase/tests/conversations.sql)'),
   ('conversation_for', 'firm_scoped', 'a current member reads the conversation of a contact or lead of that firm they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
+  ('open_conversation', 'firm_scoped', 'a current member marks a conversation of that firm they may see opened for the firm; the same refusal for another firm''s as for one that does not exist (4e)'),
+  ('add_sender_as_contact', 'firm_scoped', 'a current member adds the new sender of a message on a contact''s conversation of that firm as a contact on its account, through add_contact; the same refusal for another firm''s message as for one that does not exist (4e)'),
+  ('account_conversation_messages', 'firm_scoped', 'a current member reads the mail of an account or opportunity of that firm they may see; the same refusal for another firm''s as for one that does not exist (4e)'),
+  ('record_conversation_attachment', 'service_only', 'the receive-mail function records a received message''s attachment, pending its scan; no API role can call it'),
+  ('finish_conversation_attachment', 'service_only', 'the receive-mail function settles a received attachment by its scan; no API role can call it'),
   ('claim_conversation_mail', 'service_only', 'the send-mail function claims queued messages with what it needs to send them; no API role can call it'),
   ('complete_conversation_mail', 'service_only', 'the send-mail function records a sent message, for the attempt that holds its claim; no API role can call it'),
   ('fail_conversation_mail', 'service_only', 'the send-mail function records a failed attempt, retried or final, for the attempt that holds its claim; no API role can call it'),
@@ -4473,8 +4545,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['contact-mail', 'documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the contact-mail, documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table

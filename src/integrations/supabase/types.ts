@@ -1061,6 +1061,37 @@ export type Database = {
         }
         Returns: Json
       }
+      // Replies come back (20261122130000, CRM-E1.3): a conversation opened clears its new-mail mark for the firm, answering {last_opened_at}; a new sender
+      // offered on a contact's conversation added as a contact on its account (add_contact's answer); an account's or an opportunity's mail, {messages}.
+      open_conversation: {
+        Args: {
+          p_conversation_id: string
+          p_seen_through?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      add_sender_as_contact: {
+        Args: {
+          p_message_id: string
+          p_first_name?: string | null
+          p_last_name?: string | null
+          p_title?: string | null
+          p_phone?: string | null
+          p_mobile?: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      account_conversation_messages: {
+        Args: {
+          p_account_id?: string | null
+          p_opportunity_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // Adding a contact to an account and moving one (20261119170000): add_contact answers {record, previous_main}; move_contact {record, from, to, was_main,
       // activities_moved, opportunity_links_dropped, main_contact_cleared} (PT409 asks for p_confirm); the choices are the accounts it may go to; the context is what the form needs.
       add_contact: {
