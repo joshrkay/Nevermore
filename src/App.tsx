@@ -36,6 +36,7 @@ const LeadsPage = lazy(() => import("./pages/leads/LeadsPage"));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
+const LeadPage = lazy(() => import("./pages/leads/LeadPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
 const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPage"));
@@ -93,6 +94,7 @@ const AppRoutes = () => (
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
                   <Route path="/inbox" element={<InboxPage />} />
                   <Route path="/leads" element={<LeadsPage />} />
+                  <Route path="/leads/:id" element={<LeadPage />} />
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/contacts/:id" element={<ContactPage />} />

@@ -55,8 +55,21 @@ $$;
 
 REVOKE ALL ON FUNCTION public.lead_read_only_reason(public.leads) FROM PUBLIC, anon, authenticated, service_role;
 
+-- The lead's own fields as the page and a save answer them: crm_lead_fields with its owner named. Internal.
+CREATE FUNCTION public.lead_page_fields(l public.leads)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT public.crm_lead_fields(l)
+    || jsonb_build_object('owner', CASE WHEN l.owner_id IS NULL THEN NULL ELSE jsonb_build_object('id', l.owner_id, 'name', public.crm_person_name(l.owner_id)) END)
+$$;
+
+REVOKE ALL ON FUNCTION public.lead_page_fields(public.leads) FROM PUBLIC, anon, authenticated, service_role;
+
 -- ---------- 2. The page ----------
--- {lead: <crm_lead_fields> with owner {id, name} | null, can_change, converted, stages: {new, working, not_fit, converted}}. The stages are when each status the status bar
+-- {lead: <crm_lead_fields> with owner {id, name} | null, can_change, can_add, in_bin, can_reopen, converted, stages: {new, working, not_fit, converted}}. The stages are when each status the status bar
 -- shows began: New when the lead was made, Working and Not a fit when it last became so (none while it is New, or for Not a fit while it is not), Converted
 -- when it was converted.
 CREATE FUNCTION public.lead_page(p_firm_id uuid, p_lead_id uuid)
@@ -77,9 +90,13 @@ BEGIN
     RETURN NULL;
   END IF;
   RETURN jsonb_build_object(
-    'lead', public.crm_lead_fields(l)
-      || jsonb_build_object('owner', CASE WHEN l.owner_id IS NULL THEN NULL ELSE jsonb_build_object('id', l.owner_id, 'name', public.crm_person_name(l.owner_id)) END),
+    'lead', public.lead_page_fields(l),
     'can_change', public.can_change_firm_record(l.firm_id, l.owner_id) AND public.lead_read_only_reason(l) IS NULL,
+    -- Whether a call, a note or a task can be logged: by anyone who sees it, on a lead that is not read only (log_lead_activity's own rule).
+    'can_add', public.lead_read_only_reason(l) IS NULL,
+    'in_bin', l.deleted_at IS NOT NULL,
+    -- Reopen (reopen_lead's own rule): a Not a fit lead, not in the bin, that the level rule lets the caller change.
+    'can_reopen', l.status = 'not_fit' AND l.deleted_at IS NULL AND public.can_change_firm_record(l.firm_id, l.owner_id),
     'stages', jsonb_build_object(
       'new', l.created_at,
       'working', CASE WHEN l.status <> 'new' THEN public.lead_status_began(l, 'working') END,
@@ -99,19 +116,6 @@ $$;
 
 REVOKE ALL ON FUNCTION public.lead_page(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.lead_page(uuid, uuid) TO authenticated;
-
--- The lead's own fields as the page and a save answer them: crm_lead_fields with its owner named. Internal.
-CREATE FUNCTION public.lead_page_fields(l public.leads)
-RETURNS jsonb
-LANGUAGE sql
-STABLE
-SET search_path = public, pg_temp
-AS $$
-  SELECT public.crm_lead_fields(l)
-    || jsonb_build_object('owner', CASE WHEN l.owner_id IS NULL THEN NULL ELSE jsonb_build_object('id', l.owner_id, 'name', public.crm_person_name(l.owner_id)) END)
-$$;
-
-REVOKE ALL ON FUNCTION public.lead_page_fields(public.leads) FROM PUBLIC, anon, authenticated, service_role;
 
 -- The lead the caller acts on, held for the change: seen (PT404, one answer for not there and not theirs), then changed by the level rule (42501). Internal: the
 -- writes below call it after the write guard.

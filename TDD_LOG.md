@@ -28,3 +28,18 @@ The `tdd` skill was the first tool call. One test, seen red, then only its code,
 | 21 | lead_page.sql 20: what the log form offers on a lead | `ERROR:  function public.lead_activity_options(uuid, uuid) does not exist` | green |
 | 22 | lead_page.sql Z: support and a closing firm log, mark and reopen nothing | `FAIL: support logs nothing gave ok, expected PT423` | green |
 | 23 | data_isolation.sql, help_from_nevermore.sql, close_a_firm.sql: every new definer and write is in the three registries, the support and closing lists | `FAIL: privileged functions and the registry disagree: ... lead_activity, lead_page, ... update_lead` and `... gave log_lead_activity, mark_lead_not_fit, reopen_lead, update_lead, expected <NULL>` | green |
+| 24 | lead_page.sql 21: whether anything can be logged on the lead, and whether it is in the bin | `FAIL: a Working lead takes calls, notes and tasks gave <NULL>, expected t` | green |
+| 25 | LeadPage.test: the header shows the name, status, business, location, employees, source and owner, with Email, Log a call and Not a fit, no Convert | `Error: Failed to resolve import "./LeadPage" from "src/pages/leads/LeadPage.test.tsx". Does the file exist?` | green |
+| 26 | LeadPage.test: the status bar shows New, Working and Converted with the date each began | `Unable to find role="list" and name "Status"` | green |
+| 27 | LeadPage.test: the details shown and saved in place from the version started from | `Unable to find role="region" and name "Details"` | green |
+| 28 | LeadPage.test: Converting makes names the account, contact and opportunity (two cases of the one naming rule, written together) | `Unable to find role="region" and name "Converting makes"` (both) | green |
+| 29 | LeadPage.test: the lead's calls, notes and tasks listed newest first | `Unable to find role="region" and name /Calls, notes and tasks/` | green |
+| 30 | LeadPage.test: Nothing logged yet with Add a note and Add a task; a note logged on the lead | `Unable to find an accessible element with the role "button" and name "Add a task"` | green |
+| 31 | LeadPage.test: Log a call from the header logs on the lead and reads the lead again | `Unable to find role="dialog" and name "Log a call"` | green |
+| 32 | LeadPage.test: Not a fit asks a reason from the short list and marks the lead | `Unable to find role="dialog" and name "Not a fit"` | green |
+| 33 | lead_page.sql 22: whether the caller may reopen the lead | `FAIL: its owner reopens a Not a fit lead gave <NULL>, expected t` | green |
+| 34 | LeadPage.test: the Not a fit banner shows the reason with Reopen; nothing to change; Reopen reopens | `Unable to find role="note" and name "Not a fit"` | green |
+| 35 | LeadPage.test: the Converted banner links to the account, contact and opportunity; the page is read-only | `Unable to find role="note" and name "Converted"` | green |
+| 36 | LeadPage.test: No emails yet and the place to write writes to the lead | `Unable to find role="region" and name "Emails"` | green |
+| 37 | brokerAuth.test: connecting a mailbox from a lead's page comes back to the lead | `/leads/5f1c...: expected '/advisor' to be '/leads/5f1c...'` | green |
+| 38 | seo.guard.test: the route /leads/:id has its own title | `/leads/:id: expected 'Page not found \| Nevermore' not to be ...` | green |

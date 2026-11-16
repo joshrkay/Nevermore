@@ -50,7 +50,15 @@ function messageOf(m: Raw): ConversationMessage {
 
 /** A contact's conversation, newest first, and the writer's mailbox. */
 export async function getConversation(firmId: string, contactId: string): Promise<Conversation> {
-  const { data, error } = await supabase.rpc("conversation_for", { p_contact_id: contactId, p_firm_id: firmId });
+  return conversationOf(await supabase.rpc("conversation_for", { p_contact_id: contactId, p_firm_id: firmId }));
+}
+
+/** A lead's conversation, newest first, and the writer's mailbox (the lead's page, slice 8.5, D-603). */
+export async function getLeadConversation(firmId: string, leadId: string): Promise<Conversation> {
+  return conversationOf(await supabase.rpc("conversation_for", { p_lead_id: leadId, p_firm_id: firmId }));
+}
+
+function conversationOf({ data, error }: { data: unknown; error: { code?: string; message?: string } | null }): Conversation {
   if (error) throw refusal(error, "We couldn't load the emails. Try again.");
   const row = (data ?? {}) as { conversation?: Raw | null; messages?: Raw[]; mailbox?: { connected?: boolean; last_send_failed?: boolean } };
   return {
@@ -84,7 +92,9 @@ export async function openConversation(firmId: string, conversationId: string, s
 }
 
 export interface MessageToSend {
-  contactId: string;
+  /** The contact written to, or, on a lead's page, the lead (a lead's message carries no file, D-685). */
+  contactId?: string;
+  leadId?: string;
   subject: string;
   body: string;
   /** The message this one answers (its id), so it carries In-Reply-To and References (D-635); null for a new message. */
@@ -96,7 +106,7 @@ export interface MessageToSend {
 /** Records one message queued on the contact's conversation (send_conversation_message) and answers it. */
 export async function sendConversationMessage(firmId: string, m: MessageToSend): Promise<ConversationMessage> {
   const { data, error } = await supabase.rpc("send_conversation_message", {
-    p_contact_id: m.contactId, p_subject: m.subject, p_body: m.body, p_in_reply_to: m.inReplyTo, p_firm_id: firmId,
+    p_contact_id: m.contactId ?? null, p_lead_id: m.leadId ?? null, p_subject: m.subject, p_body: m.body, p_in_reply_to: m.inReplyTo, p_firm_id: firmId,
     ...(m.documentIds.length > 0 ? { p_document_ids: m.documentIds } : {}),
   });
   if (error) throw refusal(error, "We couldn't send that. Try again.");

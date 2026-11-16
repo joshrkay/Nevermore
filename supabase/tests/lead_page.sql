@@ -730,6 +730,36 @@ BEGIN
   PERFORM pg_temp.as_owner();
 END $$;
 
+-- ---------- 21. Whether anything can be logged on the lead, and whether it is in the bin ----------
+-- Catches: Log a call and Add a note offered on a lead the log refuses (Converted, Not a fit, the bin), or a binned lead's page that does not say so.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('calls')) ->> 'can_add')::boolean, true, 'a Working lead takes calls, notes and tasks');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('nofit')) ->> 'can_add')::boolean, false, 'a Not a fit one does not');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('done')) ->> 'can_add')::boolean, false, 'nor a converted one');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('calls')) ->> 'in_bin')::boolean, false, 'not in the bin');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('binned')) ->> 'can_add')::boolean, false, 'nor one in the bin');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('binned')) ->> 'in_bin')::boolean, true, 'which says it is in the bin');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- 22. Whether the caller may reopen the lead ----------
+-- Catches: Reopen offered on a lead that is not Not a fit, or to someone the level rule does not let change it (reopen_lead would refuse both).
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('nofit')) ->> 'can_reopen')::boolean, true, 'its owner reopens a Not a fit lead');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('calls')) ->> 'can_reopen')::boolean, false, 'not a Working one');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('acme'), pg_temp.id('done')) ->> 'can_reopen')::boolean, false, 'nor a converted one');
+  PERFORM pg_temp.as_owner();
+  UPDATE public.leads SET status = 'not_fit', not_fit_reason = 'other' WHERE id = pg_temp.id('zl');
+  PERFORM pg_temp.as_user('zenith_agent2', 'zenith-benefits');
+  PERFORM pg_temp.is((public.lead_page(pg_temp.id('zenith'), pg_temp.id('zl')) ->> 'can_reopen')::boolean, false, 'nor someone who only reads it');
+  PERFORM pg_temp.as_owner();
+END $$;
+
 -- ---------- Z. A Nevermore support session and a closing firm read and change nothing (ADR 0023, ADR 0024) ----------
 -- Catches: a write of the page that skips the one write guard (assert_firm_writable). Last: the firm is left closing.
 DO $$

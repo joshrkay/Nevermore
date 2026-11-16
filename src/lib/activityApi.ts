@@ -166,6 +166,28 @@ export async function logActivity(firmId: string, input: LogInput): Promise<Logg
   return { activity: activityItemOf(parsed.data.activity), followUp: parsed.data.follow_up ? activityItemOf(parsed.data.follow_up) : null };
 }
 
+/** Logs a call, a note or a task on a lead (log_lead_activity, slice 8.5): as `logActivity`, with no contact or opportunity to name (D-807). A call on a New lead makes it Working (D-808). */
+export async function logLeadActivity(firmId: string, input: Omit<LogInput, "accountId" | "contactId" | "opportunityId"> & { leadId: string }): Promise<Logged> {
+  const { data, error } = await supabase.rpc("log_lead_activity", {
+    p_kind: input.kind,
+    p_lead_id: input.leadId,
+    p_at: input.at ?? null,
+    p_outcome: input.outcome ?? null,
+    p_body: input.body ?? null,
+    p_title: input.title ?? null,
+    p_due_on: input.dueOn ?? null,
+    p_for: input.forId ?? null,
+    p_follow_up_title: input.followUp?.title ?? null,
+    p_follow_up_due_on: input.followUp?.dueOn ?? null,
+    p_follow_up_for: input.followUp?.forId ?? null,
+    p_firm_id: firmId,
+  });
+  if (error) throw refusal(error, FALLBACK);
+  const parsed = loggedSchema.safeParse(data);
+  if (!parsed.success) throw new ActivityError("failed", FALLBACK);
+  return { activity: activityItemOf(parsed.data.activity), followUp: parsed.data.follow_up ? activityItemOf(parsed.data.follow_up) : null };
+}
+
 /** What a person changes in a call or a task (every field is sent), or a note's text (only `body` is). */
 export interface ChangeInput {
   contactId?: string | null;
@@ -232,6 +254,16 @@ const optionsSchema = z.object({
 /** The contacts and opportunities a call can be with or about, and the firm's members a task can be for. Null when the person may not see the account. */
 export async function getActivityOptions(firmId: string, accountId: string): Promise<ActivityOptions | null> {
   const { data, error } = await supabase.rpc("account_activity_options", { p_firm_id: firmId, p_account_id: accountId });
+  if (error) throw refusal(error, "Couldn't load the choices. Try again.");
+  if (data === null) return null;
+  const parsed = optionsSchema.safeParse(data);
+  if (!parsed.success) throw new ActivityError("failed", "Couldn't load the choices. Try again.");
+  return parsed.data;
+}
+
+/** The firm's members a task on a lead can be for (lead_activity_options): no contacts or opportunities, a lead has none. Null when the person may not see the lead. */
+export async function getLeadActivityOptions(firmId: string, leadId: string): Promise<ActivityOptions | null> {
+  const { data, error } = await supabase.rpc("lead_activity_options", { p_firm_id: firmId, p_lead_id: leadId });
   if (error) throw refusal(error, "Couldn't load the choices. Try again.");
   if (data === null) return null;
   const parsed = optionsSchema.safeParse(data);
