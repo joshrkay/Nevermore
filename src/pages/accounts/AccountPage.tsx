@@ -15,7 +15,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadFailed, NotAvailable, PlaceholderPanel, PlaceholderLines, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
 import { useAuth } from "@/hooks/useAuth";
-import type { AccountFields, AccountPage as Page } from "@/lib/accountPageApi";
+import { listAccountTab, type AccountFields, type AccountPage as Page } from "@/lib/accountPageApi";
+import EmailAContact, { type ContactChoice } from "@/components/conversations/EmailAContact";
+import { AccountEmails } from "@/components/conversations/AccountEmails";
+import { contactName } from "@/data/accountPage";
 
 const isTab = (v: string | null): v is TabId => (TAB_IDS as readonly string[]).includes(v ?? "");
 
@@ -101,7 +104,19 @@ const AccountPage = () => {
           )}
         </div>
       )}
-      <AccountHeader account={account} menu={page.canChange && firmId ? <AccountMenu firmId={firmId} account={actionAccount} onDone={done} label="More actions for this account" /> : undefined} />
+      <AccountHeader
+        account={account}
+        menu={page.canChange && firmId ? <AccountMenu firmId={firmId} account={actionAccount} onDone={done} label="More actions for this account" /> : undefined}
+        email={canAct && firmId ? (
+          <EmailAContact
+            firmId={firmId}
+            accountId={account.id}
+            loadContacts={() => emailChoices(firmId, account.id)}
+            returnTo={(contactId) => `/accounts/${account.id}?email=${contactId}`}
+            startWith={params.get("email")}
+          />
+        ) : undefined}
+      />
       <Tabs value={tab} onValueChange={go}>
         <TabsList aria-label="The account" className="mb-6 h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0">
           {TAB_IDS.map((t) => (
@@ -113,6 +128,16 @@ const AccountPage = () => {
         </TabsList>
         <TabsContent value="overview" className="mt-0">
           {firmId && <AccountOverview key={account.id} firmId={firmId} page={page} onSaved={saved} />}
+          {firmId && (
+            <div className="mt-6">
+              <AccountEmails
+                key={`emails-${account.id}`}
+                firmId={firmId}
+                accountId={account.id}
+                contactName={(cid) => { const c = tabs.contacts.rows.find((r) => r.id === cid); return c ? contactName(c) : null; }}
+              />
+            </div>
+          )}
         </TabsContent>
         {TAB_IDS.filter((t) => t !== "overview").map((t) => (
           <TabsContent key={t} value={t} className="mt-0">
@@ -138,6 +163,12 @@ const AccountPage = () => {
     </Frame>
   );
 };
+
+/** The account's contacts Email offers, as many as one list holds (100). */
+async function emailChoices(firmId: string, accountId: string): Promise<ContactChoice[]> {
+  const list = await listAccountTab(firmId, accountId, "contacts", { limit: 100, offset: 0 });
+  return (list?.rows ?? []).map((c) => ({ id: c.id, name: contactName(c), email: c.email, doNotEmail: c.doNotEmail, isMain: c.isMain }));
+}
 
 const Frame = ({ children }: { children: React.ReactNode }) => (
   <div className="bg-background">

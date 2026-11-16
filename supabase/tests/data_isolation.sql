@@ -224,6 +224,7 @@
 \i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -790,6 +791,12 @@ BEGIN
     FROM public.conversation_messages m WHERE m.firm_id = fid;
     INSERT INTO storage.objects (bucket_id, name)
     SELECT 'contact-mail', a.storage_path FROM public.conversation_message_attachments a WHERE a.firm_id = fid;
+    -- 6.3: a file link on each of those messages, naming a document of the firm's, and one download of it.
+    INSERT INTO public.conversation_message_files (firm_id, message_id, n, document_id, file_name, token_hash, issued_at, expires_at)
+    SELECT fid, m.id, 1, (SELECT d.id FROM public.documents d JOIN public.chamber_sessions s ON s.id = d.session_id WHERE s.firm_id = fid ORDER BY d.id LIMIT 1), 'fixture.xlsx',
+           encode(extensions.digest('file-fixture-' || m.id, 'sha256'), 'hex'), now(), now() + interval '30 days'
+    FROM public.conversation_messages m WHERE m.firm_id = fid;
+    INSERT INTO public.conversation_file_downloads (firm_id, file_id) SELECT fid, f.id FROM public.conversation_message_files f WHERE f.firm_id = fid;
   END LOOP;
 END $$;
 
@@ -974,6 +981,12 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.conversation_message_attachments',           '{"agent_b":1}', '{"A":2,"B":2}'),
   ('storage.objects WHERE bucket_id = ''contact-mail''', '{"agent_b":1}', '{"A":2,"B":2}');
+-- ---- 6.3 CRM-E1.2b: file links on contact mail (20261122160000) ----
+-- Closed to the API, the service role included: written by send_conversation_message and claim_conversation_mail, opened by the edge function message-file
+-- through conversation_file_open (supabase/tests/conversation_files.sql).
+INSERT INTO matrix VALUES
+  ('public.conversation_message_files',                 '{"service":0}', NULL),
+  ('public.conversation_file_downloads',                '{"service":0}', NULL);
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
@@ -1476,10 +1489,12 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
   ('create_lead(p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes a lead of that firm, owned by its maker (or, by the level rule, by someone they may choose), New and Added by hand (CRM-L1.2a); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
-  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid)', 'own', NULL,
+  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid, p_document_ids uuid[])', 'own', NULL,
    'a current member of the firm the call acts for, with a connected mailbox, writes to a contact or lead they may see (CRM-E1.2a): the message is recorded queued on the record''s conversation and its id queued on the outbox; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a contact or lead the caller may not see, the same as for one that is not there, PT409 for Do not email, no email, a lead in the bin or converted, PT412 with no mailbox, 22023 for a field the rules refuse'),
   ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for (or a support session at its address) reads the conversation of a contact or lead they may see, newest first, and whether their own mailbox is connected; PT404 for a record the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
+  ('conversation_files_for(p_contact_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) lists the files a message to a contact they may see may carry: its account''s own, past the virus check (6.3, D-605); PT404 for a contact the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
   ('add_sender_as_contact(p_message_id uuid, p_first_name text, p_last_name text, p_title text, p_phone text, p_mobile text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for adds the new sender of a received message on a contact''s conversation they may see as a contact on that account, through add_contact and all its rules (CRM-E1.3); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a message the caller may not see, the same as for one that is not there, PT409 for a lead''s conversation or a sender not offered'),
   ('open_conversation(p_conversation_id uuid, p_seen_through timestamp with time zone, p_firm_id uuid)', 'own', NULL,
@@ -2126,6 +2141,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.send_conversation_message(p_contact_id => {acontact}, p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"status": "queued"|PT412'),
   ('conversation_for', 'advisor', 'by_id',
    $$SELECT jsonb_typeof(public.conversation_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('conversation_files_for', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.conversation_files_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$'),
   -- CRM-E1.3: the conversation of that contact, a new sender's message on it, and its account's mail.
   ('open_conversation', 'advisor', 'by_id',
    $$SELECT public.open_conversation({aconv}, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"last_opened_at": "'),
@@ -3331,6 +3348,16 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('storage.objects WHERE bucket_id = ''bundle-links''', 'firm', 'by the quote request in the folder; stored by a member, read by nobody through the API',
    $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('bundle-links', {qr} || '/00000000-0000-4000-8000-000000000000/1-probe-{tag}.pdf') RETURNING ctid::text$m$, false,
    'name = {qr} || ''/00000000-0000-4000-8000-000000000000/1-moved-{tag}.pdf''');
+-- ---- 6.3 CRM-E1.2b: file links on contact mail (20261122160000) ----
+-- A message's file link: its own firm_id and a message of that firm (a foreign key on the pair), naming a document. A download: its own firm_id and a link.
+-- Neither is read by any member through the API (conversation_for names the files; the edge function opens a link), so no positive control.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.conversation_message_files', 'firm', 'its own firm_id and a message of that firm; closed to the API',
+   $m$INSERT INTO public.conversation_message_files (firm_id, message_id, n, document_id, file_name) SELECT m.firm_id, m.id, 9, (SELECT d.id FROM public.documents d JOIN public.chamber_sessions s ON s.id = d.session_id WHERE s.firm_id = {firm} ORDER BY d.id LIMIT 1), 'probe-{tag}.pdf' FROM public.conversation_messages m WHERE m.firm_id = {firm} ORDER BY m.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.conversation_file_downloads', 'firm', 'its own firm_id and a file link of that firm; closed to the API',
+   $m$INSERT INTO public.conversation_file_downloads (firm_id, file_id) SELECT f.firm_id, f.id FROM public.conversation_message_files f WHERE f.firm_id = {firm} ORDER BY f.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 -- ---- CRM-E1.3: replies come back (20261122130000) ----
 -- A received file is on a message of its own firm, by a foreign key on the pair; its bytes are read by whoever reads its message, so (as for the messages)
 -- one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
@@ -4061,6 +4088,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('claim_conversation_mail', 'service_only', 'the send-mail function claims queued messages with what it needs to send them; no API role can call it'),
   ('complete_conversation_mail', 'service_only', 'the send-mail function records a sent message, for the attempt that holds its claim; no API role can call it'),
   ('fail_conversation_mail', 'service_only', 'the send-mail function records a failed attempt, retried or final, for the attempt that holds its claim; no API role can call it'),
+  ('conversation_files_for', 'firm_scoped', 'a current member lists the files a message to a contact of that firm they may see may carry; the same refusal for another firm''s contact as for one that does not exist (4e; supabase/tests/conversation_files.sql)'),
+  ('conversation_file_allowed', 'service_only', 'whether a file may go with a message to a contact (D-605): the send and the list ask it; no API role can call it'),
+  ('conversation_file_open', 'service_only', 'the message-file edge function opens a file link by its token''s hash and logs the download: the service role only (supabase/tests/conversation_files.sql)'),
   ('conversation_mail_ended', 'trigger', 'a message whose outbox event died by another path (the reaper) is marked failed as uncertain, inside that write; no API role can run it'),
   ('add_contact', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, adds a contact to it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
   ('move_contact', 'firm_scoped', 'a current member of the firm the call acts for moves a contact to another account of that firm by the level rule; another firm''s contact or account is as not there (4e)'),
@@ -4386,13 +4416,14 @@ INSERT INTO secret_columns VALUES
   ('public.broker_mailboxes', 'token_ciphertext', 'ciphertext', 'a broker''s mailbox refresh token, sealed by the mailbox function; only the sending function reads it back'),
   ('public.broker_mailboxes', 'token_iv', 'ciphertext', 'the sealing''s initialisation vector, kept with the ciphertext it belongs to'),
   ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept'),
-  ('public.bundle_links', 'token_hash', 'hash', 'the SHA-256 of a bundle link''s token (6.6b, ADR 0003); the token is answered once to the advisor who issues it and never kept');
+  ('public.bundle_links', 'token_hash', 'hash', 'the SHA-256 of a bundle link''s token (6.6b, ADR 0003); the token is answered once to the advisor who issues it and never kept'),
+  ('public.conversation_message_files', 'token_hash', 'hash', 'the SHA-256 of a file link''s token (6.3, D-605); the token is answered only to send-mail, which puts it in the message, and never kept');
 -- The functions the API roles can run that name a secret's table, each swept below as every caller with a statement that calls it.
 CREATE TEMP TABLE secret_readers (fn text PRIMARY KEY, call text NOT NULL);
 INSERT INTO secret_readers VALUES
   ('my_mailbox()', $$SELECT public.my_mailbox()::text$$),
   -- CRM-E1.2a: the send reads the caller's own mailbox address, the read whether it is connected; neither returns the token.
-  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid)',
+  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid, p_document_ids uuid[])',
    $$SELECT public.send_conversation_message(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} AND c.email IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1), p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm_a})::text$$),
   ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)',
    $$SELECT public.conversation_for(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} ORDER BY c.created_at, c.id LIMIT 1), p_firm_id => {firm_a})::text$$),

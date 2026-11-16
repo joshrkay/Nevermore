@@ -9,10 +9,10 @@ import { TAB_IDS, TAB_LABELS } from "./accountColumns";
 
 /**
  * The top of an account's page (screen 17): its name and status, then one line of industry, location, employees, website and owner, whichever of them it has.
- * Email and New opportunity are not shown (D-186). Log a call and Add a task (CRM-E1.5) are offered only where there are actions to take: not in a Nevermore
+ * Email (CRM-E1.2, slice 6.3) asks which contact and opens the place to write; New opportunity is not shown (D-186). Log a call and Add a task (CRM-E1.5) are offered only where there are actions to take: not in a Nevermore
  * support session (ADR 0024) and not on an archived account, so nothing here is a button that does nothing (D-24).
  */
-export function AccountHeader({ account, menu }: { account: AccountDetails; menu?: ReactNode }) {
+export function AccountHeader({ account, menu, email }: { account: AccountDetails; menu?: ReactNode; email?: ReactNode }) {
   const actions = useAccountActions();
   const facts = [
     account.industry,
@@ -36,10 +36,11 @@ export function AccountHeader({ account, menu }: { account: AccountDetails; menu
         </div>
         {menu && <div className="ml-auto shrink-0">{menu}</div>}
       </div>
-      {actions?.canAdd && (
+      {(actions?.canAdd || email) && (
         <div data-account-actions className="mt-4 flex flex-wrap gap-2">
-          <Button type="button" onClick={() => actions.log("call")}>Log a call</Button>
-          <Button type="button" variant="outline" onClick={() => actions.log("task")}>Add a task</Button>
+          {actions?.canAdd && <Button type="button" onClick={() => actions.log("call")}>Log a call</Button>}
+          {actions?.canAdd && <Button type="button" variant="outline" onClick={() => actions.log("task")}>Add a task</Button>}
+          {email}
         </div>
       )}
     </header>

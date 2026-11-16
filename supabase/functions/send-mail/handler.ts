@@ -10,6 +10,7 @@
 import { getMailboxAccess, MAILBOX_PROBLEMS, readMailboxConfig, type MailboxConfig } from "../_shared/mailbox.ts";
 import { isMailAddress } from "../_shared/mailAddress.ts";
 import { isServiceCall } from "../_shared/serviceAuth.ts";
+import { parseBaseUrl } from "../dispatch-outbox/config.ts";
 import { CLAIM_LEASE_SECONDS, MAX_ATTEMPTS, retryDelaySeconds } from "../dispatch-outbox/dispatch.ts";
 import { buildMessage, gmailRaw, mimeBase64, type ClaimedMessage } from "./message.ts";
 
@@ -179,7 +180,13 @@ async function sendOne(db: SendMailClient, deps: SendMailDeps, config: MailboxCo
   }
   // The message was written from one address and its Message-ID is at that domain: it goes from that mailbox or not at all.
   if (access.address.toLowerCase() !== m.from_address.toLowerCase()) return fail(db, deps, queue, row, "mailbox", REASONS.other_mailbox, null);
-  const text = buildMessage(m, replyDomain, deps.now());
+  // A file goes as a link on the app's own address (D-605): with no address set, a message with files can't be built yet, so it waits and is tried again.
+  const appBase = parseBaseUrl(deps.env("APP_BASE_URL"));
+  if ((m.files ?? []).length > 0 && !appBase) {
+    deps.log("SEND_MAIL_CONFIG_MISSING: APP_BASE_URL is not set to an https URL, so a message's file links can't be made");
+    return retryOrGiveUp(db, deps, queue, row, "unavailable", REASONS.unavailable);
+  }
+  const text = buildMessage(m, replyDomain, deps.now(), appBase);
   const microsoft = access.provider === "microsoft";
   // Graph takes the MIME message as base64 text and answers 202 with no body; Gmail takes it as base64url `raw` and answers its id.
   let res: Response;

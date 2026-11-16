@@ -1070,6 +1070,7 @@ $$;
 \i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

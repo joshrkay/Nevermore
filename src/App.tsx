@@ -27,6 +27,7 @@ const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
 const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
 const BundleLinkPage = lazy(() => import("./pages/BundleLinkPage"));
+const FileLinkPage = lazy(() => import("./pages/FileLinkPage"));
 const SecondFactorPage = lazy(() => import("./pages/SecondFactorPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
@@ -79,6 +80,7 @@ const AppRoutes = () => (
                 <Route path="/terms" element={<TermsPage />} />
                 {/* The bundle link a PEO opens (ADR 0003): no sign-in, the edge function checks the token. */}
                 <Route path="/b/:token" element={<BundleLinkPage />} />
+                <Route path="/f" element={<FileLinkPage />} />
                 <Route path="/manuscript" element={<ManuscriptPage />} />
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 {/* A submission by its File ID; row security decides who may read it. */}

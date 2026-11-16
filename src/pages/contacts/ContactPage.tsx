@@ -5,6 +5,8 @@ import { Archive } from "lucide-react";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { accountKey } from "@/components/accounts/useAccountQueries";
 import { ContactDetailsPanel } from "@/components/contacts/ContactDetails";
+import PlaceToWrite from "@/components/conversations/PlaceToWrite";
+import { contactName } from "@/data/accountPage";
 import { ContactHeader, ContactHeaderLoading } from "@/components/contacts/ContactHeader";
 import { ContactActivity, ContactOpportunities } from "@/components/contacts/ContactPanels";
 import { contactKey, useContactPageQuery } from "@/components/contacts/useContactQueries";
@@ -16,7 +18,7 @@ import type { ContactFields, ContactPage as Page } from "@/lib/contactPageApi";
 /**
  * A contact's page (story CRM-C1.1, screen 18; D-37: `/contacts/:id` inside the workspace layout). The database decides who may see the contact (its account's
  * visibility) and who may change it (the level rule on its own owner, D-209); this draws what it answers. The calls, notes and tasks, Log a call, Add a task, Add a
- * note, Move and the edit of each entry are the account page's own, on this contact. The emails with the contact are Epic 6's (D-186).
+ * note, Move and the edit of each entry are the account page's own, on this contact. The emails with the contact and the place to write are `PlaceToWrite` (CRM-E1.2, D-680).
  */
 const ContactPage = () => {
   const { id = "" } = useParams();
@@ -70,7 +72,15 @@ const ContactPage = () => {
           {firmId && <ContactDetailsPanel key={contact.id} firmId={firmId} contact={contact} canChange={page.canChange} onSaved={saved} />}
           <ContactOpportunities opportunities={page.opportunities} />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-6">
+          {firmId && (
+            <PlaceToWrite
+              key={`emails-${contact.id}`}
+              firmId={firmId}
+              recipient={{ contactId: contact.id, name: contactName(contact), email: contact.email, doNotEmail: contact.doNotEmail, accountId: contact.account.id }}
+              returnTo={`/contacts/${contact.id}`}
+            />
+          )}
           {firmId && <ContactActivity key={contact.id} firmId={firmId} contactId={contact.id} />}
         </div>
       </div>

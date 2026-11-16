@@ -14,3 +14,8 @@ verify_jwt = false
 # token, which it hashes before asking the database as the service role.
 [functions.bundle-link]
 verify_jwt = false
+
+# A file link on a message to a contact (/f#<token>, D-605), with no sign-in: the function answers only a live link's token, which it hashes before
+# asking the database as the service role.
+[functions.message-file]
+verify_jwt = false

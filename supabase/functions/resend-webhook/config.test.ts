@@ -18,7 +18,8 @@ describe("how the webhook function is deployed", () => {
     const sections = [...toml.matchAll(/\[functions\.([a-z-]+)\]/g)].map((m) => m[1]);
     // The two the email provider calls with a signature instead of a login, and the bundle link a PEO opens with no sign-in (ADR 0003),
     // which answers only a live link's token.
-    expect(sections).toEqual(["resend-webhook", "receive-mail", "bundle-link"]);
+    // And the file link a contact opens from an agent's message (D-605), which answers only a live link's token too.
+    expect(sections).toEqual(["resend-webhook", "receive-mail", "bundle-link", "message-file"]);
   });
 
   it("is checked on a signed-out call by the setup, which relies on its own 401", () => {
