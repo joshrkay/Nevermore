@@ -53,8 +53,22 @@ describe("createOpportunity", () => {
     expect(await createOpportunity("f1", "a1", input)).toEqual({ id: "o1", version: 1, stage: "qualifying" });
     expect(rpc).toHaveBeenCalledWith("opportunity_create", {
       p_account_id: "a1", p_name: "January 2028 PEO search", p_target_start: "2028-01-01", p_employees: 45, p_main_contact_id: "c1", p_expected_close: "2027-12-10",
-      p_value: 7100, p_source: "Referral", p_referral_partner_code: "acme-cfo", p_next_step: "Ask Elena.", p_owner_id: "u1", p_firm_id: "f1",
+      p_value: 7100, p_source: "Referral", p_referral_partner_code: "acme-cfo", p_next_step: "Ask Elena.", p_owner_id: "u1", p_firm_id: "f1", p_renewal_id: null,
     });
+  });
+
+  // Catches: Start the renewal's renewal not sent with the save (the opportunity is then made and the renewal never linked: D-449), or sent as a second call.
+  it("sends the renewal it starts in the same call", async () => {
+    rpc.mockResolvedValue({ data: { record: { id: "o1", version: 1, stage: "qualifying" } }, error: null });
+    await createOpportunity("f1", "a1", { ...input, source: "Renewal", referralPartnerCode: null, renewalId: "r1" });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("opportunity_create", expect.objectContaining({ p_renewal_id: "r1", p_source: "Renewal" }));
+  });
+
+  // Catches: a renewal that is done or already worked (PT409) told as a failed connection, so the person retries a save that can never work, instead of reading the database's words.
+  it("says a renewal that cannot be started in the database's words", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT409", message: "Its renewal is being worked by January 2027 renewal" } });
+    expect(await caught(() => createOpportunity("f1", "a1", { ...input, renewalId: "r1" }))).toMatchObject({ kind: "renewalTaken", message: "Its renewal is being worked by January 2027 renewal" });
   });
   // Catches: a blank sent as an empty string or as the word typed (a date the database cannot read, a source "" it would take as a source, an owner it would look
   // for), instead of nothing, which makes the maker the owner.

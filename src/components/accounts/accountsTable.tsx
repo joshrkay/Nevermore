@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { US_STATE_CODES } from "@/data/chamberValidation";
 import { formatDay, locationOf, SOURCE_LABELS, STAGE_LABELS, STATUS_LABELS } from "@/data/accountPage";
 import { daysSince } from "@/data/quoteRequests";
+import { daysAwayWords, daysFromToday } from "@/data/renewals";
 import { Pill } from "@/components/accounts/accountLists";
 import {
   useFirmReady, useSavedViewList, withSavedViews, type ColumnDefinition, type FieldChoice, type FieldDefinitions, type TableDefinition, type TableQuery, type TableView,
@@ -22,13 +23,12 @@ import type { ViewCount } from "@/lib/tableQuery";
 // the filters (D-44; supabase/migrations/20261119130000_accounts_table_query.sql).
 
 /**
- * The database knows the renewal's two fields (CRM-A2.4a: `ACCOUNT_FIELDS` is the server's list, compared with the migration), but nothing a later story ships
- * appears early (D-402): the screen's fields, labels and filters leave them out until the Renewal column and its view arrive (CRM-A2.4b).
+ * The renewal's two fields (CRM-A2.4a, shown by CRM-A2.4b): `renewal_date` is the Renewal column's (sorted and filtered), `renewing_in_120_days` has no column of its
+ * own: it is only the filter the "Renewing in 120 days" view holds (D-450), and "Add filter" offers it too.
  */
-const LATER_FIELDS = ["renewal_date", "renewing_in_120_days"] as const;
-type ScreenField = Exclude<AccountField, (typeof LATER_FIELDS)[number]>;
-type Fields = Pick<typeof ACCOUNT_FIELDS, ScreenField>;
-const SCREEN_FIELDS = (Object.keys(ACCOUNT_FIELDS) as AccountField[]).filter((f): f is ScreenField => !(LATER_FIELDS as readonly string[]).includes(f));
+type ScreenField = AccountField;
+type Fields = typeof ACCOUNT_FIELDS;
+const SCREEN_FIELDS = Object.keys(ACCOUNT_FIELDS) as AccountField[];
 
 const dash = <span className="text-muted-foreground">—</span>;
 
@@ -57,6 +57,8 @@ const FIELD_LABELS: Record<ScreenField, string> = {
   archived: "Archived",
   waiting_on_peo: "Waiting on a PEO",
   owner: "Owner",
+  renewal_date: "Renewal date",
+  renewing_in_120_days: "Renewing in 120 days",
 };
 
 /** The values of the choice fields, as the database lists them (accounts_field_choices), with their words. */
@@ -115,6 +117,9 @@ const opportunityText = (row: Pick<AccountRow, "opportunity_stage" | "target_sta
   row.opportunity_stage === null ? "None open" : `${STAGE_LABELS[row.opportunity_stage]}, ${startWords(row.target_start)}${row.open_opportunities > 1 ? `, +${row.open_opportunities - 1} more` : ""}`;
 
 const isoDay = (moment: string) => moment.slice(0, 10);
+
+/** The Renewal column in words: the day and how far away it is ("Jan 1, 2027, in 50 days"), or "None on file". */
+const renewalText = (row: Pick<AccountRow, "renewal_date">): string => (row.renewal_date === null ? "None on file" : `${formatDay(row.renewal_date)}, ${daysAwayWords(daysFromToday(row.renewal_date))}`);
 
 // Each column's `id` is kept in the database in a person's column choice (CRM-S3.1a): never rename or reuse one once shipped. A column added later is hidden
 // for a person who has a kept choice until they show it from the Columns menu. `usual` (below) says which show until a person chooses.
@@ -183,6 +188,24 @@ const accountColumns: ColumnDefinition<AccountRow, keyof Fields>[] = [
     },
   },
   {
+    id: "renewal",
+    header: "Renewal",
+    sortField: "renewal_date",
+    filterField: "renewal_date",
+    text: (row) => renewalText(row),
+    cell: (row) => {
+      if (row.renewal_date === null) return <span className="text-sm text-muted-foreground">None on file</span>;
+      const days = daysFromToday(row.renewal_date);
+      // A renewal that has passed and is not done is shown in the warning colour (D-448); the column holds the nearest one not done (D-450).
+      return (
+        <div className="text-sm">
+          <p>{formatDay(row.renewal_date)}</p>
+          <p className={`text-xs ${days < 0 ? "font-medium text-warning" : "text-muted-foreground"}`}>{daysAwayWords(days)}</p>
+        </div>
+      );
+    },
+  },
+  {
     id: "employees", header: "Employees", align: "right", sortField: "employees", filterField: "employees",
     text: (row) => (row.employees === null ? "" : String(row.employees)),
     cell: (row) => <span className="font-mono text-sm">{row.employees ?? "—"}</span>,
@@ -239,15 +262,16 @@ const accountColumns: ColumnDefinition<AccountRow, keyof Fields>[] = [
   },
 ];
 
-/** The columns shown until a person chooses their own (the story's default columns; Renewal comes with its story, D-186). Label is one of the story's "other columns": shown from the Columns menu, never forced on a person who has a kept choice (D-217). */
-const USUAL_COLUMNS = ["account", "main_contact", "opportunity", "quotes", "employees", "owner", "last_activity"] as const;
+/** The columns shown until a person chooses their own (the story's default columns, Renewal among them: CRM-A2.4b). Label is one of the story's "other columns": shown from the Columns menu, never forced on a person who has a kept choice (D-217). */
+const USUAL_COLUMNS = ["account", "main_contact", "opportunity", "quotes", "renewal", "employees", "owner", "last_activity"] as const;
 
 // ---------- views ----------
 
-/** The built-in views, the story's (Renewing in 120 days is not offered until renewals exist, D-186). An archived account is in no other view. */
+/** The built-in views, the story's. "Renewing in 120 days" holds accounts with a renewal not done within the next 120 days, overdue included, soonest first (D-450). An archived account is in no other view. */
 export const ACCOUNT_VIEWS: TableView<Fields>[] = [
   { id: "open_opportunities", label: "Open opportunities", filters: [{ field: "open_opportunities", op: "more_than", value: 0 }] },
   { id: "waiting_on_quotes", label: "Waiting on quotes", filters: [{ field: "waiting_on_peo", op: "is", value: true }] },
+  { id: "renewing_in_120_days", label: "Renewing in 120 days", filters: [{ field: "renewing_in_120_days", op: "is", value: true }], sort: { field: "renewal_date", direction: "asc" } },
   { id: "clients", label: "Clients", filters: [{ field: "status", op: "any_of", value: ["client"] }] },
   { id: "archived", label: "Archived", filters: [{ field: "archived", op: "is", value: true }] },
 ];

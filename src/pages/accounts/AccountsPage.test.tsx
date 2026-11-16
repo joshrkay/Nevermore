@@ -67,6 +67,12 @@ const row = (over: Partial<AccountRow> = {}): AccountRow => ({
   opportunity_stage: "in_market", target_start: "2027-01-01", open_opportunities: 1, quote_requests_sent: 3, quotes_received: 1, waiting_on_peo: true,
   earliest_quote_expires_on: null, last_activity_at: "2026-11-11T10:00:00Z", labels: [], renewal_date: null, ...over,
 });
+/** A day this many days from today, as the database sends a date (YYYY-MM-DD, in the person's own day). */
+const inDays = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const second = row({
   id: "a2", name: "Kestrel Software", city: "Seattle", state: "WA", status: "client", employees: 64, owner: "u2", owner_name: "Marcus Hale", main_contact_name: "Imani Cole",
   main_contact_email: null, main_contact_phone: "(541) 555-0134", opportunity_id: null, opportunity_name: null, opportunity_stage: null, target_start: null, open_opportunities: 0,
@@ -97,7 +103,7 @@ const asked = () => listAccounts.mock.lastCall![0] as { firmId: string | null; f
 beforeEach(() => {
   for (const fn of [saveView, listAccounts, countAccountViews, listFirmMembers, fetchMyColumns, setMyColumns, createAccount, listAccountOwners, firmLabels, exportRows, downloadBlob, signOut, ...Object.values(actions), mfa.listFactors, mfa.challengeAndVerify]) fn.mockReset();
   listAccounts.mockResolvedValue({ rows: [row(), second], total: 375 });
-  countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 31, 2][i] ?? 0 })));
+  countAccountViews.mockImplementation(async (_firm: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [375, 21, 7, 3, 31, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   firmLabels.mockResolvedValue([{ id: "l1", name: "Hot lead" }, { id: "l2", name: "Referral" }]);
@@ -129,11 +135,12 @@ describe("the Accounts page: the table", () => {
     expect(await screen.findByText("1 to 50 of 375 accounts")).toBeInTheDocument();
   });
 
-  // Catches: a default column missing or worded wrongly (screen 16), a Renewal column (D-186), or a column the story keeps for "other columns" shown at once.
+  // Catches: a default column missing or worded wrongly (screen 16), the Renewal column missing or out of its place, or a column the story keeps for "other columns" shown at once.
   it("shows the story's columns, each as screen 16 words it, and not the ones kept for the Columns menu", async () => {
+    listAccounts.mockResolvedValue({ rows: [row({ renewal_date: inDays(50) }), second], total: 375 });
     renderAt();
     await screen.findByRole("link", { name: "Harborview Dental Group" });
-    expect(headers()).toEqual(["Account", "Main contact", "Opportunity", "Quotes", "Employees", "Owner", "Last activity"]);
+    expect(headers()).toEqual(["Account", "Main contact", "Opportunity", "Quotes", "Renewal", "Employees", "Owner", "Last activity"]);
     const [first, kestrel] = within(body()).getAllByRole("row");
     // The name opens the account's page; the city and state sit under it.
     expect(within(first).getByRole("link", { name: "Harborview Dental Group" })).toHaveAttribute("href", "/accounts/a1");
@@ -146,6 +153,9 @@ describe("the Accounts page: the table", () => {
     expect(first).toHaveTextContent("In market");
     expect(first).toHaveTextContent("Jan 2027 start");
     expect(first).toHaveTextContent("1 of 3 back");
+    // The nearest renewal not done: its day and how far away it is (D-450); none says so.
+    expect(first).toHaveTextContent("in 50 days");
+    expect(kestrel).toHaveTextContent("None on file");
     expect(first).toHaveTextContent("45");
     expect(first).toHaveTextContent("Dana Reyes");
     expect(first).toHaveTextContent("Nov 11, 2026");
@@ -197,18 +207,18 @@ describe("the Accounts page: the table", () => {
 });
 
 describe("the Accounts page: views and filters", () => {
-  // Catches: a view the story lists missing, "Renewing in 120 days" shown before renewals exist (D-186), a count under the wrong tab.
-  it("offers the story's views with their counts, and not Renewing in 120 days", async () => {
+  // Catches: a view the story lists missing (Renewing in 120 days among them, D-450), a count under the wrong tab.
+  it("offers the story's views with their counts", async () => {
     renderAt();
     await screen.findByRole("link", { name: "Harborview Dental Group" });
     const tabs = await screen.findByRole("navigation", { name: /views|tabs/i }).catch(() => null);
     const text = (tabs ?? document.body).textContent ?? "";
     expect(text).toContain("All accounts");
-    for (const name of ["Open opportunities", "Waiting on quotes", "Clients", "Archived"]) expect(text).toContain(name);
-    expect(text).not.toContain("Renewing in 120 days");
+    for (const name of ["Open opportunities", "Waiting on quotes", "Renewing in 120 days", "Clients", "Archived"]) expect(text).toContain(name);
     await waitFor(() => expect(screen.getByRole("link", { name: /Open opportunities/ })).toHaveTextContent("21"));
     expect(screen.getByRole("link", { name: /All accounts/ })).toHaveTextContent("375");
     expect(screen.getByRole("link", { name: /Waiting on quotes/ })).toHaveTextContent("7");
+    expect(screen.getByRole("link", { name: /Renewing in 120 days/ })).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: /Clients/ })).toHaveTextContent("31");
   });
 
@@ -216,6 +226,7 @@ describe("the Accounts page: views and filters", () => {
   it.each([
     ["Open opportunities", { field: "open_opportunities", op: "more_than", value: 0 }],
     ["Waiting on quotes", { field: "waiting_on_peo", op: "is", value: true }],
+    ["Renewing in 120 days", { field: "renewing_in_120_days", op: "is", value: true }],
     ["Clients", { field: "status", op: "any_of", value: ["client"] }],
     ["Archived", { field: "archived", op: "is", value: true }],
   ])("opens %s as its own filter", async (name, filter) => {
@@ -269,7 +280,7 @@ describe("the Accounts page: views and filters", () => {
   });
 
   // Catches: a view saved from the default layout keeping no columns (it would then show whatever the person has later, not what they saw).
-  it("saves a view from the default layout with the seven columns on screen", async () => {
+  it("saves a view from the default layout with the eight columns on screen", async () => {
     const user = userEvent.setup();
     renderAt();
     await screen.findByRole("link", { name: "Harborview Dental Group" });
@@ -278,7 +289,7 @@ describe("the Accounts page: views and filters", () => {
     await user.type(await screen.findByLabelText("Name"), "My view");
     await user.click(screen.getByRole("button", { name: "Save view" }));
     await waitFor(() => expect(saveView).toHaveBeenCalled());
-    expect(saveView.mock.calls[0][0]).toMatchObject({ table: "accounts", name: "My view", columns: ["account", "main_contact", "opportunity", "quotes", "employees", "owner", "last_activity"] });
+    expect(saveView.mock.calls[0][0]).toMatchObject({ table: "accounts", name: "My view", columns: ["account", "main_contact", "opportunity", "quotes", "renewal", "employees", "owner", "last_activity"] });
   });
 
   // Catches: an Owner chip showing a person's id when the firm's people could not be listed (D-227: "A member"); me and my team keep their words.
@@ -382,7 +393,7 @@ describe("the Accounts page: columns", () => {
     await user.click(await screen.findByLabelText("Website"));
     await waitFor(() => expect(setMyColumns).toHaveBeenCalled());
     expect(setMyColumns.mock.calls[0].slice(1, 3)).toEqual(["accounts", null]);
-    expect(setMyColumns.mock.calls[0][3]).toEqual(["account", "main_contact", "opportunity", "quotes", "employees", "owner", "last_activity", "website"]);
+    expect(setMyColumns.mock.calls[0][3]).toEqual(["account", "main_contact", "opportunity", "quotes", "renewal", "employees", "owner", "last_activity", "website"]);
   });
 
   // Catches: a kept column choice ignored on this table.
@@ -435,17 +446,39 @@ describe("the Accounts page: the Label column and filter (D-198)", () => {
   });
 });
 
-describe("the Accounts page: nothing a later story ships appears early", () => {
-  // Catches (D-402, review of #181): the renewal's fields offered by "Add filter" before the screens that show renewals exist (CRM-A2.4b), so a person could
-  // filter by a column the table does not have.
-  it("does not offer the renewal's fields in Add filter", async () => {
+describe("the Accounts page: the Renewal column and its view (CRM-A2.4b, D-450)", () => {
+  // Catches: the renewal's fields not offered by "Add filter" once the Renewal column exists, or "Renewing in 120 days" given a column of its own (it is only a filter).
+  it("offers the renewal's date and Renewing in 120 days in Add filter, and only the date as a column", async () => {
     const user = userEvent.setup();
     renderAt();
     await screen.findByRole("link", { name: "Harborview Dental Group" });
     await user.click(screen.getByRole("button", { name: "Add filter" }));
-    expect(await screen.findByRole("button", { name: "Label" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Renewal date" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Renewing in 120 days" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Renewal date" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Renewing in 120 days" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    expect(await screen.findByLabelText("Renewal")).toBeChecked();
+    expect(screen.queryByLabelText("Renewing in 120 days")).not.toBeInTheDocument();
+  });
+
+  // Catches: a past renewal that is not done shown like any other (D-448: it is in the warning colour), or its days away worded wrongly.
+  it("says a past renewal 'ago' in the warning colour, and today as 'today'", async () => {
+    listAccounts.mockResolvedValue({ rows: [row({ renewal_date: inDays(-12) }), row({ id: "a3", name: "Third Co", renewal_date: inDays(0) })], total: 2 });
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    const [past, today] = within(body()).getAllByRole("row");
+    const ago = within(past).getByText("12 days ago");
+    expect(ago.className).toContain("text-warning");
+    expect(within(today).getByText("today").className).not.toContain("text-warning");
+  });
+
+  // Catches: the view opening in the table's own order (last activity) instead of soonest renewal first, or sorting the rows the wrong way (D-450).
+  it("opens Renewing in 120 days sorted by the renewal date, soonest first", async () => {
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByRole("link", { name: "Harborview Dental Group" });
+    await user.click(screen.getByRole("link", { name: /Renewing in 120 days/ }));
+    await waitFor(() => expect(listAccounts).toHaveBeenLastCalledWith(expect.objectContaining({ sort: { field: "renewal_date", direction: "asc" } })));
   });
 });
 

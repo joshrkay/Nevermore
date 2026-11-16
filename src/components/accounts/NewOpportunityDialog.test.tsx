@@ -119,7 +119,7 @@ describe("the New opportunity form (screen 25)", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: "o1", version: 1, stage: "qualifying" }));
     expect(createOpportunity).toHaveBeenCalledWith("f1", "a1", {
       name: "January 2028 renewal", targetStart: "2028-01-01", employees: 45, mainContactId: "c2", expectedClose: "2027-12-10", value: 7100, source: "Renewal",
-      referralPartnerCode: null, nextStep: "Ask Elena whether headcount changed.", ownerId: "u2",
+      referralPartnerCode: null, nextStep: "Ask Elena whether headcount changed.", ownerId: "u2", renewalId: null,
     });
     expect(toast.success).toHaveBeenCalledWith("Opportunity created");
   });
@@ -209,5 +209,60 @@ describe("the New opportunity form (screen 25)", () => {
     const ask = await screen.findByRole("alertdialog");
     await user.click(within(ask).getByRole("button", { name: /Discard/ }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("Start the renewal (the form filled in, D-449)", () => {
+  const openRenewal = async (renewsOn = "2027-01-01") => {
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <NewOpportunityDialog firmId="f1" accountId="a1" renewal={{ id: "r1", renewsOn }} onClose={onClose} onCreated={onCreated} />
+      </QueryClientProvider>,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Start the renewal" });
+    await within(dialog).findByLabelText("Opportunity name");
+    return { user, dialog };
+  };
+
+  // Catches: the form not filled in as D-449 says (name "<Month YYYY> renewal" from the renewal's date, target start that date, source Renewal, employees and main
+  // contact from the account), so the person retypes what the renewal already knows.
+  it("opens with the renewal's name, date and source, and the account's employees and main contact", async () => {
+    const { dialog } = await openRenewal();
+    expect(field(dialog, "Opportunity name")).toHaveValue("January 2027 renewal");
+    expect(field(dialog, "Target start date")).toHaveValue("2027-01-01");
+    expect(field(dialog, "Source")).toHaveValue("Renewal");
+    expect(field(dialog, "Employees in this search")).toHaveValue("45");
+    expect(field(dialog, "Main contact")).toHaveValue("c1");
+  });
+
+  // Catches: the save not carrying the renewal (the opportunity is then made and never linked), or the renewal sent with the form's other fields lost.
+  it("saves with the renewal's id, and tells the page which opportunity was made", async () => {
+    const { user, dialog } = await openRenewal();
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: "o1", version: 1, stage: "qualifying" }));
+    expect(createOpportunity).toHaveBeenCalledWith("f1", "a1", expect.objectContaining({ renewalId: "r1", source: "Renewal", targetStart: "2027-01-01", name: "January 2027 renewal", employees: 45, mainContactId: "c1" }));
+  });
+
+  // Catches: the name following the target start as a PEO search ("January 2027 PEO search") on a renewal, or going on following it after the person typed their own.
+  it("keeps the name in step with the date as a renewal's name until the person types one", async () => {
+    const { user, dialog } = await openRenewal();
+    await user.clear(field(dialog, "Target start date"));
+    await user.type(field(dialog, "Target start date"), "2027-03-15");
+    expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 renewal");
+    await user.type(field(dialog, "Opportunity name"), " for Harborview");
+    await user.clear(field(dialog, "Target start date"));
+    await user.type(field(dialog, "Target start date"), "2027-04-01");
+    expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 renewal for Harborview");
+  });
+
+  // Catches: a renewal someone else started meanwhile refused with a generic failure, or the form closed (the person then loses what they typed).
+  it("says the database's words when the renewal is already being worked, and stays open", async () => {
+    createOpportunity.mockRejectedValue(new OpportunityError("renewalTaken", "Its renewal is being worked by January 2027 renewal", "PT409"));
+    const { user, dialog } = await openRenewal();
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    expect(await within(dialog).findByText("Its renewal is being worked by January 2027 renewal")).toBeInTheDocument();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

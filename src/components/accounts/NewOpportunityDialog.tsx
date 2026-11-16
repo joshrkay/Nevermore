@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
-import { dollarsOf, newOpportunitySchema, OPPORTUNITY_SOURCES, suggestedOpportunityName } from "@/data/opportunityFields";
+import { dollarsOf, newOpportunitySchema, OPPORTUNITY_SOURCES, suggestedOpportunityName, suggestedRenewalName } from "@/data/opportunityFields";
 import { useAuth } from "@/hooks/useAuth";
 import { createOpportunity, getNewOpportunityContext, OpportunityError, type MadeOpportunity, type NewOpportunityContext } from "@/lib/opportunityCreateApi";
 
@@ -19,10 +19,21 @@ import { createOpportunity, getNewOpportunityContext, OpportunityError, type Mad
 //
 // Not here, and where it goes (D-441, D-402): "Save and start the quote" and "Start from last year's certified answers" come with New quote (Epic 5).
 
-/** The form in a dialog over an account. `onCreated` runs once the opportunity is made (the page opens it); `onClose` closes the form. */
-export function NewOpportunityDialog({ firmId, accountId, person = "You", onClose, onCreated }: {
+/**
+ * "Start the renewal" (CRM-A2.4b, D-449): the renewal this form starts. The form opens filled in (name "<Month YYYY> renewal", target start the renewal's date,
+ * source Renewal, employees and main contact from the account) and the save links the opportunity to the renewal in the same step.
+ */
+export interface StartingRenewal {
+  id: string;
+  /** The renewal's day, YYYY-MM-DD. */
+  renewsOn: string;
+}
+
+/** The form in a dialog over an account. `onCreated` runs once the opportunity is made (the page opens it); `onClose` closes the form. `renewal` opens it as Start the renewal. */
+export function NewOpportunityDialog({ firmId, accountId, person = "You", renewal, onClose, onCreated }: {
   firmId: string;
   accountId: string;
+  renewal?: StartingRenewal;
   /** The person's own name, for the owner choice if the firm's people are not in the answer. */
   person?: string;
   onClose: () => void;
@@ -36,8 +47,8 @@ export function NewOpportunityDialog({ firmId, accountId, person = "You", onClos
     <Dialog open onOpenChange={(next) => { if (!next) (closer.current ?? onClose)(); }}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl font-bold">New opportunity</DialogTitle>
-          <DialogDescription>{data ? `On ${data.account.name}` : "Start a search on this account."}</DialogDescription>
+          <DialogTitle className="font-display text-xl font-bold">{renewal ? "Start the renewal" : "New opportunity"}</DialogTitle>
+          <DialogDescription>{data ? `On ${data.account.name}` : renewal ? "Start the renewal on this account." : "Start a search on this account."}</DialogDescription>
         </DialogHeader>
         {context.isError && !data ? (
           <div role="alert" className="space-y-3 text-sm">
@@ -55,7 +66,7 @@ export function NewOpportunityDialog({ firmId, accountId, person = "You", onClos
             <Button type="button" variant="outline" onClick={onClose}>Close</Button>
           </div>
         ) : (
-          <NewOpportunityForm firmId={firmId} accountId={accountId} person={person} context={data} onClose={onClose} onCreated={onCreated} closer={closer} />
+          <NewOpportunityForm firmId={firmId} accountId={accountId} person={person} renewal={renewal} context={data} onClose={onClose} onCreated={onCreated} closer={closer} />
         )}
       </DialogContent>
     </Dialog>
@@ -78,8 +89,8 @@ const fieldOf = (message: string): string | undefined => {
   return undefined;
 };
 
-function NewOpportunityForm({ firmId, accountId, person, context, onClose, onCreated, closer }: {
-  firmId: string; accountId: string; person: string; context: NewOpportunityContext; onClose: () => void; onCreated: (made: MadeOpportunity) => void;
+function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClose, onCreated, closer }: {
+  firmId: string; accountId: string; person: string; renewal?: StartingRenewal; context: NewOpportunityContext; onClose: () => void; onCreated: (made: MadeOpportunity) => void;
   closer: MutableRefObject<(() => void) | null>;
 }) {
   const { user } = useAuth();
@@ -94,8 +105,8 @@ function NewOpportunityForm({ firmId, accountId, person, context, onClose, onCre
   const api = useWorkspaceForm({
     schema: newOpportunitySchema,
     defaultValues: {
-      name: suggestedOpportunityName(""), target_start: "", employees: context.account.employees === null ? "" : String(context.account.employees),
-      main_contact: context.mainContact?.id ?? "", expected_close: "", value: "", source: "", referral_partner: "", owner: me, next_step: "",
+      name: renewal ? suggestedRenewalName(renewal.renewsOn) : suggestedOpportunityName(""), target_start: renewal ? renewal.renewsOn : "", employees: context.account.employees === null ? "" : String(context.account.employees),
+      main_contact: context.mainContact?.id ?? "", expected_close: "", value: "", source: renewal ? "Renewal" : "", referral_partner: "", owner: me, next_step: "",
     },
     save: async (values) => {
       const v = values as Record<string, string>;
@@ -112,6 +123,7 @@ function NewOpportunityForm({ firmId, accountId, person, context, onClose, onCre
           referralPartnerCode: v.source === "Referral" && v.referral_partner !== "" ? v.referral_partner : null,
           nextStep: v.next_step,
           ownerId: v.owner || null,
+          renewalId: renewal?.id ?? null,
         });
       } catch (e) {
         if (e instanceof OpportunityError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? (OWNER_RULE.test(e.message) ? "owner" : undefined) : e.kind === "invalid" ? fieldOf(e.message) : undefined);
@@ -132,7 +144,7 @@ function NewOpportunityForm({ firmId, accountId, person, context, onClose, onCre
 
   const source = api.form.watch("source");
   return (
-    <WorkspaceForm api={api} aria-label="New opportunity" actions={<FormActions submitLabel="Save opportunity" savingLabel="Saving…" />}>
+    <WorkspaceForm api={api} aria-label={renewal ? "Start the renewal" : "New opportunity"} actions={<FormActions submitLabel="Save opportunity" savingLabel="Saving…" />}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field name="name" label="Opportunity name" required>
           {(field) => <Input {...field} autoFocus onChange={(e) => { nameTyped.current = true; field.onChange(e); }} />}
@@ -148,7 +160,7 @@ function NewOpportunityForm({ firmId, accountId, person, context, onClose, onCre
               type="date"
               onChange={(e) => {
                 field.onChange(e);
-                if (!nameTyped.current) api.form.setValue("name", suggestedOpportunityName(e.target.value));
+                if (!nameTyped.current) api.form.setValue("name", renewal ? suggestedRenewalName(e.target.value) : suggestedOpportunityName(e.target.value));
               }}
             />
           )}

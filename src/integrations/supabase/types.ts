@@ -1069,9 +1069,27 @@ export type Database = {
           p_next_step: string | null
           p_owner_id?: string | null
           p_firm_id?: string | null
+          // Start the renewal (20261121160000, D-449): the renewal this opportunity works, linked in the same transaction.
+          p_renewal_id?: string | null
         }
         Returns: Json
       }
+      // Renewals (20261120110000, CRM-A2.4a): an account's renewals with days away, and adding, changing and deleting one from a version; "Didn't renew" and its undo.
+      account_renewals: { Args: { p_firm_id: string | null; p_account_id: string; p_time_zone?: string }; Returns: Json }
+      add_renewal: {
+        Args: { p_account_id: string; p_kind: string; p_with_whom: string; p_renews_on: string; p_placement_start_on?: string | null; p_firm_id?: string | null; p_time_zone?: string }
+        Returns: Json
+      }
+      update_renewal: {
+        Args: { p_renewal_id: string; p_with_whom: string; p_renews_on: string; p_firm_id?: string | null; p_version?: number | null; p_time_zone?: string }
+        Returns: Json
+      }
+      delete_renewal: { Args: { p_renewal_id: string; p_firm_id?: string | null; p_version?: number | null }; Returns: Json }
+      mark_renewal_not_renewed: {
+        Args: { p_renewal_id: string; p_not_renewed_on: string; p_firm_id?: string | null; p_version?: number | null; p_time_zone?: string }
+        Returns: Json
+      }
+      undo_renewal_not_renewed: { Args: { p_renewal_id: string; p_firm_id?: string | null; p_version?: number | null; p_time_zone?: string }; Returns: Json }
       // Spotting a duplicate while typing (20261121090000): {matches, more}; a match the person may see in full, one they may not as a mask.
       duplicate_account_check: { Args: { p_firm_id: string | null; p_name: string; p_website: string; p_state: string }; Returns: Json }
       duplicate_contact_check: { Args: { p_firm_id: string | null; p_email: string }; Returns: Json }

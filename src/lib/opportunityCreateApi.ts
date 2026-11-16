@@ -7,7 +7,7 @@ import { classifyApiError } from "@/lib/advisorApi";
 // archived account, a closing firm and Nevermore support, each field (D-29), the source, the owner (the level rule, D-209). This only puts its answers and
 // refusals into the screen's shape and words, as `contactApi` does for adding a contact.
 
-export type OpportunityFailure = "invalid" | "notAllowed" | "notFound" | "archived" | "readOnly" | "failed";
+export type OpportunityFailure = "invalid" | "notAllowed" | "notFound" | "archived" | "readOnly" | "renewalTaken" | "failed";
 
 export class OpportunityError extends Error {
   constructor(readonly kind: OpportunityFailure, message: string, readonly code?: string) {
@@ -24,6 +24,8 @@ function refusal(error: DbError, fallback: string): Error {
   switch (error.code) {
     case "PT404": return new OpportunityError("notFound", "That account isn't available any more. Reload the page.", error.code);
     case "PT423": return new OpportunityError("readOnly", error.message || "This can't be changed right now.", error.code);
+    // Start the renewal (D-449): the renewal is done, or an open opportunity already works it; the database says which, in words.
+    case "PT409": return new OpportunityError("renewalTaken", error.message || "This renewal can't be started.", error.code);
     case "55000": return new OpportunityError("archived", error.message || "This account is archived. Nothing can be added to it.", error.code);
     case "22023": return new OpportunityError("invalid", error.message || fallback, error.code);
     case "42501": return new OpportunityError("notAllowed", error.message || "You can't do that.", error.code);
@@ -93,6 +95,8 @@ export interface NewOpportunity {
   nextStep: string;
   /** The person chosen as the owner; null leaves it to the database, which makes the maker the owner. */
   ownerId: string | null;
+  /** The renewal this opportunity starts (D-449): it is linked in the same save. Null for an ordinary new opportunity. */
+  renewalId?: string | null;
 }
 
 const madeSchema = z.object({
@@ -123,6 +127,7 @@ export async function createOpportunity(firmId: string, accountId: string, o: Ne
     p_next_step: o.nextStep,
     p_owner_id: o.ownerId,
     p_firm_id: firmId,
+    p_renewal_id: o.renewalId ?? null,
   });
   if (error) throw refusal(error, SAVE_FALLBACK);
   const parsed = madeSchema.safeParse(data);

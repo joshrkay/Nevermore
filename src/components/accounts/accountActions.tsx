@@ -9,7 +9,7 @@ import { AddContactDialog } from "./AddContactDialog";
 import { AddToNoteDialog } from "./AddToNoteDialog";
 import { LogActivityDialog } from "./LogActivityDialog";
 import { MoveContactDialog } from "./MoveContactDialog";
-import { NewOpportunityDialog } from "./NewOpportunityDialog";
+import { NewOpportunityDialog, type StartingRenewal } from "./NewOpportunityDialog";
 import { accountKey } from "./useAccountQueries";
 
 // What a person can do to an account's calls, notes and tasks (story CRM-E1.5), offered to the places that draw them (the header's buttons, a contact's
@@ -21,7 +21,7 @@ type Open =
   | { mode: "edit"; item: ActivityItem }
   | { mode: "add"; item: ActivityItem }
   | { mode: "contact" }
-  | { mode: "opportunity" }
+  | { mode: "opportunity"; renewal?: StartingRenewal }
   | { mode: "move"; contact: ContactRow }
   | null;
 
@@ -59,6 +59,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
     addTo: (item) => setOpen({ mode: "add", item }),
     addContact: () => setOpen({ mode: "contact" }),
     newOpportunity: () => setOpen({ mode: "opportunity" }),
+    startRenewal: (renewal) => setOpen({ mode: "opportunity", renewal }),
     canMove,
     move: (contact) => setOpen({ mode: "move", contact }),
     setDone: async (task, done) => {
@@ -95,7 +96,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
       )}
       {open?.mode === "opportunity" && (
         <NewOpportunityDialog
-          firmId={firmId} accountId={accountId} person={person} onClose={close}
+          firmId={firmId} accountId={accountId} person={person} renewal={open.renewal} onClose={close}
           // Saving opens the new opportunity's own page (D-442, CRM-O1.1b's route); the account's lists are asked again for when the person comes back.
           onCreated={(made) => { close(); refresh(); navigate(`/opportunities/${made.id}`); }}
         />
