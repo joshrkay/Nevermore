@@ -11,7 +11,6 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
-  setQuoteRequestStatus: vi.fn(),
   addQuoteRequestNote: vi.fn(),
   correctQuoteRequestNote: vi.fn(),
   reissueQuoteRequestAddress: vi.fn(),
@@ -354,42 +353,6 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
     await waitFor(() => expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ adminFeePepm: null, expiresOn: null })));
-  });
-
-  // N-1.2, CRM-Q3.1: an agent records what a PEO said. Break caught: the two new statuses with no way to record them, so the board shows what no one can set.
-  it("records that a PEO acknowledged, or has a question open, with one click each, and tells the page", async () => {
-    const onChanged = panel({ requests: [request()] });
-    const row = screen.getByTestId("quote-request-7");
-    fireEvent.click(within(row).getByRole("button", { name: "Mark TriNet acknowledged" }));
-    await waitFor(() => expect(api.setQuoteRequestStatus).toHaveBeenCalledWith(7, "acknowledged"));
-    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
-    fireEvent.click(within(row).getByRole("button", { name: "Mark TriNet question open" }));
-    await waitFor(() => expect(api.setQuoteRequestStatus).toHaveBeenLastCalledWith(7, "question_open"));
-  });
-
-  // Break caught: a button for the status a PEO is already in (the database refuses it), or any of them on a quote, a decline or a closed request,
-  // where the database refuses every one.
-  it("offers each open status but the one it is in, and none on a quote, a decline or a closed request", () => {
-    panel({ requests: [request({ id: 1, status: "sent" }), request({ id: 2, peo_name: "Justworks", status: "acknowledged" }), request({ id: 3, peo_name: "Insperity", status: "question_open" })] });
-    const marks = (id: number) => within(screen.getByTestId(`quote-request-${id}`)).queryAllByRole("button", { name: /^Mark / }).map((b) => b.textContent);
-    expect(marks(1)).toEqual(["Acknowledged", "Question open"]);
-    expect(marks(2)).toEqual(["Question open", "Back to Sent"]);
-    expect(marks(3)).toEqual(["Acknowledged", "Back to Sent"]);
-  });
-
-  // Break caught: a status the database refused (someone else changed it a minute ago) shown as recorded, or the page told to refresh as if it had been.
-  it("says a status that wasn't recorded, and does not tell the page it changed", async () => {
-    api.setQuoteRequestStatus.mockRejectedValueOnce(new Error("TypeError: Failed to fetch"));
-    const onChanged = panel({ requests: [request()] });
-    const row = screen.getByTestId("quote-request-7");
-    fireEvent.click(within(row).getByRole("button", { name: "Mark TriNet acknowledged" }));
-    expect(await within(row).findByRole("alert")).toHaveTextContent("The status wasn't recorded. Check your connection and try again.");
-    expect(onChanged).not.toHaveBeenCalled();
-  });
-
-  it("offers none on a quoted, declined or closed quote request", () => {
-    panel({ requests: [request({ id: 1, status: "quoted" }), request({ id: 2, peo_name: "Justworks", status: "declined" }), request({ id: 3, peo_name: "Insperity", status: "closed" })] });
-    for (const id of [1, 2, 3]) expect(within(screen.getByTestId(`quote-request-${id}`)).queryAllByRole("button", { name: /^Mark / })).toHaveLength(0);
   });
 
   it("offers no answer on a closed quote request: only a new send reopens it", () => {

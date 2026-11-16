@@ -568,15 +568,6 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
   if (error) fail(error, "Couldn't record the answer.");
 }
 
-/** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */
-export type OpenQuoteStatus = "sent" | "acknowledged" | "question_open";
-
-/** Records that a PEO acknowledged, has a question open, or is back to Sent. Every change is logged with who and when; mail never makes it. */
-export async function setQuoteRequestStatus(id: number, status: OpenQuoteStatus): Promise<void> {
-  const { error } = await supabase.rpc("advisor_set_quote_request_status", { p_quote_request_id: id, p_status: status });
-  if (error) fail(error, "Couldn't record the status.");
-}
-
 /**
  * Revokes a quote request's reply address and issues a new one. Mail sent to the old address no longer reaches
  * the quote request, so the PEO has to be given the new one.
