@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { getAccountRenewals, type AccountRenewals } from "@/lib/renewalsApi";
 import { getAccountPage, listAccountFiles, listAccountTab, type AccountFile, type ActivityFilter, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
 
 /** An account's page and its lists are asked again this often, and when the window gets focus (D-49). */
@@ -82,4 +83,17 @@ export function useAccountTabQuery<T extends AccountListTab | "files">(firmId: s
     }
   }, [dropped, query]);
   return { query, data };
+}
+
+/** The account's renewals (the Renewals tab, its count, and the Overview's first five): asked again with everything else of the account. Null data: not there or not theirs. */
+export function useAccountRenewalsQuery(firmId: string | null, accountId: string) {
+  return useQuery<AccountRenewals | null>({
+    queryKey: [...accountKey(firmId, accountId), "renewals"],
+    queryFn: () => getAccountRenewals(firmId as string, accountId),
+    enabled: firmId !== null,
+    refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
+    refetchOnWindowFocus: (q) => keepsAsking(q),
+    refetchOnReconnect: (q) => keepsAsking(q),
+    retry: false,
+  });
 }

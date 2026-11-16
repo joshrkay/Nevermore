@@ -222,6 +222,7 @@
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
 \i supabase/migrations/20261121170000_opportunity_outcome.sql
 SET client_min_messages = notice;
 
@@ -1489,8 +1490,8 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for saves an opportunity''s own fields from a version, by the level rule on the opportunity''s own owner (an agent their own, a lead their team''s, an owner the firm''s, one with no owner an owner''s), never its stage or account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity that is not there or whose account the caller may not see, 55000 on an archived account');
 -- CRM-A2.3 (20261120130000_opportunity_create.sql; supabase/tests/opportunity_create.sql): New opportunity on an account.
 INSERT INTO callable VALUES
-  ('opportunity_create(p_account_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_referral_partner_code text, p_next_step text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
-   'a current member of the firm the call acts for, who may see the account, makes an opportunity on it (stage Qualifying, no intake), owned by its maker or, by the level rule, by someone they may choose who can see the account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field, a source, a referral partner, a contact or an owner the rules refuse'),
+  ('opportunity_create(p_account_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_referral_partner_code text, p_next_step text, p_owner_id uuid, p_firm_id uuid, p_renewal_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the account, makes an opportunity on it (stage Qualifying, no intake), owned by its maker or, by the level rule, by someone they may choose who can see the account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field, a source, a referral partner, a contact or an owner the rules refuse; with a renewal to start (CRM-A2.4b, D-449): 22023 for a renewal that is not this account''s (or not there) or a source other than Renewal, 42501 for a renewal the caller may not change (the renewal change rule), and PT409 for one that is done (marked as not renewed, or renewed by a win) or that an open opportunity already works'),
   ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
 
@@ -2183,7 +2184,7 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('update_opportunity', 'advisor', 'by_id',
    $$SELECT public.update_opportunity({opp}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, (SELECT version FROM public.opportunities WHERE id = {opp}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": false'),
   ('opportunity_create', 'advisor', 'by_id',
-   $$SELECT public.opportunity_create({acct}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"name": "Probe search"'),
+   $$SELECT public.opportunity_create({acct}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, NULL)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"name": "Probe search"'),
   ('opportunity_create_context', 'advisor', 'by_id',
    $$SELECT jsonb_typeof(public.opportunity_create_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
   ('opportunity_outcome', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_outcome({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');

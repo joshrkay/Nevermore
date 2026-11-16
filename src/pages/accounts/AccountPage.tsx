@@ -11,11 +11,12 @@ import { AccountOverview } from "@/components/accounts/AccountOverview";
 import { AccountTabPanel } from "@/components/accounts/AccountTabPanel";
 import { TAB_IDS, TAB_LABELS, type TabId } from "@/components/accounts/accountColumns";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
+import { RenewalsPanel } from "@/components/accounts/AccountRenewals";
 import { DuplicateBanner } from "@/components/accounts/DuplicateBanner";
 import { MergeDialog } from "@/components/accounts/MergeDialog";
 import { GoToKept, MergedNote } from "@/components/accounts/MergedAddress";
 import { useMergedAddress } from "@/components/accounts/useMergedAddress";
-import { accountKey, useAccountPageQuery } from "@/components/accounts/useAccountQueries";
+import { accountKey, useAccountPageQuery, useAccountRenewalsQuery } from "@/components/accounts/useAccountQueries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoadFailed, NotAvailable, PlaceholderPanel, PlaceholderLines, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
@@ -42,6 +43,8 @@ const AccountPage = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const query = useAccountPageQuery(firmId, id);
+  // The Renewals tab's count: the page's own read has no renewals (their list is asked for with the tab and shared with the Overview's first five).
+  const renewals = useAccountRenewalsQuery(firmId, id);
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
@@ -95,7 +98,7 @@ const AccountPage = () => {
     else void queryClient.invalidateQueries({ queryKey: accountKey(firmId, id) });
   };
   const count: Record<TabId, number | null> = {
-    overview: null, contacts: tabs.contacts.count, opportunities: tabs.opportunities.count, quotes: tabs.quotes.count, activity: tabs.activity.count, files: tabs.files.count,
+    overview: null, contacts: tabs.contacts.count, opportunities: tabs.opportunities.count, quotes: tabs.quotes.count, renewals: renewals.data?.count ?? null, activity: tabs.activity.count, files: tabs.files.count,
   };
   // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024). On an archived account
   // nothing can be added (D-222: the database refuses a new call, note, task or addition), but an existing call or task can still be changed and a task marked done.
@@ -141,9 +144,12 @@ const AccountPage = () => {
         <TabsContent value="overview" className="mt-0">
           {firmId && <AccountOverview key={account.id} firmId={firmId} page={page} onSaved={saved} />}
         </TabsContent>
-        {TAB_IDS.filter((t) => t !== "overview").map((t) => (
+        <TabsContent value="renewals" className="mt-0">
+          {firmId && <RenewalsPanel key={account.id} firmId={firmId} accountId={id} />}
+        </TabsContent>
+        {TAB_IDS.filter((t) => t !== "overview" && t !== "renewals").map((t) => (
           <TabsContent key={t} value={t} className="mt-0">
-            {firmId && <AccountTabPanel key={`${account.id}-${t}`} firmId={firmId} accountId={id} tab={t as Exclude<TabId, "overview">} page={page} contactId={contactId} />}
+            {firmId && <AccountTabPanel key={`${account.id}-${t}`} firmId={firmId} accountId={id} tab={t as Exclude<TabId, "overview" | "renewals">} page={page} contactId={contactId} />}
           </TabsContent>
         ))}
       </Tabs>

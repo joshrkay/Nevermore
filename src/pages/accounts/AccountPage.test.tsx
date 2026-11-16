@@ -17,6 +17,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFiles: vi.fn(), updateAccount: vi.fn(), getSubmissionAccount: vi.fn() };
 vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), ...client }));
+const renewalsClient = { getAccountRenewals: vi.fn() };
+vi.mock("@/lib/renewalsApi", async () => ({ ...(await vi.importActual<object>("@/lib/renewalsApi")), ...renewalsClient }));
 const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn() };
 vi.mock("@/lib/accountActionsApi", () => actions);
 const listFirmMembers = vi.fn();
@@ -99,10 +101,13 @@ const tabNames = () => screen.getAllByRole("tab").map((t) => t.textContent);
 const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 
 beforeEach(() => {
-  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(renewalsClient), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getAccountPage.mockResolvedValue(page());
+  renewalsClient.getAccountRenewals.mockResolvedValue({ count: 1, canChange: true, rows: [{
+    id: "r1", version: 1, kind: "current_plan", withWhom: "Aetna", renewsOn: "2027-01-01", daysAway: 50, opportunity: null, notRenewedOn: null, done: false, outcome: null, madeByWin: false,
+  }] });
 });
 
 describe("AccountPage: the menu's recent records", () => {
@@ -183,12 +188,11 @@ describe("AccountPage: the header and the tabs", () => {
     expect(screen.getByText("No owner")).toBeInTheDocument();
   });
 
-  // Catches: a Renewals tab (D-186), a missing tab, or a count that is not the database's.
-  it("has the six tabs, each with its count, and no Renewals tab", async () => {
+  // Catches: a missing tab, the Renewals tab out of its place (screen 17: after Quotes), or a count that is not the database's (the Renewals count is the renewals', not the page's).
+  it("has the seven tabs, each with its count, Renewals after Quotes", async () => {
     renderPage();
     await screen.findByRole("heading", { level: 1 });
-    expect(tabNames()).toEqual(["Overview", "Contacts2", "Opportunities2", "Quotes2", "Activity14", "Files1"]);
-    expect(screen.queryByRole("tab", { name: /Renewals/ })).toBeNull();
+    await waitFor(() => expect(tabNames()).toEqual(["Overview", "Contacts2", "Opportunities2", "Quotes2", "Renewals1", "Activity14", "Files1"]));
     expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   });
 
@@ -222,6 +226,7 @@ describe("AccountPage: the Overview", () => {
     expect(row("Current provider")).toHaveTextContent("Payroll vendor");
     expect(row("Source")).toHaveTextContent("Employer's intake · Kline CPA");
     expect(row("Owner")).toHaveTextContent("Dana Reyes");
+    // The renewals are their own panel and tab, not a row of the details.
     expect(within(details).queryByText(/Renewal/)).toBeNull();
   });
 
@@ -233,8 +238,8 @@ describe("AccountPage: the Overview", () => {
     expect(within(details).getByText("Address").nextElementSibling).toHaveTextContent("Not provided");
   });
 
-  // Catches: the page's lists not showing the rows or their count, a Renewals list (D-186), a "See all" that opens nothing.
-  it("shows each list's rows with its count and a See all, and no Renewals", async () => {
+  // Catches: the page's lists not showing the rows or their count, a Renewals list missing from the Overview (D-454), a "See all" that opens nothing.
+  it("shows each list's rows with its count and a See all, Renewals among them", async () => {
     renderPage();
     const contacts = await screen.findByRole("region", { name: /Contacts/ });
     expect(within(contacts).getByRole("heading", { name: /Contacts\s*2/ })).toBeInTheDocument();
@@ -251,8 +256,11 @@ describe("AccountPage: the Overview", () => {
     const activity = screen.getByRole("region", { name: /Recent activity/ });
     expect(within(activity).getByText("Employees changed from 40 to 45")).toBeInTheDocument();
     expect(within(activity).getByText("Account created")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: /Renewals/ })).toBeNull();
-    expect(screen.getAllByRole("link", { name: /^See all/ }).map((l) => l.textContent)).toEqual(["See all contacts", "See all opportunities", "See all quotes", "See all activity"]);
+    const renewals = await screen.findByRole("region", { name: /Renewals/ });
+    expect(within(renewals).getByText("The employer's current plan")).toBeInTheDocument();
+    expect(within(renewals).getByText("Aetna")).toBeInTheDocument();
+    expect(within(renewals).getByText("in 50 days")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /^See all/ }).map((l) => l.textContent)).toEqual(["See all contacts", "See all opportunities", "See all quotes", "See all renewals", "See all activity"]);
   });
 
   // Catches: "See all" that goes nowhere, or opens another tab.
