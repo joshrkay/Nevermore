@@ -529,10 +529,17 @@ SELECT pg_temp.is(:'peek_firm_name'::text, 'Alpha Advisory', 'the page can say w
 SELECT pg_temp.is(:'peek_contact_name'::text, 'Lucia Perez', 'and who it is for');
 SELECT pg_temp.is((SELECT last_opened_at IS NOT NULL FROM public.intake_invitations WHERE intake_id = pg_temp.id('intake1') AND status = 'pending'), true, 'the opening is recorded');
 
--- 29. A link that is no link is refused (PT404), and learns nothing: a hash nobody holds, and a link opened at another firm's address (PT422, checked first, so it learns nothing of the link's state).
--- Break caught: a guess is told anything, or a link works at the wrong firm's address.
+-- 29. A link that is no link is refused (PT404), and learns nothing: a hash nobody holds.
+-- Break caught: a guess is told anything.
 SELECT pg_temp.is(pg_temp.state_as('outsider', 'alpha-advisory', format('SELECT * FROM public.peek_intake_invite(%L, %L)', repeat('0', 64), 'alpha-advisory')), 'PT404', 'a hash nobody holds is not a link');
+
+-- 29a. A link opened at another firm's address is refused (PT422), though the link is a real, waiting one.
+-- Break caught: a link works at the wrong firm's address.
 SELECT pg_temp.is(pg_temp.state_as('outsider', 'bravo-brokers', format('SELECT * FROM public.peek_intake_invite(%L, %L)', repeat('e', 64), 'bravo-brokers')), 'PT422', 'a link opened at another firm''s address is refused');
+
+-- 29b. A link opened at another firm's address learns nothing of the link's state: a link Remind replaced is refused as PT422, not PT410.
+-- Break caught: the address is checked after the link's state, so a guess at another firm's address learns that a link was replaced.
+SELECT pg_temp.is(pg_temp.state_as('outsider', 'bravo-brokers', format('SELECT * FROM public.peek_intake_invite(%L, %L)', repeat('a', 64), 'bravo-brokers')), 'PT422', 'a replaced link opened at another firm''s address says nothing of its state');
 
 -- 30. A link Remind replaced says so (PT410), and does not count as an opening of the invitation; an expired link says so too (PT410).
 -- Break caught: the old link of a reminded invitation still opens (Remind revokes nothing), or its opening is counted.
@@ -585,10 +592,17 @@ SELECT pg_temp.broker_invite('intake7', 'unverified@example.test', '7');
 SELECT pg_temp.is(pg_temp.state_as('unverified', 'alpha-advisory', format('SELECT public.accept_intake_invite(%L, %L)', repeat('7', 64), 'alpha-advisory')), '42501', 'an unverified address can''t accept');
 SELECT pg_temp.is((SELECT user_id FROM public.chamber_sessions WHERE id = pg_temp.id('intake7')), NULL::uuid, 'the intake is still the firm''s');
 
--- 34. A hash nobody holds is not a link (PT404), and a link accepted at another firm's address is refused (PT422) before anything about its state is told.
--- Break caught: a guess is told anything, or a link works at the wrong firm's address.
+-- 34. A hash nobody holds is not a link (PT404).
+-- Break caught: a guess is told anything.
 SELECT pg_temp.is(pg_temp.state_as('client2', 'alpha-advisory', format('SELECT public.accept_intake_invite(%L, %L)', repeat('0', 64), 'alpha-advisory')), 'PT404', 'a hash nobody holds is not a link');
+
+-- 34a. A link accepted at another firm's address is refused (PT422).
+-- Break caught: a link works at the wrong firm's address.
 SELECT pg_temp.is(pg_temp.state_as('client2', 'bravo-brokers', format('SELECT public.accept_intake_invite(%L, %L)', repeat('6', 64), 'bravo-brokers')), 'PT422', 'a link accepted at another firm''s address is refused');
+
+-- 34b. A link accepted at another firm's address learns nothing of the link's state: a link Remind replaced is refused as PT422, not PT410.
+-- Break caught: the address is checked after the link's state, so a guess at another firm's address learns that a link was replaced.
+SELECT pg_temp.is(pg_temp.state_as('client2', 'bravo-brokers', format('SELECT public.accept_intake_invite(%L, %L)', repeat('a', 64), 'bravo-brokers')), 'PT422', 'a replaced link accepted at another firm''s address says nothing of its state');
 
 -- 35. A link works once, for 14 days, and only while it is the latest: a used link, a link Remind replaced and an expired link are each refused (PT410) and change nothing.
 -- Break caught: a link opens the intake twice, a replaced link still works, or an old link never ends.
