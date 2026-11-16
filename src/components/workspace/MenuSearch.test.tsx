@@ -111,7 +111,7 @@ describe("the menu's search box: typing", () => {
     const link = (name: string) => within(results()).getByRole("link", { name: new RegExp(`^${name}`) }).getAttribute("href");
     expect(link("Harborview Dental Group")).toBe("/accounts/a1");
     expect(link("Elena Marsh")).toBe("/contacts/c1");
-    expect(link("Harborview 2027 search")).toBe("/advisor/submissions/i1");
+    expect(link("Harborview 2027 search")).toBe("/opportunities/o1");
     expect(link("Paychex Prime")).toBe("/advisor/submissions/i1");
   });
 
@@ -125,14 +125,14 @@ describe("the menu's search box: typing", () => {
     expect(client.searchRecords).toHaveBeenCalledWith("f1", "harbor view");
   });
 
-  it("leaves an opportunity with no intake as plain text, as the pages do until it has a page (D-187)", async () => {
+  // Catches: an opportunity with no intake opening nothing now that it has a page of its own (D-430 replaces D-187).
+  it("opens an opportunity's own page, with an intake or without", async () => {
     client.searchRecords.mockResolvedValue(found({ accounts: none, contacts: none, quotes: none, opportunities: { rows: [lonely], more: false } }));
     const user = userEvent.setup();
     renderBox();
     await user.type(box(), "harbor");
     await pause();
-    expect(await within(results()).findByText("Harborview with no intake")).toBeInTheDocument();
-    expect(within(results()).queryByRole("link", { name: /no intake/ })).not.toBeInTheDocument();
+    expect(await within(results()).findByRole("link", { name: /no intake/ })).toHaveAttribute("href", "/opportunities/o2");
   });
 
   it("marks a record of an archived account", async () => {

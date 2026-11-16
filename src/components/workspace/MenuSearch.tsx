@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
+import { accountPath, contactPath, opportunityPath, submissionPath } from "@/components/accounts/accountColumns";
 import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
 import { searchTermFor } from "@/components/workspace/table/address";
 import { useAuth } from "@/hooks/useAuth";
@@ -23,13 +24,13 @@ export const MENU_SEARCH_MIN_CHARS = 2;
 
 const KIND_WORDS: Record<SearchKind, string> = { account: "Account", contact: "Contact", opportunity: "Opportunity", quote: "Quote" };
 
-/** Where a record opens. An opportunity has no page until CRM-O1.1b, so, as everywhere (D-187), its submission's page opens, or nothing when it has none. */
+/** Where a record opens. An opportunity opens its own page (CRM-O1.1b, D-430, which replaced D-187: its submission's page, or nothing with none); a quote its submission's page. */
 export function hitPath(hit: SearchHit): string | null {
   switch (hit.kind) {
-    case "account": return `/accounts/${hit.id}`;
-    case "contact": return `/contacts/${hit.id}`;
-    case "opportunity": return hit.submissionId ? `/advisor/submissions/${hit.submissionId}` : null;
-    case "quote": return `/advisor/submissions/${hit.submissionId}`;
+    case "account": return accountPath(hit.id);
+    case "contact": return contactPath(hit.id);
+    case "opportunity": return opportunityPath(hit.id);
+    case "quote": return submissionPath(hit.submissionId);
   }
 }
 

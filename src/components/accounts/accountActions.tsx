@@ -17,7 +17,7 @@ import { accountKey } from "./useAccountQueries";
 // provider (a Nevermore support session, an archived account) there are no actions and nothing is drawn for them.
 
 type Open =
-  | { mode: "log"; kind: ActivityType; contactId: string | null }
+  | { mode: "log"; kind: ActivityType; contactId: string | null; opportunityId: string | null }
   | { mode: "edit"; item: ActivityItem }
   | { mode: "add"; item: ActivityItem }
   | { mode: "contact" }
@@ -54,7 +54,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
   }, [queryClient, firmId, accountId, alsoKey]);
   const actions = useMemo<AccountActions>(() => ({
     canAdd,
-    log: (kind, contactId = null) => setOpen({ mode: "log", kind, contactId }),
+    log: (kind, contactId = null, opportunityId = null) => setOpen({ mode: "log", kind, contactId, opportunityId }),
     edit: (item) => setOpen({ mode: "edit", item }),
     addTo: (item) => setOpen({ mode: "add", item }),
     addContact: () => setOpen({ mode: "contact" }),
@@ -76,7 +76,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
       {children}
       {open?.mode === "log" && (
         <LogActivityDialog
-          firmId={firmId} accountId={accountId} accountName={accountName} kind={open.kind} contactId={open.contactId} userId={userId} onClose={close}
+          firmId={firmId} accountId={accountId} accountName={accountName} kind={open.kind} contactId={open.contactId} opportunityId={open.opportunityId} userId={userId} onClose={close}
           onSaved={(logged: Logged | { activity: ActivityItem; followUp: null }) => {
             toast.success(logged.followUp ? `${SAVED_WORDS[logged.activity.type]}, with its follow-up task` : SAVED_WORDS[logged.activity.type]);
             close();
