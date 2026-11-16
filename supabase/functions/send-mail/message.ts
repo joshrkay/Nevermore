@@ -14,6 +14,19 @@ export interface ClaimedMessage {
   message_references: string[];
   sender_id: string | null;
   reply_address: string;
+  /** Its files, each with the link's token issued for this attempt (claim_conversation_mail, D-605). Never kept by the database. */
+  files?: { n: number; file_name: string; token: string }[];
+}
+
+/**
+ * The text that goes: the body as written, then each file with its own link. A file goes as a link, never as an attachment (D-605, ADR 0003); the token
+ * is after `#`, so it is never in a request the host logs (D-645's way out), and the page /f reads it and posts it to message-file.
+ */
+export function bodyWithLinks(m: ClaimedMessage, appBase: string | null): string {
+  const files = m.files ?? [];
+  if (files.length === 0 || !appBase) return m.body_text;
+  const lines = files.map((f) => `${f.file_name}: ${appBase}/f#${f.token}`);
+  return `${m.body_text}\n\nFiles (each link stops working after 30 days):\n${lines.join("\n")}`;
 }
 
 const ENC = new TextEncoder();
@@ -53,7 +66,7 @@ function subjectValue(subject: string): string {
 const list = (addresses: string[]) => addresses.join(",\r\n ");
 
 /** The message's text, ready to send. `replyDomain` is the receiving subdomain the conversation's address is at. */
-export function buildMessage(m: ClaimedMessage, replyDomain: string, now: Date): string {
+export function buildMessage(m: ClaimedMessage, replyDomain: string, now: Date, appBase: string | null = null): string {
   const headers = [
     `From: ${m.from_address}`,
     `To: ${list(m.to_addresses)}`,
@@ -70,7 +83,7 @@ export function buildMessage(m: ClaimedMessage, replyDomain: string, now: Date):
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: base64",
   ];
-  return `${headers.join("\r\n")}\r\n\r\n${bodyLines(m.body_text)}`;
+  return `${headers.join("\r\n")}\r\n\r\n${bodyLines(bodyWithLinks(m, appBase))}`;
 }
 
 /** The message as Gmail's `raw`: base64url, no padding. */

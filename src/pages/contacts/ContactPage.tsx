@@ -5,6 +5,8 @@ import { Archive } from "lucide-react";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { accountKey } from "@/components/accounts/useAccountQueries";
 import { ContactDetailsPanel } from "@/components/contacts/ContactDetails";
+import PlaceToWrite from "@/components/conversations/PlaceToWrite";
+import { contactName } from "@/data/accountPage";
 import { ContactHeader, ContactHeaderLoading } from "@/components/contacts/ContactHeader";
 import { ContactActivity, ContactOpportunities } from "@/components/contacts/ContactPanels";
 import { contactKey, useContactPageQuery } from "@/components/contacts/useContactQueries";
@@ -70,7 +72,15 @@ const ContactPage = () => {
           {firmId && <ContactDetailsPanel key={contact.id} firmId={firmId} contact={contact} canChange={page.canChange} onSaved={saved} />}
           <ContactOpportunities opportunities={page.opportunities} />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-6">
+          {firmId && (
+            <PlaceToWrite
+              key={`emails-${contact.id}`}
+              firmId={firmId}
+              recipient={{ contactId: contact.id, name: contactName(contact), email: contact.email, doNotEmail: contact.doNotEmail, accountId: contact.account.id }}
+              returnTo={`/contacts/${contact.id}`}
+            />
+          )}
           {firmId && <ContactActivity key={contact.id} firmId={firmId} contactId={contact.id} />}
         </div>
       </div>

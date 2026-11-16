@@ -490,6 +490,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "With the account or the lead it is with, and closing a firm (CRM-P1.7) deletes all of them with its other data. No one edits a message once it is recorded. A person who is deleted leaves the messages they wrote, with no writer named.",
   },
   {
+    id: "conversation_files",
+    label: "File links on a firm's mail with its contacts",
+    sensitivity: "restricted",
+    examples: "Each file of an account's own that went with a message to one of its contacts (D-605), as a link, never an attachment: which message and which uploaded document (named, not copied: a census holds employees' personal information), the file's name, when its link was issued and stops working, whether it was revoked, and each time it was downloaded. The link's token is never kept, only a hash of it.",
+    stored: { tables: ["conversation_message_files", "conversation_file_downloads"], buckets: [], elsewhere: ["the message in the writer's Sent folder and the contact's inbox, which holds the link until it stops working"] },
+    retention: "Kept with the message it went with. A link stops working 30 days after the message was sent; the file itself stays with its intake.",
+    deletion: "With the message (its account or contact) and with the document it names (its intake). Closing a firm (CRM-P1.7) deletes them with the firm's other data.",
+  },
+  {
     id: "recent_records",
     label: "The records a person opened last",
     sensitivity: "internal",

@@ -27,6 +27,11 @@ vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@
 const listAccountOwners = vi.fn();
 vi.mock("@/lib/accountCreateApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountCreateApi")), listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
 
+const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn() };
+vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...conversations }));
+const fetchMyMailbox = vi.fn();
+vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), fetchMyMailbox: () => fetchMyMailbox() }));
+
 const { default: ContactPage } = await import("./ContactPage");
 const { ContactError } = await import("@/lib/contactApi");
 
@@ -82,6 +87,10 @@ beforeEach(() => {
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getContactPage.mockResolvedValue(page());
+  for (const fn of [...Object.values(conversations), fetchMyMailbox]) fn.mockReset();
+  conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
+  conversations.listAttachableFiles.mockResolvedValue([]);
+  fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "dana@example.com" });
   serveActivity([call, note, task]);
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
   listAccountOwners.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
@@ -160,6 +169,20 @@ describe("ContactPage: the details", () => {
     renderPage();
     const details = within(await screen.findByRole("region", { name: "Details" }));
     expect(details.getByText("Owner", { selector: "dt" }).nextElementSibling).toHaveTextContent("Not provided");
+  });
+});
+
+describe("ContactPage: the emails", () => {
+  // Catches: a contact's page with no place to write (CRM-E1.2's first criterion), one that writes to another record, or one that comes back elsewhere
+  // after connecting a mailbox (D-650).
+  it("shows the emails with the contact and a place to write, for this contact, coming back here after connecting", async () => {
+    conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: false, lastSendFailed: false } });
+    fetchMyMailbox.mockResolvedValue({ connected: false });
+    renderPage();
+    const emails = await screen.findByRole("region", { name: "Emails" });
+    expect(await within(emails).findByText("No emails yet")).toBeInTheDocument();
+    expect(await within(emails).findByText("Connect your email to write from here")).toBeInTheDocument();
+    expect(conversations.getConversation).toHaveBeenCalledWith("f1", "c1");
   });
 });
 

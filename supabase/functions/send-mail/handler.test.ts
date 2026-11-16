@@ -164,6 +164,32 @@ describe("send-mail: a message through Gmail", () => {
   });
 });
 
+describe("send-mail: files go as links (D-605)", () => {
+  // Break caught: a file sent as an attachment, a link left out of the message, a link with the token where the host's request log keeps it (the path,
+  // D-645), or a message with files that doesn't say its links run out.
+  it("lists each file with its own link, the token after #, and says the links stop working after 30 days; nothing is attached", async () => {
+    const files = [{ n: 1, file_name: "census.xlsx", token: "A".repeat(43) }, { n: 2, file_name: "loss-runs.pdf", token: "b".repeat(43) }];
+    const s = await setup({ env: { ...ENV, APP_BASE_URL: "https://app.nevermore.example" }, claimed: [{ event_id: "e1", attempt: 1, message: { ...MESSAGE, files } }] });
+    expect((await handleSendMailRequest(post(), s.deps)).status).toBe(200);
+    const sent = gmailRaw(s.fetchFn);
+    expect(sent.headers.get("content-type")).toBe("text/plain; charset=UTF-8");
+    expect(decodeBase64Body(sent.body)).toBe(
+      "Hi Lucia,\r\nShall we talk?\r\n\r\nFiles (each link stops working after 30 days):\r\n" +
+      `census.xlsx: https://app.nevermore.example/f#${"A".repeat(43)}\r\nloss-runs.pdf: https://app.nevermore.example/f#${"b".repeat(43)}`,
+    );
+  });
+
+  // Break caught: a message with files sent without its links when the app's address isn't set (the client would get a message promising files and none).
+  it("sends nothing and tries again later when a message has files and the app's address isn't set", async () => {
+    const files = [{ n: 1, file_name: "census.xlsx", token: "A".repeat(43) }];
+    const s = await setup({ claimed: [{ event_id: "e1", attempt: 1, message: { ...MESSAGE, files } }] });
+    expect(await (await handleSendMailRequest(post(), s.deps)).json()).toEqual({ claimed: 1, sent: 0, retrying: 1, failed: 0 });
+    expect(s.fetchFn.mock.calls.some(([url]) => String(url).includes("gmail.googleapis.com"))).toBe(false);
+    expect(s.calls.find(([fn]) => fn === "fail_conversation_mail")?.[1]).toMatchObject({ p_kind: "unavailable", p_retry_in_seconds: 60 });
+    expect(s.logs.join("\n")).toContain("APP_BASE_URL");
+  });
+});
+
 describe("send-mail: the message's other headers", () => {
   // Break caught: a reply that starts a new thread in the client's mail, a thread header on a message that answers none, or a CC dropped.
   it("carries the CC, and In-Reply-To and References only when the writer named the message it answers", async () => {
