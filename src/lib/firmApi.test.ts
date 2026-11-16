@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { fetchFirmName, fetchIsMemberOfFirmAddress, recordFirmSignIn, signUpFirm, fetchWaitingFirms, decideFirm, fetchFirmStates, suspendFirm, liftFirmSuspension, fetchIsMySuspendedFirmAtAddress } = await import("./firmApi");
+const { fetchFirmTakesIntakes, fetchFirmName,fetchIsMemberOfFirmAddress, recordFirmSignIn, signUpFirm, fetchWaitingFirms, decideFirm, fetchFirmStates, suspendFirm, liftFirmSuspension, fetchIsMySuspendedFirmAtAddress } = await import("./firmApi");
 
 describe("asking the database about a firm address", () => {
   beforeEach(() => rpc.mockReset());
@@ -40,6 +40,31 @@ describe("asking the database about a firm address", () => {
       rpc.mockResolvedValue({ data, error: null });
       expect(await fetchIsMemberOfFirmAddress("acme-brokers"), String(data)).toBe(false);
     }
+  });
+});
+
+describe("asking whether a firm's link takes intakes (P-2.1)", () => {
+  beforeEach(() => rpc.mockReset());
+
+  // Break caught: the screens ask the wrong function or the wrong argument, so a refused firm's link still looks open.
+  it("asks firm_takes_intakes for the address and gets its yes", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await fetchFirmTakesIntakes("acme-brokers")).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("firm_takes_intakes", { p_address: "acme-brokers" });
+  });
+
+  // Break caught: a false, an empty or an odd answer is read as a yes, so a link that takes none shows a button to it.
+  it("counts only a plain true as a yes", async () => {
+    for (const data of [false, null, "true", 1]) {
+      rpc.mockResolvedValue({ data, error: null });
+      expect(await fetchFirmTakesIntakes("acme-brokers"), String(data)).toBe(false);
+    }
+  });
+
+  // Break caught: an unreachable database is read as "this link takes none", so a working link shows a refusal instead of letting the caller decide.
+  it("fails, rather than saying the link takes none, when the database can't be reached", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await expect(fetchFirmTakesIntakes("acme-brokers")).rejects.toThrow("Couldn't check this link.");
   });
 });
 

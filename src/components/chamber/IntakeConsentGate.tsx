@@ -1,7 +1,10 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useIntakeConsent } from "@/hooks/useIntakeConsent";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
+import { fetchFirmTakesIntakes } from "@/lib/firmApi";
+import { DRAFT_WORDING_NOTICE, FIRM_SEES_ANSWERS_HEADING, firmSeesAnswersText } from "@/data/legalWording";
 import {
   INTAKE_CONSENT_AGREEMENT,
   INTAKE_CONSENT_IS_DRAFT,
@@ -18,14 +21,30 @@ const primaryButton =
  * refuses a new intake or document without that agreement too; this is what the prospect sees.
  */
 const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
-  const { status, agree, agreeing, agreeError, retry } = useIntakeConsent();
+  const firm = useFirmAddress();
+  const { status, agree, agreeing, agreeError, retry } = useIntakeConsent(firm.status === "known" ? firm.name : null);
   const [checked, setChecked] = useState(false);
   const checkboxId = useId();
   const titleId = useId();
+  // Whether the firm's link takes intakes now (D-1741). Asked only when an agreement is needed: an employer who already has an intake goes on with it.
+  const linkAddress = firm.status === "known" ? firm.address : null;
+  const [linkOpen, setLinkOpen] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (linkAddress === null || status !== "needed") return;
+    let cancelled = false;
+    void fetchFirmTakesIntakes(linkAddress).then(
+      (open) => !cancelled && setLinkOpen(open),
+      // No answer is no refusal: the database refuses a start the link can't take, and the Chamber says so.
+      () => !cancelled && setLinkOpen(true),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [linkAddress, status]);
 
   if (status === "agreed") return <>{children}</>;
 
-  if (status === "checking") {
+  if (status === "checking" || (status === "needed" && linkAddress !== null && linkOpen === null)) {
     return (
       <div className="h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading">
         <Loader2 className="w-6 h-6 text-primary animate-spin" aria-hidden="true" />
@@ -49,12 +68,31 @@ const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
     );
   }
 
+  if (linkOpen === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-6 py-10">
+        <div className="text-center max-w-md w-full">
+          <h1 className="font-display text-xl font-bold mb-3">This link isn't taking new intakes</h1>
+          <p className="text-muted-foreground mb-6">
+            Nothing has been started or saved. Ask the person who sent you the link to check it with you.
+          </p>
+          <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">
+            Back
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-background px-6 py-10 flex justify-center" aria-labelledby={titleId}>
       <div className="w-full max-w-2xl">
         <Link to="/" className="font-display text-sm text-foreground hover:text-primary transition-colors">
           Nevermore
         </Link>
+        {firm.status === "known" && (
+          <p className="text-sm font-semibold text-primary mt-6">You were invited by {firm.name}</p>
+        )}
         <h1 id={titleId} className="font-display text-3xl font-bold mt-6 mb-2">
           Before you start
         </h1>
@@ -74,6 +112,13 @@ const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
               <p className="text-sm text-muted-foreground leading-relaxed">{section.body}</p>
             </section>
           ))}
+          {firm.status === "known" && (
+            <section className="bg-card border border-border rounded-xl p-5">
+              <h2 className="font-display text-lg font-bold mb-2">{FIRM_SEES_ANSWERS_HEADING}</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">{firmSeesAnswersText(firm.name)}</p>
+              <p className="text-xs font-medium text-warning mt-2">{DRAFT_WORDING_NOTICE}</p>
+            </section>
+          )}
         </div>
         <p className="text-sm text-muted-foreground mb-6">
           Read the full{" "}
