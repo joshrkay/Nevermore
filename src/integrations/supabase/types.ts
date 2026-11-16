@@ -1038,6 +1038,29 @@ export type Database = {
         }
         Returns: Json
       }
+      // Writing to a contact or a lead (20261122090000): records the message queued on the record's conversation and answers it
+      // (conversation_message_fields). PT404 a record the caller may not see; PT409 Do not email, no email, a lead in the bin or converted; PT412 no mailbox.
+      send_conversation_message: {
+        Args: {
+          p_contact_id?: string | null
+          p_lead_id?: string | null
+          p_subject?: string | null
+          p_body?: string | null
+          p_cc?: string[] | null
+          p_in_reply_to?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
+      // A contact's or a lead's conversation, newest first: {conversation, messages, mailbox: {connected, last_send_failed}} (20261122090000).
+      conversation_for: {
+        Args: {
+          p_contact_id?: string | null
+          p_lead_id?: string | null
+          p_firm_id?: string | null
+        }
+        Returns: Json
+      }
       // Adding a contact to an account and moving one (20261119170000): add_contact answers {record, previous_main}; move_contact {record, from, to, was_main,
       // activities_moved, opportunity_links_dropped, main_contact_cleared} (PT409 asks for p_confirm); the choices are the accounts it may go to; the context is what the form needs.
       add_contact: {

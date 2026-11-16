@@ -35,6 +35,7 @@ import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
+import { MAIL_ADDRESS_PATTERN } from "../../supabase/functions/_shared/mailAddress";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
@@ -256,6 +257,12 @@ describe("server and client intake rules agree", () => {
     expect(columns).toEqual([...FUNNEL_STEPS]);
     const counted = [...sql.matchAll(/FILTER \(WHERE m\.milestone = '(\w+)'\),?\n/g)].map((m) => m[1]);
     expect(counted).toEqual([...FUNNEL_STEPS]);
+  });
+
+  // CRM-E1.2a (20261122090000): the one address rule. Break caught: the database takes a CC or a person's address that the send-mail
+  // function's message builder then refuses (a message queued that can never go), or the builder puts in a header what the database never checked.
+  it("holds the same address rule in the database and the message builder", () => {
+    expect(quoted(blocks("mail_address_pattern").join("\n"))).toEqual([MAIL_ADDRESS_PATTERN.source]);
   });
 
   it("knows every kind of email the outbox holds, and which of them go to the prospect", () => {

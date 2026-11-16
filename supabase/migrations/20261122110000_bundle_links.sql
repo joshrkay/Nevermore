@@ -397,7 +397,7 @@ REVOKE ALL ON FUNCTION public.intake_stored_files(uuid, uuid) FROM PUBLIC, anon,
 GRANT EXECUTE ON FUNCTION public.intake_stored_files(uuid, uuid) TO service_role;
 
 -- ---------- 9. Kept when a firm closes ----------
--- The closing's one list (20261122100000, slice 6.6a), restated with every line it had, and a link and its files kept: they are a quote request's, and a quote
+-- The closing's one list (20261122100500, slices 6.2 and 6.6a), restated with every line it had, and a link and its files kept: they are a quote request's, and a quote
 -- request is an intake's, which stays with its employer; they are deleted with the intake (section 8).
 CREATE OR REPLACE FUNCTION public.firm_closing_plan()
 RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
@@ -418,6 +418,8 @@ AS $$
     (57, 'public.bulk_changes', 'delete', 'firm_id', 'bulk changes, kept for ten minutes'' undo'),
     (60, 'public.referral_partners', 'delete', 'firm_id', 'referral partners'),
     (58, 'public.activities', 'delete', 'firm_id', 'calls, notes and tasks on the firm''s accounts, contacts and leads; before the opportunities, contacts and accounts they stand on'),
+    (58, 'public.conversation_messages', 'delete', 'firm_id', 'the mail with the firm''s contacts and leads; before the conversations they are on'),
+    (58, 'public.conversations', 'delete', 'firm_id', 'the conversations with the firm''s contacts and leads, their reply addresses with them; before the contacts and leads they are with'),
     (59, 'public.account_labels', 'delete', 'firm_id', 'the labels on the firm''s accounts; before the accounts they stand on'),
     (59, 'public.lead_labels', 'delete', 'firm_id', 'the labels on the firm''s leads; before the leads they stand on'),
     (60, 'public.leads', 'delete', 'firm_id', 'leads, the people and businesses the firm is not quoting yet, the bin with them; after their calls, notes and tasks'),
@@ -447,8 +449,8 @@ AS $$
     (900, 'public.intake_deletions', 'keep', NULL, 'the record that an intake was deleted, kept after it'),
     (900, 'public.intake_lifecycle_events', 'keep', NULL, 'an intake''s'),
     (900, 'public.manuscript_versions', 'keep', NULL, 'an intake''s'),
-    (900, 'public.profiles', 'keep', NULL, 'the employer''s own profile'),
     (900, 'public.peo_authorizations', 'keep', NULL, 'the employer''s own say over which PEOs may receive their packet; an intake''s'),
+    (900, 'public.profiles', 'keep', NULL, 'the employer''s own profile'),
     (900, 'public.bundle_links', 'keep', NULL, 'a quote request''s links to its bundle: they go with the intake, under the intake retention rules'),
     (900, 'public.quote_request_addresses', 'keep', NULL, 'a quote request''s: quote requests belong to an intake'),
     (900, 'public.quote_request_events', 'keep', NULL, 'a quote request''s'),

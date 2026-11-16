@@ -216,7 +216,9 @@
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
 SET client_min_messages = notice;
 
@@ -764,6 +766,12 @@ BEGIN
     INSERT INTO public.leads (firm_id, name, source) VALUES (fid, 'Fixture unowned lead ' || f, 'added_by_hand');
     INSERT INTO public.activities (firm_id, lead_id, kind, body) SELECT fid, l.id, 'note', 'Fixture lead note' FROM public.leads l WHERE l.firm_id = fid AND l.owner_id = agent;
     INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT fid, l.id, b.id FROM public.leads l, public.labels b WHERE l.firm_id = fid AND l.owner_id = agent AND b.firm_id = fid;
+    -- CRM-E1.2a: a conversation with each account's contact, each with one message.
+    INSERT INTO public.conversations (firm_id, contact_id, reply_address)
+    SELECT fid, c.id, 'c.fixture.' || substr(md5(c.id::text), 1, 16) FROM public.contacts c WHERE c.firm_id = fid;
+    INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id)
+    SELECT fid, v.id, 'outbound', 'agent@example.test', ARRAY['c@example.test'], 'Fixture', 'Fixture mail', '<' || v.id || '@example.test>'
+    FROM public.conversations v WHERE v.firm_id = fid;
     -- 6.6b: a bundle link on the firm's quote request (its issue is one more event on the quote request), a file of it in the bucket, and a guess
     -- that missed.
     INSERT INTO public.bundle_links (firm_id, quote_request_id, session_id, version, token_hash, folder, files, expires_at)
@@ -937,6 +945,12 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.leads',                                      '{"agent_b":1}', '{"A":2,"B":2}'),
   ('public.lead_labels',                                '{}', NULL);
+-- ---- CRM-E1.2a: conversations with contacts and leads (20261122090000) ----
+-- Read by the level rule as calls, notes and tasks are (supabase/tests/conversations.sql), written by no API role. Each firm has one with each account's
+-- contact, each with a message: the first firm's members see both, the second's agent the one on the account they own and its owner both.
+INSERT INTO matrix VALUES
+  ('public.conversations',                              '{"agent_b":1}', '{"A":2,"B":2}'),
+  ('public.conversation_messages',                      '{"agent_b":1}', '{"A":2,"B":2}');
 -- ---- 6.6b: the bundle link (20261122110000) ----
 -- Closed to the API, the service role included: issued and revoked through functions, opened by the edge function through two functions
 -- (supabase/tests/bundle_links.sql). A link's files are stored by a firm's member under its own quote request and read by nobody through the API.
@@ -1436,6 +1450,10 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for makes an account of that firm, owned by its maker (or, by the level rule, by someone they may choose: an agent only themselves, a lead their teams, an owner anyone in the firm), source Added by hand; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
   ('create_lead(p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for makes a lead of that firm, owned by its maker (or, by the level rule, by someone they may choose), New and Added by hand (CRM-L1.2a); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, 22023 for a field or an owner the rules refuse'),
+  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, with a connected mailbox, writes to a contact or lead they may see (CRM-E1.2a): the message is recorded queued on the record''s conversation and its id queued on the outbox; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a contact or lead the caller may not see, the same as for one that is not there, PT409 for Do not email, no email, a lead in the bin or converted, PT412 with no mailbox, 22023 for a field the rules refuse'),
+  ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) reads the conversation of a contact or lead they may see, newest first, and whether their own mailbox is connected; PT404 for a record the caller may not see, the same as for one that is not there, 42501 for anyone who is no member of that firm'),
   ('add_contact(p_account_id uuid, p_first_name text, p_last_name text, p_title text, p_email text, p_phone text, p_mobile text, p_owner_id uuid, p_is_main boolean, p_do_not_email boolean, p_firm_id uuid)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the account, adds a contact to it (owned by its maker or, by the level rule, by someone they may choose), taking over as the account''s one main contact when asked; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field or an owner the rules refuse'),
   ('move_contact(p_contact_id uuid, p_to_account_id uuid, p_confirm boolean, p_firm_id uuid)', 'own', NULL,
@@ -1551,7 +1569,10 @@ BEGIN
     format('SELECT count(*) FROM public.intake_stored_files(%L, %L)', sid, pg_temp.id('prospect_a')),
     format('SELECT public.complete_intake_deletion(%L, 0)', nobody),
     format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody),
-    'SELECT public.record_census_template_scan(0, ''failed'', NULL)'
+    'SELECT public.record_census_template_scan(0, ''failed'', NULL)',
+    'SELECT count(*) FROM public.claim_conversation_mail(1, 5, 600)',
+    format('SELECT public.complete_conversation_mail(%L, 1, ''probe'')', nobody),
+    format('SELECT public.fail_conversation_mail(%L, 1, ''refused'', ''probe'', NULL)', nobody)
   ] LOOP
     FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
       PERFORM pg_temp.become(who);
@@ -2057,6 +2078,11 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.create_account('Probe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
   ('create_lead', 'advisor', 'by_id',
    $$SELECT public.create_lead('Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"source": "added_by_hand"'),
+  -- A member with a mailbox records a queued message; one with none stops at it (PT412), past the firm and the record, which is what is probed here.
+  ('send_conversation_message', 'advisor', 'by_id',
+   $$SELECT public.send_conversation_message(p_contact_id => {acontact}, p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"status": "queued"|PT412'),
+  ('conversation_for', 'advisor', 'by_id',
+   $$SELECT jsonb_typeof(public.conversation_for(p_contact_id => {acontact}, p_firm_id => {firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
   ('archive_account', 'advisor', 'by_id', $$SELECT public.archive_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": true'),
   ('restore_account', 'advisor', 'by_id', $$SELECT public.restore_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"changed": false'),
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
@@ -3218,6 +3244,18 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.lead_labels', 'firm', 'its own firm_id, a lead and a label of that firm; closed to the API',
    $m$WITH l AS (INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Lead {tag}') RETURNING id, firm_id) INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT l.firm_id, d.id, l.id FROM l, public.leads d WHERE d.firm_id = {firm} ORDER BY d.created_at, d.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- CRM-E1.2a: conversations with contacts and leads (20261122090000) ----
+-- A conversation is with a contact (or a lead) of its own firm, by a foreign key on the pair; a message is on a conversation of its own firm. Read by level,
+-- so (as for contacts) one member of the second firm legitimately reads none of the probe's rows. Written by no API role.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to, foreign_insert) VALUES
+  ('public.conversations', 'firm', 'its own firm_id, and a contact or lead of that firm; read by the level rule, written by no API role',
+   $m$WITH c AS (INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'conv-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING id, firm_id) INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(c.id::text), 1, 16) FROM c RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(random()::text), 1, 16) FROM public.contacts c WHERE c.firm_id = {firm} LIMIT 1$m$),
+  ('public.conversation_messages', 'firm', 'its own firm_id, and a conversation of that firm; read by whoever reads the conversation, written by no API role',
+   $m$WITH c AS (INSERT INTO public.contacts (firm_id, account_id, last_name, email) SELECT a.firm_id, a.id, 'Probe', 'msg-{tag}@example.test' FROM public.accounts a WHERE a.firm_id = {firm} AND a.owner_id IS NOT NULL ORDER BY a.created_at, a.id LIMIT 1 RETURNING id, firm_id), v AS (INSERT INTO public.conversations (firm_id, contact_id, reply_address) SELECT c.firm_id, c.id, 'c.probe.' || substr(md5(c.id::text), 1, 16) FROM c RETURNING id, firm_id) INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) SELECT v.firm_id, v.id, 'outbound', 'probe@example.test', ARRAY['probe@example.test'], 'Probe', 'Probe', '<' || v.id || '@example.test>' FROM v RETURNING ctid::text$m$, false,
+   'firm_id = {firm}',
+   $m$INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) SELECT v.firm_id, v.id, 'outbound', 'probe@example.test', ARRAY['probe@example.test'], 'Probe', 'Probe', '<' || gen_random_uuid() || '@example.test>' FROM public.conversations v WHERE v.firm_id = {firm} LIMIT 1$m$);
 -- ---- 6.6b: the bundle link (20261122110000) ----
 -- A link: its own firm_id and a quote request of that firm. A link's file: by the quote request its first folder names. Neither is read by any
 -- member through the API, so no positive control; every other caller reads, changes and deletes none, and a non-member stores none.
@@ -3908,6 +3946,12 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('update_account', 'firm_scoped', 'a current member of the firm the call acts for saves an account''s own fields from a version, when the level rule gives it them; refused for another firm''s account as for one that is not there (4e)'),
   ('create_account', 'firm_scoped', 'a current member of the firm the call acts for makes an account of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
   ('create_lead', 'firm_scoped', 'a current member of the firm the call acts for makes a lead of that firm, owned by its maker; refused for anyone who is no member of the firm named (4e)'),
+  ('send_conversation_message', 'firm_scoped', 'a current member of the firm the call acts for writes to a contact or lead of that firm they may see; the same refusal for another firm''s record as for one that does not exist (4e; supabase/tests/conversations.sql)'),
+  ('conversation_for', 'firm_scoped', 'a current member reads the conversation of a contact or lead of that firm they may see; the same refusal for another firm''s record as for one that does not exist (4e)'),
+  ('claim_conversation_mail', 'service_only', 'the send-mail function claims queued messages with what it needs to send them; no API role can call it'),
+  ('complete_conversation_mail', 'service_only', 'the send-mail function records a sent message, for the attempt that holds its claim; no API role can call it'),
+  ('fail_conversation_mail', 'service_only', 'the send-mail function records a failed attempt, retried or final, for the attempt that holds its claim; no API role can call it'),
+  ('conversation_mail_ended', 'trigger', 'a message whose outbox event died by another path (the reaper) is marked failed as uncertain, inside that write; no API role can run it'),
   ('add_contact', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, adds a contact to it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
   ('move_contact', 'firm_scoped', 'a current member of the firm the call acts for moves a contact to another account of that firm by the level rule; another firm''s contact or account is as not there (4e)'),
   ('contact_move_choices', 'firm_scoped', 'the firm''s accounts a contact may be moved to, to a member of that firm who may see the contact (4e)'),
@@ -4235,6 +4279,11 @@ INSERT INTO secret_columns VALUES
 CREATE TEMP TABLE secret_readers (fn text PRIMARY KEY, call text NOT NULL);
 INSERT INTO secret_readers VALUES
   ('my_mailbox()', $$SELECT public.my_mailbox()::text$$),
+  -- CRM-E1.2a: the send reads the caller's own mailbox address, the read whether it is connected; neither returns the token.
+  ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid)',
+   $$SELECT public.send_conversation_message(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} AND c.email IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1), p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm_a})::text$$),
+  ('conversation_for(p_contact_id uuid, p_lead_id uuid, p_firm_id uuid)',
+   $$SELECT public.conversation_for(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} ORDER BY c.created_at, c.id LIMIT 1), p_firm_id => {firm_a})::text$$),
   ('firm_pending_invitations(p_firm_id uuid)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.firm_pending_invitations({firm_a}) f$$),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.invite_member({firm_a}, 'secret-probe@example.test', 'agent', NULL, repeat('b', 64)) f$$),
