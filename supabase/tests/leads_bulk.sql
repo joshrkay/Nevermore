@@ -422,6 +422,16 @@ BEGIN
   PERFORM pg_temp.is(jsonb_array_length(r -> 'skipped'), 0, 'nor named');
   PERFORM pg_temp.is((r ->> 'unavailable')::int, 3, 'it, another firm''s and a made-up id are counted as not available');
   PERFORM pg_temp.is((pg_temp.lead_row('b1')).deleted_at, NULL::timestamptz, 'the unseen lead is not in the bin');
+  -- From mutation: a lead already in the bin, named by its id, is not changed (it is put back by Restore, D-806).
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'status', '{"status":"working"}', NULL, jsonb_build_array(pg_temp.id('a1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'unavailable')::int, 1, 'a lead in the bin is not available');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_preview(pg_temp.id('acme'), 'status', '{"status":"working"}', NULL, jsonb_build_array(pg_temp.id('a1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'will_change')::int, 0, 'nor offered by the preview');
+  PERFORM pg_temp.is((pg_temp.lead_row('a1')).status, 'new', 'and is not changed');
   PERFORM pg_temp.is((pg_temp.lead_row('z1')).deleted_at, NULL::timestamptz, 'nor the other firm''s');
 END $$;
 
@@ -747,6 +757,9 @@ SELECT pg_temp.lead('m1', 'acme', 'acme_agent1', 'Match Co');
 SELECT pg_temp.lead('m2', 'acme', 'acme_agent1', 'Match Co');
 SELECT pg_temp.lead('m3', 'acme', 'acme_agent2', 'Match Co');
 UPDATE public.leads SET state = 'WA' WHERE id IN (pg_temp.id('m1'), pg_temp.id('m2'), pg_temp.id('m3'));
+-- From mutation: a lead the search finds but the filter does not (Oregon) must stay as it is.
+SELECT pg_temp.lead('m4', 'acme', 'acme_agent1', 'Match Co');
+UPDATE public.leads SET state = 'OR' WHERE id = pg_temp.id('m4');
 UPDATE public.leads SET employees = 200 WHERE id = pg_temp.id('m2');
 DO $$
 DECLARE r jsonb;

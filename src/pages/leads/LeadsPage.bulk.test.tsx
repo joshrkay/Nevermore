@@ -100,6 +100,29 @@ describe("the leads' bulk bar (CRM-L1.1b)", () => {
       ["Change owner", "Change status", "Not a fit", "Set a field", "Label", "Delete", "Export", "Clear"]);
   });
 
+  // Catches (ADR 0024, from mutation): Nevermore support offered a change of anything; it keeps Export's line and Clear.
+  it("offers Nevermore support none of the changes", async () => {
+    const user = userEvent.setup();
+    renderAt("/leads", workspace({ isSupport: true }));
+    await selectTwo(user);
+    for (const name of ["Change owner", "Change status", "Not a fit", "Set a field", "Label", "Delete"]) expect(within(bar()!).queryByRole("button", { name })).toBeNull();
+    expect(within(bar()!).getByRole("button", { name: "Clear" })).toBeInTheDocument();
+  });
+
+  // Catches (CRM-S3.6, from mutation): "Select all N that match" sent as the page's ids, so the change misses every lead on the other pages.
+  it("sends the table's filters, not ids, for all that match", async () => {
+    const user = userEvent.setup();
+    listLeads.mockResolvedValue({ rows, total: 120 });
+    bulk.previewLeadsBulk.mockResolvedValue(outcome({ selected: 120, changed: 120 }));
+    renderAt("/leads?q=reyes");
+    await screen.findByText("Ana Solis");
+    await user.click(screen.getByRole("checkbox", { name: /Select all|select the page/i }));
+    await user.click(await screen.findByRole("button", { name: "Select all 120 that match" }));
+    await user.click(within(bar()!).getByRole("button", { name: "Delete" }));
+    await screen.findByRole("dialog", { name: "Delete 120 leads?" });
+    expect(bulk.previewLeadsBulk.mock.lastCall![2]).toEqual({ filters: expect.objectContaining({ filters: [], time_zone: "America/Los_Angeles" }) });
+  });
+
   // Catches (CRM-L1.1): a delete made without asking, a question that does not name the count, or no word of the bin and its 30 days.
   it("asks before deleting, naming the count, then moves them to the bin and says so", async () => {
     const user = userEvent.setup();
