@@ -19,8 +19,9 @@ BEGIN
     (SELECT string_agg(quote_literal(x), ', ' ORDER BY x) FROM unnest(names) x));
 END $$;
 
--- 2. Who may read a record's history, and whether its record still exists: main's renewals and placements (20261120110000) with this line's
--- leads (20261121090000).
+-- 2. Who may read a record's history, and whether its record still exists: main's renewals and placements (20261120110000) and commission
+-- payments (20261120121000, which spliced its branch into the definition it found) with this line's leads (20261121090000). Leaving the
+-- payments branch out made record_exists answer "still there" for a deleted payment, so deleting one was refused (42501).
 CREATE OR REPLACE FUNCTION public.record_history_can_see(p_firm_id uuid, p_table public.record_history_table, p_key text)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -53,6 +54,10 @@ BEGIN
     RETURN EXISTS (
       SELECT 1 FROM public.placements l JOIN public.accounts a ON a.id = l.account_id
       WHERE l.firm_id = p_firm_id AND l.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
+  ELSIF p_table = 'commission_payments' THEN
+    RETURN EXISTS (
+      SELECT 1 FROM public.commission_payments p JOIN public.accounts a ON a.id = p.account_id
+      WHERE p.firm_id = p_firm_id AND p.id = public.record_history_key_uuid(p_key) AND public.can_see_firm_record(a.firm_id, a.owner_id));
   ELSIF p_table = 'leads' THEN
     RETURN EXISTS (
       SELECT 1 FROM public.leads l
@@ -83,6 +88,8 @@ BEGIN
     RETURN EXISTS (SELECT 1 FROM public.renewals r WHERE r.firm_id = p_firm_id AND r.id = public.record_history_key_uuid(p_key));
   ELSIF p_table = 'placements' THEN
     RETURN EXISTS (SELECT 1 FROM public.placements l WHERE l.firm_id = p_firm_id AND l.id = public.record_history_key_uuid(p_key));
+  ELSIF p_table = 'commission_payments' THEN
+    RETURN EXISTS (SELECT 1 FROM public.commission_payments p WHERE p.firm_id = p_firm_id AND p.id = public.record_history_key_uuid(p_key));
   ELSIF p_table = 'leads' THEN
     RETURN EXISTS (SELECT 1 FROM public.leads l WHERE l.firm_id = p_firm_id AND l.id = public.record_history_key_uuid(p_key));
   END IF;
@@ -181,7 +188,8 @@ END;
 $function$;
 
 
--- 4. What closing a firm does: this line's newest (20261122200000) with main's renewals, placements and merged records (20261121100000).
+-- 4. What closing a firm does: this line's newest (20261122200000) with main's renewals, placements, commission payments (20261120121000, which
+-- spliced its line into the plan it found) and merged records (20261121100000).
 CREATE OR REPLACE FUNCTION public.firm_closing_plan()
 RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
 LANGUAGE sql
@@ -200,6 +208,7 @@ AS $$
     (56, 'public.bulk_change_records', 'delete', 'firm_id', 'what each bulk change did to each record, kept for ten minutes'' undo'),
     (57, 'public.bulk_changes', 'delete', 'firm_id', 'bulk changes, kept for ten minutes'' undo'),
     (60, 'public.referral_partners', 'delete', 'firm_id', 'referral partners'),
+    (54, 'public.commission_payments', 'delete', 'firm_id', 'commission payments (what the firm received for its placements); before the placements and accounts they stand on'),
     (56, 'public.renewals', 'delete', 'firm_id', 'renewals (the dates an account''s cover comes up); before the placements they come from and the opportunities working them'),
     (57, 'public.placements', 'delete', 'firm_id', 'placements (what the firm placed for its accounts); before the opportunities and accounts they stand on'),
     (57, 'public.merged_records', 'delete', 'firm_id', 'where each merged-away account or contact went, so its old address led to the kept one'),

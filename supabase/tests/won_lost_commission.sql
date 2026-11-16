@@ -1494,6 +1494,10 @@ BEGIN
   PERFORM pg_temp.is((SELECT close_reason FROM public.quote_requests WHERE id = q), 'went_elsewhere', 'a quote the win closed says why');
   PERFORM pg_temp.reopen('acme_agent1', 'o_crq1');
   PERFORM pg_temp.is((SELECT close_reason FROM public.quote_requests WHERE id = q), 'went_elsewhere', 'a reopening leaves it closed, with its reason');
+  -- Since slice 6.6a (M-1.1, D-623) a send needs the employer's authorization of that PEO: the employer's say is recorded as the superuser, as 6.6a's own tests do.
+  INSERT INTO public.peo_authorizations (session_id, peo_id, peo_name, authorized, wording_version, wording_text, signed_by)
+  SELECT s.id, p.id, 'TriNet', true, 'draft-1', 'I authorize this PEO to receive my packet.', s.user_id
+  FROM public.chamber_sessions s, public.peos p WHERE s.id = pg_temp.id('crq1') AND lower(p.name) = 'trinet';
   PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
   PERFORM public.advisor_record_quote_send(pg_temp.id('crq1'), 'TriNet', NULL);
   PERFORM pg_temp.as_owner();
@@ -1512,7 +1516,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT p.ord < (SELECT p2.ord FROM public.firm_closing_plan() p2 WHERE p2.src = 'public.placements') FROM public.firm_closing_plan() p WHERE p.src = 'public.commission_payments'), true, 'before the placements they stand on');
   PERFORM pg_temp.is((SELECT p.ord < (SELECT p2.ord FROM public.firm_closing_plan() p2 WHERE p2.src = 'public.accounts') FROM public.firm_closing_plan() p WHERE p.src = 'public.commission_payments'), true, 'and the accounts');
   PERFORM pg_temp.is((SELECT p.firm_column FROM public.firm_closing_plan() p WHERE p.src = 'public.commission_payments'), 'firm_id', 'by the firm');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'every table it kept is kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 39::bigint, 'every table it kept is kept (the 34 main kept and the five of 6.x)');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() p WHERE p.action = 'delete' AND p.src IN ('public.labels', 'public.account_labels', 'public.bulk_changes', 'public.bulk_change_records', 'public.recent_records',
     'public.activities', 'public.renewals', 'public.placements', 'public.accounts', 'public.contacts', 'public.opportunities', 'public.record_history', 'public.referral_partners', 'public.saved_views')), 14::bigint,
     'and every delete line it had, with these');
@@ -1520,7 +1524,7 @@ BEGIN
   -- the history domain still knows every table it knew
   PERFORM pg_temp.is((SELECT string_agg(m[1], ',' ORDER BY m[1]) FROM pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z_]+)''', 'g') AS m
                       WHERE c.contypid = 'public.record_history_table'::regtype AND c.conname = 'record_history_table_known'),
-    'accounts,commission_payments,contacts,opportunities,placements,referral_partners,renewals', 'the history domain holds every table it had, and the payments');
+    'accounts,commission_payments,contacts,leads,opportunities,placements,referral_partners,renewals', 'the history domain holds every table it had, and the payments (and leads, from 6.x)');
   -- running the three patches a second time changes nothing
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src = 'public.commission_payments'), 1::bigint, 'one line');
 END $$;

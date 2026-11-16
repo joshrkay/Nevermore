@@ -1647,6 +1647,18 @@ INSERT INTO callable VALUES
    'the same for deleting a payment from a version; refused as record_commission_payment is'),
   ('set_placement_commission(p_placement_id uuid, p_firm_id uuid, p_version integer, p_basis text, p_rate numeric, p_expected_yearly numeric)', 'own', NULL,
    'a current member of the firm adds, changes or clears the commission a placement expects, when the level rule gives them its opportunity, from a version; refused as record_commission_payment is, and conflict-shaped for a stale version');
+-- CRM-S4.3b (20261121100000_merge_records.sql; supabase/tests/merge_records.sql): merging accounts and contacts, keeping two separate, and the old address of a merged-away record.
+INSERT INTO callable VALUES
+  ('merge_preview(p_firm_id uuid, p_kind text, p_kept_id uuid, p_removed_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see both records, reads them side by side with the fields that differ, what would move and, in words, why they may not merge them; 42501 for anyone who is no member of that firm, PT404 for a record the caller may not see, the same as for one that is not there'),
+  ('merge_accounts(p_kept_id uuid, p_removed_id uuid, p_choices jsonb, p_kept_version integer, p_removed_version integer, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may change both accounts by the level rule, merges two accounts of that firm into the kept one; 42501 for anyone who is no member of that firm or may not change both, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('merge_contacts(p_kept_id uuid, p_removed_id uuid, p_choices jsonb, p_kept_version integer, p_removed_version integer, p_firm_id uuid)', 'own', NULL,
+   'the same for two contacts of one account; 22023 for two contacts of two accounts; 42501 for anyone who is no member of that firm or may not change both, PT423 for a closing firm and a support session, PT404 for a contact the caller may not see, the same as for one that is not there'),
+  ('account_keep_separate(p_account_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may change an account by the level rule, clears its possible-duplicate mark; 42501 for anyone who is no member of that firm or may not change it, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
+  ('resolve_merged_record(p_firm_id uuid, p_kind text, p_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for is led from the old address of a merged-away account or contact to the record it became, when they may see that record; NULL for anyone else, the same as for an address that was never merged; 42501 for anyone who is no member of that firm');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2414,7 +2426,8 @@ BEGIN
       (f, 'rdel', (SELECT x.id::text FROM public.renewals x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'current_plan' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
       (f, 'opp', (SELECT o.id::text FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id WHERE o.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1)),
       (f, 'plc', (SELECT x.id::text FROM public.placements x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
-      (f, 'pay', (SELECT x.id::text FROM public.commission_payments x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY x.created_at, x.id LIMIT 1));
+      (f, 'pay', (SELECT x.id::text FROM public.commission_payments x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY x.created_at, x.id LIMIT 1)),
+      (f, 'merged', (SELECT m.removed_id::text FROM public.merged_records m WHERE m.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) ORDER BY m.merged_at, m.removed_id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2632,7 +2645,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg|rnw|rdel|opp|plc|pay)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg|rnw|rdel|opp|plc|pay|merged)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;

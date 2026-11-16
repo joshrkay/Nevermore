@@ -673,14 +673,15 @@ BEGIN
   PERFORM pg_temp.sent(n, 'Justworks');
 END $$;
 
--- ---------- 19. Marking a submission Lost revokes the link of every PEO it closes, with no withdrawal sent (the advisor skipped it) ----------
--- Catches: a lost submission whose PEOs can still open the employer's packet because nobody wrote to them.
+-- ---------- 19. Archiving a submission revokes the link of every PEO it closes, with no withdrawal sent (the advisor skipped it) ----------
+-- D-1717: Won and Lost on an opportunity are marked on the opportunity (D-470), so the skipped-offer case is shown with Archived, which set_submission_status still allows.
+-- Catches: an archived submission whose PEOs can still open the employer's packet because nobody wrote to them.
 DO $$
 BEGIN
   PERFORM pg_temp.sent_intake('bay', 'Bay Cafe');
   PERFORM pg_temp.fmove('bay', 'quoted');
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM public.set_submission_status(pg_temp.id('bay'), 'lost');
+  PERFORM public.set_submission_status(pg_temp.id('bay'), 'archived');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::integer FROM public.bundle_links WHERE session_id = pg_temp.id('bay') AND revoked_at IS NULL), 0, 'no live link is left');
   PERFORM pg_temp.is((SELECT array_agg(DISTINCT revoked_reason) FROM public.bundle_links WHERE session_id = pg_temp.id('bay')), ARRAY['submission_closed'],
@@ -689,7 +690,7 @@ BEGIN
     'and nothing is sent');
 END $$;
 
--- ---------- 20. Marking it Won with the withdrawal: one message, written once, queued on the thread of each PEO still open, never the winner's ----------
+-- ---------- 20. Archiving a won search with the withdrawal (D-1717): one message, written once, queued on the thread of each PEO still open, never the winner's ----------
 -- Catches: a closing withdrawal sent to the PEO the employer chose, one that starts a new thread, one with a link, or a PEO still open left untold.
 DO $$
 DECLARE r jsonb; jw bigint; ins bigint; m public.quote_request_messages; first public.quote_request_messages;
@@ -698,11 +699,15 @@ BEGIN
   jw := pg_temp.qr('cove', 'Justworks'); ins := pg_temp.qr('cove', 'Insperity');
   UPDATE public.quote_requests SET status = 'quoted' WHERE id = jw;
   PERFORM pg_temp.fmove('cove', 'quoted');
+  -- D-470: Won is marked on the opportunity, so here the search was won there (the winner is the submission's, as opportunity_mark_won leaves it) and the advisor now
+  -- archives it (D-471, archived straight from Won), which set_submission_status still does and which closes the PEOs still open and tells each one.
+  UPDATE public.submission_workflow SET status = 'won', won_quote_request_id = jw WHERE session_id = pg_temp.id('cove');
   SELECT * INTO first FROM public.quote_request_messages WHERE quote_request_id = ins AND direction = 'sent';
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  r := public.close_submission_and_withdraw(pg_temp.id('cove'), 'won', NULL, jw, 'Cove Dental', 'Thank you for quoting Cove Dental; they have chosen another PEO.');
+  r := public.close_submission_and_withdraw(pg_temp.id('cove'), 'archived', NULL, jw, 'Cove Dental', 'Thank you for quoting Cove Dental; they have chosen another PEO.');
   PERFORM pg_temp.as_owner();
-  PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('cove')), 'won', 'the submission is won');
+  PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('cove')), 'archived', 'the submission is archived, with its winner kept');
+  PERFORM pg_temp.is((SELECT won_quote_request_id FROM public.submission_workflow WHERE session_id = pg_temp.id('cove')), jw, 'and the winner is still named');
   PERFORM pg_temp.is((SELECT count(*)::integer FROM public.quote_request_messages WHERE quote_request_id = jw AND status = 'queued'), 0, 'nothing to the winner');
   SELECT * INTO m FROM public.quote_request_messages WHERE quote_request_id = ins AND status = 'queued';
   PERFORM pg_temp.is(m.body_text, 'Thank you for quoting Cove Dental; they have chosen another PEO.', 'the one note, as written');
@@ -714,6 +719,30 @@ BEGIN
   PERFORM pg_temp.is(r -> 'message_ids', jsonb_build_array(m.id), 'and it answers the messages it queued');
 END $$;
 
+-- ---------- 20b. Won or Lost on an opportunity is refused, and then nothing moves and nothing is sent (D-470, D-1717) ----------
+-- Catches: close_submission_and_withdraw moving a submission to Won or Lost around its opportunity (no placement, no renewal, no commission, no lost reason),
+-- or queuing the withdrawals of a move that was refused. Those are done on the opportunity's won/lost dialog (Epic 5, slice 5.0b), which then sends them.
+DO $$
+DECLARE jw bigint; before integer;
+BEGIN
+  PERFORM pg_temp.sent_intake('fern', 'Fern Bakery');
+  jw := pg_temp.qr('fern', 'Justworks');
+  UPDATE public.quote_requests SET status = 'quoted' WHERE id = jw;
+  PERFORM pg_temp.fmove('fern', 'quoted');
+  PERFORM pg_temp.is((SELECT count(*)::integer FROM public.opportunities WHERE intake_id = pg_temp.id('fern')), 1, 'the submission sits on an opportunity');
+  before := (SELECT count(*) FROM public.quote_request_messages);
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.close_submission_and_withdraw(%L, 'won', NULL, %s, 'S', 'Thank you.')$s$, pg_temp.id('fern'), jw)),
+    '22023: Mark it won or lost on its opportunity', 'won is refused');
+  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.close_submission_and_withdraw(%L, 'lost', NULL, NULL, 'S', 'Thank you.')$s$, pg_temp.id('fern'))),
+    '22023: Mark it won or lost on its opportunity', 'and so is lost');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('fern')), 'quoted', 'the submission did not move');
+  PERFORM pg_temp.is((SELECT count(*)::integer FROM public.quote_request_messages), before, 'no withdrawal was queued');
+  PERFORM pg_temp.is((SELECT count(*)::integer FROM public.bundle_links WHERE session_id = pg_temp.id('fern') AND revoked_at IS NULL), 2, 'and no link was revoked');
+  PERFORM pg_temp.is((SELECT count(*)::integer FROM public.quote_requests WHERE session_id = pg_temp.id('fern') AND status = 'closed'), 0, 'or quote request closed');
+END $$;
+
 -- ---------- 21. With no connected mailbox the closing withdrawal is refused, and then nothing moves (D-634) ----------
 -- Catches: a submission marked Lost while the withdrawal the advisor wrote is dropped (no From), so the PEOs are never told.
 DO $$
@@ -723,7 +752,7 @@ BEGIN
   PERFORM pg_temp.fmove('dune', 'quoted');
   before := (SELECT count(*) FROM public.quote_request_messages);
   PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.close_submission_and_withdraw(%L, 'lost', NULL, NULL, 'S', 'N')$s$, pg_temp.id('dune'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.close_submission_and_withdraw(%L, 'archived', NULL, NULL, 'S', 'N')$s$, pg_temp.id('dune'))),
     'PT412: Connect your mailbox to send from here.', 'no mailbox');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('dune')), 'quoted', 'the submission did not move');
@@ -735,7 +764,7 @@ END $$;
 DO $$
 BEGIN
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.close_submission_and_withdraw(%L, 'lost', NULL, NULL, E'S\nBcc: eve@evil.example', 'N')$s$, pg_temp.id('dune'))),
+  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.close_submission_and_withdraw(%L, 'archived', NULL, NULL, E'S\nBcc: eve@evil.example', 'N')$s$, pg_temp.id('dune'))),
     '22023: A subject is one line.', 'a subject of two lines');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('dune')), 'quoted', 'the submission did not move');

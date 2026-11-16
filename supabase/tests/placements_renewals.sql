@@ -801,7 +801,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.renewals') < (SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.placements'), true, 'the renewals first');
   PERFORM pg_temp.is((SELECT ord FROM public.firm_closing_plan() WHERE src = 'public.placements') < (SELECT min(ord) FROM public.firm_closing_plan() WHERE src IN ('public.opportunities', 'public.contacts', 'public.accounts')), true, 'both before the records they stand on');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE src IN ('public.accounts', 'public.contacts', 'public.opportunities', 'public.activities', 'public.record_history', 'public.referral_partners')), 6::bigint, 'and every line it had is kept');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'with every kept table');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 39::bigint, 'with every kept table (the 34 main kept, and this line''s five: bundle_links, the bundle-links bucket, peo_authorizations, peo_registrations and the contact-mail bucket)');
 END $$;
 
 
@@ -1404,7 +1404,7 @@ BEGIN
                                                               'public.activities', 'public.renewals', 'public.placements', 'public.accounts', 'public.contacts', 'public.opportunities')),
     ARRAY['public.account_labels', 'public.accounts', 'public.activities', 'public.bulk_change_records', 'public.bulk_changes', 'public.contacts', 'public.labels',
           'public.opportunities', 'public.placements', 'public.recent_records', 'public.renewals'], 'the closing plan deletes the five tables Epic 3 added beside the three records and these two');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 34::bigint, 'and keeps every table it kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() WHERE action = 'keep'), 39::bigint, 'and keeps every table it kept (and the five this line added)');
   PERFORM pg_temp.is((SELECT count(*) FROM public.firm_closing_plan() p WHERE p.action = 'delete' AND p.src IN ('public.renewals', 'public.placements')), 2::bigint, 'each line once');
 END $$;
 
