@@ -185,7 +185,7 @@ describe("send-mail: files go as links (D-605)", () => {
   // Break caught: a message with files sent without its links when the app's address isn't set (the client would get a message promising files and none).
   it("sends nothing and tries again later when a message has files and the app's address isn't set", async () => {
     const files = [{ n: 1, file_name: "census.xlsx", token: "A".repeat(43) }];
-    const s = await setup({ claimed: [{ event_id: "e1", attempt: 1, message: { ...MESSAGE, files } }] });
+    const s = await setup({ env: { ...ENV, APP_BASE_URL: undefined }, claimed: [{ event_id: "e1", attempt: 1, message: { ...MESSAGE, files } }] });
     expect(await (await handleSendMailRequest(post(), s.deps)).json()).toEqual({ claimed: 1, sent: 0, retrying: 1, failed: 0 });
     expect(s.fetchFn.mock.calls.some(([url]) => String(url).includes("gmail.googleapis.com"))).toBe(false);
     expect(s.calls.find(([fn]) => fn === "fail_conversation_mail")?.[1]).toMatchObject({ p_kind: "unavailable", p_retry_in_seconds: 60 });
