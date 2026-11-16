@@ -207,6 +207,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

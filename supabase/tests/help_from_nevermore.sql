@@ -208,6 +208,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -573,6 +574,7 @@ BEGIN
     ('add a sender as a contact', format($q$SELECT public.add_sender_as_contact(%L, 'A', 'B', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), support_msg),
     ('change accounts in bulk', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
     ('change leads in bulk', format($q$SELECT public.bulk_leads_change(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), support_msg),
+    ('change quotes in bulk', format($q$SELECT public.bulk_quotes_change(%L, 'close', '{"reason":"other"}', NULL, '["q1"]')$q$, fa), support_msg),
     ('restore leads from the bin', format($q$SELECT public.restore_leads(%L, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), support_msg),
     ('preview a bulk change', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), support_msg),
     ('undo a bulk change', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), support_msg),
@@ -1134,7 +1136,7 @@ DECLARE
     'intake_folder_firm_read_only', 'intake_folder_in_my_firm', 'intake_in_my_firm', 'intake_owner_in_my_firm', 'quote_request_in_my_firm',
     'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session',
     'bundle_link_folder_in_my_firm', 'bundle_link_folder_read_only'];
-  reads text[] := ARRAY['opportunity_create_context', 'opportunity_outcome', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
+  reads text[] := ARRAY['opportunity_create_context', 'opportunity_outcome', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'quotes_list', 'quotes_view_counts', 'inbox_list', 'inbox_view_counts', 'conversation_for', 'conversation_files_for', 'account_conversation_messages', 'peo_authorization_states', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'opportunity_page', 'opportunity_activity', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check', 'lead_page', 'lead_activity', 'lead_activity_options', 'lead_convert_context',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin'];
@@ -1147,7 +1149,7 @@ DECLARE
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'convert_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
     'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo',
     'close_submission_and_withdraw', 'opportunity_mark_won_and_withdraw', 'opportunity_mark_lost_and_withdraw', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate',
-    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads'];
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'bulk_leads_change', 'bulk_quotes_change', 'bulk_leads_preview', 'bulk_leads_undo', 'restore_leads'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1224,7 +1226,7 @@ DECLARE
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
     'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw', 'opportunity_mark_won_and_withdraw', 'opportunity_mark_lost_and_withdraw',
-    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads'];
+    'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission', 'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_quotes_change', 'bulk_leads_undo', 'restore_leads'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s, open to every admin with or without a session; the PEO list is the same for every firm',
