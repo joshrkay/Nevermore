@@ -760,6 +760,64 @@ BEGIN
   PERFORM pg_temp.as_owner();
 END $$;
 
+-- ---------- 23. Working's date is when it became Working, not a later change of status (from mutation) ----------
+-- Catches: the status bar's Working dated by the lead's last status change of any kind (here, becoming Not a fit after it).
+DO $$
+DECLARE r jsonb; worked timestamptz;
+BEGIN
+  PERFORM pg_temp.lead('later', 'acme', 'acme_agent1');
+  PERFORM pg_temp.claims_of('acme_agent1');
+  UPDATE public.leads SET status = 'working' WHERE id = pg_temp.id('later');
+  SELECT max(at) INTO worked FROM public.record_history WHERE record_key = pg_temp.id('later')::text AND field = 'status';
+  UPDATE public.leads SET status = 'not_fit', not_fit_reason = 'other' WHERE id = pg_temp.id('later');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.lead_page(pg_temp.id('acme'), pg_temp.id('later')) -> 'stages';
+  PERFORM pg_temp.is((r ->> 'working')::timestamptz, worked, 'Working began when it became Working');
+  PERFORM pg_temp.is((r ->> 'not_fit')::timestamptz > worked, true, 'Not a fit began after');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- 24. A converted lead links only to what the caller may see (from mutation) ----------
+-- Catches: the banner naming an account (and its contact and opportunity) that the level rule hides from the lead's owner, after the account changed hands.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.lead('handed', 'acme', 'acme_agent1', 'Handed Co');
+  PERFORM pg_temp.account('handed_acc', 'acme', 'acme_agent3', 'Handed Co');
+  PERFORM pg_temp.contact('handed_c', 'handed_acc', 'acme_agent3', 'h@example.test');
+  PERFORM pg_temp.opportunity('handed_o', 'handed_acc', 'acme_agent3');
+  UPDATE public.leads SET status = 'converted', converted_at = now(), converted_account_id = pg_temp.id('handed_acc'), converted_contact_id = pg_temp.id('handed_c'),
+    converted_opportunity_id = pg_temp.id('handed_o') WHERE id = pg_temp.id('handed');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.lead_page(pg_temp.id('acme'), pg_temp.id('handed')) -> 'converted';
+  PERFORM pg_temp.is(r, '{"account": null, "contact": null, "opportunity": null}'::jsonb, 'nothing named the caller may not see');
+  PERFORM pg_temp.as_user('acme_agent3', 'acme-brokers');
+  PERFORM pg_temp.is(public.lead_page(pg_temp.id('acme'), pg_temp.id('handed')), NULL, 'and the account''s owner does not see the lead');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- 25. A lead's rows are as hidden as the lead, and changed by its level rule (from mutation) ----------
+-- Catches: another agent changing, adding to or closing the calls, notes and tasks of a lead they may not see; or a lead's owner refused a call someone
+-- else logged on it (the level rule gives the owner every row on their lead, as an account's owner has every row on the account).
+DO $$
+DECLARE call_id uuid; note_id uuid; task_id uuid; r jsonb;
+BEGIN
+  SELECT id INTO call_id FROM public.activities WHERE lead_id = pg_temp.id('calls') AND kind = 'call';
+  SELECT id INTO note_id FROM public.activities WHERE lead_id = pg_temp.id('calls') AND kind = 'note';
+  SELECT id INTO task_id FROM public.activities WHERE lead_id = pg_temp.id('calls') AND kind = 'task' ORDER BY created_at LIMIT 1;
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.update_activity(p_activity_id => %L, p_outcome => 'spoke')$q$, call_id)), ':', 1), 'PT404', 'another agent changes no call of the lead');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.add_to_note(%L, 'x')$q$, note_id)), ':', 1), 'PT404', 'nor adds to its note');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.set_task_done(%L, false)$q$, task_id)), ':', 1), 'PT404', 'nor opens its task');
+  PERFORM pg_temp.as_owner();
+  INSERT INTO public.activities (firm_id, lead_id, kind, author_id, outcome) VALUES (pg_temp.id('acme'), pg_temp.id('calls'), 'call', pg_temp.id('acme_owner'), 'no_answer')
+  RETURNING id INTO call_id;
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.update_activity(p_activity_id => call_id, p_outcome => 'spoke', p_body => 'Called back');
+  PERFORM pg_temp.is(r ->> 'body', 'Called back', 'the lead''s owner changes a call someone else logged on it');
+  PERFORM pg_temp.as_owner();
+END $$;
+
 -- ---------- Z. A Nevermore support session and a closing firm read and change nothing (ADR 0023, ADR 0024) ----------
 -- Catches: a write of the page that skips the one write guard (assert_firm_writable). Last: the firm is left closing.
 DO $$

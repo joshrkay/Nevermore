@@ -5,11 +5,12 @@ import { toast } from "sonner";
 import PlaceToWrite from "@/components/conversations/PlaceToWrite";
 import { LeadDetailsPanel } from "@/components/leads/LeadDetails";
 import { LeadActionsProvider } from "@/components/leads/leadActions";
-import { LeadHeader } from "@/components/leads/LeadHeader";
+import { LeadHeader, LeadHeaderLoading } from "@/components/leads/LeadHeader";
 import { ConvertedBanner, ConvertingMakes, LeadActivity, NotFitBanner } from "@/components/leads/LeadPanels";
 import { LeadStatusBar } from "@/components/leads/LeadStatusBar";
 import { NotFitDialog } from "@/components/leads/NotFitDialog";
 import { leadKey, useLeadPageQuery } from "@/components/leads/useLeadQueries";
+import { LoadFailed, NotAvailable, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
 import { useAuth } from "@/hooks/useAuth";
 import { ContactError } from "@/lib/contactApi";
@@ -26,6 +27,9 @@ const LeadPage = () => {
   const firmId = firm?.id ?? null;
   const queryClient = useQueryClient();
   const query = useLeadPageQuery(firmId, id);
+  const retry = useCallback(() => void query.refetch(), [query]);
+  const waiting = firmId === null || (query.data === undefined && !query.isError);
+  const slow = useSlowLoad(waiting, retry);
   const [markingNotFit, setMarkingNotFit] = useState(false);
   const [reopening, setReopening] = useState(false);
 
@@ -48,8 +52,17 @@ const LeadPage = () => {
     setReopening(false);
   };
 
+  // Only the answer for this address is drawn: what is held for another lead (or firm) is not shown under it.
+  const answered = query.data === null || query.data === undefined || query.data.lead.id === id;
+  if (waiting || !answered) return <Frame><LeadLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;
+  if (query.isError && query.data === undefined) {
+    // An address whose id is no id at all (the database refuses it, 22P02) is a lead that isn't there, not a load that could work next time.
+    if ((query.error as { code?: string }).code === "22P02") return <Frame><NotAvailable noun="lead" backTo="/leads" backLabel="Back to all leads" /></Frame>;
+    return <Frame><LoadFailed error={query.error as Error} what="this lead" onRetry={retry} /></Frame>;
+  }
   const page = query.data;
-  if (!page) return <Frame>{null}</Frame>;
+  // The same answer for a lead that is gone, another firm's, or one the person's level does not reach.
+  if (!page) return <Frame><NotAvailable noun="lead" backTo="/leads" backLabel="Back to all leads" /></Frame>;
   const { lead } = page;
   // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024).
   const canAct = firmId !== null && !isSupport;
@@ -111,6 +124,24 @@ const Frame = ({ children }: { children: React.ReactNode }) => (
   <div className="bg-background">
     <main className="container mx-auto px-6 py-8">{children}</main>
   </div>
+);
+
+/** What the page shows while the lead is on its way (CRM-L2.1's Loading state): the header, and the panels each under its own heading with grey lines. */
+const LeadLoading = ({ slow, onTryAgain }: { slow: boolean; onTryAgain: () => void }) => (
+  <RecordLoading name="lead">
+    <LeadHeaderLoading />
+    <SlowLoadLine loading slow={slow} onTryAgain={onTryAgain} />
+    <div className="grid gap-6 lg:grid-cols-[22rem_minmax(0,1fr)] items-start">
+      <div className="space-y-6">
+        <PlaceholderPanel heading="Details"><PlaceholderLines count={8} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Converting makes"><PlaceholderLines count={3} /></PlaceholderPanel>
+      </div>
+      <div className="space-y-6">
+        <PlaceholderPanel heading="Emails"><PlaceholderLines count={3} /></PlaceholderPanel>
+        <PlaceholderPanel heading="Calls, notes and tasks"><PlaceholderLines count={4} /></PlaceholderPanel>
+      </div>
+    </div>
+  </RecordLoading>
 );
 
 export default LeadPage;

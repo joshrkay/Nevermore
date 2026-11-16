@@ -43,3 +43,14 @@ The `tdd` skill was the first tool call. One test, seen red, then only its code,
 | 36 | LeadPage.test: No emails yet and the place to write writes to the lead | `Unable to find role="region" and name "Emails"` | green |
 | 37 | brokerAuth.test: connecting a mailbox from a lead's page comes back to the lead | `/leads/5f1c...: expected '/advisor' to be '/leads/5f1c...'` | green |
 | 38 | seo.guard.test: the route /leads/:id has its own title | `/leads/:id: expected 'Page not found \| Nevermore' not to be ...` | green |
+| 39 | LeadsPage.test: each lead's name links to its page | `Unable to find role="link" and name "Lucia Reyes"` | green |
+| 40 | InboxPage.test: a lead's message opens the lead's page | `Unable to find an element with the text: A lead's page, /leads/l5` | green |
+| 41 | LeadPage.test: the Loading state: the header and each panel's heading with grey lines | `Unable to find an accessible element with the role "heading" and name "Details"` | green |
+| 42 | LeadPage.test: This lead isn't available, with the way back to Leads | `Unable to find an element with the text: /This lead isn't available/i` | green |
+| 43 | LeadPage.test: the page failed to load, with Try again | `Unable to find role="button" and name /Try again/` | green |
+| 44 | LeadPage.test: a support session reads the page and is offered nothing to change | Passed when first run (the guard came with cycle 30's provider). Checked by mutation: with support allowed to act, `expected <button> to be null` | green |
+| 45 | lead_page.sql 23 (from mutation): Working's date is when it became Working, not a later status change | Mutant "status began: any status change" survived; with the test, killed | green |
+| 46 | lead_page.sql 24 (from mutation): a converted lead links only to what the caller may see | Mutant "converted links: no sight of account" survived; with the test, killed | green |
+| 47 | lead_page.sql 25 (from mutation): a lead's rows are as hidden as the lead, and its owner changes a call someone else logged | Mutants "activity seen: lead always seen" and "can_edit: no lead level rule" survived; with the test (one test for the two), both killed | green |
+| 48 | LeadPage.test (from mutation): no Reopen for someone who may only read the lead | Mutant "page: Reopen to anyone acting" survived; with the test, killed | green |
+| 49 | LeadPage.test (from mutation): a Not a fit lead's status bar marks no step | Mutant "status bar: Not a fit marks Working" survived; with the test, killed | green |

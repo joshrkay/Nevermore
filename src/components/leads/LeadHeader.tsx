@@ -8,7 +8,7 @@ import { PlaceholderLine } from "@/components/workspace/states";
 import type { LeadFields } from "@/lib/leadPageApi";
 
 /** Where the lead is, as one line: "Portland, OR", or whichever part is known. */
-export const leadPlace = (l: Pick<LeadFields, "city" | "state">): string | null => [l.city, l.state].filter((p): p is string => !!p).join(", ") || null;
+const leadPlace = (l: Pick<LeadFields, "city" | "state">): string | null => [l.city, l.state].filter((p): p is string => !!p).join(", ") || null;
 
 /**
  * The top of a lead's page (story CRM-L2.1, screen 15): a trail back to Leads, "Lead", the name with its status, one line of title at the business, where it is,

@@ -115,4 +115,10 @@ describe("the Leads page (CRM-L1.1a)", () => {
     renderAt("/leads?view=converted");
     expect(await screen.findByText(/No leads match/)).toBeInTheDocument();
   });
+
+  // Catches: a lead's name that leads nowhere now that a lead has a page (slice 8.5).
+  it("links each lead's name to its page", async () => {
+    renderAt();
+    expect(await screen.findByRole("link", { name: "Lucia Reyes" })).toHaveAttribute("href", "/leads/l1");
+  });
 });

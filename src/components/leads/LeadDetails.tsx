@@ -76,7 +76,7 @@ export function LeadDetailsPanel({ firmId, lead, canChange, onSaved }: {
       if (started.version === undefined) throw new SaveRefused("Couldn't save the lead. Reload the page and try again.");
       try {
         const answer = await updateLead(firmId, lead.id, leadEditOf(values as LeadForm), started.version);
-        if (answer.conflict) throw new SaveConflict({ conflict: true, currentVersion: answer.currentVersion, current: leadFormOf(answer.current), changed: answer.changed });
+        if (!("lead" in answer)) throw new SaveConflict({ conflict: true, currentVersion: answer.currentVersion, current: leadFormOf(answer.current), changed: answer.changed });
         return answer.lead;
       } catch (e) {
         if (e instanceof ContactError && e.kind !== "failed") {

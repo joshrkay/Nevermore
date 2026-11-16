@@ -6,6 +6,15 @@
 -- (D-809, can_see_firm_record and can_change_firm_record, as the leads table's row security reads it); one in the bin only by an owner or support (D-806).
 --
 --   lead_page(firm, lead)                    The page in one read. NULL, the same as for a lead that is not there, to anyone who may not see it.
+--   update_lead(...)                         The save of the lead's own fields with its version (D-46); a saved change makes a New lead Working (D-808).
+--   mark_lead_not_fit(lead, reason)          Not a fit with a reason from the short list (CRM-L1.3).
+--   reopen_lead(lead)                        A Not a fit lead Working again (D-1652).
+--   log_lead_activity(...)                   A call, a note or a task on the lead (D-807); the first call makes a New lead Working.
+--   lead_activity(firm, lead, filter, ...)   Its calls, notes and tasks, newest first.
+--   lead_activity_options(firm, lead)        The firm's people a task on it can be for.
+-- And, restated with every line from 20261119180000 so that they reach a lead's rows (D-1650): can_edit_activity, update_activity, add_to_note, set_task_done.
+-- Converted, Not a fit and the bin are read, not changed (CRM-L1.1): every write refuses them with 55000 in words (D-1651).
+-- No table is added. Emailing a lead is 6.2's send_conversation_message and conversation_for, unchanged.
 
 -- ---------- 1. Who sees a lead ----------
 -- The leads table's own row rule (20261121090000, leads_visible), for the functions here that read past row security: the level rule on its owner, and one in

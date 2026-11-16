@@ -170,6 +170,16 @@ describe("LeadPage: the Not a fit banner and Reopen", () => {
   });
 });
 
+describe("LeadPage: the Not a fit banner, read only", () => {
+  // Catches (from mutation): Reopen offered to someone the level rule does not let change the lead (the database's can_reopen), which reopen_lead refuses.
+  it("offers no Reopen to someone who may only read the lead", async () => {
+    client.getLeadPage.mockResolvedValue(page({ canChange: false, canAdd: false, canReopen: false }, { status: "not_fit", notFitReason: "other" }));
+    renderPage();
+    const banner = await screen.findByRole("note", { name: "Not a fit" });
+    expect(within(banner).queryByRole("button", { name: "Reopen" })).toBeNull();
+  });
+});
+
 describe("LeadPage: the Converted banner", () => {
   // Catches: a converted lead with no way to what it became (CRM-L2.1: a banner linking to the account, contact and opportunity), or one that can still be
   // changed, written to or converted again.
@@ -293,6 +303,45 @@ describe("LeadPage: calls, notes and tasks", () => {
   });
 });
 
+describe("LeadPage: a Nevermore support session", () => {
+  // Catches: buttons offered to support that the database refuses (ADR 0024: support reads, changes nothing), even where the database's own answer says
+  // something can be added.
+  it("reads the page and offers nothing to change", async () => {
+    renderPage("/leads/l1", workspace({ isSupport: true }));
+    await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" });
+    await screen.findByText("Wants a quote in January");
+    for (const name of [/^Log a call/, "Not a fit", /^Edit/, "Add a note"]) expect(screen.queryByRole("button", { name })).toBeNull();
+  });
+});
+
+describe("LeadPage: the states", () => {
+  // Catches: a blank page while loading (CRM-L2.1's Loading state: the header and panel headings with grey lines).
+  it("shows the header and each panel's heading with grey lines while the lead is on its way", () => {
+    client.getLeadPage.mockReturnValue(new Promise(() => {}));
+    renderPage();
+    for (const heading of ["Details", "Converting makes", "Emails", "Calls, notes and tasks"]) expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(screen.getAllByRole("status").some((s) => /Loading lead/.test(s.textContent ?? ""))).toBe(true);
+  });
+
+  // Catches: a lead that is not there, another firm's, or one the level rule hides (the database gives one answer) drawn as a blank page or said in other words.
+  it("says This lead isn't available when there is none to show, with the way back to Leads", async () => {
+    client.getLeadPage.mockResolvedValue(null);
+    renderPage();
+    expect(await screen.findByText(/This lead isn't available/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to all leads" })).toHaveAttribute("href", "/leads");
+  });
+
+  // Catches: a load that failed said as a lead that isn't there, with no way to try again.
+  it("says the page failed to load, with Try again", async () => {
+    const user = userEvent.setup();
+    const { ContactError } = await import("@/lib/contactApi");
+    client.getLeadPage.mockRejectedValueOnce(new ContactError("failed", "Couldn't load the lead. Try again."));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Try again/ }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Lucia Reyes" })).toBeInTheDocument();
+  });
+});
+
 describe("LeadPage: the status bar", () => {
   // Catches: a status bar without the date each status began, or one that marks the wrong status as the lead's own.
   it("shows New, Working and Converted with the date each began, the lead's own marked", async () => {
@@ -302,5 +351,13 @@ describe("LeadPage: the status bar", () => {
     expect(steps.map((s) => s.textContent)).toEqual(["NewNov 2, 2026", "WorkingNov 5, 2026", "ConvertedNot yet"]);
     expect(steps[1]).toHaveAttribute("aria-current", "step");
     expect(steps[0]).not.toHaveAttribute("aria-current");
+  });
+
+  // Catches (from mutation): a Not a fit lead's status bar marking a step it is not on (its banner says where it is).
+  it("marks no step for a Not a fit lead", async () => {
+    client.getLeadPage.mockResolvedValue(page({ canChange: false, canAdd: false }, { status: "not_fit", notFitReason: "other" }));
+    renderPage();
+    const bar = await screen.findByRole("list", { name: "Status" });
+    for (const step of within(bar).getAllByRole("listitem")) expect(step).not.toHaveAttribute("aria-current");
   });
 });
