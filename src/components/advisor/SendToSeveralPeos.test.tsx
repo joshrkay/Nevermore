@@ -349,6 +349,14 @@ describe("SendToSeveralPeos: choosing (CRM-Q2.5)", () => {
     expect(await peoRow(region, "Justworks")).toHaveTextContent("Can't tell yet · Justworks's minimum headcount isn't checked yet.");
   });
 
+  // Break caught (found by mutation): the reason taken from the PEO's first check whatever it said, so a PEO whose first check is met gives a met check's sentence as why its fit can't be told.
+  it("gives the reason from the check that says so, not from the first check", async () => {
+    const mixed = parsePeoCatalog([{ id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], min_headcount: 10, sources: { answers: sourced, min_headcount: sourced } } }]);
+    render(<SendToSeveralPeos {...props} catalog={mixed} startOpen />);
+    const region = await screen.findByRole("region", { name: "Send to several PEOs" });
+    expect(await peoRow(region, "Justworks")).toHaveTextContent("Can't tell yet · Justworks's states served aren't checked yet.");
+  });
+
   // Break caught: a PEO that fails a check shows only "Not ready" with a label, never the PEO's fact against the employer's, so the agent can't judge the warning.
   it("says a PEO doesn't fit, with the reason", async () => {
     const region = await open();
@@ -371,6 +379,17 @@ describe("SendToSeveralPeos: choosing (CRM-Q2.5)", () => {
     expect(within(region).getByRole("checkbox", { name: "Oasis" })).not.toBeChecked();
     expect(within(region).getByRole("checkbox", { name: "Justworks" })).toBeEnabled();
     expect(within(region).getByRole("checkbox", { name: "Justworks" })).toBeChecked();
+  });
+
+  // Break caught (found by mutation): a PEO the employer withdrew treated like one not yet asked, so it can be ticked and the agent builds a send the database refuses.
+  it("doesn't let a PEO the employer withdrew be ticked, and says it was withdrawn", async () => {
+    loadPeoAuthorizations.mockResolvedValue([
+      { peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }, { peo: "Oasis", state: "withdrawn", signedAt: null, wordingVersion: null },
+      { peo: "TriNet", state: "authorized", signedAt: null, wordingVersion: null },
+    ]);
+    const region = await open();
+    await waitFor(() => expect(within(region).getByRole("checkbox", { name: "Oasis" })).toBeDisabled());
+    expect(await peoRow(region, "Oasis")).toHaveTextContent("Withdrawn by the employer");
   });
 
   // Break caught: no way to get an unauthorized PEO added from here (the agent has to leave step 4 to write to the employer), or an ask that sends nothing,
@@ -459,5 +478,51 @@ describe("SendToSeveralPeos: choosing (CRM-Q2.5)", () => {
     expect((sendToPeo.mock.calls[2][0] as { peo: string }).peo).toBe("Justworks");
     expect(await within(region).findByText("Justworks: Sent. It is on the Justworks thread.")).toBeInTheDocument();
     expect(within(region).queryByRole("button", { name: "Try again with Justworks" })).not.toBeInTheDocument();
+  });
+
+  // Break caught (found by mutation): Try again sent without the mailbox check the first send makes, so a mailbox lost in between is sent from anyway, or the agent isn't offered Connect.
+  it("checks the mailbox again on Try again, and offers to connect one that has gone", async () => {
+    sendToPeo.mockReset().mockRejectedValueOnce(Object.assign(new Error("The mail provider refused the message."), { code: "PT500" })).mockResolvedValue({ quoteRequestId: 1, messageId: 2 });
+    const region = await open();
+    fireEvent.click(await within(region).findByRole("checkbox", { name: "Oasis" }));
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(3));
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    fireEvent.click(await within(region).findByRole("button", { name: "Send to 1 PEO" }));
+    const again = await within(region).findByRole("button", { name: "Try again with Justworks" });
+    fetchMyMailbox.mockResolvedValue({ connected: false });
+    fireEvent.click(again);
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Connect your email to send this");
+    expect(sendToPeo).toHaveBeenCalledTimes(1);
+  });
+
+  // Break caught (found by mutation): a send that goes on Try again leaving the page as if nothing was sent, so the quote it made isn't listed until a reload.
+  it("tells the page when a send goes on Try again, after none had", async () => {
+    props.onSent.mockClear();
+    sendToPeo.mockReset()
+      .mockRejectedValueOnce(Object.assign(new Error("The mail provider refused the message."), { code: "PT500" }))
+      .mockResolvedValue({ quoteRequestId: 1, messageId: 2 });
+    const region = await open();
+    fireEvent.click(await within(region).findByRole("checkbox", { name: "Oasis" }));
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(3));
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    fireEvent.click(await within(region).findByRole("button", { name: "Send to 1 PEO" }));
+    fireEvent.click(await within(region).findByRole("button", { name: "Try again with Justworks" }));
+    await within(region).findByText("Justworks: Sent. It is on the Justworks thread.");
+    expect(props.onSent).toHaveBeenCalledTimes(1);
+  });
+
+  // Break caught (found by mutation): Try again sending to the first chosen PEO whichever line it was pressed on.
+  it("tries again with the PEO whose line it is on, not the first one", async () => {
+    sendToPeo.mockReset().mockImplementation(async (s: { peo: string }) => {
+      if (s.peo === "Oasis" && sendToPeo.mock.calls.length === 2) throw Object.assign(new Error("The mail provider refused the message."), { code: "PT500" });
+      return { quoteRequestId: 1, messageId: 2 };
+    });
+    const region = await open();
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(3));
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    fireEvent.click(await within(region).findByRole("button", { name: "Send to 2 PEOs" }));
+    fireEvent.click(await within(region).findByRole("button", { name: "Try again with Oasis" }));
+    await waitFor(() => expect(sendToPeo).toHaveBeenCalledTimes(3));
+    expect((sendToPeo.mock.calls[2][0] as { peo: string }).peo).toBe("Oasis");
   });
 });

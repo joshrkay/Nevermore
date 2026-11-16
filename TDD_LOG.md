@@ -18,3 +18,10 @@ Seam 2 (D-13): component tests. One test per cycle, seen red for the right reaso
 14. draws no choosing for no intake / an intake not certified. NOT red-first on the real code (cycle 13 already read stepToOpenAt); I undid it to `atChoosing = !!page`, saw red: `expect(element).not.toBeInTheDocument()` x2, restored, green.
 15. reads the opportunity again once a send has gone. My cycle-13 code had a refetch with no test (code before test); I replaced it with a no-op, saw red: `expected "spy" to be called 2 times, but got 1 times`, restored it, green.
 (Refactor after cycle 12, no new behaviour: STATE_WORDS, askToAddPeo and askToAddAnyPeo moved from PacketRecipientsPanel to src/data/peoAuthorizationWords.ts to keep the component file free of non-component exports; tests unchanged and green. Two older tests, AdvisorSubmissionPage's "offers to send several PEOs at once" and OpportunityPage's "opens Send to several PEOs on the quotes panel", now give the employer's authorization of the PEOs they expect ticked, because an unauthorized PEO is no longer ticked, D-1784.)
+
+Mutation round (each of 28 rules of the new code broken, a test must go red). Five survived; each got a test, and each of these cycles was seen red against the mutant (the real code was already right, so none was red-first on real code, and they are logged as mutation-driven):
+16. gives the reason from the check that says so, not from the first check. Mutant `checks[0]?.sentence`: red (`Received:` the wrong sentence). Real code: green.
+17. doesn't let a PEO the employer withdrew be ticked, and says it was withdrawn. Mutant `=== "not_asked"` on the disabled test: red. Real code: green.
+18. tries again with the PEO whose line it is on, not the first one. Mutant `chosen[0]`: red. Real code: green.
+19. tells the page when a send goes on Try again, after none had. Mutant with onSent removed from retry: red. Real code: green.
+20. checks the mailbox again on Try again, and offers to connect one that has gone. Mutant calling retry without beforeSend: red. Real code: green.
