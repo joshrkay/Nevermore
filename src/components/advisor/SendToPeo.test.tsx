@@ -72,4 +72,24 @@ describe("SendToPeo", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Send from your own mail" }));
     expect(onSendYourself).toHaveBeenCalledTimes(1);
   });
+  // M-2.3. Break caught: a PEO holding an older version offered a plain first send, so nothing tells the advisor it is an update, or the update sent
+  // as a first send (no "what changed", the old link replaced rather than revoked as a newer version); or anything sent before the advisor sends it.
+  it("offers a PEO holding an older version the update, and sends nothing until the advisor sends it", async () => {
+    loadPeoSendContext.mockResolvedValue(CONNECTED);
+    fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    sendToPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 42 });
+    render(<SendToPeo {...props} updateFrom={2} />);
+    expect(screen.getByText("Insperity has version 2. Version 3 is certified.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send version 3 to Insperity" }));
+    const form = await screen.findByRole("form", { name: "Send version 3 to Insperity" });
+    expect(within(form).getByRole("region", { name: "Added under your note" })).toHaveTextContent(
+      "What changed since version 2: each answer by its name and the census by count, never a value",
+    );
+    expect(sendToPeo).not.toHaveBeenCalled();
+    fireEvent.click(within(form).getByRole("checkbox", { name: /Dana Lee/ }));
+    fireEvent.change(within(form).getByLabelText("Your note"), { target: { value: "Dana, they certified again." } });
+    fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sendToPeo).toHaveBeenCalledTimes(1));
+    expect(sendToPeo.mock.calls[0][0]).toMatchObject({ peo: "Insperity", to: ["dana@insperity.example"], note: "Dana, they certified again.", update: true });
+  });
 });

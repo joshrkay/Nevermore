@@ -26,13 +26,15 @@ export interface PeoSend {
   to: string[];
   subject: string;
   note: string;
+  /** An update to a PEO holding an older version (M-2.3): sent by send_peo_update, which says what changed. */
+  update?: boolean;
   /** Stores the made files and issues the bundle link for that quote request (issueBundleLink with the PEO card's plan). */
   issueLink: (quoteRequestId: number) => Promise<{ id: number; token: string }>;
 }
 
 /** The send's three steps; answers the quote request and the message. A refusal is thrown in the database's own words. */
 export async function sendToPeo(s: PeoSend): Promise<{ quoteRequestId: number; messageId: number }> {
-  const sent = await supabase.rpc("send_to_peo", { p_session_id: s.sessionId, p_peo: s.peo, p_to: s.to, p_subject: s.subject, p_note: s.note });
+  const sent = await supabase.rpc(s.update ? "send_peo_update" : "send_to_peo", { p_session_id: s.sessionId, p_peo: s.peo, p_to: s.to, p_subject: s.subject, p_note: s.note });
   if (sent.error) throw new AdvisorApiError(sent.error.message || "The send didn't go through. Try again.", sent.error.code);
   const { quote_request_id: quoteRequestId, message_id: messageId } = sent.data as unknown as { quote_request_id: number; message_id: number };
   let link: { id: number; token: string };

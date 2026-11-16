@@ -107,11 +107,31 @@ export function olderVersionNote(
   return `Sent v${r.sent_version}, current v${currentVersion}`;
 }
 
+/**
+ * The version a PEO holds when it is offered the update (M-2.3): a quote request still open on the submission (sent or quoted, as the queue's "A PEO
+ * has an older version" counts it) that was sent an older version than the latest certified. Null when there is no update to offer.
+ */
+export function updateFrom(r: { status: string; sent_version: number | null } | undefined, currentVersion: number | null): number | null {
+  if (!r || (r.status !== "sent" && r.status !== "quoted")) return null;
+  if (r.sent_version === null || currentVersion === null || r.sent_version >= currentVersion) return null;
+  return r.sent_version;
+}
+
+/**
+ * "Quote given on version 1; version 2 sent since" (M-2.3): a quoted request's quote was given on an older version than the one sent since, until the
+ * advisor records the PEO's new answer (quote_requests.quoted_version, 20261122180000). Null otherwise.
+ */
+export function quotedOnOlderNote(r: { status: string; sent_version: number | null; quoted_version?: number | null }): string | null {
+  if (r.status !== "quoted" || r.quoted_version == null || r.sent_version === null || r.quoted_version >= r.sent_version) return null;
+  return `Quote given on version ${r.quoted_version}; version ${r.sent_version} sent since`;
+}
+
 const FIELD_NAMES: Record<string, string> = {
   status: "Status",
   peo_name: "PEO",
   sent_on: "Sent on",
   sent_version: "Version sent",
+  quoted_version: "Quote given on version",
   quote_received_on: "Received on",
   quote_expires_on: "Expires on",
   proposed_start_on: "Proposed start",

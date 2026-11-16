@@ -18,7 +18,7 @@ import {
   YEAR_MAX,
   MONEY_MAX,
 } from "@/data/chamberValidation";
-import { FIELD_KINDS } from "@/data/provenance";
+import { FIELD_KINDS, FIELD_LABELS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
@@ -637,6 +637,13 @@ describe("server and client intake rules agree", () => {
   // word, so the email says what the composer previews and counsel's text stays one change.
   it("puts the legal-wording module's line on every message to a PEO", () => {
     expect(quoted(blocks("peo_send_notice").join("\n"))).toEqual([PEO_SEND_NOTICE]);
+  });
+
+  // M-2.3, D-1612: an update names what changed by each answer's label, the one the advisor's field review shows (FIELD_LABELS); the database writes
+  // it, so its copy (public.intake_field_labels) must be the same labels in the same order. The census is counted, never named, so it is left out.
+  it("names what changed in an update by the labels the field review shows", () => {
+    const server = [...blocks("intake_field_labels").join("\n").matchAll(/\('(\w+)', '((?:[^']|'')+)'\)/g)].map((m) => [m[1], m[2].replace(/''/g, "'")]);
+    expect(server).toEqual(Object.entries(FIELD_LABELS).filter(([key]) => key !== "census"));
   });
 });
 

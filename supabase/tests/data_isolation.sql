@@ -225,6 +225,7 @@
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
 \i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1375,6 +1376,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_reissue_quote_request_address(0)', 'revoking and reissuing a quote request''s reply address'),
   ('send_to_peo(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)', 'advisor',
                                                                      'SELECT public.send_to_peo(gen_random_uuid(), ''Probe PEO'', ARRAY[''peo@peo.example''], ''S'', ''N'')', 'sending the bundle to a PEO (6.6)'),
+  ('send_peo_update(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.send_peo_update(gen_random_uuid(), ''Probe PEO'', ARRAY[''peo@peo.example''], ''S'', ''N'')', 'sending a PEO the newer certified version (6.8)'),
   ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)', 'advisor',
                                                                      'SELECT public.attach_peo_link(0, 0, ''probe'')', 'joining the bundle link to a message to a PEO (6.6)'),
   ('peo_send_context(p_session_id uuid, p_peo text)', 'advisor',
@@ -2004,6 +2007,8 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('revoke_bundle_link', 'advisor', 'by_id', $$SELECT public.revoke_bundle_link({qr})::text$$),
   -- M-2.1: a member gets past the firm to the PEO's authorization (22023), the writer of the message to its link (22023), another member to the writer (PT409).
   ('send_to_peo', 'advisor', 'by_id', $$SELECT public.send_to_peo({sid}, 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  -- M-2.3: a member gets past the firm to the PEO's own quote request (PT409: nothing was sent to it yet).
+  ('send_peo_update', 'advisor', 'by_id', $$SELECT public.send_peo_update({sid}, 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('attach_peo_link', 'advisor', 'by_id', $$SELECT public.attach_peo_link({peomsg}::bigint, 0, 'probe')::text$$),
   ('peo_send_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_send_context({sid}, 'Probe PEO'))$$),
   ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
@@ -3975,6 +3980,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('issue_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm issues its bundle link; the same refusal for another firm''s quote request as for one that does not exist (4e; supabase/tests/bundle_links.sql)'),
   ('revoke_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm revokes its link; the same refusal for another firm''s quote request as for one that does not exist (4e)'),
   ('send_to_peo', 'firm_scoped', 'a current member of the intake''s firm, with a connected mailbox, sends its bundle to a PEO the employer authorized (M-2.1); the same refusal for another firm''s intake as for one that does not exist (4e; supabase/tests/peo_send.sql)'),
+  ('send_peo_update', 'firm_scoped', 'a current member of the intake''s firm sends a PEO holding an older version the newer one, through send_to_peo and every check of it (M-2.3); the same refusal for another firm''s intake as for one that does not exist (4e; supabase/tests/peo_update.sql)'),
   ('attach_peo_link', 'firm_scoped', 'the advisor who wrote a message to a PEO joins its bundle link to it; the same refusal for another firm''s message as for one that does not exist (4e)'),
   ('peo_send_context', 'firm_scoped', 'a current member of the intake''s firm reads their own mailbox, the PEO''s contacts and the reply address for the composer; PT404 for another firm''s intake (4e)'),
   ('claim_peo_mail', 'service_only', 'the send-mail function claims PEO messages whose link has joined them, with the token; no API role can call it'),
@@ -4439,6 +4445,9 @@ INSERT INTO secret_readers VALUES
   -- and answers neither.
   ('send_to_peo(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)',
    $$SELECT public.send_to_peo((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  -- M-2.3: the update reads only what send_to_peo reads, and the two certified versions' answers to name what changed by label, never a value.
+  ('send_peo_update(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.send_peo_update((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('peo_send_context(p_session_id uuid, p_peo text)',
    $$SELECT public.peo_send_context((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO')::text$$),
   ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)',

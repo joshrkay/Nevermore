@@ -10,7 +10,7 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import {
-  canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote,
+  canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
   QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
   type QuoteNoteKind,
 } from "@/data/quoteRequests";
@@ -292,6 +292,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         {requests.map((r) => {
           const quote = r.status === "quoted" ? describeQuote(r) : "";
           const older = olderVersionNote(r, currentVersion);
+          const quotedOn = quotedOnOlderNote(r);
           // The same checks the prospect saw on PEO Match, for a PEO the catalog holds.
           const listed = findPeo(catalog, r.peo_name);
           // A stale profile is still read, with when it was last checked (src/data/peoProfiles.ts).
@@ -327,6 +328,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                 </p>
               )}
               {quote && <p className="text-sm">{quote}</p>}
+              {quotedOn && <p className="text-xs text-muted-foreground">{quotedOn}</p>}
               {local && replyDomain && <ReplyAddress request={r} address={replyAddress(local, replyDomain)} onChanged={onChanged} />}
               {r.note && <p className="text-xs text-muted-foreground italic">{r.note}</p>}
               {answering === r.id ? (

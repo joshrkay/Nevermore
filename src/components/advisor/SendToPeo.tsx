@@ -20,6 +20,11 @@ export interface SendToPeoProps {
   returnTo: string;
   /** Stores the bundle's files and issues its link for the PEO's quote request (issueBundleLink). */
   issueLink: PeoSend["issueLink"];
+  /**
+   * The version the PEO holds when it is older than `version` (M-2.3): the composer is then the update, which says under the note what changed
+   * since it. Null or left out for a first send.
+   */
+  updateFrom?: number | null;
   /** After the send is queued. */
   onSent: () => void;
   /** The advisor chose to send it from their own mail instead: the page offers to record that send (the existing recorded send, M-2.5). */
@@ -36,6 +41,8 @@ const typed = (text: string) => text.split(/[\s,;]+/).map((x) => x.trim()).filte
  * mail with the reply address in CC and record that send.
  */
 const SendToPeo = (p: SendToPeoProps) => {
+  const update = p.updateFrom != null && p.version !== null && p.updateFrom < p.version;
+  const title = update ? `Send version ${p.version} to ${p.peo}` : `Send to ${p.peo}`;
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<PeoSendContext | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
@@ -68,7 +75,9 @@ const SendToPeo = (p: SendToPeoProps) => {
     setBusy(true);
     setProblem(null);
     try {
-      await sendToPeo({ sessionId: p.sessionId, peo: p.peo, to: [...picked, ...typed(others)], subject, note, issueLink: p.issueLink });
+      await sendToPeo({
+        sessionId: p.sessionId, peo: p.peo, to: [...picked, ...typed(others)], subject, note, issueLink: p.issueLink, ...(update ? { update: true } : {}),
+      });
       setQueued(`Queued to ${p.peo} from ${context?.mailbox.address ?? "your mailbox"}. It is on the ${p.peo} thread, and in your Sent folder once it goes.`);
       setOpen(false);
       p.onSent();
@@ -84,13 +93,15 @@ const SendToPeo = (p: SendToPeoProps) => {
   return (
     <div className="space-y-2">
       {queued && <p role="status" className="text-sm">{queued}</p>}
+      {/* M-2.3: offered, never sent on its own; nothing goes until the advisor sends it. */}
+      {update && !queued && <p className="text-sm">{`${p.peo} has version ${p.updateFrom}. Version ${p.version} is certified.`}</p>}
       {!open ? (
         <button type="button" onClick={() => setOpen(true)} className="min-h-11 px-4 rounded-md border border-primary text-primary text-sm font-medium">
-          {`Send to ${p.peo}`}
+          {title}
         </button>
       ) : (
         <form
-          aria-label={`Send to ${p.peo}`}
+          aria-label={title}
           className="border border-border rounded-md p-3 space-y-3 text-sm"
           onSubmit={(e) => {
             e.preventDefault();
@@ -123,6 +134,7 @@ const SendToPeo = (p: SendToPeoProps) => {
           </label>
           <section aria-label="Added under your note" className="rounded-md bg-muted p-2 text-xs text-muted-foreground space-y-0.5">
             <p className="font-medium">Added under your note; you can't change it. The PEO gets a link, never the files.</p>
+            {update && <p>{`What changed since version ${p.updateFrom}: each answer by its name and the census by count, never a value`}</p>}
             {peoSendBlockPreview({ fileId: p.fileId, version: p.version, openItems: p.openItems }).map((line) => <p key={line}>{line}</p>)}
             <p className="italic">{DRAFT_WORDING_NOTICE}</p>
           </section>

@@ -2241,6 +2241,29 @@ describe("AdvisorSubmissionPage", () => {
         expect([input.quoteRequestId, input.plan.peo, input.plan.version, input.answers.version]).toEqual([7, "Justworks", 1, 1]);
       });
 
+      // Catches (M-2.3): a PEO holding an older certified version left with only a first send on its card, so the update is never offered there, or
+      // the offer made to a PEO that already holds the latest.
+      it("offers the update on the card of a PEO holding an older version, and a plain send where it holds the latest", async () => {
+        peoSend.sendToPeo.mockClear();
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 2, submission: { ...detail().submission!, version: 2 },
+          quoteRequests: [
+            { id: 7, session_id: "s1", peo_name: "Justworks", status: "quoted", sent_version: 1, sent_on: "2026-11-02", quoted_version: 1,
+              quote_received_on: "2026-11-05", quote_expires_on: "2026-12-05", proposed_start_on: null, admin_fee_pepm: 110, note: null },
+            { id: 8, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 2, sent_on: "2026-11-10", quoted_version: null,
+              quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null },
+          ],
+        }));
+        renderPage();
+        const card = async (name: string) => (await within(await panel()).findByRole("heading", { name })).closest("article")!;
+        const justworks = await card("Justworks");
+        expect(within(justworks).getByText("Justworks has version 1. Version 2 is certified.")).toBeInTheDocument();
+        expect(within(justworks).getByRole("button", { name: "Send version 2 to Justworks" })).toBeInTheDocument();
+        const trinet = await card("TriNet");
+        expect(within(trinet).getByRole("button", { name: "Send to TriNet" })).toBeInTheDocument();
+        expect(peoSend.sendToPeo).not.toHaveBeenCalled();
+      });
+
       // Catches (M-2.2): no way to send several PEOs at once from the submission page, or one offered over PEOs the panel doesn't list (one with
       // no profile, one no longer listed), or ticking a PEO that isn't ready (TriNet misses answers and a document and fails its headcount check).
       it("offers to send several PEOs at once, each listed PEO with a profile, the ready ones ticked", async () => {

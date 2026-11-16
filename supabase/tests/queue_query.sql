@@ -458,6 +458,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261122140000_peo_send.sql
 \i supabase/migrations/20261122150000_inbox.sql
 \i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
 
 -- ---------- reading the new call ----------
 CREATE FUNCTION pg_temp.q(filters jsonb, sort text DEFAULT NULL, dir text DEFAULT 'asc', page integer DEFAULT 1,

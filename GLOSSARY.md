@@ -92,6 +92,14 @@ _Avoid_: share link, download link, portal
 An advisor's email to people at one PEO, from their own connected mailbox, carrying their cover note and the **Bundle link**, never files. It creates or continues that PEO's quote request and is on its thread as sent. Under the note is the **Fixed block**.
 _Avoid_: submit to carrier, upload
 
+**Update to a PEO** (code: `send_peo_update`, `quote_request_messages.update_from_version`, `SendToPeo`'s `updateFrom`; M-2.3, slice 6.8, D-1610 to D-1619):
+A **Send to a PEO** of the latest certified version to a PEO whose quote request is still open (sent or quoted) and holds an older one. It is offered on the PEO's card ("<PEO> has version 1. Version 2 is certified.") and goes only when an advisor sends it, on the same thread. Under the note it says what changed since the PEO's version: each answer by its label and the census by count (added, removed, changed), never a value. Its new **Bundle link** revokes the old one as a newer version.
+_Avoid_: resend, revision, amendment
+
+**Quote given on version** (code: `quote_requests.quoted_version`; M-2.3, D-1615):
+The certified version a PEO's quote answered. A quoted request stays quoted when an **Update to a PEO** is sent, and reads "Quote given on version 1; version 2 sent since" until the advisor records a new answer (a quote whose dates or fee changed, or a request newly marked quoted). A note alone is no new answer.
+_Avoid_: stale quote, old quote
+
 **Send to several PEOs** (code: `SendToSeveralPeos`, `peoLinkIssuer`; M-2.2, slice 6.7, D-1600 to D-1609):
 One action that makes a **Send to a PEO** for each PEO the advisor ticks, one at a time: each its own quote request, its own **Bundle link** and its own message, addressed only to that PEO's own contacts, opening with its own greeting ("Hello Dana,") over the advisor's one note. A PEO is **ready** when nothing it needs to quote is missing and no eligibility check is not met; a ready PEO starts ticked, one that isn't starts unticked with what it is missing. A review shows each chosen PEO's recipients, greeting, files and open items before anything goes; one the employer hasn't authorized, or with no contact address, is not sent and the rest go. The result says Sent or Not sent, with the reason, for each.
 _Avoid_: bulk send, blast, mass mail
