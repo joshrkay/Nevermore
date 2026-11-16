@@ -63,12 +63,12 @@ export function useOpportunityActivityQuery(firmId: string | null, opportunityId
 }
 
 /** How the opportunity ended and what its win made: the lost reason, the placement with its payments, and each quote's close reason (CRM-O1.3b). */
-export function useOpportunityOutcomeQuery(firmId: string | null, opportunityId: string, submissionId: string | null | undefined) {
+export function useOpportunityOutcomeQuery(firmId: string | null, opportunityId: string, enabled: boolean) {
   return useQuery<OpportunityOutcome>({
-    queryKey: [...opportunityKey(firmId, opportunityId), "outcome", submissionId],
-    queryFn: () => getOpportunityOutcome(firmId as string, opportunityId, submissionId ?? null),
-    // Asked once the page has said which intake it holds (undefined until then), so it is not asked twice.
-    enabled: firmId !== null && submissionId !== undefined,
+    queryKey: [...opportunityKey(firmId, opportunityId), "outcome"],
+    queryFn: () => getOpportunityOutcome(firmId as string, opportunityId),
+    // Asked once the page has loaded (the opportunity is one the person may see), so it is not asked for one that is not there.
+    enabled: firmId !== null && enabled,
     refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
     retry: false,
   });

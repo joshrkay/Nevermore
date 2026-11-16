@@ -1,23 +1,22 @@
-import { useState } from "react";
-import { z } from "zod";
+import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { dateRule, Field, FormActions, SaveRefused, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
-import { STAGE_LABELS, today } from "@/data/accountPage";
-import { outcomeBannerWords } from "@/data/opportunityClose";
-import { dollarsWords } from "@/data/opportunityPage";
+import { submissionPath } from "@/components/accounts/accountColumns";
+import { formatDay, STAGE_LABELS } from "@/data/accountPage";
+import { changedLine, outcomeBannerWords } from "@/data/opportunityClose";
+import { dollarsWords, opportunityFieldLabel } from "@/data/opportunityPage";
 import { isConflict } from "@/lib/recordVersion";
-import { OpportunityError, recordCommissionPayment, reopenOpportunity, type OpportunityOutcome, type OpportunityPage } from "@/lib/opportunityPageApi";
+import { OpportunityError, reopenOpportunity, type CommissionPayment, type OpportunityOutcome, type OpportunityPage } from "@/lib/opportunityPageApi";
+import { DeletePaymentDialog, EditPaymentDialog, RecordPaymentDialog } from "./PaymentDialogs";
+import { PlacementCommissionDialog } from "./PlacementCommissionDialog";
 
 // The won or lost banner (CRM-O1.1's "Won or lost" state, D-426, D-472): "Won · <PEO> · from <start> · renews <date>" with the commission line, or "Lost · <reason>".
-// Either has Reopen for those allowed (D-462); a win has Record a payment for whoever may change the opportunity (D-467). The database decides who may and what is
-// refused (D-469: a renewal being worked, payments to delete first) and says why in words.
+// Either has Reopen for those allowed (D-462); a win has Record a payment, Edit and Delete on each payment, and Add or Change commission, for whoever may change the
+// opportunity (D-466, D-467). The database decides who may and what is refused (D-469: a renewal being worked, payments to delete first) and says why in words.
 
-export function OutcomeBanner({ firmId, page, outcome, loading, failed, onRetry, canReopen, onChanged }: {
+export function OutcomeBanner({ firmId, page, outcome, loading, failed, onRetry, canReopen, canChange, onChanged }: {
   firmId: string;
   page: OpportunityPage;
   outcome: OpportunityOutcome | undefined;
@@ -26,15 +25,27 @@ export function OutcomeBanner({ firmId, page, outcome, loading, failed, onRetry,
   onRetry: () => void;
   /** Whoever D-462 allows, on an account that is not archived. */
   canReopen: boolean;
+  /** Whoever may change the opportunity (D-209), on an account that is not archived and not in a support session: payments and the commission. */
+  canChange: boolean;
   /** Something changed: the page and the outcome are asked again. */
   onChanged: () => void;
 }) {
   const stage = page.opportunity.stage as "won" | "lost";
   const [reopening, setReopening] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [editing, setEditing] = useState<CommissionPayment | null>(null);
+  const [deleting, setDeleting] = useState<CommissionPayment | null>(null);
+  const [commissioning, setCommissioning] = useState(false);
   const placement = outcome?.placement ?? null;
   const commission = placement?.commission ?? null;
   const received = outcome?.receivedToDate ?? 0;
+  const submissionId = page.opportunity.submissionId;
+  // A submission archived from a stage other than Won or Lost reads as Lost but has no lost reason, and nothing to undo: the database refuses a reopen of it ("Restore it
+  // from the archive"), so it is not offered. Until the outcome says there is a reason, it cannot be known that a Reopen of a Lost with an intake can work.
+  const archivedNotLost = stage === "lost" && submissionId !== null && outcome !== undefined && outcome.lostReason === null;
+  const reopenable = canReopen && !archivedNotLost && (stage === "won" || submissionId === null || outcome !== undefined);
+  // The admin fee of the quote that was won, which a later commission is worked from (the placement's PEO, by name ignoring case, D-424).
+  const wonQuote = placement ? page.quotes.find((q) => q.peoName.toLowerCase() === placement.peoName.toLowerCase()) : undefined;
   return (
     <section role="region" aria-label="Outcome" className="mb-6 rounded-xl border border-border bg-muted/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -54,47 +65,102 @@ export function OutcomeBanner({ firmId, page, outcome, loading, failed, onRetry,
           ) : (
             <p className="text-sm text-muted-foreground">{loading ? "Loading how this opportunity ended…" : STAGE_LABELS[stage]}</p>
           )}
-          {outcome && stage === "won" && placement && (
+          {archivedNotLost && submissionId && (
             <p className="text-sm text-muted-foreground">
-              {commission?.expectedYearly != null
-                ? `Commission: ${dollarsWords(commission.expectedYearly)} expected a year · ${dollarsWords(received)} received so far`
-                : commission
-                  ? `Commission: expected figure not set · ${dollarsWords(received)} received so far`
-                  : received > 0
-                    ? `Commission: none expected recorded · ${dollarsWords(received)} received so far`
-                    : "Commission: none expected recorded"}
+              It was archived, not lost. Restore it from <Link to={submissionPath(submissionId)} className="text-primary underline underline-offset-2">the submission's page</Link>.
             </p>
+          )}
+          {outcome && stage === "won" && placement && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p className="text-sm text-muted-foreground">
+                {commission?.expectedYearly != null
+                  ? `Commission: ${dollarsWords(commission.expectedYearly)} expected a year · ${dollarsWords(received)} received so far`
+                  : commission
+                    ? `Commission: expected figure not set · ${dollarsWords(received)} received so far`
+                    : received > 0
+                      ? `Commission: none expected recorded · ${dollarsWords(received)} received so far`
+                      : "Commission: none expected recorded"}
+              </p>
+              {canChange && (
+                <button type="button" onClick={() => setCommissioning(true)} className="text-sm text-primary underline underline-offset-2">
+                  {commission ? "Change commission" : "Add commission"}
+                </button>
+              )}
+            </div>
           )}
         </div>
         <div className="flex gap-2">
-          {stage === "won" && placement && page.canChange && (
+          {stage === "won" && placement && canChange && (
             <Button type="button" variant="outline" onClick={() => setPaying(true)}>Record a payment</Button>
           )}
-          {canReopen && <Button type="button" variant="outline" onClick={() => setReopening(true)}>Reopen</Button>}
+          {reopenable && <Button type="button" variant="outline" onClick={() => setReopening(true)}>Reopen</Button>}
         </div>
       </div>
+      {outcome && stage === "won" && placement && outcome.payments.length > 0 && (
+        <ul aria-label="Payments received" className="mt-3 divide-y divide-border rounded-md border border-border bg-background text-sm">
+          {outcome.payments.map((p) => (
+            <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <span className="min-w-0 break-words">
+                {formatDay(p.receivedOn)} · {dollarsWords(p.amount)}{p.note ? ` · ${p.note}` : ""}
+              </span>
+              {canChange && (
+                <span className="flex gap-3">
+                  <button type="button" onClick={() => setEditing(p)} aria-label={`Edit the payment of ${dollarsWords(p.amount)} received ${formatDay(p.receivedOn)}`} className="text-primary underline underline-offset-2">Edit</button>
+                  <button type="button" onClick={() => setDeleting(p)} aria-label={`Delete the payment of ${dollarsWords(p.amount)} received ${formatDay(p.receivedOn)}`} className="text-destructive underline underline-offset-2">Delete</button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       {reopening && <ReopenDialog firmId={firmId} page={page} onClose={() => setReopening(false)} onChanged={onChanged} />}
       {paying && placement && (
         <RecordPaymentDialog firmId={firmId} placementId={placement.id} onClose={() => setPaying(false)} onChanged={onChanged} />
+      )}
+      {editing && <EditPaymentDialog firmId={firmId} payment={editing} onClose={() => setEditing(null)} onChanged={onChanged} />}
+      {deleting && <DeletePaymentDialog firmId={firmId} payment={deleting} onClose={() => setDeleting(null)} onChanged={onChanged} />}
+      {commissioning && placement && (
+        <PlacementCommissionDialog
+          firmId={firmId}
+          placement={placement}
+          adminFeePepm={wonQuote?.adminFeePepm ?? null}
+          employees={page.opportunity.employees ?? page.intake?.censusSize ?? null}
+          onClose={() => setCommissioning(false)}
+          onChanged={onChanged}
+        />
       )}
     </section>
   );
 }
 
-/** Reopening (ADR 0027) undoes what the win made, so it asks first and says what it undoes. */
+/**
+ * Reopening (ADR 0027) undoes what the win made, so it asks first and says what it undoes. It reopens from the version the opportunity had when this dialog opened
+ * (D-46), never the page's live one, which a background reload moves: a Reopen opened from an older view must not pass the check and undo a newer win. A conflict
+ * answer is shown, and only then does the dialog start from the version it named, so the next press is made knowing it.
+ */
 function ReopenDialog({ firmId, page, onClose, onChanged }: { firmId: string; page: OpportunityPage; onClose: () => void; onChanged: () => void }) {
   const { opportunity } = page;
+  const version = useRef(opportunity.version);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const [conflicted, setConflicted] = useState(false);
   const won = opportunity.stage === "won";
+  const leave = () => {
+    // The page is asked again once the person has seen the conflict (the banner may go: someone else already reopened it).
+    if (conflicted) onChanged();
+    onClose();
+  };
   const reopen = async () => {
     setBusy(true);
     setRefused(null);
     try {
-      const done = await reopenOpportunity(firmId, opportunity.id, opportunity.version);
+      const done = await reopenOpportunity(firmId, opportunity.id, version.current);
       if (isConflict(done)) {
-        setRefused(`Someone else changed this opportunity first. It is now ${STAGE_LABELS[done.stage]}. Nothing was reopened.`);
-        onChanged();
+        version.current = done.currentVersion;
+        setConflicted(true);
+        setRefused(
+          `Someone else changed this opportunity first. It is now ${STAGE_LABELS[done.stage]}. Nothing was reopened. ${done.changed.map((c) => changedLine(c, opportunityFieldLabel)).join("; ")}${done.changed.length > 0 ? ". " : ""}Reopen again if you still want to.`,
+        );
         return;
       }
       toast.success("Reopened");
@@ -107,7 +173,7 @@ function ReopenDialog({ firmId, page, onClose, onChanged }: { firmId: string; pa
     }
   };
   return (
-    <AlertDialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+    <AlertDialog open onOpenChange={(open) => { if (!open && !busy) leave(); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Reopen this opportunity?</AlertDialogTitle>
@@ -124,49 +190,5 @@ function ReopenDialog({ firmId, page, onClose, onChanged }: { firmId: string; pa
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
-}
-
-const paymentSchema = z.object({
-  received_on: dateRule().refine((v) => v !== "", "Enter the day it was received, like 2027-02-10."),
-  amount: z.string().trim().refine((v) => /^\d+(\.\d{1,2})?$/.test(v) && Number(v) > 0, "Enter an amount above zero, like 1500."),
-  note: z.string().trim().max(500, "Keep the note to 500 characters."),
-});
-
-/** Record a payment (D-467): the day it was received, an amount above zero and a note, against the placement the win made. */
-function RecordPaymentDialog({ firmId, placementId, onClose, onChanged }: { firmId: string; placementId: string; onClose: () => void; onChanged: () => void }) {
-  const api = useWorkspaceForm({
-    schema: paymentSchema,
-    defaultValues: { received_on: today(), amount: "", note: "" },
-    save: async (v) => {
-      try {
-        return await recordCommissionPayment(firmId, placementId, { receivedOn: v.received_on, amount: Number(v.amount), note: v.note });
-      } catch (e) {
-        if (e instanceof OpportunityError && e.kind !== "failed") throw new SaveRefused(e.message);
-        throw e;
-      }
-    },
-    onSaved: () => {
-      toast.success("Payment recorded");
-      onChanged();
-      onClose();
-    },
-    failureMessage: "Couldn't record the payment. Check your connection and try again.",
-    onCancel: onClose,
-  });
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) api.cancel?.(); }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Record a payment</DialogTitle>
-          <DialogDescription>Commission the firm received for this placement.</DialogDescription>
-        </DialogHeader>
-        <WorkspaceForm api={api} aria-label="Record a payment" actions={<FormActions submitLabel="Record payment" savingLabel="Recording…" />}>
-          <Field name="received_on" label="Received on" required>{(field) => <Input {...field} type="date" />}</Field>
-          <Field name="amount" label="Amount" required>{(field) => <Input {...field} inputMode="decimal" />}</Field>
-          <Field name="note" label="Note">{(field) => <Textarea {...field} rows={2} />}</Field>
-        </WorkspaceForm>
-      </DialogContent>
-    </Dialog>
   );
 }

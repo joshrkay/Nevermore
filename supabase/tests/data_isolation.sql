@@ -222,6 +222,7 @@
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1493,6 +1494,10 @@ INSERT INTO callable VALUES
   ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
 
+-- CRM-O1.3b review (20261121170000_opportunity_outcome.sql; supabase/tests/opportunity_outcome.sql): the outcome of an opportunity, in one read.
+INSERT INTO callable VALUES
+  ('opportunity_outcome(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the opportunity''s account, by level, reads how the opportunity ended: its lost reason and note, the placement a win made with its commission, the renewal made with it, the payments received and each quote request''s close reason and proposed start; PT404, one answer, for an opportunity that is not there, is another firm''s or may not be seen, as opportunity_page answers');
 -- CRM-O1.3a (20261120121000_won_lost_commission.sql; supabase/tests/won_lost_commission.sql): won, lost and reopen, and the commission received.
 INSERT INTO callable VALUES
   ('opportunity_mark_won(p_opportunity_id uuid, p_quote_request_id bigint, p_start_date date, p_renewal_date date, p_broker_of_record text, p_firm_id uuid, p_version integer, p_commission_basis text, p_commission_rate numeric, p_commission_expected_yearly numeric, p_time_zone text)', 'own', NULL,
@@ -2180,7 +2185,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('opportunity_create', 'advisor', 'by_id',
    $$SELECT public.opportunity_create({acct}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"name": "Probe search"'),
   ('opportunity_create_context', 'advisor', 'by_id',
-   $$SELECT jsonb_typeof(public.opportunity_create_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+   $$SELECT jsonb_typeof(public.opportunity_create_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('opportunity_outcome', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_outcome({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
 
 -- CRM-O1.3a: won, lost and reopen ({opp} is the opportunity of the firm's owned account, owned by the account's owner; {plc} the account's placement and {pay} the
 -- payment on it). The opportunity's three functions are asked for a version it never had, which the member meets after every other question (22023), so nothing
@@ -3988,7 +3994,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_create', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, makes an opportunity on it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
   ('opportunity_owner_choices', 'service_only', 'the firm''s current people an opportunity of an account may be given to by the level rule and who sees the account, for any firm and account owner by id, so no API role can call it: the form''s read, opportunity_create_context, asks it once the caller is known to see the account'),
-  ('opportunity_create_context', 'firm_scoped', 'an account''s name, archived state, employees and contacts, the firm''s referral partners and the people who may own a new opportunity, to a member of the firm who may see the account (4e)');
+  ('opportunity_create_context', 'firm_scoped', 'an account''s name, archived state, employees and contacts, the firm''s referral partners and the people who may own a new opportunity, to a member of the firm who may see the account (4e)'),
+  ('opportunity_outcome', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads how it ended: the lost reason, the placement, its renewal and payments and each quote''s close reason; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),

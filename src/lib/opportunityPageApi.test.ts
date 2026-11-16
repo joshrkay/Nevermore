@@ -19,7 +19,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unkno
 
 const {
   getOpportunityPage, listOpportunityActivity, updateOpportunity, OpportunityError, markOpportunityWon, markOpportunityLost, reopenOpportunity, recordCommissionPayment,
-  getOpportunityOutcome, getOpportunityOfSubmission, getFirmName,
+  getOpportunityOutcome, getOpportunityOfSubmission, getFirmName, updateCommissionPayment, deleteCommissionPayment, setPlacementCommission,
 } = await import("./opportunityPageApi");
 type OpportunityEdit = import("./opportunityPageApi").OpportunityEdit;
 
@@ -320,24 +320,36 @@ describe("recordCommissionPayment (CRM-O1.3a: record_commission_payment, D-467)"
   });
 });
 
-describe("getOpportunityOutcome (D-467, D-472, D-424: read from the tables the firm's row security shows)", () => {
+describe("getOpportunityOutcome (D-423: one read, opportunity_outcome)", () => {
   beforeEach(() => {
     reads.length = 0;
-    for (const k of Object.keys(tables)) delete tables[k];
+    rpc.mockReset();
+  });
+  const answer = {
+    lost_reason: null, lost_note: null,
+    placement: {
+      id: "pl1", peo_name: "PEO B", start_date: "2027-01-01", broker_of_record: "Acme Benefits", ended_on: null, commission_basis: "share", commission_rate: 20,
+      commission_expected_yearly: 12744, version: 2,
+    },
+    renewal: { id: "r1", renews_on: "2028-01-01" },
+    payments: [{ id: "p1", received_on: "2027-02-10", amount: 1500, note: null, version: 1 }, { id: "p2", received_on: "2027-03-10", amount: 500, note: "Second", version: 1 }],
+    received_to_date: 2000,
+    quotes: [{ id: 12, close_reason: null, proposed_start_on: "2027-01-01" }, { id: 13, close_reason: "went_elsewhere", proposed_start_on: null }],
+  };
+
+  // Catches: the outcome read from five tables in two waves (no one snapshot, an untyped client, a row policy per table) instead of the one function.
+  it("asks the database's one read, and no table", async () => {
+    rpc.mockResolvedValue({ data: answer, error: null });
+    await getOpportunityOutcome("f1", "o1");
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("opportunity_outcome", { p_firm_id: "f1", p_opportunity_id: "o1" });
+    expect(reads).toEqual([]);
   });
 
   // Catches: the banner missing the placement's PEO, start, broker or commission, the renewal's date, the payments to date, or a quote's close reason.
   it("reads the lost reason, the placement with its renewal and payments, and each quote's close reason and proposed start", async () => {
-    tables.opportunities = { data: { lost_reason: null, lost_note: null }, error: null };
-    tables.placements = {
-      data: { id: "pl1", peo_name: "PEO B", start_date: "2027-01-01", broker_of_record: "Acme Benefits", ended_on: null, commission_basis: "share", commission_rate: "20.00", commission_expected_yearly: "12744.00", version: 2 },
-      error: null,
-    };
-    tables.renewals = { data: { renews_on: "2028-01-01" }, error: null };
-    tables.commission_payments = { data: [{ id: "p1", received_on: "2027-02-10", amount: "1500.00", note: null, version: 1 }, { id: "p2", received_on: "2027-03-10", amount: 500, note: "Second", version: 1 }], error: null };
-    tables.quote_requests = { data: [{ id: 12, close_reason: null, proposed_start_on: "2027-01-01" }, { id: 13, close_reason: "went_elsewhere", proposed_start_on: null }], error: null };
-    const got = await getOpportunityOutcome("f1", "o1", "i1");
-    expect(got).toEqual({
+    rpc.mockResolvedValue({ data: answer, error: null });
+    expect(await getOpportunityOutcome("f1", "o1")).toEqual({
       lostReason: null, lostNote: null,
       placement: {
         id: "pl1", peoName: "PEO B", startDate: "2027-01-01", brokerOfRecord: "Acme Benefits", endedOn: null, renewsOn: "2028-01-01",
@@ -347,23 +359,95 @@ describe("getOpportunityOutcome (D-467, D-472, D-424: read from the tables the f
       receivedToDate: 2000,
       quotes: { 12: { closeReason: null, proposedStart: "2027-01-01" }, 13: { closeReason: "went_elsewhere", proposedStart: null } },
     });
-    expect(reads.find((r) => r.table === "placements")?.calls).toContainEqual(["eq", ["opportunity_id", "o1"]]);
-    expect(reads.find((r) => r.table === "quote_requests")?.calls).toContainEqual(["eq", ["session_id", "i1"]]);
   });
 
   // Catches: a banner that fails for a win with no commission or a loss with no placement.
   it("has no placement and no payments for an opportunity that is not won, and reads the lost reason", async () => {
-    tables.opportunities = { data: { lost_reason: "other", lost_note: "Closed the practice" }, error: null };
-    tables.placements = { data: null, error: null };
-    tables.quote_requests = { data: [], error: null };
-    const got = await getOpportunityOutcome("f1", "o1", null);
-    expect(got).toMatchObject({ lostReason: "other", lostNote: "Closed the practice", placement: null, payments: [], receivedToDate: 0, quotes: {} });
+    rpc.mockResolvedValue({ data: { ...answer, lost_reason: "other", lost_note: "Closed the practice", placement: null, renewal: null, payments: [], received_to_date: 0, quotes: [] }, error: null });
+    expect(await getOpportunityOutcome("f1", "o1")).toMatchObject({ lostReason: "other", lostNote: "Closed the practice", placement: null, payments: [], receivedToDate: 0, quotes: {} });
   });
 
-  // Catches: a failed read taken for "no outcome", which would show a won opportunity with no banner.
-  it("is a failure when a table cannot be read", async () => {
-    tables.opportunities = { data: null, error: { code: "XX000", message: "boom" } };
-    expect(await caught(() => getOpportunityOutcome("f1", "o1", null))).toBeInstanceOf(OpportunityError);
+  // Catches: a win with no commission read as a commission of nothing.
+  it("reads a placement with no commission as none", async () => {
+    rpc.mockResolvedValue({ data: { ...answer, placement: { ...answer.placement, commission_basis: null, commission_rate: null, commission_expected_yearly: null } }, error: null });
+    expect((await getOpportunityOutcome("f1", "o1")).placement?.commission).toBeNull();
+  });
+
+  // Catches: a failed read taken for "no outcome", which would show a won opportunity with no banner; and an answer of the wrong shape taken for one.
+  it("is a failure when the read fails or answers a shape that is not the agreed one", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000", message: "boom" } });
+    expect(await caught(() => getOpportunityOutcome("f1", "o1"))).toBeInstanceOf(OpportunityError);
+    rpc.mockResolvedValue({ data: { lost_reason: null }, error: null });
+    expect(await caught(() => getOpportunityOutcome("f1", "o1"))).toBeInstanceOf(OpportunityError);
+  });
+
+  // Catches: an opportunity the person may not see read as a failure to try again.
+  it("says an opportunity that may not be seen is not available", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PT404", message: "That opportunity isn't available" } });
+    expect(await caught(() => getOpportunityOutcome("f1", "o1"))).toMatchObject({ kind: "notFound" });
+  });
+});
+
+describe("editing and deleting a payment, and the commission later (CRM-O1.3b review: update_commission_payment, delete_commission_payment, set_placement_commission)", () => {
+  const paymentConflict = {
+    conflict: true, currentVersion: 3, current: { received_on: "2027-02-11", amount: 1600, note: "Moved" },
+    changed: [{ field: "amount", value: 1600, who: "marcus@x.example", at: "2026-11-12T10:00:00+00:00" }],
+  };
+
+  // Catches: the day, amount, note or version sent under the wrong parameter, or the answer's totals lost.
+  it("saves a payment from the version the person started from", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "p1", placement_id: "pl1", received_on: "2027-02-10", amount: 1400, note: "x", version: 2 }, received_to_date: 1400, expected_yearly: 12744 }, error: null });
+    const got = await updateCommissionPayment("f1", "p1", { receivedOn: "2027-02-10", amount: 1400, note: "x" }, 1);
+    expect(rpc).toHaveBeenCalledWith("update_commission_payment", { p_payment_id: "p1", p_received_on: "2027-02-10", p_amount: 1400, p_note: "x", p_firm_id: "f1", p_version: 1 });
+    expect(got).toEqual({ conflict: false, receivedToDate: 1400, expectedYearly: 12744 });
+  });
+
+  // Catches: a stale edit treated as saved, or the person left without who changed what (D-46).
+  it("answers a stale payment save as a conflict with what is there now", async () => {
+    rpc.mockResolvedValue({ data: paymentConflict, error: null });
+    expect(await updateCommissionPayment("f1", "p1", { receivedOn: "2027-02-10", amount: 1400, note: "" }, 1)).toEqual({
+      conflict: true, currentVersion: 3, current: { receivedOn: "2027-02-11", amount: 1600, note: "Moved" }, changed: paymentConflict.changed,
+    });
+  });
+
+  // Catches: the payment deleted without the version it was seen at, so a payment someone else changed is deleted unseen.
+  it("deletes a payment from the version the person started from", async () => {
+    rpc.mockResolvedValue({ data: { deleted: true, amount: 1500, received_to_date: 0 }, error: null });
+    expect(await deleteCommissionPayment("f1", "p1", 2)).toEqual({ conflict: false, receivedToDate: 0 });
+    expect(rpc).toHaveBeenCalledWith("delete_commission_payment", { p_payment_id: "p1", p_firm_id: "f1", p_version: 2 });
+  });
+
+  it("answers a stale delete as a conflict, deleting nothing", async () => {
+    rpc.mockResolvedValue({ data: paymentConflict, error: null });
+    expect(await deleteCommissionPayment("f1", "p1", 1)).toMatchObject({ conflict: true, currentVersion: 3, current: { amount: 1600 } });
+  });
+
+  // Catches: the commission sent under the wrong parameter, none sent as zeros, or the placement's version left out.
+  it("sets the commission from the placement's version, and clears it with none", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "pl1", commission_basis: "flat", commission_rate: 9000, commission_expected_yearly: 9000, version: 4 } }, error: null });
+    expect(await setPlacementCommission("f1", "pl1", { basis: "flat", rate: 9000, expectedYearly: 9000 }, 3)).toEqual({
+      conflict: false, commission: { basis: "flat", rate: 9000, expectedYearly: 9000 }, version: 4,
+    });
+    expect(rpc).toHaveBeenLastCalledWith("set_placement_commission", { p_placement_id: "pl1", p_firm_id: "f1", p_version: 3, p_basis: "flat", p_rate: 9000, p_expected_yearly: 9000 });
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "pl1", commission_basis: null, commission_rate: null, commission_expected_yearly: null, version: 5 } }, error: null });
+    expect(await setPlacementCommission("f1", "pl1", null, 4)).toEqual({ conflict: false, commission: null, version: 5 });
+    expect(rpc).toHaveBeenLastCalledWith("set_placement_commission", { p_placement_id: "pl1", p_firm_id: "f1", p_version: 4, p_basis: null, p_rate: null, p_expected_yearly: null });
+  });
+
+  it("answers a stale commission change as a conflict with the commission now", async () => {
+    const changed = [{ field: "commission_rate", value: 25, who: "marcus@x.example", at: "2026-11-12T10:00:00+00:00" }];
+    rpc.mockResolvedValue({ data: { conflict: true, currentVersion: 5, current: { commission_basis: "share", commission_rate: 25, commission_expected_yearly: null }, changed }, error: null });
+    expect(await setPlacementCommission("f1", "pl1", null, 3)).toEqual({ conflict: true, currentVersion: 5, current: { basis: "share", rate: 25, expectedYearly: null }, changed });
+  });
+
+  // Catches: a refusal (a level rule, an archived account) said as a failed connection.
+  it("says each refusal in the database's own words", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Only the opportunity's owner can change it." } });
+    for (const call of [
+      () => updateCommissionPayment("f1", "p1", { receivedOn: "2027-02-10", amount: 1, note: "" }, 1),
+      () => deleteCommissionPayment("f1", "p1", 1),
+      () => setPlacementCommission("f1", "pl1", null, 1),
+    ]) expect(await caught(call)).toMatchObject({ kind: "notAllowed", message: "Only the opportunity's owner can change it." });
   });
 });
 
@@ -380,9 +464,11 @@ describe("getOpportunityOfSubmission (D-470: the console finds the opportunity a
     tables.opportunities = { data: null, error: null };
     expect(await getOpportunityOfSubmission("i1")).toBeNull();
   });
-  // Catches: a read that fails hiding the console's status control: it is "no opportunity", and the database still refuses a win on one it can't see.
-  it("is none when the read fails", async () => {
+  // Catches: a failed read taken for "this submission is on no opportunity", which sent the console to its old quote picker (the database refuses a win made there).
+  it("is a failure when the read fails, and none only when it worked and found nothing", async () => {
     tables.opportunities = { data: null, error: { code: "XX000", message: "boom" } };
+    expect(await caught(() => getOpportunityOfSubmission("i1"))).toBeInstanceOf(OpportunityError);
+    tables.opportunities = { data: null, error: null };
     expect(await getOpportunityOfSubmission("i1")).toBeNull();
   });
 });

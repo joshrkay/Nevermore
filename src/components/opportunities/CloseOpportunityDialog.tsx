@@ -6,10 +6,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { dateRule, Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
-import { formatDay, formatWhen, STAGE_LABELS } from "@/data/accountPage";
+import { formatDay, STAGE_LABELS } from "@/data/accountPage";
 import { isConflict } from "@/lib/recordVersion";
-import { adminFeeWords } from "@/data/opportunityPage";
-import { COMMISSION_BASES, commissionArithmetic, expectedCommissionYearly, LOST_REASONS, renewalAfter } from "@/data/opportunityClose";
+import { adminFeeWords, opportunityFieldLabel } from "@/data/opportunityPage";
+import { changedLine, commissionProblems, LOST_REASONS, renewalAfter } from "@/data/opportunityClose";
+import { CommissionFields } from "./CommissionFields";
 import {
   markOpportunityLost, markOpportunityWon, OpportunityError, type OpportunityCloseConflict, type OpportunityClosed, type OpportunityQuote, type PlacementCommission,
 } from "@/lib/opportunityPageApi";
@@ -18,8 +19,6 @@ import {
 // offers only the quotes the employer could have taken (D-463), lists what a win will do before it is done (D-464), defaults the dates, broker and commission as
 // D-465 and D-466 say, and asks a lost search for its reason (D-468). The database decides every rule; its refusals are said in its own words beside the button. If
 // someone changed the opportunity first nothing is done, and the dialog says who changed what and offers a reload (D-46).
-
-const MONEY = /^\d+(\.\d{1,2})?$/;
 
 /** The dialog's rules, in words, before anything is sent. The database asks the same and says the rest. */
 export const closeSchema = z.object({
@@ -48,12 +47,7 @@ export const closeSchema = z.object({
   else if (v.start_date !== "" && v.renewal_date <= v.start_date) say("renewal_date", "The renewal must come after the start.");
   if (v.broker === "") say("broker", "Say who the broker of record is.");
   else if (v.broker.length > 120) say("broker", "Keep the broker of record to 120 characters.");
-  if (v.commission_basis !== "") {
-    const rate = Number(v.commission_rate);
-    if (!MONEY.test(v.commission_rate) || rate <= 0) say("commission_rate", "Enter the commission's number, like 20.");
-    else if (v.commission_basis === "share" && rate > 100) say("commission_rate", "A share is a percent: 100 at most.");
-  }
-  if (v.commission_yearly !== "" && !MONEY.test(v.commission_yearly)) say("commission_yearly", "Enter the expected commission in dollars, like 7650.");
+  for (const p of commissionProblems(v)) say(p.path, p.message);
 });
 
 export interface CloseTarget {
@@ -65,9 +59,6 @@ export interface CloseTarget {
   /** The opportunity's employees, else the certified census size: what the expected commission is worked from (D-466). */
   employees: number | null;
 }
-
-/** Words the database's column names for the stale notice. */
-const fieldWords = (field: string) => field.replace(/_/g, " ");
 
 export function CloseOpportunityDialog({ firmId, target, accountName, quotes, proposedStarts, brokerDefault, initial, onClose, onDone }: {
   firmId: string;
@@ -131,31 +122,23 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
   const outcome = form.watch("outcome") as string;
   const quoteId = form.watch("quote") as string;
   const startDay = form.watch("start_date") as string;
-  const basis = form.watch("commission_basis") as string;
-  const rate = form.watch("commission_rate") as string;
   const chosen = quoted.find((q) => String(q.id) === quoteId) ?? null;
 
-  // What the person typed is kept: a default only fills a field they have not touched.
-  const typed = useRef({ start: false, renewal: false, yearly: false });
+  // What the person typed is kept: a default only fills a field they have not touched. The start follows the quote chosen, and the starts the PEOs proposed, which may
+  // arrive after the dialog opened (the outcome loads beside the page): an untouched start is then worked out again.
+  const typed = useRef({ start: false, renewal: false });
+  const proposedKey = JSON.stringify(proposedStarts);
   useEffect(() => {
     if (!typed.current.start) form.setValue("start_date", startFor(quoteId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quoteId]);
+  }, [quoteId, proposedKey]);
   useEffect(() => {
     if (!typed.current.renewal) form.setValue("renewal_date", renewalAfter(startDay));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDay]);
-  const figures = { basis, rate: Number(rate), adminFeePepm: chosen?.adminFeePepm ?? null, employees: target.employees };
-  const worked = MONEY.test(rate) ? expectedCommissionYearly(figures) : null;
-  useEffect(() => {
-    if (!typed.current.yearly) form.setValue("commission_yearly", worked === null ? "" : String(worked));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worked]);
 
   const renewal = form.watch("renewal_date") as string;
   const closing = outcome === "won" ? quotes.filter((q) => q.id !== chosen?.id && (q.status === "sent" || q.status === "quoted")) : [];
-  const basisNow = COMMISSION_BASES.find((b) => b.value === basis);
-  const arithmetic = MONEY.test(rate) ? commissionArithmetic(figures) : null;
 
   return (
     <Dialog open onOpenChange={(open) => {
@@ -174,7 +157,7 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
             <p className="text-sm">It is now {STAGE_LABELS[conflict.stage]}. Nothing was saved.</p>
             {conflict.changed.length > 0 && (
               <ul className="space-y-1 text-sm text-muted-foreground">
-                {conflict.changed.map((c) => <li key={c.field}>{fieldWords(c.field)} changed by {c.who}, {formatWhen(c.at)}</li>)}
+                {conflict.changed.map((c) => <li key={c.field}>{changedLine(c, opportunityFieldLabel)}</li>)}
               </ul>
             )}
             <div className="flex justify-end">
@@ -187,15 +170,18 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
             aria-label="Close this opportunity"
             actions={<FormActions submitLabel={outcome === "won" ? "Mark won" : outcome === "lost" ? "Mark lost" : "Close opportunity"} savingLabel="Saving…" />}
           >
-            <Field name="outcome" label="Outcome" required>
+            <Field name="outcome" label="Outcome" required group>
               {(field) => (
-                <div role="radiogroup" aria-label="Outcome" className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-2">
                   <label className={`flex items-center gap-2 rounded-md border p-3 text-sm ${canWin ? "" : "opacity-60"}`}>
-                    <input type="radio" name="outcome" value="won" checked={field.value === "won"} disabled={!canWin} aria-describedby={canWin ? undefined : "won-needs-a-quote"} onChange={() => field.onChange("won")} />
+                    <input
+                      type="radio" name="outcome" value="won" ref={canWin ? field.ref : undefined} checked={field.value === "won"} disabled={!canWin}
+                      aria-describedby={canWin ? undefined : "won-needs-a-quote"} onChange={() => field.onChange("won")}
+                    />
                     <span><strong className="font-medium">Won</strong> · the employer took a quote</span>
                   </label>
                   <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
-                    <input type="radio" name="outcome" value="lost" checked={field.value === "lost"} onChange={() => field.onChange("lost")} />
+                    <input type="radio" name="outcome" value="lost" ref={canWin ? undefined : field.ref} checked={field.value === "lost"} onChange={() => field.onChange("lost")} />
                     <span><strong className="font-medium">Lost</strong> · the search ended without one</span>
                   </label>
                 </div>
@@ -205,12 +191,12 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
 
             {outcome === "won" && (
               <>
-                <Field name="quote" label="Which quote did they take?" required>
+                <Field name="quote" label="Which quote did they take?" required group>
                   {(field) => (
-                    <div role="radiogroup" aria-label="Which quote did they take?" className="space-y-2">
-                      {quoted.map((q) => (
+                    <div className="space-y-2">
+                      {quoted.map((q, i) => (
                         <label key={q.id} className="flex items-center gap-2 rounded-md border p-3 text-sm">
-                          <input type="radio" name="quote" value={q.id} checked={field.value === String(q.id)} onChange={() => field.onChange(String(q.id))} />
+                          <input type="radio" name="quote" value={q.id} ref={i === 0 ? field.ref : undefined} checked={field.value === String(q.id)} onChange={() => field.onChange(String(q.id))} />
                           <span className="flex-1"><strong className="font-medium">{q.peoName}</strong>{q.adminFeePepm !== null && <> · {adminFeeWords(q.adminFeePepm)}</>}</span>
                           <span className="rounded bg-primary/10 px-2 py-0.5 text-xs">Quoted</span>
                         </label>
@@ -226,25 +212,10 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
                   <Field name="renewal_date" label="Renewal date" required>
                     {(field) => <Input {...field} type="date" onChange={(e) => { typed.current.renewal = true; field.onChange(e); }} />}
                   </Field>
-                  <Field name="broker" label="Broker of record" required>{(field) => <Input {...field} maxLength={200} />}</Field>
+                  <Field name="broker" label="Broker of record" required>{(field) => <Input {...field} maxLength={120} />}</Field>
                 </div>
                 <h3 className="pt-1 text-sm font-medium text-muted-foreground">Commission (optional)</h3>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field name="commission_basis" label="Commission basis">
-                    {(field) => (
-                      <SelectInput {...field}>
-                        <option value="">None recorded</option>
-                        {COMMISSION_BASES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-                      </SelectInput>
-                    )}
-                  </Field>
-                  {basisNow && <Field name="commission_rate" label={basisNow.numberLabel}>{(field) => <Input {...field} inputMode="decimal" />}</Field>}
-                  {basisNow && (
-                    <Field name="commission_yearly" label="Expected commission, a year" help={arithmetic}>
-                      {(field) => <Input {...field} inputMode="decimal" onChange={(e) => { typed.current.yearly = true; field.onChange(e); }} />}
-                    </Field>
-                  )}
-                </div>
+                <CommissionFields form={form} adminFeePepm={chosen?.adminFeePepm ?? null} employees={target.employees} />
                 <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground" aria-label="What marking it won does">
                   {chosen && <li>{accountName} becomes a client.</li>}
                   {closing.map((q) => <li key={q.id}>{q.peoName}'s open quote is closed.</li>)}
