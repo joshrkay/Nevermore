@@ -195,26 +195,8 @@ END;
 $$;
 
 -- ---------- 3. A message as the reads answer it ----------
--- 6.2's fields (20261122090000), every one kept, and who sent a received message by name, whether it is automatic, whether its sender is new, and whether
--- the sender is offered as a contact.
-CREATE OR REPLACE FUNCTION public.conversation_message_fields(m public.conversation_messages)
-RETURNS jsonb
-LANGUAGE sql
-STABLE
-SET search_path = public, pg_temp
-AS $$
-  SELECT jsonb_build_object(
-    'id', m.id, 'conversation_id', m.conversation_id, 'direction', m.direction, 'from_address', m.from_address, 'to_addresses', to_jsonb(m.to_addresses), 'cc_addresses', to_jsonb(m.cc_addresses),
-    'subject', m.subject, 'body_text', m.body_text, 'message_id', m.message_id, 'in_reply_to', m.in_reply_to,
-    'message_references', to_jsonb(m.message_references), 'sender_id', m.sender_id, 'status', m.status,
-    'from_name', m.from_name, 'is_automatic', m.is_automatic, 'new_sender', m.new_sender,
-    -- A new sender on a contact's conversation who is no contact on that account yet is offered as one (add_sender_as_contact). A lead has no account, so
-    -- its conversation offers nothing (D-662).
-    'offer_contact', m.new_sender AND m.direction = 'inbound' AND EXISTS (
-      SELECT 1 FROM public.conversations v JOIN public.contacts k ON k.id = v.contact_id
-      WHERE v.id = m.conversation_id
-        AND NOT EXISTS (SELECT 1 FROM public.contacts o WHERE o.account_id = k.account_id AND lower(btrim(o.email)) = lower(m.from_address))))
-$$;
+-- conversation_message_fields is restated in section 7, with each message's attachments: 6.2's fields (20261122090000), every one kept, and who sent a
+-- received message by name, whether it is automatic, whether its sender is new, and whether the sender is offered as a contact.
 
 -- ---------- 4. Adding a new sender as a contact (CRM-E1.3) ----------
 -- The sender of a received message offered as a contact (conversation_message_fields' offer_contact) is added to the account of the conversation's contact,
@@ -524,7 +506,8 @@ $$;
 
 REVOKE ALL ON FUNCTION public.conversation_message_attachment_list(uuid) FROM PUBLIC, anon, authenticated, service_role;
 
--- conversation_message_fields as section 3 restates it, with its attachments.
+-- conversation_message_fields restated from 20261122090000, every field kept, with what a received message adds: who sent it by name, whether it is
+-- automatic, whether its sender is new, whether the sender is offered as a contact, and its attachments.
 CREATE OR REPLACE FUNCTION public.conversation_message_fields(m public.conversation_messages)
 RETURNS jsonb
 LANGUAGE sql

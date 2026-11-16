@@ -27,3 +27,35 @@ SQL tests: `supabase/tests/conversation_replies.sql` on the lane's Postgres (por
 | 20 | handler.test: a conversation's attachments are scanned and stored by PEO mail's rules in the contact-mail bucket; a failed scan blocks only that file | `AssertionError: expected { stored: +0, blocked: +0, …(3) } to deeply equal { stored: 1, blocked: 1, …(3) }` | green |
 | 21 | handler.test: a conversation reply's address, subject, file names and text never reach a log | none: passed at once (a guard over cycle 19 and 20's code, which logs ids and counts only); mutated below | green (at once) |
 | 22 | handler.test: a scanner that was reached but can't answer has the provider retry a conversation's reply | none: passed at once (cycle 20's code kept PEO mail's retry); mutated below | green (at once) |
+| 23 | conversation_replies 19 (from the mutation pass): opening with an older moment never moves the mark back | seen red against mutant M10 (the forward-only guard removed): `FAIL: a later open through an older moment leaves it read gave true, expected false`; the code already held the rule | green |
+| 24 | conversation_replies 20 (from the mutation pass): an opportunity's mail needs the opportunity itself to be one the caller may see | seen red against mutant M13 (the opportunity's own level check removed): `FAIL: an opportunity the agent may not see, on an account they may gave ok, expected PT404 ...`; the code already held the rule | green |
+
+The registries the brief requires (data_isolation's matrix, probe and three function lists, help_from_nevermore's and close_a_firm's lists, the closing plan, the data class, the bucket list) were driven by those existing tests going red as each piece was added: `public.conversation_message_attachments is not in the registry`, `privileged functions not in the registry: account_conversation_messages, ...`, `closing a firm and the registry disagree`, `every function that asks a membership helper is classified ... gave add_sender_as_contact, open_conversation`, `a count per table of what was deleted gave {... "conversation_message_attachments": 0}`, dataPolicy.test's bucket list.
+
+## Mutations (each rule broken on purpose; the suite named must go red)
+
+| # | Mutation | Test run | Result |
+|---|---|---|---|
+| M1 | a message naming two conversations joins one (`= 1` to `>= 1`) | conversation_replies | red (7) |
+| M2 | the conversation replay check removed | conversation_replies | survived: equivalent. The insert's `ON CONFLICT (provider_message_id) DO NOTHING` and its re-read answer the same duplicate, so the early check only saves work |
+| M3 | is_automatic not kept | conversation_replies | red (3) |
+| M4 | a former member's copy counted as the firm's own | conversation_replies | red (4) |
+| M5 | a CC'd person counted as new | conversation_replies | red (5) |
+| M6 | mail to an unknown c. address held as revoked | conversation_replies | red (6) |
+| M7 | someone already a contact on the account offered again | conversation_replies | red (9) (first run mutated a definition that a later one replaced, and survived; the dead definition was removed and the mutation rerun) |
+| M8 | a sender not offered is added | conversation_replies | red (11) |
+| M9 | an automatic reply counted as new mail | conversation_replies | red (12) |
+| M10 | the mark may move backwards | conversation_replies | survived, then test 19 added (cycle 23): red |
+| M11 | a support session clears the mark | help_from_nevermore | red |
+| M12 | an account's read takes every account's mail | conversation_replies | red (15) |
+| M13 | an opportunity read without its own level | conversation_replies | survived, then test 20 added (cycle 24): red |
+| M14 | a repeated Message-ID reused | conversation_replies | red (16) |
+| M15 | the bucket policy's `status = 'stored'` removed | conversation_replies | survived: equivalent. The table's check allows a path only on a stored row, so the policy's path match already implies it |
+| M16 | the files' rows left out of the closing | close_a_firm | red |
+| M17 | an attachment's rows readable by anyone signed in | conversation_replies | red (18) |
+| M18 | the lead check gone from add_sender_as_contact | conversation_replies | red (11) |
+| H1 | the handler ignores a conversation's answer | handler.test | red (19, 20) |
+| H2 | a conversation's files kept in peo-mail | handler.test | red (20) |
+| H3 | no retry for a conversation's pending file | handler.test | red (22) |
+| H4 | the sender's address in the log | handler.test | red (19, 21) |
+| H5 | a conversation's files recorded as PEO mail's | handler.test | red (20) |

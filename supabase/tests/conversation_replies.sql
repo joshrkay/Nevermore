@@ -745,3 +745,27 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'conversation_replies: a received file is read as its conversation is';
 END $$;
+
+-- ---------- 19. (from the mutation pass) Opening with an older moment never moves the mark back. Catches: a stale page, opened late, making mail ----------
+-- someone already read new again for the whole firm.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.open_conversation(p_conversation_id => pg_temp.id('conv_lucia'));
+  PERFORM public.open_conversation(p_conversation_id => pg_temp.id('conv_lucia'), p_seen_through => now() - interval '1 day');
+  PERFORM pg_temp.is(public.conversation_for(p_contact_id => pg_temp.id('lucia')) #>> '{conversation,new_mail}', 'false', 'a later open through an older moment leaves it read');
+  RESET ROLE;
+  RAISE NOTICE 'conversation_replies: the mark never moves back';
+END $$;
+
+-- ---------- 20. (from the mutation pass) An opportunity's mail needs the opportunity itself to be one the caller may see, not only its account. ----------
+-- Catches: an agent reading, through an opportunity of a colleague's that the level rule keeps from them, the mail of an account they may see.
+DO $$
+BEGIN
+  PERFORM pg_temp.opportunity('reyes_opp_other', 'reyes', 'acme_agent3');
+  PERFORM pg_temp.as_user('acme_agent1');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.account_conversation_messages(p_opportunity_id => %L)', pg_temp.id('reyes_opp_other'))),
+    'PT404: That account or opportunity isn''t one you can see.', 'an opportunity the agent may not see, on an account they may');
+  RESET ROLE;
+  RAISE NOTICE 'conversation_replies: an opportunity''s mail asks for the opportunity''s own level';
+END $$;
