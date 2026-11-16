@@ -6,7 +6,7 @@
 -- by a foreign key, so removing a lead for good takes the names and values kept for its undo with it. Added to; nothing replaced (ADR 0007).
 ALTER TABLE public.bulk_changes DROP CONSTRAINT bulk_changes_action_check;
 ALTER TABLE public.bulk_changes ADD CONSTRAINT bulk_changes_action_check
-  CHECK (action IN ('owner', 'archive', 'field', 'label_add', 'label_remove', 'delete'));
+  CHECK (action IN ('owner', 'archive', 'field', 'label_add', 'label_remove', 'delete', 'status', 'not_fit'));
 
 ALTER TABLE public.bulk_change_records ADD COLUMN lead_id uuid;
 ALTER TABLE public.bulk_change_records DROP CONSTRAINT bulk_change_records_one_record;
@@ -31,9 +31,46 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   prm jsonb := COALESCE(NULLIF(p_params, 'null'::jsonb), '{}'::jsonb);
+  allowed text[];
+  k text;
 BEGIN
+  IF jsonb_typeof(prm) <> 'object' THEN
+    RAISE EXCEPTION 'The change''s details are missing.' USING ERRCODE = '22023';
+  END IF;
+  allowed := CASE p_action
+    WHEN 'owner' THEN ARRAY['owner_id']
+    WHEN 'status' THEN ARRAY['status']
+    WHEN 'not_fit' THEN ARRAY['reason']
+    WHEN 'delete' THEN ARRAY[]::text[]
+    ELSE NULL END;
+  IF allowed IS NULL THEN
+    RAISE EXCEPTION 'Choose what to change: the owner, the status, Not a fit, a field, a label or deleting.' USING ERRCODE = '22023';
+  END IF;
+  FOR k IN SELECT jsonb_object_keys(prm) LOOP
+    IF NOT k = ANY (allowed) THEN
+      RAISE EXCEPTION 'That change does not take "%".', left(k, 64) USING ERRCODE = '22023';
+    END IF;
+  END LOOP;
   IF p_action = 'owner' THEN
+    IF jsonb_typeof(prm -> 'owner_id') IS DISTINCT FROM 'string' OR (prm ->> 'owner_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      RAISE EXCEPTION 'Choose who will own these leads.' USING ERRCODE = '22023';
+    END IF;
     RETURN jsonb_build_object('owner_id', lower(prm ->> 'owner_id'));
+  END IF;
+  IF p_action = 'status' THEN
+    -- New or Working only: Converted is set by converting alone, and Not a fit has its own action with its reason (D-808, D-811).
+    IF jsonb_typeof(prm -> 'status') IS DISTINCT FROM 'string' OR (prm ->> 'status') NOT IN ('new', 'working') THEN
+      RAISE EXCEPTION 'Choose New or Working.' USING ERRCODE = '22023';
+    END IF;
+    RETURN jsonb_build_object('status', prm ->> 'status');
+  END IF;
+  IF p_action = 'not_fit' THEN
+    -- One reason for all, from the short list (CRM-L1.3, D-811).
+    IF jsonb_typeof(prm -> 'reason') IS DISTINCT FROM 'string'
+       OR NOT (prm ->> 'reason') = ANY (ARRAY['too_small', 'wrong_industry', 'not_interested', 'bad_contact_details', 'other']) THEN
+      RAISE EXCEPTION 'Choose why they are not a fit: too small, wrong industry, not interested, bad contact details or other.' USING ERRCODE = '22023';
+    END IF;
+    RETURN jsonb_build_object('reason', prm ->> 'reason');
   END IF;
   RETURN '{}'::jsonb;
 END;
@@ -107,6 +144,14 @@ BEGIN
   END IF;
   IF p_action = 'owner' THEN
     outcome := CASE WHEN l.owner_id IS NOT DISTINCT FROM (p_params ->> 'owner_id')::uuid THEN 'same' ELSE 'change' END;
+    RETURN;
+  END IF;
+  IF p_action = 'status' THEN
+    outcome := CASE WHEN l.status = p_params ->> 'status' THEN 'same' ELSE 'change' END;
+    RETURN;
+  END IF;
+  IF p_action = 'not_fit' THEN
+    outcome := CASE WHEN l.status = 'not_fit' AND l.not_fit_reason = p_params ->> 'reason' THEN 'same' ELSE 'change' END;
     RETURN;
   END IF;
   outcome := 'change';
@@ -219,6 +264,14 @@ BEGIN
       row_before := jsonb_build_object('owner_id', l.owner_id);
       row_after := jsonb_build_object('owner_id', new_owner);
       UPDATE public.leads SET owner_id = new_owner WHERE id = l.id;
+    ELSIF p_action = 'status' THEN
+      row_before := jsonb_build_object('status', l.status, 'not_fit_reason', l.not_fit_reason);
+      row_after := jsonb_build_object('status', params ->> 'status', 'not_fit_reason', NULL);
+      UPDATE public.leads SET status = params ->> 'status', not_fit_reason = NULL WHERE id = l.id;
+    ELSIF p_action = 'not_fit' THEN
+      row_before := jsonb_build_object('status', l.status, 'not_fit_reason', l.not_fit_reason);
+      row_after := jsonb_build_object('status', 'not_fit', 'not_fit_reason', params ->> 'reason');
+      UPDATE public.leads SET status = 'not_fit', not_fit_reason = params ->> 'reason' WHERE id = l.id;
     ELSE
       row_before := jsonb_build_object('deleted_at', NULL);
       row_after := jsonb_build_object('deleted_at', now());
@@ -285,7 +338,7 @@ BEGIN
     SELECT * INTO l FROM public.leads x WHERE x.id = rec.lead_id AND x.firm_id = firm FOR NO KEY UPDATE;
     -- Changed since: the lead's history has an entry for the field after the change finished with it, whoever made it (a value put back is a change too).
     since := EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text AND h.id > rec.history_mark
-      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' ELSE 'deleted_at' END);
+      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' WHEN 'status' THEN 'status' WHEN 'not_fit' THEN 'status' ELSE 'deleted_at' END);
     IF since THEN
       skipped := skipped || jsonb_build_object('id', l.id, 'name', rec.record_name, 'code', 'changed_since', 'reason', 'It has been changed since.');
       CONTINUE;
@@ -297,6 +350,8 @@ BEGIN
         CONTINUE;
       END IF;
       UPDATE public.leads SET owner_id = prev WHERE id = l.id;
+    ELSIF ch.action IN ('status', 'not_fit') THEN
+      UPDATE public.leads SET status = rec.before ->> 'status', not_fit_reason = rec.before ->> 'not_fit_reason' WHERE id = l.id;
     ELSE
       UPDATE public.leads SET deleted_at = NULL WHERE id = l.id;
     END IF;

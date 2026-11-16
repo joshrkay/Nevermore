@@ -563,3 +563,62 @@ BEGIN
   PERFORM pg_temp.is(u #>> '{skipped,0,code}', 'owner_left', 'named: the previous owner has left');
   PERFORM pg_temp.is((pg_temp.lead_row('o2')).owner_id, pg_temp.id('acme_agent1'), 'it keeps its new owner');
 END $$;
+
+-- Catches (CRM-S3.7): what a change asks for reaching the leads unchecked. Each is refused in words (22023), nothing changed.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'owner', '{"owner_id":"x"}', jsonb_build_array(pg_temp.id('o1')::text))),
+    '22023: Choose who will own these leads.', 'an owner that is not a person');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'archive', '{}', jsonb_build_array(pg_temp.id('o1')::text))),
+    '22023: Choose what to change: the owner, the status, Not a fit, a field, a label or deleting.', 'an action leads do not have');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'delete', '{"x":1}', jsonb_build_array(pg_temp.id('o1')::text))),
+    '22023: That change does not take "x".', 'a key the change does not take');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- 5. Change status, Not a fit ----------
+-- Catches (D-811, D-808): Change status not setting New or Working, or setting what only converting or Not a fit sets.
+SELECT pg_temp.lead('s1', 'acme', 'acme_agent1', 'Status Co');
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'status', '{"status":"working"}', NULL, jsonb_build_array(pg_temp.id('s1')::text));
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'status', '{"status":"converted"}', jsonb_build_array(pg_temp.id('s1')::text))), ':', 1),
+    '22023', 'Converted is set only by converting');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'changed')::int, 1, 'one lead set');
+  PERFORM pg_temp.is((pg_temp.lead_row('s1')).status, 'working', 'it is Working');
+END $$;
+
+-- Catches (D-202): Undo of a status change not putting the status back.
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'status', '{"status":"new"}', NULL, jsonb_build_array(pg_temp.id('s1')::text));
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'the status change undone');
+  PERFORM pg_temp.is((pg_temp.lead_row('s1')).status, 'working', 'Working again');
+END $$;
+
+-- Catches (D-811, CRM-L1.3): Not a fit without its one reason from the short list, or not set. Undo puts the status back and clears the reason.
+SELECT pg_temp.lead('n1', 'acme', 'acme_agent1', 'Too Small Co');
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'not_fit', '{"reason":"bored"}', jsonb_build_array(pg_temp.id('n1')::text))),
+    '22023: Choose why they are not a fit: too small, wrong industry, not interested, bad contact details or other.', 'a reason off the list');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'not_fit', '{"reason":"too_small"}', NULL, jsonb_build_array(pg_temp.id('n1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('n1')).status, 'not_fit', 'it is Not a fit');
+  PERFORM pg_temp.is((pg_temp.lead_row('n1')).not_fit_reason, 'too_small', 'for the reason given');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('n1')).status, 'new', 'New again after Undo');
+  PERFORM pg_temp.is((pg_temp.lead_row('n1')).not_fit_reason, NULL::text, 'with no reason');
+END $$;
