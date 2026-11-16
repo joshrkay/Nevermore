@@ -24,6 +24,17 @@ describe("expectedCommissionYearly (D-466)", () => {
   it("rounds half up to the cent", () => {
     expect(expectedCommissionYearly({ basis: "share", rate: 1, adminFeePepm: 8.375, employees: 1 })).toBe(1.01);
   });
+  // Catches: the figure worked in floating point (a product of three decimals, nudged by a tolerance), which turns an exact half cent down: 84.85% of $277.25 for 2,750
+  // employees is exactly $7,763,138.625 a year, and the cent above it is the answer (D-466: half up, worked in integer cents).
+  it("works in integer cents, so an exact half cent goes up", () => {
+    expect(expectedCommissionYearly({ basis: "share", rate: 84.85, adminFeePepm: 277.25, employees: 2750 })).toBe(7763138.63);
+    expect(expectedCommissionYearly({ basis: "share", rate: 78.75, adminFeePepm: 397.33, employees: 1970 })).toBe(7396893.95);
+  });
+  // Catches: dollars per employee or flat that pick up a stray cent from the same drift.
+  it("keeps cents exact for per employee and flat", () => {
+    expect(expectedCommissionYearly({ basis: "per_employee", rate: 4.35, adminFeePepm: null, employees: 3 })).toBe(156.6);
+    expect(expectedCommissionYearly({ basis: "flat", rate: 1234.56, adminFeePepm: null, employees: null })).toBe(1234.56);
+  });
 });
 
 describe("renewalAfter (D-465)", () => {

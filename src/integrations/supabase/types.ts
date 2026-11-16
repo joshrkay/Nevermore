@@ -1074,6 +1074,55 @@ export type Database = {
         }
         Returns: Json
       }
+      // Won, lost and reopened (20261120121000, restated by 20261121170000): each all or none, from the version the person started from, and answering
+      // {conflict: false, record: {id, stage, version, ...}} or {conflict: true, currentVersion, current: {stage}, changed}. A win and a reopening move the
+      // opportunity's version (won_at and won_by are tracked fields), and the answer names the new one.
+      opportunity_mark_won: {
+        Args: {
+          p_opportunity_id: string
+          p_quote_request_id: number
+          p_start_date?: string | null
+          p_renewal_date?: string | null
+          p_broker_of_record?: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+          p_commission_basis?: string | null
+          p_commission_rate?: number | null
+          p_commission_expected_yearly?: number | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      opportunity_mark_lost: {
+        Args: { p_opportunity_id: string; p_reason: string; p_note?: string | null; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
+      }
+      opportunity_reopen: { Args: { p_opportunity_id: string; p_firm_id?: string | null; p_version?: number | null }; Returns: Json }
+      // Commission received (20261120121000): record one against a placement ({payment, received_to_date, expected_yearly}), save one from its version ({conflict: false,
+      // record, received_to_date, expected_yearly} or {conflict: true, currentVersion, current: {received_on, amount, note}, changed}), delete one from its version
+      // ({deleted: true, amount, received_to_date} or the same conflict), and add, change or clear a placement's expected commission from the placement's version.
+      record_commission_payment: {
+        Args: { p_placement_id: string; p_received_on: string; p_amount: number; p_note?: string | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      update_commission_payment: {
+        Args: { p_payment_id: string; p_received_on: string; p_amount: number; p_note?: string | null; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
+      }
+      delete_commission_payment: { Args: { p_payment_id: string; p_firm_id?: string | null; p_version?: number | null }; Returns: Json }
+      set_placement_commission: {
+        Args: {
+          p_placement_id: string
+          p_firm_id?: string | null
+          p_version?: number | null
+          p_basis?: string | null
+          p_rate?: number | null
+          p_expected_yearly?: number | null
+        }
+        Returns: Json
+      }
+      // How an opportunity ended, in one read (20261121170000): {lost_reason, lost_note, placement, renewal, payments, received_to_date, quotes}; raises PT404 as opportunity_page does.
+      opportunity_outcome: { Args: { p_firm_id: string; p_opportunity_id: string }; Returns: Json }
       // Renewals (20261120110000, CRM-A2.4a): an account's renewals with days away, and adding, changing and deleting one from a version; "Didn't renew" and its undo.
       account_renewals: { Args: { p_firm_id: string | null; p_account_id: string; p_time_zone?: string }; Returns: Json }
       add_renewal: {

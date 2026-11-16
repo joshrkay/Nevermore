@@ -118,11 +118,18 @@ export const editOf = (f: OpportunityForm): OpportunityEdit => ({
 
 const FIELD_WORDS: Record<string, string> = {
   name: "name", target_start: "target start", employees: "employees", main_contact_id: "main contact", expected_close: "expected close", value: "value", source: "source",
-  next_step: "next step", owner_id: "owner", account_id: "account", lost_by: "lost by",
+  next_step: "next step", owner_id: "owner", account_id: "account", lost_by: "lost by", lost_at: "lost on", lost_reason: "lost reason", lost_note: "lost note",
+  won_at: "won on", won_by: "won by",
 };
 /** The fields whose history value is a code, not words: only that they changed is said. */
-const CODE_FIELDS = new Set(["main_contact_id", "owner_id", "account_id", "lost_by"]);
-const DATE_FIELDS = new Set(["target_start", "expected_close", "lost_at"]);
+const CODE_FIELDS = new Set(["main_contact_id", "owner_id", "account_id", "lost_by", "won_by"]);
+const DATE_FIELDS = new Set(["target_start", "expected_close", "lost_at", "won_at"]);
+
+/** The page's own words for a field the database names, as a sentence starts with it: "Owner", "Main contact", never "owner_id" or "owner id". For a conflict's `changed` list. */
+export function opportunityFieldLabel(field: string): string {
+  const words = FIELD_WORDS[field] ?? field.replace(/_/g, " ");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
 
 const valueOf = (field: string, v: Json | null): string => {
   if (v === null || v === undefined || v === "") return "nothing";
@@ -145,8 +152,9 @@ export function historyWords(row: OpportunityChangeRow): string {
   const field = row.field ?? "a field";
   // Marked lost with no intake (D-408): the moment is the entry; clearing it reopens the opportunity.
   if (field === "lost_at") return row.to === null || row.to === undefined || row.to === "" ? "No longer marked lost" : `Marked lost on ${valueOf(field, row.to)}`;
-  const words = FIELD_WORDS[field] ?? field.replace(/_/g, " ");
-  const named = `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+  // Marked won (CRM-O1.3b review: a win is a change of the opportunity, with when and by whom); clearing it is the reopening.
+  if (field === "won_at") return row.to === null || row.to === undefined || row.to === "" ? "No longer marked won" : `Marked won on ${valueOf(field, row.to)}`;
+  const named = opportunityFieldLabel(field);
   return CODE_FIELDS.has(field) ? `${named} changed` : `${named} changed from ${valueOf(field, row.from)} to ${valueOf(field, row.to)}`;
 }
 

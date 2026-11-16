@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { Archive } from "lucide-react";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { accountPath } from "@/components/accounts/accountColumns";
+import { ACCOUNTS_TABLE } from "@/components/accounts/accountsTable";
 import { accountKey } from "@/components/accounts/useAccountQueries";
 import { CloseOpportunityDialog } from "@/components/opportunities/CloseOpportunityDialog";
 import { OutcomeBanner } from "@/components/opportunities/OutcomeBanner";
@@ -34,7 +35,7 @@ const OpportunityPage = () => {
   const queryClient = useQueryClient();
   const retry = useCallback(() => void query.refetch(), [query]);
   // How it ended, what the win made and each quote's close reason (CRM-O1.3b). Read beside the page, so a failure of it never hides the page.
-  const outcome = useOpportunityOutcomeQuery(firmId, id, query.data ? query.data.opportunity.submissionId : undefined);
+  const outcome = useOpportunityOutcomeQuery(firmId, id, query.data != null && query.data.opportunity.id === id);
   const [closing, setClosing] = useState<"won" | "lost" | "" | null>(null);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
@@ -50,12 +51,16 @@ const OpportunityPage = () => {
     void queryClient.invalidateQueries({ queryKey: ["contact", firmId] });
   }, [queryClient, firmId, id]);
 
-  // A close, a reopen or a payment changes the stage, the history, the account's status and renewals: all of it is asked again.
+  // A close, a reopen, a payment or a change of the commission changes the stage, the history, the account's status and renewals, the accounts table's rows and what the
+  // submission's read holds (the quotes panel's "still needs"): all of it is asked again.
+  const submissionId = query.data?.opportunity.submissionId ?? null;
   const closed = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: opportunityKey(firmId, id) });
     if (query.data) void queryClient.invalidateQueries({ queryKey: accountKey(firmId, query.data.opportunity.accountId) });
     void queryClient.invalidateQueries({ queryKey: ["contact", firmId] });
-  }, [queryClient, firmId, id, query.data]);
+    void queryClient.invalidateQueries({ queryKey: ["table", firmId, ACCOUNTS_TABLE.id] });
+    if (submissionId !== null) void queryClient.invalidateQueries({ queryKey: ["opportunity-needs", firmId, submissionId] });
+  }, [queryClient, firmId, id, query.data, submissionId]);
 
   // Only the answer for this address is drawn: what is held for another opportunity (or firm) is not shown under it.
   const answered = query.data === null || query.data === undefined || query.data.opportunity.id === id;
@@ -102,6 +107,7 @@ const OpportunityPage = () => {
           failed={outcome.isError}
           onRetry={() => void outcome.refetch()}
           canReopen={canReopen}
+          canChange={canAct && page.canChange}
           onChanged={closed}
         />
       )}
