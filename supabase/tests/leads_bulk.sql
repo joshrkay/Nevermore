@@ -501,3 +501,65 @@ BEGIN
   PERFORM pg_temp.is(u #>> '{skipped,0,name}', 'Person u1', 'by its name');
   PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at, NULL::timestamptz, 'it stays out of the bin');
 END $$;
+
+-- ---------- 3. The preview ----------
+-- Catches (CRM-S3.7, CRM-L1.1): the dialog's words not coming from the same rules as the change, or the preview changing something. It counts what will change
+-- and names what is skipped, and the leads stay as they are.
+DO $$
+DECLARE p jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  p := public.bulk_leads_preview(pg_temp.id('acme'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('u1')::text, pg_temp.id('conv')::text, pg_temp.id('b1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((p ->> 'will_change')::int, 1, 'one will be deleted');
+  PERFORM pg_temp.is(p #>> '{skipped,0,code}', 'converted', 'the converted one is named');
+  PERFORM pg_temp.is((p ->> 'unavailable')::int, 1, 'the unseen one is counted');
+  PERFORM pg_temp.is((p ->> 'selected')::int, 2, 'the selection the database counts');
+  PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at, NULL::timestamptz, 'nothing deleted');
+END $$;
+
+-- ---------- 4. Change owner ----------
+-- Catches (D-811): a bulk owner change that does not give the leads to the person chosen. A lead (role) gives their team's lead to another member.
+SELECT pg_temp.lead('o1', 'acme', 'acme_agent2', 'Owner Co');
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_lead', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'owner', jsonb_build_object('owner_id', pg_temp.id('acme_agent1')), NULL, jsonb_build_array(pg_temp.id('o1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'changed')::int, 1, 'one lead given away');
+  PERFORM pg_temp.is((pg_temp.lead_row('o1')).owner_id, pg_temp.id('acme_agent1'), 'to the person chosen');
+  PERFORM pg_temp.is((pg_temp.lead_row('o1')).deleted_at, NULL::timestamptz, 'and not deleted');
+  PERFORM pg_temp.is(r #>> '{owner,name}', public.crm_person_name(pg_temp.id('acme_agent1')), 'the new owner named');
+END $$;
+
+-- Catches (D-202): Undo of an owner change putting back the bin instead of the owner.
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'owner', jsonb_build_object('owner_id', pg_temp.id('acme_agent2')), NULL, jsonb_build_array(pg_temp.id('o1')::text));
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'the owner change undone');
+  PERFORM pg_temp.is((pg_temp.lead_row('o1')).owner_id, pg_temp.id('acme_agent1'), 'the owner put back');
+END $$;
+
+-- Catches (D-202): an undo giving a lead back to someone who has left the firm (a lead owned by a former member is no one's to change but an owner's). It is
+-- skipped and named.
+SELECT pg_temp.new_user('acme_leaving');
+INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('acme_leaving'), 'agent');
+SELECT pg_temp.lead('o2', 'acme', 'acme_leaving', 'Leaving Co');
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'owner', jsonb_build_object('owner_id', pg_temp.id('acme_agent1')), NULL, jsonb_build_array(pg_temp.id('o2')::text));
+  PERFORM pg_temp.as_owner();
+  UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('acme_leaving');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(u #>> '{skipped,0,code}', 'owner_left', 'named: the previous owner has left');
+  PERFORM pg_temp.is((pg_temp.lead_row('o2')).owner_id, pg_temp.id('acme_agent1'), 'it keeps its new owner');
+END $$;

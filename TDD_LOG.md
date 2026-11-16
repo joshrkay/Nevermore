@@ -11,3 +11,7 @@ One test per cycle: the test, the failing line seen, then green. SQL tests run o
 7. `leads_bulk.sql` §2 "undone once only" (D-202: a second undo is refused, PT409). Red: `FAIL: undone once only gave ok, expected PT409`. Green.
 8. `leads_bulk.sql` §2 "too late to undo" (D-202: ten minutes, PT410). Red: `FAIL: too late to undo gave ok, expected PT410`. Green.
 9. `leads_bulk.sql` §2 "nothing put back" (D-202: a lead changed since, here taken out of the bin, is skipped and named). Red: `FAIL: nothing put back gave 1, expected 0`. Green.
+10. `leads_bulk.sql` §3 "one will be deleted" (CRM-S3.7: the preview counts, names the skipped and changes nothing). Red: `ERROR:  function public.bulk_leads_preview(uuid, unknown, unknown, unknown, jsonb) does not exist`. Green.
+11. `leads_bulk.sql` §4 "to the person chosen" (D-811: Change owner gives the leads to the member chosen, named in the answer). Red: `FAIL: to the person chosen gave cd6a1091-..., expected 129d2f83-...`. Green.
+12. `leads_bulk.sql` §4 "the owner put back" (D-202: Undo of an owner change puts the previous owner back). Red: `FAIL: the owner put back gave 9c63..., expected 366d...`. Green.
+13. `leads_bulk.sql` §4 "named: the previous owner has left" (D-202: an undo never gives a lead back to a former member). Red: `FAIL: named: the previous owner has left gave <NULL>, expected owner_left`. Green.

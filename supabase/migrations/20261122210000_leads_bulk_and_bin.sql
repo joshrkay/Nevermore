@@ -20,7 +20,28 @@ ALTER TABLE public.bulk_change_records
     AND (record_type = 'lead') = (lead_id IS NOT NULL)),
   ADD CONSTRAINT bulk_change_records_lead_fkey FOREIGN KEY (firm_id, lead_id) REFERENCES public.leads (firm_id, id) ON DELETE CASCADE;
 
--- ---------- 2. The selection ----------
+-- ---------- 2. What a bulk change asks for, checked ----------
+-- What a bulk change of leads asks for, checked and tidied, as bulk_params_checked checks the accounts': {owner_id} | {} for delete. Anything else is refused
+-- (22023, in words). Internal.
+CREATE FUNCTION public.bulk_lead_params_checked(p_action text, p_params jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  prm jsonb := COALESCE(NULLIF(p_params, 'null'::jsonb), '{}'::jsonb);
+BEGIN
+  IF p_action = 'owner' THEN
+    RETURN jsonb_build_object('owner_id', lower(prm ->> 'owner_id'));
+  END IF;
+  RETURN '{}'::jsonb;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.bulk_lead_params_checked(text, jsonb) FROM PUBLIC, anon, authenticated, service_role;
+
+-- ---------- 2b. The selection ----------
 -- The leads a bulk change is for, as bulk_accounts_resolve finds accounts (CRM-S3.6's contract): `lead_ids` (in id order), `selected`, `requested` (for ids:
 -- how many different ids were named; NULL for filters) and `too_many`. Only the firm's leads the caller may see and not in the bin (D-806: a lead in the bin
 -- is in no view but Deleted, and is put back by Restore, not changed); an id that is not one (another firm's, made up, text) gives none. Internal.
@@ -84,13 +105,62 @@ BEGIN
     reason := 'It is converted, so it can be read but not changed or deleted.';
     RETURN;
   END IF;
+  IF p_action = 'owner' THEN
+    outcome := CASE WHEN l.owner_id IS NOT DISTINCT FROM (p_params ->> 'owner_id')::uuid THEN 'same' ELSE 'change' END;
+    RETURN;
+  END IF;
   outcome := 'change';
 END;
 $$;
 
 REVOKE ALL ON FUNCTION public.bulk_lead_outcome(public.leads, text, jsonb) FROM PUBLIC, anon, authenticated, service_role;
 
--- ---------- 4. The change ----------
+-- ---------- 4. The preview ----------
+-- Answers {action, selected, requested, unavailable, limit, too_many, will_change, unchanged, skipped: [{id, name, code, reason}]}: what the change would do,
+-- asked by the same rules (bulk_lead_outcome). It changes and locks nothing.
+CREATE FUNCTION public.bulk_leads_preview(p_firm_id uuid, p_action text, p_params jsonb DEFAULT '{}'::jsonb, p_filters jsonb DEFAULT NULL, p_ids jsonb DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  firm uuid;
+  sel record;
+  l public.leads;
+  oc record;
+  n_change integer := 0;
+  n_same integer := 0;
+  seen integer := 0;
+  skipped jsonb := '[]'::jsonb;
+  params jsonb;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  params := public.bulk_lead_params_checked(p_action, p_params);
+  SELECT * INTO sel FROM public.bulk_leads_resolve(firm, p_filters, p_ids);
+  FOR l IN SELECT x.* FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (sel.lead_ids) ORDER BY x.id LOOP
+    seen := seen + 1;
+    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params);
+    IF oc.outcome = 'change' THEN
+      n_change := n_change + 1;
+    ELSIF oc.outcome = 'same' THEN
+      n_same := n_same + 1;
+    ELSE
+      skipped := skipped || jsonb_build_object('id', l.id, 'name', l.name, 'code', oc.code, 'reason', oc.reason);
+    END IF;
+  END LOOP;
+  RETURN jsonb_build_object('action', p_action, 'selected', sel.selected, 'requested', sel.requested, 'limit', 1000, 'too_many', sel.too_many,
+    'unavailable', (cardinality(sel.lead_ids) - seen) + COALESCE(GREATEST(sel.requested - sel.selected, 0), 0),
+    'will_change', n_change, 'unchanged', n_same, 'skipped', skipped);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.bulk_leads_preview(uuid, text, jsonb, jsonb, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.bulk_leads_preview(uuid, text, jsonb, jsonb, jsonb) TO authenticated;
+
+-- ---------- 5. The change ----------
 CREATE FUNCTION public.bulk_leads_change(p_firm_id uuid, p_action text, p_params jsonb DEFAULT '{}'::jsonb, p_filters jsonb DEFAULT NULL, p_ids jsonb DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -112,29 +182,52 @@ DECLARE
   n_unavailable integer := 0;
   oc record;
   skipped jsonb := '[]'::jsonb;
+  params jsonb;
+  new_owner uuid;
+  n_same integer := 0;
+  row_before jsonb;
+  row_after jsonb;
+  result jsonb;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
+  params := public.bulk_lead_params_checked(p_action, p_params);
   SELECT m.id INTO maker FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = auth.uid() AND public.membership_is_current(m.valid_from, m.valid_until);
   SELECT * INTO sel FROM public.bulk_leads_resolve(firm, p_filters, p_ids);
   -- Every lead of the selection, held in one statement in id order (the lock order of 20261119210000).
   SELECT COALESCE(array_agg(k.id ORDER BY k.id), '{}') INTO locked
   FROM (SELECT x.id FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (sel.lead_ids) AND x.deleted_at IS NULL ORDER BY x.id FOR NO KEY UPDATE) k;
+  -- The new owner's membership, held FOR SHARE after the leads (the lock order of 20261119210000).
+  IF p_action = 'owner' THEN
+    new_owner := (params ->> 'owner_id')::uuid;
+    PERFORM public.member_to_own(firm, new_owner);
+  END IF;
   FOR l IN SELECT x.* FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (locked) ORDER BY x.id LOOP
-    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, p_params);
+    SELECT * INTO oc FROM public.bulk_lead_outcome(l, p_action, params);
     IF oc.outcome = 'skip' THEN
       skipped := skipped || jsonb_build_object('id', l.id, 'name', l.name, 'code', oc.code, 'reason', oc.reason);
+      CONTINUE;
+    ELSIF oc.outcome = 'same' THEN
+      n_same := n_same + 1;
       CONTINUE;
     END IF;
     IF NOT made THEN
       INSERT INTO public.bulk_changes (id, firm_id, actor_id, actor_membership_id, action, detail, made_at, undo_until)
-      VALUES (chg, firm, auth.uid(), maker, p_action, '{}'::jsonb, now(), undo_by);
+      VALUES (chg, firm, auth.uid(), maker, p_action, params, now(), undo_by);
       made := true;
     END IF;
-    UPDATE public.leads SET deleted_at = now() WHERE id = l.id;
+    IF p_action = 'owner' THEN
+      row_before := jsonb_build_object('owner_id', l.owner_id);
+      row_after := jsonb_build_object('owner_id', new_owner);
+      UPDATE public.leads SET owner_id = new_owner WHERE id = l.id;
+    ELSE
+      row_before := jsonb_build_object('deleted_at', NULL);
+      row_after := jsonb_build_object('deleted_at', now());
+      UPDATE public.leads SET deleted_at = now() WHERE id = l.id;
+    END IF;
     -- The newest history entry of the lead once the change is done with it: an entry after it, by anyone, is a change made since (D-202).
     SELECT COALESCE(max(h.id), 0) INTO mark FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text;
     INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, lead_id, record_name, before, after, history_mark)
-    VALUES (chg, firm, 'lead', l.id, l.name, jsonb_build_object('deleted_at', NULL), jsonb_build_object('deleted_at', now()), mark);
+    VALUES (chg, firm, 'lead', l.id, l.name, row_before, row_after, mark);
     n_change := n_change + 1;
   END LOOP;
   IF made THEN
@@ -142,14 +235,20 @@ BEGIN
   END IF;
   -- Named but not a lead the caller may see, or gone while the locks were taken: not available, so the counts add up to what was asked.
   n_unavailable := (cardinality(sel.lead_ids) - cardinality(locked)) + COALESCE(GREATEST(sel.requested - sel.selected, 0), 0);
-  RETURN jsonb_build_object('action', p_action, 'selected', sel.selected, 'requested', sel.requested, 'unavailable', n_unavailable, 'changed', n_change, 'skipped', skipped, 'change_id', CASE WHEN made THEN chg END, 'undo_until', CASE WHEN made THEN undo_by END);
+  result := jsonb_build_object('action', p_action, 'selected', sel.selected, 'requested', sel.requested, 'limit', 1000, 'too_many', false,
+    'unavailable', n_unavailable, 'will_change', n_change, 'changed', n_change, 'unchanged', n_same, 'skipped', skipped,
+    'change_id', CASE WHEN made THEN chg END, 'undo_until', CASE WHEN made THEN undo_by END);
+  IF p_action = 'owner' THEN
+    result := result || jsonb_build_object('owner', jsonb_build_object('id', new_owner, 'name', public.crm_person_name(new_owner)));
+  END IF;
+  RETURN result;
 END;
 $$;
 
 REVOKE ALL ON FUNCTION public.bulk_leads_change(uuid, text, jsonb, jsonb, jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.bulk_leads_change(uuid, text, jsonb, jsonb, jsonb) TO authenticated;
 
--- ---------- 5. Undo ----------
+-- ---------- 6. Undo ----------
 -- Puts back every lead of the change nobody has changed since, and answers {action, restored, skipped: [{id, name, code, reason}], gone}. The level rule is
 -- not asked again (as bulk_accounts_undo, D-202): an agent who deleted leads no longer sees them in the bin, and the undo is theirs to make.
 CREATE FUNCTION public.bulk_leads_undo(p_change_id uuid, p_firm_id uuid DEFAULT NULL)
@@ -167,6 +266,7 @@ DECLARE
   restored integer := 0;
   skipped jsonb := '[]'::jsonb;
   since boolean;
+  prev uuid;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
   SELECT * INTO ch FROM public.bulk_changes c WHERE c.id = p_change_id AND c.firm_id = firm FOR UPDATE;
@@ -185,12 +285,21 @@ BEGIN
     SELECT * INTO l FROM public.leads x WHERE x.id = rec.lead_id AND x.firm_id = firm FOR NO KEY UPDATE;
     -- Changed since: the lead's history has an entry for the field after the change finished with it, whoever made it (a value put back is a change too).
     since := EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text AND h.id > rec.history_mark
-      AND h.field = 'deleted_at');
+      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' ELSE 'deleted_at' END);
     IF since THEN
       skipped := skipped || jsonb_build_object('id', l.id, 'name', rec.record_name, 'code', 'changed_since', 'reason', 'It has been changed since.');
       CONTINUE;
     END IF;
-    UPDATE public.leads SET deleted_at = NULL WHERE id = l.id;
+    IF ch.action = 'owner' THEN
+      prev := (rec.before ->> 'owner_id')::uuid;
+      IF prev IS NOT NULL AND NOT public.crm_is_current_member(firm, prev) THEN
+        skipped := skipped || jsonb_build_object('id', l.id, 'name', rec.record_name, 'code', 'owner_left', 'reason', 'Its previous owner is no longer a member of the firm.');
+        CONTINUE;
+      END IF;
+      UPDATE public.leads SET owner_id = prev WHERE id = l.id;
+    ELSE
+      UPDATE public.leads SET deleted_at = NULL WHERE id = l.id;
+    END IF;
     restored := restored + 1;
   END LOOP;
   UPDATE public.bulk_changes SET undone_at = now() WHERE id = ch.id;
