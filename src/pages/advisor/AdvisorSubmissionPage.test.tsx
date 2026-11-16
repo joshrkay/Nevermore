@@ -41,7 +41,7 @@ const api = {
 vi.mock("@/lib/advisorApi", () => api);
 // The account that holds the submission (D-213), as the database answers it: its id and name, or null.
 const submissionAccount = vi.fn();
-vi.mock("@/lib/accountPageApi", () => ({ getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
+vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
 let intakeNow: { status: string; data_sha256: string | null; version: string | null } | null = null;
 vi.mock("@/integrations/supabase/client", () => ({

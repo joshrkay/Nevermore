@@ -1,10 +1,11 @@
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { classifyApiError } from "@/lib/advisorApi";
 import { activityItemOf, activityItemSchema, type ActivityItem } from "@/lib/activityApi";
 import { OPPORTUNITY_STAGES, type OpportunityStage, type TabRows } from "@/lib/accountPageApi";
-import { readSaveAnswer, type ChangedField, type RecordConflict, type Saved } from "@/lib/recordVersion";
+import { isConflict, readSaveAnswer, type ChangedField, type RecordConflict, type Saved } from "@/lib/recordVersion";
 
 // What the opportunity's page asks the database (story CRM-O1.1b, screen 19; 20261120120000_opportunity_page.sql). Three calls: the page (the opportunity with its
 // stage, account, owner and main contact, its quote requests, its intake's summary and its contacts), a page of its activity, and the save of its own fields with
@@ -276,6 +277,7 @@ function refusal(error: DbError, fallback: string): Error {
     case "PT423": return new OpportunityError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "55000": return new OpportunityError("readOnly", error.message || "This account is archived. Nothing on its opportunities can be changed.", error.code);
     case "22023":
+    case "PT409":
     case "40001": return new OpportunityError("invalid", error.message || fallback, error.code);
     case "22003": return new OpportunityError("invalid", "That number is too big.", error.code);
     case "42501": return new OpportunityError("notAllowed", error.message || "You can't change this opportunity.", error.code);
@@ -375,4 +377,192 @@ export async function updateOpportunity(firmId: string, opportunityId: string, e
     },
     changed: (answer as RecordConflict<EditableRow>).changed,
   };
+}
+
+
+// ---------- Closing an opportunity (story CRM-O1.3b, screen 26; 20261120121000_won_lost_commission.sql) ----------
+// Won, lost and reopened are each all or none in the database, with the version check (D-461). The answers: {conflict: false, record: {stage, version, ...}} or, when
+// someone saved first and nothing was done, {conflict: true, currentVersion, current: {stage}, changed}. The database decides who may (D-462), what is refused (D-463,
+// D-469, D-471) and says why in words; this only puts the answers into the screen's shape. The tables the banner reads (placements, renewals, commission payments,
+// the lost reason, a quote's close reason) are read through the firm's row security, which shows them to whoever sees the account (D-467).
+
+/** What a close or a reopen did: the stage the opportunity is now at, and the version to start the next save from. */
+export type OpportunityClosed = { conflict: false; stage: OpportunityStage; version: number };
+
+/** Someone else changed the opportunity first. Nothing was done. `stage` is where it is now; `changed` names each field that differs, and who changed it. */
+export type OpportunityCloseConflict = { conflict: true; currentVersion: number; stage: OpportunityStage; changed: ChangedField[] };
+
+/** The commission a win expects (D-466): its basis, the person's number (a percent for a share, dollars otherwise) and the yearly figure expected. */
+export interface PlacementCommission {
+  basis: "share" | "per_employee" | "flat";
+  rate: number;
+  expectedYearly: number | null;
+}
+
+export interface WinInput {
+  quoteRequestId: number;
+  startDate: string;
+  renewalDate: string;
+  brokerOfRecord: string;
+  commission: PlacementCommission | null;
+}
+
+const CLOSE_FALLBACK = "Couldn't save. Check your connection and try again.";
+
+const changedSchema = z.object({ field: z.string().min(1), value: z.any().refine((v) => v !== undefined, "a value, or null"), who: z.string().min(1), at: z.string().min(1) });
+const closedAnswer = z.union([
+  z.object({ conflict: z.literal(false), record: z.object({ stage: z.enum(OPPORTUNITY_STAGES), version: z.number().int().min(1) }) }),
+  z.object({ conflict: z.literal(true), currentVersion: z.number().int().min(1), current: z.object({ stage: z.enum(OPPORTUNITY_STAGES) }), changed: z.array(changedSchema) }),
+]);
+
+async function close(name: "opportunity_mark_won" | "opportunity_mark_lost" | "opportunity_reopen", args: Record<string, unknown>): Promise<OpportunityClosed | OpportunityCloseConflict> {
+  const { data, error } = await (supabase.rpc as unknown as (n: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: DbError | null }>)(name, args);
+  if (error) throw refusal(error, CLOSE_FALLBACK);
+  const parsed = closedAnswer.safeParse(data);
+  if (!parsed.success) throw new OpportunityError("failed", CLOSE_FALLBACK);
+  // The shapes are checked above; the compiler (not strict) cannot narrow the union zod infers, so it is named here.
+  const a = parsed.data as unknown as
+    | { conflict: false; record: { stage: OpportunityStage; version: number } }
+    | { conflict: true; currentVersion: number; current: { stage: OpportunityStage }; changed: ChangedField[] };
+  if (isConflict(a)) return { conflict: true, currentVersion: a.currentVersion, stage: a.current.stage, changed: a.changed };
+  return { conflict: false, stage: a.record.stage, version: a.record.version };
+}
+
+/** Marks the opportunity won on the quote the employer took, making the placement and its renewal, from the version the person started from. */
+export const markOpportunityWon = (firmId: string, opportunityId: string, win: WinInput, version: number) =>
+  close("opportunity_mark_won", {
+    p_opportunity_id: opportunityId, p_quote_request_id: win.quoteRequestId, p_start_date: win.startDate, p_renewal_date: win.renewalDate, p_broker_of_record: win.brokerOfRecord,
+    p_firm_id: firmId, p_version: version, p_commission_basis: win.commission?.basis ?? null, p_commission_rate: win.commission?.rate ?? null,
+    p_commission_expected_yearly: win.commission?.expectedYearly ?? null,
+  });
+
+/** Marks the opportunity lost for a reason from the fixed list (Other needs a note), from the version the person started from. */
+export const markOpportunityLost = (firmId: string, opportunityId: string, lost: { reason: string; note: string }, version: number) =>
+  close("opportunity_mark_lost", { p_opportunity_id: opportunityId, p_reason: lost.reason, p_note: lost.note.trim() === "" ? null : lost.note.trim(), p_firm_id: firmId, p_version: version });
+
+/** Reopens a won or lost opportunity (ADR 0027): the database refuses it while the win's renewal is being worked or its placement has payments, in words. */
+export const reopenOpportunity = (firmId: string, opportunityId: string, version: number) =>
+  close("opportunity_reopen", { p_opportunity_id: opportunityId, p_firm_id: firmId, p_version: version });
+
+/** A payment recorded: what the firm has received for the placement to date, against what it expected a year. */
+export interface CommissionRecorded {
+  receivedToDate: number;
+  expectedYearly: number | null;
+}
+
+const paymentAnswer = z.object({ received_to_date: z.number(), expected_yearly: z.number().nullable() }).passthrough();
+
+/** Records commission received against the placement won from the opportunity (D-467). */
+export async function recordCommissionPayment(firmId: string, placementId: string, payment: { receivedOn: string; amount: number; note: string }): Promise<CommissionRecorded> {
+  const { data, error } = await (supabase.rpc as unknown as (n: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: DbError | null }>)("record_commission_payment", {
+    p_placement_id: placementId, p_received_on: payment.receivedOn, p_amount: payment.amount, p_note: payment.note, p_firm_id: firmId,
+  });
+  if (error) throw refusal(error, "Couldn't record the payment. Check your connection and try again.");
+  const parsed = paymentAnswer.safeParse(data);
+  if (!parsed.success) throw new OpportunityError("failed", "Couldn't record the payment. Check your connection and try again.");
+  return { receivedToDate: parsed.data.received_to_date, expectedYearly: parsed.data.expected_yearly };
+}
+
+export interface CommissionPayment {
+  id: string;
+  receivedOn: string;
+  amount: number;
+  note: string | null;
+  version: number;
+}
+
+/** The placement a win made, for the banner (D-472): its PEO, start and the renewal made with it, the broker of record and the commission expected. */
+export interface OpportunityPlacement {
+  id: string;
+  peoName: string;
+  startDate: string | null;
+  brokerOfRecord: string | null;
+  endedOn: string | null;
+  renewsOn: string | null;
+  commission: PlacementCommission | null;
+  version: number;
+}
+
+/** What the banner and the quotes panel need beyond the page: the lost reason (D-468), the placement with its payments (D-467) and each quote's close reason (D-424). */
+export interface OpportunityOutcome {
+  lostReason: string | null;
+  lostNote: string | null;
+  placement: OpportunityPlacement | null;
+  payments: CommissionPayment[];
+  receivedToDate: number;
+  /** By quote request id: why it closed, and the start the PEO proposed (the win's default start, D-465). */
+  quotes: Record<number, { closeReason: string | null; proposedStart: string | null }>;
+}
+
+const OUTCOME_FALLBACK = "Couldn't load how this opportunity ended. Try again.";
+const untyped = () => supabase as unknown as SupabaseClient;
+const money = (v: unknown): number => Number(v);
+
+/** Reads one table; a failed read is a failure, never "nothing there" (a won opportunity must not be drawn without its banner). */
+async function readRows<T>(read: PromiseLike<{ data: T | null; error: DbError | null }>): Promise<T | null> {
+  const { data, error } = await read;
+  if (error) throw refusal(error, OUTCOME_FALLBACK);
+  return data;
+}
+
+export async function getOpportunityOutcome(firmId: string, opportunityId: string, submissionId: string | null): Promise<OpportunityOutcome> {
+  const db = untyped();
+  const [opp, pl, quoteRows] = await Promise.all([
+    readRows(db.from("opportunities").select("lost_reason, lost_note").eq("id", opportunityId).eq("firm_id", firmId).maybeSingle()),
+    readRows(db.from("placements").select("id, peo_name, start_date, broker_of_record, ended_on, commission_basis, commission_rate, commission_expected_yearly, version")
+      .eq("opportunity_id", opportunityId).eq("firm_id", firmId).maybeSingle()),
+    submissionId === null ? Promise.resolve([]) : readRows(db.from("quote_requests").select("id, close_reason, proposed_start_on").eq("session_id", submissionId)),
+  ]);
+  const placementRow = pl as { id: string; peo_name: string; start_date: string | null; broker_of_record: string | null; ended_on: string | null; commission_basis: string | null; commission_rate: unknown; commission_expected_yearly: unknown; version: number } | null;
+  let renewsOn: string | null = null;
+  let payments: CommissionPayment[] = [];
+  if (placementRow) {
+    const [renewal, paid] = await Promise.all([
+      readRows(db.from("renewals").select("renews_on").eq("placement_id", placementRow.id).maybeSingle()),
+      readRows(db.from("commission_payments").select("id, received_on, amount, note, version").eq("placement_id", placementRow.id).order("received_on", { ascending: true })),
+    ]);
+    renewsOn = (renewal as { renews_on: string } | null)?.renews_on ?? null;
+    payments = ((paid ?? []) as { id: string; received_on: string; amount: unknown; note: string | null; version: number }[])
+      .map((r) => ({ id: r.id, receivedOn: r.received_on, amount: money(r.amount), note: r.note, version: r.version }));
+  }
+  const o = opp as { lost_reason: string | null; lost_note: string | null } | null;
+  return {
+    lostReason: o?.lost_reason ?? null,
+    lostNote: o?.lost_note ?? null,
+    placement: placementRow && {
+      id: placementRow.id, peoName: placementRow.peo_name, startDate: placementRow.start_date, brokerOfRecord: placementRow.broker_of_record, endedOn: placementRow.ended_on, renewsOn,
+      commission: placementRow.commission_basis
+        ? { basis: placementRow.commission_basis as PlacementCommission["basis"], rate: money(placementRow.commission_rate), expectedYearly: placementRow.commission_expected_yearly === null ? null : money(placementRow.commission_expected_yearly) }
+        : null,
+      version: placementRow.version,
+    },
+    payments,
+    receivedToDate: payments.reduce((sum, p) => Math.round((sum + p.amount) * 100) / 100, 0),
+    quotes: Object.fromEntries(((quoteRows ?? []) as { id: number; close_reason: string | null; proposed_start_on: string | null }[]).map((q) => [q.id, { closeReason: q.close_reason, proposedStart: q.proposed_start_on }])),
+  };
+}
+
+/**
+ * The opportunity that holds a submission as its intake, for the console's stage control (D-470): Won and Lost there open the opportunity's own dialog. Null when the
+ * submission is on no opportunity, or the read fails: the database still refuses a win or loss the console could not route (`set_submission_status`).
+ */
+export async function getOpportunityOfSubmission(submissionId: string): Promise<{ id: string; firmId: string } | null> {
+  try {
+    const { data, error } = await untyped().from("opportunities").select("id, firm_id").eq("intake_id", submissionId).maybeSingle();
+    const row = data as { id?: unknown; firm_id?: unknown } | null;
+    if (error || typeof row?.id !== "string" || typeof row.firm_id !== "string") return null;
+    return { id: row.id, firmId: row.firm_id };
+  } catch {
+    return null;
+  }
+}
+
+/** The firm's own name, which the win offers as the broker of record (D-465). Empty when it cannot be read: the person types it. */
+export async function getFirmName(firmId: string): Promise<string> {
+  try {
+    const { data, error } = await untyped().from("firms").select("name").eq("id", firmId).maybeSingle();
+    return error ? "" : (data as { name?: string } | null)?.name ?? "";
+  } catch {
+    return "";
+  }
 }
