@@ -743,6 +743,7 @@ quote requests (`quote_request_messages`, `receive-mail`, held mail, reply addre
 | D-609 | **The bundle link** (M-2.1, ADR 0003): an unguessable token kept only as its hash, 30 days. `/b/<token>` opens with no sign-in: the employer, File ID and version, each file with its own download, the open items. Each download is on the quote request's timeline. A newer version sent (M-2.3), a withdrawal (M-2.4) or the employer withdrawing the PEO (M-1.1) revokes it |
 | D-610 | **Order and lanes.** Waves, at most three at once (D-25), each slice in its own working copy and its own test database, test-first (`tdd`), merged into this branch, then the full gate. Wave 1: 6.2, 6.6a, 6.6b. Wave 2: 6.1, 6.4, 6.6. Wave 3: 6.5, 6.3, 6.7. Wave 4: 6.8, 6.9, 6.10 |
 | D-611 | **After Epic 6: Epic 5 and the rest of Epic 8** (founder, 2026-11-16), then Epic 7. Epic 5 (Quotes and New quote) is grilled before it is built, as every epic is; it brings CRM-Q2.6 and unblocks Epic 7's slice 7.8. Epic 8's 8.4 to 8.7 run beside it within D-25's three lanes |
+| D-612 | **Decision numbers for Epic 6's later slices.** D-620 to D-699 went to 6.6a, 6.2, 6.6b, 6.1, 6.4, 6.6, 6.3 and 6.5, and D-700 onward is Epic 7's. Slices 6.7 to 6.10 take D-1600 onward, ten each: 6.7 D-1600, 6.8 D-1610, 6.9 D-1620, 6.10 D-1630 |
 
 #### Epic 6 migrations
 
