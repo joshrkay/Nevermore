@@ -173,9 +173,15 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1071,11 +1077,11 @@ DECLARE
   helpers text[] := ARRAY['firm_role', 'is_firm_member', 'can_see_firm_record', 'can_read_firm_activity', 'can_read_peo_mail', 'colleague_in_my_firm',
     'intake_folder_firm_read_only', 'intake_folder_in_my_firm', 'intake_in_my_firm', 'intake_owner_in_my_firm', 'quote_request_in_my_firm',
     'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session'];
-  reads text[] := ARRAY['account_renewals', 'merge_preview', 'resolve_merged_record', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'duplicate_account_check', 'duplicate_contact_check', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
+  reads text[] := ARRAY['opportunity_create_context', 'opportunity_activity', 'opportunity_page', 'opportunity_outcome', 'account_renewals', 'merge_preview', 'resolve_merged_record', 'firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'duplicate_account_check', 'duplicate_contact_check', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields'];
-  writes text[] := ARRAY['add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  writes text[] := ARRAY['opportunity_create', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
@@ -1151,7 +1157,7 @@ END $$;
 -- cannot use it to change a firm's data. The list of functions is the one supabase/tests/close_a_firm.sql keeps for the closing guard.
 DO $$
 DECLARE
-  guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  guarded text[] := ARRAY['opportunity_create', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'update_account', 'create_account', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',

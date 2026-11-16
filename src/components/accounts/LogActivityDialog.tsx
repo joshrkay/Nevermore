@@ -39,14 +39,16 @@ const failureWords = (err: unknown): string =>
 
 /**
  * The form in a dialog. `item` makes it an edit of that call, task or note (its kind cannot change, and a call has no follow-up); otherwise it logs a new
- * one of `kind`, with `contactId` already chosen when it was opened from a contact. `userId` is the person, who is who a task is for unless they choose.
+ * one of `kind`, with `contactId` already chosen when it was opened from a contact and `opportunityId` when it was opened from an opportunity. `userId` is the person, who is who a task is for unless they choose.
  */
-export function LogActivityDialog({ firmId, accountId, accountName, kind, contactId, item, userId, onClose, onSaved }: {
+export function LogActivityDialog({ firmId, accountId, accountName, kind, contactId, opportunityId, item, userId, onClose, onSaved }: {
   firmId: string;
   accountId: string;
   accountName: string;
   kind: ActivityType;
   contactId?: string | null;
+  /** Already chosen as what it is about, when the form was opened from an opportunity (CRM-O1.1b). */
+  opportunityId?: string | null;
   item?: ActivityItem;
   userId: string | null;
   onClose: () => void;
@@ -63,7 +65,7 @@ export function LogActivityDialog({ firmId, accountId, accountName, kind, contac
   const [form, setForm] = useState<Form>(() => ({
     kind: item?.type ?? kind,
     contactId: item?.contact?.id ?? contactId ?? "",
-    opportunityId: item?.opportunity?.id ?? "",
+    opportunityId: item?.opportunity?.id ?? opportunityId ?? "",
     when: localInput(item?.type === "call" ? new Date(item.at) : new Date()),
     outcome: item?.outcome ?? "spoke",
     body: item?.body ?? "",

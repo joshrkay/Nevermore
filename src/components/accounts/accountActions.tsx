@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import type { ContactRow } from "@/lib/accountPageApi";
 import { ActivityError, setTaskDone, type ActivityItem, type ActivityType, type Logged } from "@/lib/activityApi";
@@ -9,6 +10,7 @@ import { AddToNoteDialog } from "./AddToNoteDialog";
 import { LogActivityDialog } from "./LogActivityDialog";
 import { MergeDialog, type MergedRecords } from "./MergeDialog";
 import { MoveContactDialog } from "./MoveContactDialog";
+import { NewOpportunityDialog, type StartingRenewal } from "./NewOpportunityDialog";
 import { PickContactDialog } from "./PickContactDialog";
 import { accountKey } from "./useAccountQueries";
 
@@ -17,10 +19,11 @@ import { accountKey } from "./useAccountQueries";
 // provider (a Nevermore support session, an archived account) there are no actions and nothing is drawn for them.
 
 type Open =
-  | { mode: "log"; kind: ActivityType; contactId: string | null }
+  | { mode: "log"; kind: ActivityType; contactId: string | null; opportunityId: string | null }
   | { mode: "edit"; item: ActivityItem }
   | { mode: "add"; item: ActivityItem }
   | { mode: "contact" }
+  | { mode: "opportunity"; renewal?: StartingRenewal }
   | { mode: "move"; contact: ContactRow }
   | { mode: "pick"; contact: ContactRow }
   | { mode: "merge"; keptId: string; removedId: string }
@@ -49,6 +52,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, as the page arrives
   }, []);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   // Every list of the account is asked again: a new row belongs in the Activity tab, its count and the Overview, and a task's state in each.
   const alsoKey = alsoRefresh?.join("\u0000");
   const refresh = useCallback(() => {
@@ -58,10 +62,12 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
   }, [queryClient, firmId, accountId, alsoKey]);
   const actions = useMemo<AccountActions>(() => ({
     canAdd,
-    log: (kind, contactId = null) => setOpen({ mode: "log", kind, contactId }),
+    log: (kind, contactId = null, opportunityId = null) => setOpen({ mode: "log", kind, contactId, opportunityId }),
     edit: (item) => setOpen({ mode: "edit", item }),
     addTo: (item) => setOpen({ mode: "add", item }),
     addContact: () => setOpen({ mode: "contact" }),
+    newOpportunity: () => setOpen({ mode: "opportunity" }),
+    startRenewal: (renewal) => setOpen({ mode: "opportunity", renewal }),
     canMove,
     move: (contact) => setOpen({ mode: "move", contact }),
     canMerge,
@@ -81,7 +87,7 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
       {children}
       {open?.mode === "log" && (
         <LogActivityDialog
-          firmId={firmId} accountId={accountId} accountName={accountName} kind={open.kind} contactId={open.contactId} userId={userId} onClose={close}
+          firmId={firmId} accountId={accountId} accountName={accountName} kind={open.kind} contactId={open.contactId} opportunityId={open.opportunityId} userId={userId} onClose={close}
           onSaved={(logged: Logged | { activity: ActivityItem; followUp: null }) => {
             toast.success(logged.followUp ? `${SAVED_WORDS[logged.activity.type]}, with its follow-up task` : SAVED_WORDS[logged.activity.type]);
             close();
@@ -97,6 +103,13 @@ export function AccountActionsProvider({ firmId, accountId, accountName, userId,
       )}
       {open?.mode === "contact" && (
         <AddContactDialog firmId={firmId} accountId={accountId} person={person} onClose={close} onAdded={refresh} />
+      )}
+      {open?.mode === "opportunity" && (
+        <NewOpportunityDialog
+          firmId={firmId} accountId={accountId} person={person} renewal={open.renewal} onRenewalTaken={refresh} onClose={close}
+          // Saving opens the new opportunity's own page (D-442, CRM-O1.1b's route); the account's lists are asked again for when the person comes back.
+          onCreated={(made) => { close(); refresh(); navigate(`/opportunities/${made.id}`); }}
+        />
       )}
       {open?.mode === "move" && (
         <MoveContactDialog

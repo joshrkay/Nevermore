@@ -172,6 +172,9 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261120090000_opportunity_stage.sql
 \i supabase/migrations/20261120110000_placements_renewals.sql
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
@@ -663,8 +666,8 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.record_history), before_rows, 'creating, answering and deleting an intake writes nothing to the history');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgrelid = 'public.chamber_sessions'::regclass AND t.tgfoid = 'public.record_history_capture()'::regprocedure), 0::bigint,
     'the intake table has no history trigger');
-  PERFORM pg_temp.is((SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal), 'accounts,contacts,opportunities,placements,referral_partners,renewals',
-    'the only tables with the trigger are the ones that keep a history: accounts, contacts, opportunities, placements, referral partners and renewals');
+  PERFORM pg_temp.is((SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND NOT t.tgisinternal), 'accounts,commission_payments,contacts,opportunities,placements,referral_partners,renewals',
+    'the only tables with the trigger are the ones that keep a history: accounts, commission payments, contacts, opportunities, placements, referral partners and renewals');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND encode(t.tgargs, 'escape') ~ 'chamber_data'), 0::bigint, 'and no list names an intake''s answers');
   -- Nothing else writes the history: the only function that inserts into it is the capture trigger.
   PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,crm_merge_history,merge_accounts,record_history_capture',
@@ -759,9 +762,11 @@ END $$;
 DO $$
 DECLARE acme uuid := pg_temp.id('acme');
 BEGIN
-  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '42501', 'referral partners can''t be emptied');
+  -- A plain TRUNCATE is refused before the guard is asked, now that opportunities name a partner (CRM-A2.3's key: 0A000); with CASCADE it reaches the guard.
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '0A000', 'referral partners can''t be emptied');
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners CASCADE$q$), '42501', 'nor emptied along with what names them');
   PERFORM pg_temp.as_service();
-  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners$q$), '42501', 'not by the service role either');
+  PERFORM pg_temp.is(pg_temp.attempt($q$TRUNCATE public.referral_partners CASCADE$q$), '42501', 'not by the service role either');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT count(*) FROM public.referral_partners WHERE firm_id = acme AND code = 'acme-cfo'), 1::bigint, 'and the partners are still there');
   RAISE NOTICE 'record_history: no emptying passed';

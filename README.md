@@ -15,7 +15,7 @@ Only publishable values go in `.env`; it is git-ignored. Secrets (AI provider ke
 ## Checks
 
 ```sh
-npm run lint && npm run typecheck:functions && npm test && npm run build
+npm run lint && npm run typecheck:functions && npm run typecheck:app && npm test && npm run build
 ```
 
 `npm run schema:intake` rewrites `docs/intake-schema.v3.json` (the current version) from the intake schema
@@ -24,6 +24,9 @@ npm run lint && npm run typecheck:functions && npm test && npm run build
 `typecheck:functions` type-checks the Deno edge functions with `tsc` (`tsconfig.functions.json`). Their
 URL imports can't be fetched by `tsc`, so `types/functions-shims.d.ts` declares them; add a
 declaration there when a function starts using more of a remote package than it already does.
+
+`typecheck:app` type-checks the app itself (`tsconfig.app.json`): the build does not, so a type error
+in `src/` would otherwise pass every other check.
 
 The SQL tests (access control, certification, abuse limits) need a scratch Postgres you can create
 databases on. Each file runs in its own throwaway database:

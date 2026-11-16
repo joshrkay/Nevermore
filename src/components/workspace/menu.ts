@@ -65,8 +65,11 @@ export const MENU_ITEMS: MenuItem[] = [
     isCurrent: (pathname, search) => (isQueue(pathname) && !isInbox(pathname, search)) || pathname.startsWith("/advisor/submissions/"),
   },
   { key: "inbox", label: "Inbox", to: `${QUEUE}?${INBOX_PARAM.name}=${INBOX_PARAM.value}`, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: isInbox },
-  // The accounts page and an account's page (CRM-A1.1a, CRM-A2.1b). The number beside it (screen 16) is not built yet.
-  { key: "accounts", label: "Accounts", to: "/accounts", icon: Building2, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/accounts" || pathname.startsWith("/accounts/") },
+  // The accounts page, an account's page and an opportunity's page (CRM-A1.1a, CRM-A2.1b, CRM-O1.1b, D-421). The number beside it (screen 16) is not built yet.
+  {
+    key: "accounts", label: "Accounts", to: "/accounts", icon: Building2, countKey: null, countWords: null,
+    isCurrent: (pathname) => pathname === "/accounts" || pathname.startsWith("/accounts/") || pathname.startsWith("/opportunities/"),
+  },
   { key: "reports", label: "Reports", to: "/advisor/funnel", icon: BarChart3, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/advisor/funnel" },
 ];
 

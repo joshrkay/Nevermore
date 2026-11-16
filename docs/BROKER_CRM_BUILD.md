@@ -596,8 +596,12 @@ sorts after Epic 3's last (`20261119230000`), in this order. "Epic 3 row n" is a
 | 4 | CRM-O1.3a | Won, lost and reopen in one step each: the quote chosen and the rest closed with a reason, the placement with its commission basis and the renewal, the lost reason; commission payments (Q-4.1) | 1, 3 | Sonnet (D), risky | `20261120121000` (the earlier `20261120120000` was superseded: `20261120111000` had merged, and CRM-O1.1a took that timestamp) |
 | 5 | CRM-O1.1b | The opportunity's page (`/opportunities/:id`): trail, header, stage bar, quotes, intake, activity with Add a note and Add a task, details edited in place, contacts, the page states; names on the account's page open it (replaces D-187) | 2, Epic 3 row 11 | Sonnet (A) | none |
 | 6 | CRM-A2.3 | New opportunity on an account (screen 25): the form and the function that makes it | 2, Epic 3 rows 11 and 14 | Sonnet (A) | `20261120130000` |
-| 7 | CRM-A2.4b | Renewals on screen: the account's Renewals tab and its count, Add a renewal, Start the renewal (the New opportunity form filled in), the Renewal column and view on the accounts table | 3, 6, Epic 3 row 10 | Sonnet (A) | none |
-| 8 | CRM-O1.3b | Mark won or lost (screen 26), the won or lost banner with Reopen, Record a payment, and the console's Won and Lost opening the same dialog | 4, 5 | Sonnet (A) | none |
+| 7 | CRM-A2.4b | Renewals on screen: the account's Renewals tab and its count, Add a renewal, Start the renewal (the New opportunity form filled in), the Renewal column and view on the accounts table | 3, 6, Epic 3 row 10 | Sonnet (A) | `20261121160000` (D-449's link of the started opportunity to its renewal: `opportunity_create` takes the renewal, which 20261120130000's comment left to this story) |
+| 8 | CRM-O1.3b | Mark won or lost (screen 26), the won or lost banner with Reopen, Record a payment, and the console's Won and Lost opening the same dialog | 4, 5 | Sonnet (A) | `20261121170000` (review fixes, after CRM-A2.4b's `20261121160000`: a win and a reopening move the opportunity's version through `won_at` and `won_by`, and the outcome is one read, `opportunity_outcome`) |
+
+The Epic 4 merge with main (not a story row) takes `20261121150000_epic4_after_merge_records.sql`, so no other story takes it. It sorts after main's `20261121100000_merge_records.sql` (CRM-S4.3b), which
+restated `firm_closing_plan` without CRM-O1.3a's commission payments step and has `merge_accounts` leave `commission_payments` behind. It adds the step back (read with `pg_get_functiondef`, raising if its anchor
+line is gone), makes the payments' key to their placement deferrable, and restates `merge_accounts` and `merge_preview` so a removed account's commission payments move to the kept account with their placement.
 
 ### CRM-O1.2 decisions
 
@@ -647,7 +651,7 @@ Epic 4 row 6.
 | D-436 | New opportunity opens from the account's header and its Opportunities tab, as a dialog over the account (screen 25). The account is filled in and shown read-only: moving an opportunity to another account is not asked |
 | D-437 | Who may add one: anyone who may see the account, as adding a contact (D-209). Refused on an archived account, a closing firm (ADR 0023) and a support session (ADR 0024) |
 | D-438 | The fields. Name: required, at most 200, offered as "<Month YYYY> PEO search" from the target start (D-188) and kept in step with it until the person types in the name. Target start: a date. Employees in this search: a whole number, offered from the account's. Main contact: one of the account's contacts, offered as its main contact, optional. Expected close: a date. Value, a year: dollars, not negative. Source (D-439). Stage: Qualifying, read-only (D-409, in CRM-O1.2's section, #149: with no intake Qualifying is the only stage there is to pick). Owner: offered as the maker (D-214), any current member allowed to own it. Next step: at most 2000 |
-| D-439 | Source is one of a fixed list kept in one module: Referral, Renewal, Existing client, Inbound, Outbound, Event, Other. Referral asks which of the firm's referral partners, kept in a new `referral_partner_id` and shown "Referral · <partner>". Renewal is set by "Start the renewal" (CRM-A2.4). The function checks the word against the list |
+| D-439 | Source is one of a fixed list kept in one module: Referral, Renewal, Existing client, Inbound, Outbound, Event, Other. Referral asks which of the firm's referral partners, kept in a new `referral_partner_id` (built as `referral_partner_code`, CRM-A2.3: a partner has no id, its code within the firm is its key and never changes) and shown "Referral · <partner>". Renewal is set by "Start the renewal" (CRM-A2.4). The function checks the word against the list |
 | D-440 | An account holds any number of opportunities, several open at once: nothing refuses another, and the form says nothing about the others |
 | D-441 | "Save and start the quote" and "Start from last year's certified answers" come with New quote (Epic 5), which adds them to this form. The second is offered when an earlier opportunity on the account holds a certified intake; it starts the new intake with those answers, all to be certified again. Until then the form has Cancel and Save opportunity (D-402) |
 | D-442 | One function, `opportunity_create(firm, account, fields)`, makes it (stage Qualifying, no intake) and returns it; saving opens the new opportunity's page |
@@ -739,7 +743,7 @@ Merging on screen (Epic 3 row 22). The one migration is `20261121110000_account_
 3. **Test-driven** (the `tdd` skill): one failing test, then only the code that passes it, at the seams in D-13.
    Name the break each test catches. Mutate what you changed before you finish.
 4. **The gate**, all green before the pull request is opened:
-   `npm run lint && npm run typecheck:functions && npm test && npm run build`, then
+   `npm run lint && npm run typecheck:functions && npm run typecheck:app && npm test && npm run build`, then
    `PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh`, and
    `npm run test:e2e` when the story touches a flow in `e2e/`.
 5. **Database.** A new migration file per story, never an edit to an old one. Every new table carries its firm

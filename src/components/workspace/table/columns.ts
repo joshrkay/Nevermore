@@ -144,6 +144,8 @@ export interface TableDefinition<K extends TableFields, Row, Context = undefined
   noun: { singular: string; plural: string };
   /** The fields a filter or a sort may name. The table's own, in code; custom fields join once loaded (see `fieldsStatus`). */
   fields: FieldDefinitions<K>;
+  /** Fields a filter may name but a sort may not (the database has no order for them): a sort in the address that names one is dropped as an unknown one is. */
+  unsortable?: readonly (keyof K & string)[];
   /** Whether every field the address may name is in `fields` yet. Absent means ready. */
   fieldsStatus?: Readiness;
   /**

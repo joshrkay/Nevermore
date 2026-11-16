@@ -41,7 +41,7 @@ const api = {
 vi.mock("@/lib/advisorApi", () => api);
 // The account that holds the submission (D-213), as the database answers it: its id and name, or null.
 const submissionAccount = vi.fn();
-vi.mock("@/lib/accountPageApi", () => ({ getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
+vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
 let intakeNow: { status: string; data_sha256: string | null; version: string | null } | null = null;
 vi.mock("@/integrations/supabase/client", () => ({
@@ -697,13 +697,13 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(panel).getAllByText(/^Prospect ·/).length).toBe(2);
     fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "information_requested" } });
     expect(within(panel).getByText(/The prospect will see/)).toBeInTheDocument();
-    fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "lost" } });
+    fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "archived" } });
     // An internal status leaves the prospect with their last shared one.
     expect(within(panel).getByText(/The prospect will see: “Received\. .*” \(the status itself stays internal\)/)).toBeInTheDocument();
-    fireEvent.change(within(panel).getByLabelText("Internal note (optional)"), { target: { value: "Went with incumbent" } });
+    fireEvent.change(within(panel).getByLabelText("Internal note (optional)"), { target: { value: "Closed it out" } });
     api.setStatus.mockResolvedValue(undefined);
     fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
-    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent"));
+    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "archived", "Closed it out"));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
     // Refreshing after a change is not another opening of the submission.
@@ -1616,7 +1616,7 @@ describe("AdvisorSubmissionPage", () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     renderPage();
     const panel = await panelOf("Status");
-    fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "lost" } });
+    fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "archived" } });
     api.setStatus.mockResolvedValue(undefined);
     expect(invalidate).not.toHaveBeenCalled();
     fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));

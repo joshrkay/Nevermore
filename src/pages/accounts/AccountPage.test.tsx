@@ -18,6 +18,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { getAccountPage: vi.fn(), listAccountTab: vi.fn(), listAccountFiles: vi.fn(), updateAccount: vi.fn(), getSubmissionAccount: vi.fn() };
 vi.mock("@/lib/accountPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountPageApi")), ...client }));
+const renewalsClient = { getAccountRenewals: vi.fn() };
+vi.mock("@/lib/renewalsApi", async () => ({ ...(await vi.importActual<object>("@/lib/renewalsApi")), ...renewalsClient }));
 const actions = { archiveAccount: vi.fn(), restoreAccount: vi.fn(), deleteAccount: vi.fn(), changeAccountOwner: vi.fn() };
 vi.mock("@/lib/accountActionsApi", () => actions);
 const listFirmMembers = vi.fn();
@@ -102,10 +104,13 @@ const panel = (name: RegExp | string) => screen.getByRole("region", { name });
 beforeEach(() => {
   // The app's identity boundary says who is signed in; these pages render without it.
   setSignedInUser("u1");
-  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(renewalsClient), ...Object.values(advisor), ...Object.values(actions), signOut]) fn.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getAccountPage.mockResolvedValue(page());
+  renewalsClient.getAccountRenewals.mockResolvedValue({ count: 1, canChange: true, rows: [{
+    id: "r1", version: 1, kind: "current_plan", withWhom: "Aetna", renewsOn: "2027-01-01", daysAway: 50, opportunity: null, notRenewedOn: null, done: false, outcome: null, madeByWin: false,
+  }] });
 });
 
 describe("AccountPage: the menu's recent records", () => {
@@ -165,13 +170,14 @@ describe("AccountPage: from one account to another", () => {
 });
 
 describe("AccountPage: the header and the tabs", () => {
-  // Catches: a header that leaves out a fact the screen shows, or shows buttons that belong to later stories (D-186, no dead buttons).
+  // Catches: a header that leaves out a fact the screen shows, or shows buttons that belong to later stories (D-186, no dead buttons). New opportunity is no longer one of them: it is built (CRM-A2.3, D-436).
   it("shows the name, status, industry, location, employees, website and owner, and no button that does nothing", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" })).toBeInTheDocument();
     expect(screen.getByText("Prospect")).toBeInTheDocument();
     expect(screen.getByText("Dental practice · Portland, OR · 45 employees · harborviewdental.example · Owner Dana Reyes")).toBeInTheDocument();
-    for (const gone of ["Email", "New opportunity", "Add a contact", "Restore"]) {
+    expect(screen.getByRole("button", { name: "New opportunity" })).toBeInTheDocument();
+    for (const gone of ["Email", "Add a contact", "Restore"]) {
       expect(screen.queryByRole("button", { name: gone }), gone).toBeNull();
       expect(screen.queryByRole("link", { name: gone }), gone).toBeNull();
     }
@@ -185,12 +191,11 @@ describe("AccountPage: the header and the tabs", () => {
     expect(screen.getByText("No owner")).toBeInTheDocument();
   });
 
-  // Catches: a Renewals tab (D-186), a missing tab, or a count that is not the database's.
-  it("has the six tabs, each with its count, and no Renewals tab", async () => {
+  // Catches: a missing tab, the Renewals tab out of its place (screen 17: after Quotes), or a count that is not the database's (the Renewals count is the renewals', not the page's).
+  it("has the seven tabs, each with its count, Renewals after Quotes", async () => {
     renderPage();
     await screen.findByRole("heading", { level: 1 });
-    expect(tabNames()).toEqual(["Overview", "Contacts2", "Opportunities2", "Quotes2", "Activity14", "Files1"]);
-    expect(screen.queryByRole("tab", { name: /Renewals/ })).toBeNull();
+    await waitFor(() => expect(tabNames()).toEqual(["Overview", "Contacts2", "Opportunities2", "Quotes2", "Renewals1", "Activity14", "Files1"]));
     expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   });
 
@@ -224,6 +229,7 @@ describe("AccountPage: the Overview", () => {
     expect(row("Current provider")).toHaveTextContent("Payroll vendor");
     expect(row("Source")).toHaveTextContent("Employer's intake · Kline CPA");
     expect(row("Owner")).toHaveTextContent("Dana Reyes");
+    // The renewals are their own panel and tab, not a row of the details.
     expect(within(details).queryByText(/Renewal/)).toBeNull();
   });
 
@@ -235,8 +241,8 @@ describe("AccountPage: the Overview", () => {
     expect(within(details).getByText("Address").nextElementSibling).toHaveTextContent("Not provided");
   });
 
-  // Catches: the page's lists not showing the rows or their count, a Renewals list (D-186), a "See all" that opens nothing.
-  it("shows each list's rows with its count and a See all, and no Renewals", async () => {
+  // Catches: the page's lists not showing the rows or their count, a Renewals list missing from the Overview (D-454), a "See all" that opens nothing.
+  it("shows each list's rows with its count and a See all, Renewals among them", async () => {
     renderPage();
     const contacts = await screen.findByRole("region", { name: /Contacts/ });
     expect(within(contacts).getByRole("heading", { name: /Contacts\s*2/ })).toBeInTheDocument();
@@ -253,8 +259,11 @@ describe("AccountPage: the Overview", () => {
     const activity = screen.getByRole("region", { name: /Recent activity/ });
     expect(within(activity).getByText("Employees changed from 40 to 45")).toBeInTheDocument();
     expect(within(activity).getByText("Account created")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: /Renewals/ })).toBeNull();
-    expect(screen.getAllByRole("link", { name: /^See all/ }).map((l) => l.textContent)).toEqual(["See all contacts", "See all opportunities", "See all quotes", "See all activity"]);
+    const renewals = await screen.findByRole("region", { name: /Renewals/ });
+    expect(within(renewals).getByText("The employer's current plan")).toBeInTheDocument();
+    expect(within(renewals).getByText("Aetna")).toBeInTheDocument();
+    expect(within(renewals).getByText("in 50 days")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /^See all/ }).map((l) => l.textContent)).toEqual(["See all contacts", "See all opportunities", "See all quotes", "See all renewals", "See all activity"]);
   });
 
   // Catches: "See all" that goes nowhere, or opens another tab.
@@ -271,13 +280,12 @@ describe("AccountPage: the Overview", () => {
 });
 
 describe("AccountPage: every name opens its record", () => {
-  // Catches: an opportunity or a quote opening nothing, or an opportunity with no submission linking to one (D-187).
-  it("opens an opportunity's and a quote's submission, and shows an opportunity with none as plain text", async () => {
+  // Catches: an opportunity's name still opening its submission (D-187, replaced by D-430), or one with no intake opening nothing; and a quote's PEO losing its link.
+  it("opens an opportunity's own page from its name, with an intake or without, and a quote's submission from its PEO", async () => {
     renderPage();
     const opportunities = await screen.findByRole("region", { name: /Opportunities/ });
-    expect(within(opportunities).getByRole("link", { name: "Search 1" })).toHaveAttribute("href", "/advisor/submissions/i1");
-    expect(within(opportunities).queryByRole("link", { name: "A search with no intake" })).toBeNull();
-    expect(within(opportunities).getByText("A search with no intake")).toBeInTheDocument();
+    expect(within(opportunities).getByRole("link", { name: "Search 1" })).toHaveAttribute("href", "/opportunities/o1");
+    expect(within(opportunities).getByRole("link", { name: "A search with no intake" })).toHaveAttribute("href", "/opportunities/o2");
     expect(within(screen.getByRole("region", { name: /Quotes/ })).getByRole("link", { name: "PEO 1" })).toHaveAttribute("href", "/advisor/submissions/i1");
   });
 
@@ -646,14 +654,14 @@ describe("AccountPage: the states", () => {
     expectStatusesOutsideBusy();
   });
 
-  // Catches: an empty list that is blank, or one that points at an action that does not exist yet. Add a contact exists since CRM-A2.2 (AccountContacts.test.tsx).
+  // Catches: an empty list that is blank, or one that points at an action that does not exist yet. Add a contact exists since CRM-A2.2 (AccountContacts.test.tsx) and New opportunity since CRM-A2.3 (AccountNewOpportunity.test.tsx).
   it("says a new account's lists in one line each, with no action that does not exist yet", async () => {
     client.getAccountPage.mockResolvedValue(page({}, { contacts: tabOf([]), opportunities: tabOf([]), quotes: tabOf([]), files: tabOf([]), activity: tabOf([change(2, { kind: "created", field: null, from: null, to: null })], 1) }));
     renderPage();
     expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
     expect(screen.getByText("No opportunities yet.")).toBeInTheDocument();
     expect(screen.getByText("No quotes yet.")).toBeInTheDocument();
-    for (const gone of [/New opportunity/, /New quote/]) {
+    for (const gone of [/New quote/]) {
       expect(screen.queryByRole("button", { name: gone })).toBeNull();
       expect(screen.queryByRole("link", { name: gone })).toBeNull();
     }
