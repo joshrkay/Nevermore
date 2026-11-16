@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expectedCommissionYearly, lostReasonWords, outcomeBannerWords, renewalAfter, quoteCloseWords } from "./opportunityClose";
+import { expectedCommissionYearly, lostReasonWords, outcomeBannerWords, peosToTell, withdrawalSubject, renewalAfter, quoteCloseWords } from "./opportunityClose";
 
 // The pure rules of closing an opportunity (CRM-O1.3b): the commission the dialog works out (D-466), the default renewal (D-465), the banner's words (D-472).
 
@@ -63,5 +63,42 @@ describe("the banner's words (D-472)", () => {
     expect(quoteCloseWords("went_elsewhere")).toBe("The employer went elsewhere");
     expect(quoteCloseWords("search_ended")).toBe("The search ended");
     expect(quoteCloseWords(null)).toBeNull();
+  });
+});
+
+// Who a close tells (D-1722). The database decides again; this draws the offer.
+const req = (id: number, peo: string, status = "sent") => ({ id, peo_name: peo, status });
+const sentMsg = (quoteRequestId: number, subject: string, recordedAt = "2026-11-10T10:00:00Z") => ({ quote_request_id: quoteRequestId, direction: "sent", subject, recorded_at: recordedAt });
+
+describe("peosToTell (D-1722)", () => {
+  // Catches: a loss that offers to tell nobody, or tells a PEO that has not been written to, when there is no winner to spare.
+  it("names every open PEO the product wrote to when nothing was won", () => {
+    expect(peosToTell([req(1, "Insperity"), req(2, "TriNet", "quoted")], [sentMsg(1, "Hi"), sentMsg(2, "Hi")], null).map((q) => q.peo_name)).toEqual(["Insperity", "TriNet"]);
+  });
+  // Catches: a win that offers to withdraw from the PEO whose quote the employer took.
+  it("never names the winner", () => {
+    expect(peosToTell([req(1, "Insperity", "quoted"), req(2, "TriNet", "quoted")], [sentMsg(1, "Hi"), sentMsg(2, "Hi")], 1).map((q) => q.peo_name)).toEqual(["TriNet"]);
+  });
+  // Catches: a PEO that is already closed (withdrawn, declined or closed with the search) offered a second withdrawal.
+  it("leaves out a PEO that is closed", () => {
+    expect(peosToTell([req(1, "Insperity"), req(2, "TriNet", "closed")], [sentMsg(1, "Hi"), sentMsg(2, "Hi")], null).map((q) => q.peo_name)).toEqual(["Insperity"]);
+  });
+  // Catches: a PEO that acknowledged the packet or has a question open left out of the withdrawal, though it is still open (5.1, D-1737).
+  it("names a PEO that acknowledged or has a question open", () => {
+    expect(peosToTell([req(1, "Insperity", "acknowledged"), req(2, "TriNet", "question_open")], [sentMsg(1, "Hi"), sentMsg(2, "Hi")], null).map((q) => q.peo_name)).toEqual(["Insperity", "TriNet"]);
+  });
+  // Catches: a PEO whose send was recorded by hand offered a withdrawal there is no thread to carry (the database leaves it out too).
+  it("leaves out a PEO the product never wrote to", () => {
+    expect(peosToTell([req(1, "Insperity"), req(2, "TriNet")], [sentMsg(1, "Hi")], null).map((q) => q.peo_name)).toEqual(["Insperity"]);
+  });
+});
+
+describe("withdrawalSubject (D-1724)", () => {
+  // Catches: a withdrawal opening a new thread in the PEO's mail because its subject is not an answer to the newest one the product sent them.
+  it("answers the newest subject the product sent the PEOs it tells, else the account's name", () => {
+    const told = [req(1, "Insperity"), req(2, "TriNet")];
+    const mail = [sentMsg(1, "Reyes Bakery: version 1", "2026-11-10T10:00:00Z"), sentMsg(2, "Reyes Bakery: version 2", "2026-11-11T10:00:00Z"), sentMsg(3, "Another", "2026-11-12T10:00:00Z")];
+    expect(withdrawalSubject(told, mail, "Reyes Bakery")).toBe("Re: Reyes Bakery: version 2");
+    expect(withdrawalSubject([], mail, "Reyes Bakery")).toBe("Re: Reyes Bakery");
   });
 });

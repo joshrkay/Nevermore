@@ -205,6 +205,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261122250000_convert_lead.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql

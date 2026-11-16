@@ -104,6 +104,14 @@ _Avoid_: stale quote, old quote
 One action that makes a **Send to a PEO** for each PEO the advisor ticks, one at a time: each its own quote request, its own **Bundle link** and its own message, addressed only to that PEO's own contacts, opening with its own greeting ("Hello Dana,") over the advisor's one note. A PEO is **ready** when nothing it needs to quote is missing and no eligibility check is not met; a ready PEO starts ticked, one that isn't starts unticked with what it is missing. A review shows each chosen PEO's recipients, greeting, files and open items before anything goes; one the employer hasn't authorized, or with no contact address, is not sent and the rest go. The result says Sent or Not sent, with the reason, for each.
 _Avoid_: bulk send, blast, mass mail
 
+**Choose PEOs** (code: `ChoosePeos`, `SendToSeveralPeos`; slice 5.0y, D-1727):
+**Send to several PEOs** as the opportunity's quotes panel places it: the button that, for a certified intake, reads the submission and opens the choosing of PEOs from its last certified answers. Not drawn for a support session or an archived account.
+_Avoid_: Send to a PEO (that is one PEO, on the submission's page)
+
+**Close and withdraw** (code: `opportunity_mark_won_and_withdraw`, `opportunity_mark_lost_and_withdraw`, `CloseOpportunityDialog`; slice 5.0y, D-1720 to D-1725):
+Marking an opportunity Won or Lost with the one withdrawal note sent, in the same transaction, on the own thread of each PEO still open but the winner. Ticked by default; unticked, it is the plain Won or Lost, and every PEO's **Bundle link** but the winner's stops working either way.
+_Avoid_: close with email
+
 **Follow-up** (code: `follow_up_peo`, `FollowUpOrWithdraw`; M-2.4, slice 6.9, D-1620 to D-1629):
 An advisor's email to a PEO already sent the bundle, on that PEO's own thread (In-Reply-To and References continue it), from their connected mailbox. It opens with default text kept in code, which the advisor edits, and carries a fresh **Bundle link** to the version already sent under the **Fixed block**, replacing the earlier link. Offered only while the quote request is open, the employer still authorizes the PEO, the advisor has not revoked its link, and the version sent is the one last certified (a newer one is an update, M-2.3).
 _Avoid_: reminder, chaser, nudge

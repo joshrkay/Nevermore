@@ -277,6 +277,7 @@ function refusal(error: DbError, fallback: string): Error {
     case "PT423": return new OpportunityError("readOnly", error.message || "This can't be changed right now.", error.code);
     case "55000": return new OpportunityError("readOnly", error.message || "This account is archived. Nothing on its opportunities can be changed.", error.code);
     case "22023":
+    case "PT412":
     case "PT409":
     case "40001": return new OpportunityError("invalid", error.message || fallback, error.code);
     case "22003": return new OpportunityError("invalid", "That number is too big.", error.code);
@@ -428,17 +429,31 @@ async function close(call: PromiseLike<{ data: Json | null; error: DbError | nul
   return { conflict: false, stage: a.record.stage, version: a.record.version };
 }
 
+/** The one note a close sends to each PEO still open, when the person offers it (D-1720). */
+export interface ClosingWithdrawal {
+  subject: string;
+  body: string;
+}
+
 /** Marks the opportunity won on the quote the employer took, making the placement and its renewal, from the version the person started from. */
-export const markOpportunityWon = (firmId: string, opportunityId: string, win: WinInput, version: number) =>
-  close(supabase.rpc("opportunity_mark_won", {
+export const markOpportunityWon = (firmId: string, opportunityId: string, win: WinInput, version: number, withdrawal?: ClosingWithdrawal) => {
+  const args = {
     p_opportunity_id: opportunityId, p_quote_request_id: win.quoteRequestId, p_start_date: win.startDate, p_renewal_date: win.renewalDate, p_broker_of_record: win.brokerOfRecord,
     p_firm_id: firmId, p_version: version, p_commission_basis: win.commission?.basis ?? null, p_commission_rate: win.commission?.rate ?? null,
     p_commission_expected_yearly: win.commission?.expectedYearly ?? null,
-  }));
+  };
+  return close(withdrawal
+    ? supabase.rpc("opportunity_mark_won_and_withdraw", { ...args, p_time_zone: "UTC", p_subject: withdrawal.subject, p_body: withdrawal.body })
+    : supabase.rpc("opportunity_mark_won", args));
+};
 
 /** Marks the opportunity lost for a reason from the fixed list (Other needs a note), from the version the person started from. */
-export const markOpportunityLost = (firmId: string, opportunityId: string, lost: { reason: string; note: string }, version: number) =>
-  close(supabase.rpc("opportunity_mark_lost", { p_opportunity_id: opportunityId, p_reason: lost.reason, p_note: lost.note.trim() === "" ? null : lost.note.trim(), p_firm_id: firmId, p_version: version }));
+export const markOpportunityLost = (firmId: string, opportunityId: string, lost: { reason: string; note: string }, version: number, withdrawal?: ClosingWithdrawal) => {
+  const args = { p_opportunity_id: opportunityId, p_reason: lost.reason, p_note: lost.note.trim() === "" ? null : lost.note.trim(), p_firm_id: firmId, p_version: version };
+  return close(withdrawal
+    ? supabase.rpc("opportunity_mark_lost_and_withdraw", { ...args, p_subject: withdrawal.subject, p_body: withdrawal.body })
+    : supabase.rpc("opportunity_mark_lost", args));
+};
 
 /** Reopens a won or lost opportunity (ADR 0027): the database refuses it while the win's renewal is being worked or its placement has payments, in words. */
 export const reopenOpportunity = (firmId: string, opportunityId: string, version: number) =>

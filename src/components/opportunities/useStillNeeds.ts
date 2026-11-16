@@ -37,5 +37,7 @@ export function useStillNeeds(firmId: string | null, submissionId: string | null
     if (!peo?.profile) return "Not known";
     return stillNeedsWords(peoCompleteness(certified.intake, certified.documents, peo.profile, peo.id).toQuote);
   };
-  return { status, of, retry };
+  /** The mail on the quote requests' threads, read with the submission: who the product wrote to, for the close's withdrawal (D-1722). */
+  const messages = submission.data?.quoteRequestMessages ?? [];
+  return { status, of, retry, messages, detail: submission.data, certified, catalog: catalog.peos };
 }

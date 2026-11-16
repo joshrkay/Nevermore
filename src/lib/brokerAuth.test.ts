@@ -46,6 +46,12 @@ describe("where a broker goes after signing in", () => {
     for (const bad of ["/leads/a/b", "/leads/..", "/leads/l1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
   });
 
+  // Catches: a broker who connects their mailbox from Email on an opportunity's page (5.0y, D-650) landing on the queue instead of back on the opportunity with the contact they were writing to.
+  it("keeps an opportunity's page, with its query", () => {
+    for (const kept of ["/opportunities/5f1c2a9e-0000-4000-8000-000000000005", "/opportunities/o1?email=c1"]) expect(brokerNext(kept), kept).toBe(kept);
+    for (const bad of ["/opportunities", "/opportunities/a/b", "/opportunities/..", "/opportunitiesx/1", "/opportunities/o1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+  });
+
   // Catches: a broker who connects their mailbox from the inbox's banner (CRM-E1.4) landing on the queue instead of back in the inbox, with its view.
   it("keeps the inbox, with its query", () => {
     for (const kept of ["/inbox", "/inbox?view=new", "/inbox?view=sent&q=reyes"]) expect(brokerNext(kept), kept).toBe(kept);

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Archive } from "lucide-react";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
 import { accountPath } from "@/components/accounts/accountColumns";
@@ -13,8 +13,13 @@ import { OpportunityActivity } from "@/components/opportunities/OpportunityActiv
 import { OpportunityDetailsPanel } from "@/components/opportunities/OpportunityDetails";
 import { IntakePanel } from "@/components/opportunities/IntakePanel";
 import { QuotesPanel } from "@/components/opportunities/QuotesPanel";
+import { AccountEmails } from "@/components/conversations/AccountEmails";
+import EmailAContact from "@/components/conversations/EmailAContact";
+import { emailChoices } from "@/components/conversations/emailChoices";
+import { ChoosePeos } from "@/components/opportunities/ChoosePeos";
 import { OpportunityHeader, OpportunityHeaderLoading } from "@/components/opportunities/OpportunityHeader";
 import { opportunityKey, useOpportunityOutcomeQuery, useOpportunityPageQuery } from "@/components/opportunities/useOpportunityQueries";
+import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
 import { LoadFailed, NotAvailable, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
@@ -27,6 +32,7 @@ import type { OpportunityFields, OpportunityPage as Page } from "@/lib/opportuni
  */
 const OpportunityPage = () => {
   const { id = "" } = useParams();
+  const [params] = useSearchParams();
   const workspace = useWorkspace();
   const { firm, isSupport } = workspace;
   const { user } = useAuth();
@@ -37,6 +43,9 @@ const OpportunityPage = () => {
   // How it ended, what the win made and each quote's close reason (CRM-O1.3b). Read beside the page, so a failure of it never hides the page.
   const outcome = useOpportunityOutcomeQuery(firmId, id, query.data != null && query.data.opportunity.id === id);
   const [closing, setClosing] = useState<"won" | "lost" | "" | null>(null);
+  // The submission is read once, for the quotes' "Still needs" and for the close's withdrawal (D-1726): when there are quotes.
+  const [choosingPeos, setChoosingPeos] = useState(false);
+  const needs = useStillNeeds(firmId, query.data?.opportunity.submissionId ?? null, (query.data?.quotes.length ?? 0) > 0 || choosingPeos);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
   // The opportunity is now among the menu search's recent records (CRM-S1.2a, D-620): noted once its page has loaded.
@@ -97,7 +106,20 @@ const OpportunityPage = () => {
           <p className="flex-1"><strong className="font-medium">This account is archived.</strong> Nothing can be added to it.</p>
         </div>
       )}
-      <OpportunityHeader page={page} onMarkWonOrLost={canClose ? () => setClosing("") : undefined} />
+      <OpportunityHeader
+        page={page}
+        email={canAct && firmId ? (
+          <EmailAContact
+            firmId={firmId}
+            accountId={account.id}
+            loadContacts={() => emailChoices(firmId, account.id)}
+            firstId={page.mainContact?.id ?? null}
+            startWith={params.get("email")}
+            returnTo={(contactId) => `/opportunities/${opportunity.id}?email=${contactId}`}
+          />
+        ) : undefined}
+        onMarkWonOrLost={canClose ? () => setClosing("") : undefined}
+      />
       {isClosed && firmId && (
         <OutcomeBanner
           firmId={firmId}
@@ -120,14 +142,20 @@ const OpportunityPage = () => {
           proposedStarts={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.proposedStart]))}
           brokerDefault={workspace.firm?.name ?? ""}
           initial={closing}
+          mail={needs.status === "ready" ? { status: "ready", messages: needs.messages } : { status: needs.status }}
           onClose={() => setClosing(null)}
           onDone={closed}
         />
       )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] items-start">
         <div className="space-y-6 min-w-0">
-          {firmId && <QuotesPanel key={opportunity.id} firmId={firmId} page={page} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
+          {firmId && <QuotesPanel
+            key={opportunity.id}
+            page={page}
+            needs={needs}
+            action={canAct && page.intake?.certifiedAt ? <ChoosePeos needs={needs} onChoose={() => setChoosingPeos(true)} returnTo={`/opportunities/${opportunity.id}`} onSent={closed} /> : undefined} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
           <IntakePanel page={page} />
+          {firmId && <AccountEmails key={`emails-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} contactName={(cid) => page.contacts.find((c) => c.id === cid)?.name ?? null} />}
           {firmId && <OpportunityActivity key={opportunity.id} firmId={firmId} opportunityId={opportunity.id} />}
         </div>
         <div className="space-y-6 min-w-0">

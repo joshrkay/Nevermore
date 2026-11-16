@@ -214,6 +214,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             firmId={opportunity.firmId}
             opportunityId={opportunity.id}
             initial={closing}
+            mail={mail}
             onClose={() => setClosing(null)}
             onDone={() => {
               onOutcomeChanged?.(opportunity.firmId);
