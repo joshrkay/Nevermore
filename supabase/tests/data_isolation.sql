@@ -217,6 +217,15 @@
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
+-- Slice 6.6a defines public.peo_authorized (M-1.1), which issuing and opening a bundle link ask. Until it is merged, a stub for this test only:
+-- every PEO authorized.
+DO $$
+BEGIN
+  IF to_regprocedure('public.peo_authorized(uuid, text)') IS NULL THEN
+    EXECUTE 'CREATE FUNCTION public.peo_authorized(p_session_id uuid, p_peo text) RETURNS boolean LANGUAGE sql STABLE AS ''SELECT true''';
+    EXECUTE 'REVOKE ALL ON FUNCTION public.peo_authorized(uuid, text) FROM PUBLIC, anon, authenticated, service_role';
+  END IF;
+END $$;
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -756,6 +765,14 @@ BEGIN
     INSERT INTO public.leads (firm_id, name, source) VALUES (fid, 'Fixture unowned lead ' || f, 'added_by_hand');
     INSERT INTO public.activities (firm_id, lead_id, kind, body) SELECT fid, l.id, 'note', 'Fixture lead note' FROM public.leads l WHERE l.firm_id = fid AND l.owner_id = agent;
     INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT fid, l.id, b.id FROM public.leads l, public.labels b WHERE l.firm_id = fid AND l.owner_id = agent AND b.firm_id = fid;
+    -- 6.6b: a bundle link on the firm's quote request (its issue is one more event on the quote request), a file of it in the bucket, and a guess
+    -- that missed.
+    INSERT INTO public.bundle_links (firm_id, quote_request_id, session_id, version, token_hash, folder, files, expires_at)
+    SELECT fid, q.id, q.session_id, 1, encode(extensions.digest('fixture-' || f, 'sha256'), 'hex'), gen_random_uuid(), '[{"name": "packet.pdf", "what": "The packet"}]', now() + interval '30 days'
+    FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END);
+    INSERT INTO storage.objects (bucket_id, name)
+    SELECT 'bundle-links', b.quote_request_id || '/' || b.folder || '/1-packet.pdf' FROM public.bundle_links b WHERE b.firm_id = fid;
+    INSERT INTO public.bundle_link_misses (address_hash) VALUES (encode(extensions.digest('192.0.2.' || f, 'sha256'), 'hex'));
   END LOOP;
 END $$;
 
@@ -801,7 +818,7 @@ INSERT INTO matrix VALUES
   -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
   -- members' alone. The prospect never sees a quote request, even on their own submission.
   ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
-  ('public.quote_request_events',                       '{}', '{"A":6,"B":6}'),
+  ('public.quote_request_events',                       '{}', '{"A":7,"B":7}'),
   ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
   ('public.quote_request_addresses',                    '{}', '{"A":2,"B":2}'),
   -- Mail on a quote request reaches the firm's members, and so does held mail addressed to their firm (CRM-P2.1c): one of each for
@@ -919,6 +936,13 @@ INSERT INTO matrix VALUES
 INSERT INTO matrix VALUES
   ('public.leads',                                      '{"agent_b":1}', '{"A":2,"B":2}'),
   ('public.lead_labels',                                '{}', NULL);
+-- ---- 6.6b: the bundle link (20261122110000) ----
+-- Closed to the API, the service role included: issued and revoked through functions, opened by the edge function through two functions
+-- (supabase/tests/bundle_links.sql). A link's files are stored by a firm's member under its own quote request and read by nobody through the API.
+INSERT INTO matrix VALUES
+  ('public.bundle_links',                               '{"service":0}', NULL),
+  ('public.bundle_link_misses',                         '{"service":0}', NULL),
+  ('storage.objects WHERE bucket_id = ''bundle-links''', '{}', NULL);
 -- ---- CRM-S1.2b: search in the database (20261119230000) ----
 -- Each person's last opened records. Closed to the API, the service role included (no grant: it would bypass row security), a member reads their own through my_recent_records() (supabase/tests/search_everywhere.sql).
 INSERT INTO matrix VALUES
@@ -1302,6 +1326,12 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_correct_quote_request_note(0, ''call'', current_date, ''probe'')', 'correcting a quote request note'),
   ('advisor_reissue_quote_request_address(p_quote_request_id bigint)', 'advisor',
                                                                      'SELECT public.advisor_reissue_quote_request_address(0)', 'revoking and reissuing a quote request''s reply address'),
+  ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)', 'advisor',
+                                                                     'SELECT public.issue_bundle_link(0, 1, gen_random_uuid(), ''[{"name": "a.pdf", "what": "A"}]'')', 'issuing the bundle link a PEO opens (6.6b)'),
+  ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', 'advisor',
+                                                                     'SELECT public.revoke_bundle_link(0)', 'revoking a quote request''s bundle link (6.6b)'),
+  ('bundle_link_folder_in_my_firm(p_name text)', 'own', NULL, 'the bundle-links storage policy calls it as the caller: whether a file''s first folder is a quote request of a firm the caller currently belongs to, outside a support session; false for anyone else'),
+  ('bundle_link_folder_read_only(p_name text)', 'own', NULL, 'the bundle-links storage policy calls it as the caller: whether that quote request''s firm is closing; false for anyone else'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
@@ -1892,6 +1922,8 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
   ('advisor_correct_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_correct_quote_request_note({note}, 'call', current_date, 'probe')::text$$),
   ('advisor_reissue_quote_request_address', 'advisor', 'by_id', $$SELECT public.advisor_reissue_quote_request_address({qr})::text$$),
+  ('issue_bundle_link', 'advisor', 'by_id', $$SELECT public.issue_bundle_link({qr}, 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
+  ('revoke_bundle_link', 'advisor', 'by_id', $$SELECT public.revoke_bundle_link({qr})::text$$),
   ('set_submission_status', 'advisor', 'by_id', $$SELECT public.set_submission_status({sid}, 'under_review', 'probe')::text$$),
   ('set_submission_needs_action', 'advisor', 'by_id', $$SELECT public.set_submission_needs_action({sid}, true, 'probe')::text$$),
   ('review_submission_field', 'advisor', 'by_id', $$SELECT public.review_submission_field({sid}, 'company_name', 'follow_up')::text$$),
@@ -3178,6 +3210,16 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.lead_labels', 'firm', 'its own firm_id, a lead and a label of that firm; closed to the API',
    $m$WITH l AS (INSERT INTO public.labels (firm_id, name) VALUES ({firm}, 'Lead {tag}') RETURNING id, firm_id) INSERT INTO public.lead_labels (firm_id, lead_id, label_id) SELECT l.firm_id, d.id, l.id FROM l, public.leads d WHERE d.firm_id = {firm} ORDER BY d.created_at, d.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- ---- 6.6b: the bundle link (20261122110000) ----
+-- A link: its own firm_id and a quote request of that firm. A link's file: by the quote request its first folder names. Neither is read by any
+-- member through the API, so no positive control; every other caller reads, changes and deletes none, and a non-member stores none.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.bundle_links', 'firm', 'its own firm_id and a quote request of that firm; closed to the API',
+   $m$INSERT INTO public.bundle_links (firm_id, quote_request_id, session_id, version, token_hash, folder, files, expires_at) VALUES ({firm}, {qr}, {intake}, 1, encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), gen_random_uuid(), '[]', now() + interval '30 days') RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('storage.objects WHERE bucket_id = ''bundle-links''', 'firm', 'by the quote request in the folder; stored by a member, read by nobody through the API',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('bundle-links', {qr} || '/00000000-0000-4000-8000-000000000000/1-probe-{tag}.pdf') RETURNING ctid::text$m$, false,
+   'name = {qr} || ''/00000000-0000-4000-8000-000000000000/1-moved-{tag}.pdf''');
 INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.quote_request_messages WHERE quote_request_id IS NULL', 'firm', 'held mail: by the firm its address belonged to',
    $m$INSERT INTO public.quote_request_messages (provider_message_id, firm_id, held_reason, direction, from_address) VALUES ('held-{tag}', {firm}, 'revoked_address', 'received', 'probe@example.test') RETURNING ctid::text$m$),
@@ -3228,7 +3270,7 @@ INSERT INTO registry (src, scope, why, names_intakes) VALUES
   ('public.ai_global_usage', 'closed', 'rate limits', false), ('public.ai_ip_log', 'closed', 'rate limits', false), ('public.ai_request_log', 'closed', 'rate limits', false),
   ('public.broker_mailboxes', 'closed', 'encrypted tokens', false), ('public.email_delivery_events', 'closed', 'delivery log', false),
   ('public.email_suppressions', 'closed', 'do-not-send list', false), ('public.intake_milestones', 'closed', 'read as counts through a function', false),
-  ('public.outbox_events', 'closed', 'queued email', false), ('public.submission_reference_counters', 'closed', 'File ID sequence', false),
+  ('public.outbox_events', 'closed', 'queued email', false), ('public.bundle_link_misses', 'closed', 'the guessing limit: hashed addresses, an hour', false), ('public.submission_reference_counters', 'closed', 'File ID sequence', false),
   ('storage.objects WHERE bucket_id = ''quarantine''', 'closed', 'uploads whose malware scan has not passed: the service role''s', false);
 
 -- ---------- 5b. the probe: two firms, one row each, from every caller ----------
@@ -3759,6 +3801,16 @@ SELECT unnest(ARRAY[
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
 INSERT INTO fn_class (fn, class, why) VALUES
+  ('issue_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm issues its bundle link; the same refusal for another firm''s quote request as for one that does not exist (4e; supabase/tests/bundle_links.sql)'),
+  ('revoke_bundle_link', 'firm_scoped', 'a current member of the quote request''s firm revokes its link; the same refusal for another firm''s quote request as for one that does not exist (4e)'),
+  ('bundle_link_folder_in_my_firm', 'own', 'storage policy helper: whether a bundle link file''s folder is a quote request of a firm the caller belongs to'),
+  ('bundle_link_folder_read_only', 'own', 'storage policy helper: whether that quote request''s firm is closing'),
+  ('bundle_link_open', 'service_only', 'the bundle-link edge function opens a link by its token''s hash: no API role but the service role can call it (supabase/tests/bundle_links.sql)'),
+  ('bundle_link_file', 'service_only', 'the bundle-link edge function finds a live link''s file and logs the download: the service role only'),
+  ('bundle_link_revoke', 'service_only', 'what M-1.1, M-2.3 and M-2.4 call inside their own guarded write: no API role can call it'),
+  ('bundle_link_address_refused', 'service_only', 'the guessing limit, asked by the two functions above; no API role can call it'),
+  ('bundle_link_miss', 'service_only', 'counts a guess that missed, for the two functions above; no API role can call it'),
+  ('log_bundle_link_change', 'trigger', 'a trigger function: a link issued or revoked is on its quote request''s timeline'),
   ('invite_member', 'firm_scoped', 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_invitations.sql)'),
   ('remove_member', 'firm_scoped', 'a current owner of the firm ends a member''s membership now; refused for every other caller, another firm''s owner and a platform admin included (4e; supabase/tests/firm_members.sql)'),
   ('suspend_member', 'firm_scoped', 'a current owner of the firm suspends a member; refused for every other caller (4e; supabase/tests/firm_members.sql)'),
@@ -4161,7 +4213,8 @@ CREATE TEMP TABLE secret_columns (tbl text NOT NULL, col text NOT NULL, kind tex
 INSERT INTO secret_columns VALUES
   ('public.broker_mailboxes', 'token_ciphertext', 'ciphertext', 'a broker''s mailbox refresh token, sealed by the mailbox function; only the sending function reads it back'),
   ('public.broker_mailboxes', 'token_iv', 'ciphertext', 'the sealing''s initialisation vector, kept with the ciphertext it belongs to'),
-  ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept');
+  ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept'),
+  ('public.bundle_links', 'token_hash', 'hash', 'the SHA-256 of a bundle link''s token (6.6b, ADR 0003); the token is answered once to the advisor who issues it and never kept');
 -- The functions the API roles can run that name a secret's table, each swept below as every caller with a statement that calls it.
 CREATE TEMP TABLE secret_readers (fn text PRIMARY KEY, call text NOT NULL);
 INSERT INTO secret_readers VALUES
@@ -4171,6 +4224,9 @@ INSERT INTO secret_readers VALUES
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.invite_member({firm_a}, 'secret-probe@example.test', 'agent', NULL, repeat('b', 64)) f$$),
   ('resend_invitation(p_invitation_id uuid, p_token_hash text)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.resend_invitation({inv_a}, repeat('a', 64)) f$$),
   ('cancel_invitation(p_invitation_id uuid)', $$SELECT public.cancel_invitation({inv_a})::text$$),
+  ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)',
+   $$SELECT public.issue_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
+  ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', $$SELECT public.revoke_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1))::text$$),
   ('accept_invitation(p_token_hash text, p_firm_address text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.accept_invitation(repeat('c', 64), (SELECT address FROM public.firms WHERE id = {firm_a})) f$$);
 
@@ -4400,8 +4456,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['bundle-links', 'documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the bundle-links, documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table

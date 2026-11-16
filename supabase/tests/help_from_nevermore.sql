@@ -1061,7 +1061,8 @@ DO $$
 DECLARE
   helpers text[] := ARRAY['firm_role', 'is_firm_member', 'can_see_firm_record', 'can_read_firm_activity', 'can_read_peo_mail', 'colleague_in_my_firm',
     'intake_folder_firm_read_only', 'intake_folder_in_my_firm', 'intake_in_my_firm', 'intake_owner_in_my_firm', 'quote_request_in_my_firm',
-    'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session'];
+    'can_change_firm_record', 'can_edit_activity', 'is_support_session', 'support_reads_firm', 'refuse_support_session',
+    'bundle_link_folder_in_my_firm', 'bundle_link_folder_read_only'];
   reads text[] := ARRAY['firm_labels', 'account_activity_options', 'account_owner_choices', 'add_contact_context', 'contact_move_choices', 'contact_page', 'contact_activity', 'account_files', 'account_page', 'account_tab', 'accounts_can_change', 'accounts_list', 'accounts_view_counts', 'leads_list', 'leads_view_counts', 'firm_member_choices', 'submission_account', 'advisor_email_problems', 'advisor_intake_funnel', 'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions',
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
@@ -1073,7 +1074,7 @@ DECLARE
     'record_member_activity', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'request_intake_deletion', 'resend_invitation',
     'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session', 'save_view', 'set_my_table_columns', 'set_submission_needs_action',
     'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view', 'export_rows', 'update_account', 'create_account', 'create_lead', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity',
-    'add_to_note', 'set_task_done'];
+    'add_to_note', 'set_task_done', 'issue_bundle_link', 'revoke_bundle_link'];
   -- A write that reaches the guard through another function it calls.
   delegates text[] := ARRAY['advisor_note_underwriter_question'];
   owner_only text[] := ARRAY['firm_join_requests', 'firm_organisations', 'firm_pending_invitations', 'request_firm_closure', 'withdraw_firm_closure'];
@@ -1122,8 +1123,9 @@ BEGIN
     AND (p.schemaname || '.' || p.tablename || ' | ' || p.policyname) NOT IN (
       'public.advisor_notes | Firm members can add notes as themselves',
       'storage.objects | Firm members can store generated manuscripts',
-      'storage.objects | Firm members can remove unrecorded manuscript uploads');
-  PERFORM pg_temp.is(unplaced, NULL::text, 'no write policy asks a membership helper except the three that are guarded (the notes trigger, the manuscripts'' two policies)');
+      'storage.objects | Firm members can remove unrecorded manuscript uploads',
+      'storage.objects | Firm members can store a bundle link''s files');
+  PERFORM pg_temp.is(unplaced, NULL::text, 'no write policy asks a membership helper except the four that are guarded (the notes trigger, the manuscripts'' two policies, a bundle link''s files)');
   SELECT string_agg(p.policyname, '; ' ORDER BY p.policyname) INTO unplaced
   FROM pg_policies p
   WHERE p.schemaname = 'storage' AND p.tablename = 'objects' AND p.cmd = 'SELECT'
@@ -1147,7 +1149,8 @@ DECLARE
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'update_account', 'create_account', 'create_lead', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
-    'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session'];
+    'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
+    'issue_bundle_link', 'revoke_bundle_link'];
   -- These do not ask the guard, and the reason a support session still cannot change a firm's data with them.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s, open to every admin with or without a session; the PEO list is the same for every firm',

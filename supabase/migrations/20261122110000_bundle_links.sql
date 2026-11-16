@@ -326,10 +326,31 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('bundle-links', 'bundle-links', false)
 ON CONFLICT (id) DO NOTHING;
 
--- May the caller store this file? Its first folder is a quote request of their own firm, the second a folder's uuid, they are no support
--- session, and the firm is not closing. Volatile, and it takes the firm row FOR KEY SHARE as the manuscripts' policies do (20261118111000), so a
--- request to close waits for a file being stored and a file stored after it is refused.
-CREATE FUNCTION public.bundle_link_file_storable(p_name text)
+-- Is this a place the caller may store a link's file? Its first folder is a quote request of their own firm, the second a folder's uuid, the
+-- name has no deeper folder, and they are no support session (a support session stores nothing).
+CREATE FUNCTION public.bundle_link_folder_in_my_firm(p_name text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  parts text[] := string_to_array(p_name, '/');
+BEGIN
+  IF array_length(parts, 1) IS DISTINCT FROM 3 OR parts[1] !~ '^[1-9][0-9]{0,17}$'
+     OR parts[2] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR NOT public.quote_request_in_my_firm(parts[1]::bigint) THEN
+    RETURN false;
+  END IF;
+  RETURN NOT EXISTS (
+    SELECT 1 FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id
+    WHERE q.id = parts[1]::bigint AND public.is_support_session(s.firm_id));
+END;
+$$;
+
+-- Is the firm of that quote request closing? Volatile, and it takes the firm row FOR KEY SHARE as the manuscripts' policies do
+-- (intake_folder_firm_read_only, 20261118111000), so a request to close waits for a file being stored and one stored after it is refused.
+CREATE FUNCTION public.bundle_link_folder_read_only(p_name text)
 RETURNS boolean
 LANGUAGE plpgsql
 VOLATILE
@@ -337,28 +358,23 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  parts text[] := string_to_array(p_name, '/');
   fid uuid;
 BEGIN
-  IF array_length(parts, 1) IS DISTINCT FROM 3 OR parts[1] !~ '^[1-9][0-9]{0,17}$'
-     OR parts[2] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR NOT public.quote_request_in_my_firm(parts[1]::bigint) THEN
+  IF NOT public.bundle_link_folder_in_my_firm(p_name) THEN
     RETURN false;
   END IF;
-  SELECT s.firm_id INTO fid FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE q.id = parts[1]::bigint;
-  IF public.is_support_session(fid) THEN
-    RETURN false;
-  END IF;
+  SELECT s.firm_id INTO fid FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE q.id = split_part(p_name, '/', 1)::bigint;
   PERFORM 1 FROM public.firms f WHERE f.id = fid FOR KEY SHARE;
-  RETURN NOT public.firm_is_read_only(fid);
+  RETURN public.firm_is_read_only(fid);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.bundle_link_file_storable(text) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.bundle_link_file_storable(text) TO authenticated;
+REVOKE ALL ON FUNCTION public.bundle_link_folder_in_my_firm(text), public.bundle_link_folder_read_only(text) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.bundle_link_folder_in_my_firm(text), public.bundle_link_folder_read_only(text) TO authenticated;
 
 CREATE POLICY "Firm members can store a bundle link's files" ON storage.objects
   FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'bundle-links' AND public.bundle_link_file_storable(name));
+  WITH CHECK (bucket_id = 'bundle-links' AND public.bundle_link_folder_in_my_firm(name) AND NOT public.bundle_link_folder_read_only(name));
 
 -- ---------- 8. Deleted with the intake ----------
 -- intake_stored_files (20261111110000), restated with every bucket it had and the intake's link files: those under any of its quote requests.
@@ -381,3 +397,73 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION public.intake_stored_files(uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.intake_stored_files(uuid, uuid) TO service_role;
+
+-- ---------- 9. Kept when a firm closes ----------
+-- The closing's one list (20261121090000), restated with every line it had, and a link and its files kept: they are a quote request's, and a quote
+-- request is an intake's, which stays with its employer; they are deleted with the intake (section 8).
+CREATE OR REPLACE FUNCTION public.firm_closing_plan()
+RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT * FROM (VALUES
+    -- Deleted: the firm's own working data.
+    (10, 'public.firm_invitations', 'delete', 'firm_id', 'pending and past invitations to join'),
+    (20, 'public.firm_organisations', 'delete', 'firm_id', 'the listed Google domains and Microsoft tenants'),
+    (30, 'public.join_requests', 'delete', 'firm_id', 'requests to join'),
+    (40, 'public.table_preferences', 'delete', 'firm_id', 'each person''s column choices'),
+    (50, 'public.saved_views', 'delete', 'firm_id', 'saved views'),
+    (55, 'public.record_history', 'delete', 'firm_id', 'the history of each record: who created it and every change to its fields; it goes with the record'),
+    (56, 'public.recent_records', 'delete', 'firm_id', 'each person''s last opened records, for the search box'),
+    (56, 'public.bulk_change_records', 'delete', 'firm_id', 'what each bulk change did to each record, kept for ten minutes'' undo'),
+    (57, 'public.bulk_changes', 'delete', 'firm_id', 'bulk changes, kept for ten minutes'' undo'),
+    (60, 'public.referral_partners', 'delete', 'firm_id', 'referral partners'),
+    (58, 'public.activities', 'delete', 'firm_id', 'calls, notes and tasks on the firm''s accounts, contacts and leads; before the opportunities, contacts and accounts they stand on'),
+    (59, 'public.account_labels', 'delete', 'firm_id', 'the labels on the firm''s accounts; before the accounts they stand on'),
+    (59, 'public.lead_labels', 'delete', 'firm_id', 'the labels on the firm''s leads; before the leads they stand on'),
+    (60, 'public.leads', 'delete', 'firm_id', 'leads, the people and businesses the firm is not quoting yet, the bin with them; after their calls, notes and tasks'),
+    (61, 'public.opportunities', 'delete', 'firm_id', 'opportunities (each is one search for one account); before the contacts and accounts they stand on'),
+    (62, 'public.contacts', 'delete', 'firm_id', 'contacts, the people at the firm''s accounts'),
+    (63, 'public.accounts', 'delete', 'firm_id', 'accounts, the businesses the firm quotes for; the intakes on their opportunities stay with their employers (below)'),
+    (64, 'public.labels', 'delete', 'firm_id', 'the firm''s own list of labels; after the accounts that carried them'),
+    (70, 'public.firm_teams', 'delete', 'firm_id', 'teams (the memberships that named one are cleared first)'),
+    -- Kept, and why.
+    (900, 'public.firms', 'keep', NULL, 'the row stays: its address stays taken for twelve months and its record must still exist'),
+    (900, 'public.firm_memberships', 'keep', NULL, 'every membership is ended, not deleted: a membership is the dated record of who belonged (it is never changed)'),
+    (900, 'public.firm_member_suspensions', 'keep', NULL, 'each open one is ended; the rows are the dated record of who was suspended'),
+    (900, 'public.firm_activity', 'keep', NULL, 'the firm''s own record is pruned after ninety days by its own job (D-45)'),
+    (900, 'public.firm_suspensions', 'keep', NULL, 'the platform''s record of suspensions'),
+    (900, 'public.firm_closures', 'keep', NULL, 'the platform''s record of this: when it was asked, by whom, when it closed, and what was deleted, without content'),
+    (900, 'public.support_sessions', 'keep', NULL, 'the platform''s record of each time Nevermore looked at the firm: who, why, when it started and ended (a session ends when the firm closes)'),
+    (900, 'public.advisor_field_reviews', 'keep', NULL, 'an intake''s: it stays for its employer under the intake retention rules'),
+    (900, 'public.advisor_notes', 'keep', NULL, 'an intake''s'),
+    (900, 'public.advisor_review_events', 'keep', NULL, 'an intake''s'),
+    (900, 'public.ai_extraction_events', 'keep', NULL, 'an intake''s'),
+    (900, 'public.chamber_certifications', 'keep', NULL, 'an intake''s'),
+    (900, 'public.chamber_sessions', 'keep', NULL, 'the intakes: they belong to the employer who made them and are not the firm''s to delete'),
+    (900, 'public.document_events', 'keep', NULL, 'an intake''s'),
+    (900, 'public.documents', 'keep', NULL, 'an intake''s'),
+    (900, 'public.information_requests', 'keep', NULL, 'an intake''s'),
+    (900, 'public.intake_consents', 'keep', NULL, 'the employer''s own agreement'),
+    (900, 'public.intake_deletions', 'keep', NULL, 'the record that an intake was deleted, kept after it'),
+    (900, 'public.intake_lifecycle_events', 'keep', NULL, 'an intake''s'),
+    (900, 'public.manuscript_versions', 'keep', NULL, 'an intake''s'),
+    (900, 'public.profiles', 'keep', NULL, 'the employer''s own profile'),
+    (900, 'public.bundle_links', 'keep', NULL, 'a quote request''s links to its bundle: they go with the intake, under the intake retention rules'),
+    (900, 'public.quote_request_addresses', 'keep', NULL, 'a quote request''s: quote requests belong to an intake'),
+    (900, 'public.quote_request_events', 'keep', NULL, 'a quote request''s'),
+    (900, 'public.quote_request_message_attachments', 'keep', NULL, 'a quote request''s'),
+    (900, 'public.quote_request_messages', 'keep', NULL, 'a quote request''s mail thread with a PEO'),
+    (900, 'public.quote_request_messages WHERE quote_request_id IS NULL', 'keep', NULL, 'held mail from a PEO: held for the platform once the firm has no members, and discarded by the holding list''s own schedule'),
+    (900, 'public.quote_request_notes', 'keep', NULL, 'a quote request''s'),
+    (900, 'public.quote_request_thread_reads', 'keep', NULL, 'a quote request''s'),
+    (900, 'public.quote_requests', 'keep', NULL, 'an intake''s'),
+    (900, 'public.submission_status_history', 'keep', NULL, 'an intake''s'),
+    (900, 'public.submission_workflow', 'keep', NULL, 'an intake''s'),
+    (900, 'storage.objects WHERE bucket_id = ''bundle-links''', 'keep', NULL, 'an intake''s files: a bundle link''s made files, deleted with the intake'),
+    (900, 'storage.objects WHERE bucket_id = ''documents''', 'keep', NULL, 'an intake''s files'),
+    (900, 'storage.objects WHERE bucket_id = ''manuscripts''', 'keep', NULL, 'an intake''s files'),
+    (900, 'storage.objects WHERE bucket_id = ''peo-mail''', 'keep', NULL, 'an intake''s files')
+  ) AS t (ord, src, action, firm_column, why)
+$$;
