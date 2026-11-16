@@ -247,6 +247,7 @@
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123120000_broker_intake.sql
+\i supabase/migrations/20261123120100_broker_intake_columns.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

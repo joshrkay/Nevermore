@@ -193,6 +193,7 @@
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123120000_broker_intake.sql
+\i supabase/migrations/20261123120100_broker_intake_columns.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -791,3 +792,62 @@ SELECT pg_temp.is((SELECT chamber_data ->> 'company_name' FROM public.chamber_se
 SELECT pg_temp.is((SELECT field_provenance -> 'company_name' -> 'source' ->> 'kind' FROM public.chamber_sessions WHERE id = pg_temp.id('save_intake')), 'broker_entry', 'its source is a broker entry, not what the chamber wrote');
 SELECT pg_temp.is((SELECT field_provenance -> 'company_name' -> 'source' ->> 'member_id' FROM public.chamber_sessions WHERE id = pg_temp.id('save_intake')), pg_temp.id('a_agent')::text, 'naming the member');
 SELECT pg_temp.is((SELECT field_provenance -> 'states' ->> 'status' FROM public.chamber_sessions WHERE id = pg_temp.id('save_intake')), 'inferred', 'and the status is not confirmed');
+
+-- 51. A member's direct update of the intake's extra_answers is refused (D-1759a). The chamber's own save sends extra_answers as they stand, so a save that leaves them alone goes through
+-- (below); a crafted update that writes them is refused, the whole save, as the FEIN is (42501): the answers to a PEO's own questions are the employer's, and nothing in them can be marked as the broker's.
+-- Break caught: a broker writes the employer's answers to a PEO's questions through a direct update that the chamber's trigger never looks at.
+SELECT pg_temp.opp('opp_hole', 'alpha', 'a_agent');
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT public.start_broker_intake(pg_temp.id('opp_hole')) ->> 'intake_id' AS hole_intake \gset
+SELECT pg_temp.as_owner();
+INSERT INTO fx VALUES ('hole_intake', :'hole_intake'::uuid);
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET extra_answers = %L WHERE id = %L$q$,
+  '{"7": {"q1": {"question": "Q?", "kind": "text", "value": "typed by the broker", "status": "confirmed", "source": {"kind": "prospect_edit"}, "updated_at": "2026-11-20T10:00:00.000Z"}}}', pg_temp.id('hole_intake'))),
+  '42501', 'a member''s update of the extra answers is refused');
+
+-- 52. The chamber's own save still goes through: it sends the answers, the provenance, the conversation, the PEO choice and the extra answers as they stand, and only the first three change.
+-- Break caught: the refusal reads every save that mentions the extra answers as one that writes them, and the broker can't save in the chamber at all.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET chamber_data = chamber_data || '{"industry": "Bakery"}', field_provenance = field_provenance,
+  transcript = transcript, chosen_peo = chosen_peo, extra_answers = extra_answers WHERE id = %L$q$, pg_temp.id('hole_intake'))), 'ok', 'a save that leaves the extra answers alone is not refused');
+SELECT pg_temp.is((SELECT chamber_data ->> 'industry' FROM public.chamber_sessions WHERE id = pg_temp.id('hole_intake')), 'Bakery', 'and the answer is kept');
+
+-- 53. A member's update of the submission is refused (D-1759a): the submission is what certifying records, written by the database, never by a member.
+-- Break caught: a broker writes the record of what the employer certified.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET submission = '{"forged": true}' WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the submission is refused');
+
+-- 54. A member's update of the intake's expiry is refused (D-1759a): when an idle draft closes is the database's to keep.
+-- Break caught: a broker keeps an employer's draft open (or closes it early) by writing its expiry.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET expires_at = now() + interval '900 days' WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the expiry is refused');
+
+-- 55. A member's update of the intake's firm is refused (D-1759a): an intake stays with the firm that started it.
+-- Break caught: a broker moves an intake to another firm.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET firm_id = %L WHERE id = %L$q$, pg_temp.id('bravo'), pg_temp.id('hole_intake'))), '42501', 'a member''s update of the firm is refused');
+
+-- 56. A member's update of who started the intake is refused (D-1759a): the starter is set by the database alone (D-1750).
+-- Break caught: a broker names another member as the starter, or clears it so the firm's policy stops covering the intake.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET started_by = NULL WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the starter is refused');
+
+-- 57. A member's update of the intake's consent record is refused (D-1759a): the agreement is the employer's (D-1751), never the firm's to point at.
+-- Break caught: a broker attaches a consent to an intake whose employer never gave one.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET intake_consent_id = gen_random_uuid() WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the consent is refused');
+
+-- 58. A member's update of how the intake began (its referral code and campaign tags) is refused (D-1759a).
+-- Break caught: a broker rewrites where an intake came from.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET referral_code = 'forged-code' WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the referral code is refused');
+
+-- 59. A member's update of the intake's File ID is refused (D-1759a): the File ID is how the advisor and the employer name the intake.
+-- Break caught: a broker renames an intake to another's File ID.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET file_id = 'EAA-FORGED' WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the File ID is refused');
+
+-- 60. A member's update of the intake's schema version is refused (D-1759a): which questions the intake was answered against is the database's to keep.
+-- Break caught: a broker moves an intake to another version of the questions, so its answers are read against the wrong ones.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET schema_version = schema_version + 1 WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the schema version is refused');
+
+-- 61. A member's update of the intake's status is refused (D-1759a): archiving or closing an intake is the employer's act, or the database's.
+-- Break caught: a broker archives or certifies an intake through a direct update.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET status = 'archived' WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the status is refused');
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp.id('hole_intake')), 'in_progress', 'the intake is still being worked');
+
+-- 62. A member's update of the intake's version is refused (D-1759a): the version is what the browser's saves check against, moved on by the database.
+-- Break caught: a broker sets the version so another tab's save no longer matches, or matches when it shouldn't.
+SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET data_version = data_version + 5 WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the version is refused');

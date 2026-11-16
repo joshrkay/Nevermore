@@ -454,6 +454,7 @@ END $$;
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123120000_broker_intake.sql
+\i supabase/migrations/20261123120100_broker_intake_columns.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried
