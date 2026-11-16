@@ -567,7 +567,7 @@ BEGIN
   s := pg_temp.send_with_link('reyes', 'Insperity');
   PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_peo_link(%s, %s, %L)', s ->> 'message_id', s ->> 'link_id', s ->> 'token')),
-    'PT404: Message not found', 'another member of the firm');
+    'PT409: Only the advisor who wrote this message can send it.', 'another member of the firm');
   PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_peo_link(%s, %s, %L)', s ->> 'message_id', s ->> 'link_id', s ->> 'token')),
     'PT404: Message not found', 'another firm');

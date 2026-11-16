@@ -22,7 +22,7 @@ import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
-import { PEO_AUTHORIZATION_VERSION } from "@/data/legalWording";
+import { PEO_AUTHORIZATION_VERSION, PEO_SEND_NOTICE } from "@/data/legalWording";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
@@ -631,6 +631,12 @@ describe("server and client intake rules agree", () => {
   // M-1.1: the employer authorizes a PEO under the wording in src/data/legalWording.ts; the database refuses any other version (EA005).
   it("asks for authorization under the PEO authorization version the database requires", () => {
     expect(quoted(blocks("peo_authorization_version").join("\n"))).toEqual([PEO_AUTHORIZATION_VERSION]);
+  });
+
+  // M-2.1, D-12: every message to a PEO carries the line in src/data/legalWording.ts; the database's copy (public.peo_send_notice) must be it, word for
+  // word, so the email says what the composer previews and counsel's text stays one change.
+  it("puts the legal-wording module's line on every message to a PEO", () => {
+    expect(quoted(blocks("peo_send_notice").join("\n"))).toEqual([PEO_SEND_NOTICE]);
   });
 });
 

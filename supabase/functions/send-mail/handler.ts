@@ -73,16 +73,24 @@ export async function handleSendMailRequest(req: Request, deps: SendMailDeps): P
   }
   const db = deps.createClient(url, serviceKey);
 
-  const claim = await db.rpc("claim_conversation_mail", { p_batch: BATCH_SIZE, p_max_attempts: MAX_ATTEMPTS, p_lock_seconds: CLAIM_LEASE_SECONDS });
-  if (claim.error) {
-    deps.log(`SEND_MAIL_CLAIM_FAILED: ${claim.error.code ?? "unexpected"}`);
-    return json({ error: "Internal error" }, 500);
-  }
-  const rows = (Array.isArray(claim.data) ? claim.data : []) as Claimed[];
-  const summary = { claimed: rows.length, sent: 0, retrying: 0, failed: 0 };
-  for (const row of rows) {
-    const outcome = await sendOne(db, deps, configured.config, replyDomain, row);
-    summary[outcome] += 1;
+  const summary = { claimed: 0, sent: 0, retrying: 0, failed: 0 };
+  // The contacts' and leads' messages (6.2), then the PEOs' (M-2.1): one function, two queues on the one outbox, each with its own claim.
+  const queues: Queue[] = [CONVERSATION_QUEUE];
+  const appBase = deps.env("APP_BASE_URL")?.trim().replace(/\/+$/, "");
+  if (appBase) queues.push({ ...PEO_QUEUE, linkBase: `${appBase}/b/` });
+  else deps.log("SEND_MAIL_CONFIG_MISSING: APP_BASE_URL is not set, so no message to a PEO is sent");
+  for (const queue of queues) {
+    const claim = await db.rpc(queue.claim, { p_batch: BATCH_SIZE, p_max_attempts: MAX_ATTEMPTS, p_lock_seconds: CLAIM_LEASE_SECONDS });
+    if (claim.error) {
+      deps.log(`SEND_MAIL_CLAIM_FAILED: ${claim.error.code ?? "unexpected"}`);
+      return json({ error: "Internal error" }, 500);
+    }
+    const rows = (Array.isArray(claim.data) ? claim.data : []) as Claimed[];
+    summary.claimed += rows.length;
+    for (const row of rows) {
+      const outcome = await sendOne(db, deps, configured.config, replyDomain, queue, row);
+      summary[outcome] += 1;
+    }
   }
   return json(summary);
 }
@@ -90,8 +98,25 @@ export async function handleSendMailRequest(req: Request, deps: SendMailDeps): P
 interface Claimed {
   event_id: string;
   attempt: number;
-  message: ClaimedMessage;
+  message: ClaimedMessage & { link_token?: string | null };
 }
+
+/** One queue on the outbox: its own claim, completion and failure, and for a PEO's messages where the bundle link starts (M-2.1). */
+interface Queue {
+  claim: string;
+  complete: string;
+  fail: string;
+  linkBase?: string;
+}
+
+const CONVERSATION_QUEUE: Queue = { claim: "claim_conversation_mail", complete: "complete_conversation_mail", fail: "fail_conversation_mail" };
+const PEO_QUEUE: Queue = { claim: "claim_peo_mail", complete: "complete_peo_mail", fail: "fail_peo_mail" };
+
+/**
+ * Where a PEO message's body holds its link: public.peo_link_marker(). The stored body never holds the token (D-67x); the link goes in its place
+ * here, as the email is built, from the token the outbox event alone carries.
+ */
+export const PEO_LINK_MARKER = "[the bundle link, sent in the email and not kept here]";
 
 type Outcome = "sent" | "retrying" | "failed";
 type FailureKind = "mailbox" | "refused" | "uncertain" | "unavailable";
@@ -102,19 +127,20 @@ export const REASONS = {
   unavailable: "Google or Microsoft didn't take the message after several tries. Nothing was sent; write it again later.",
   not_allowed: "Google or Microsoft wouldn't let Nevermore send as you. Nothing was sent; connect your mailbox again.",
   refused: "Google or Microsoft refused this message. Nothing was sent; check the addresses and write it again.",
+  no_link: "The bundle link wasn't made, so nothing was sent. Send it again.",
   other_mailbox: "Your connected mailbox has changed since you wrote this. Nothing was sent; write it again to send it from your mailbox now.",
   // The same words the database writes for a worker lost on its last attempt (conversation_mail_ended).
   uncertain: "This message may have been sent. Look in your Sent folder before writing again.",
 } as const;
 
 /** A failure worth trying again: after dispatch-outbox's delays, and final once they are used up. */
-function retryOrGiveUp(db: SendMailClient, deps: SendMailDeps, row: Claimed, kind: FailureKind, reason: string): Promise<Outcome> {
-  return fail(db, deps, row, kind, reason, retryDelaySeconds(row.attempt));
+function retryOrGiveUp(db: SendMailClient, deps: SendMailDeps, queue: Queue, row: Claimed, kind: FailureKind, reason: string): Promise<Outcome> {
+  return fail(db, deps, queue, row, kind, reason, retryDelaySeconds(row.attempt));
 }
 
 /** Records a failed attempt: retried after `retryInSeconds`, or final when it is null. */
-async function fail(db: SendMailClient, deps: SendMailDeps, row: Claimed, kind: FailureKind, reason: string, retryInSeconds: number | null): Promise<Outcome> {
-  const { error } = await db.rpc("fail_conversation_mail", {
+async function fail(db: SendMailClient, deps: SendMailDeps, queue: Queue, row: Claimed, kind: FailureKind, reason: string, retryInSeconds: number | null): Promise<Outcome> {
+  const { error } = await db.rpc(queue.fail, {
     p_event_id: row.event_id, p_attempt: row.attempt, p_kind: kind, p_reason: reason, p_retry_in_seconds: retryInSeconds,
   });
   deps.log(`SEND_MAIL_FAILED event=${row.event_id} attempt=${row.attempt} kind=${kind} final=${retryInSeconds === null}${error ? ` unrecorded=${error.code ?? "unexpected"}` : ""}`);
@@ -131,23 +157,28 @@ async function gmailId(res: Response): Promise<string | null> {
   }
 }
 
-async function sendOne(db: SendMailClient, deps: SendMailDeps, config: MailboxConfig, replyDomain: string, row: Claimed): Promise<Outcome> {
-  const m = row.message;
+async function sendOne(db: SendMailClient, deps: SendMailDeps, config: MailboxConfig, replyDomain: string, queue: Queue, row: Claimed): Promise<Outcome> {
+  const claimed = row.message;
+  // A PEO's message carries its bundle link where the marker is; one claimed without a token is refused, never sent without its bundle.
+  if (queue.linkBase !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(claimed.link_token ?? "")) {
+    return fail(db, deps, queue, row, "refused", REASONS.no_link, null);
+  }
+  const m: ClaimedMessage = queue.linkBase === undefined ? claimed : { ...claimed, body_text: claimed.body_text.replace(PEO_LINK_MARKER, `${queue.linkBase}${claimed.link_token}`) };
   // Every address by the one rule the database used (D-637), so nothing in a header can start another header.
   if (![m.from_address, ...m.to_addresses, ...m.cc_addresses].every(isMailAddress)) {
-    return fail(db, deps, row, "refused", REASONS.bad_address, null);
+    return fail(db, deps, queue, row, "refused", REASONS.bad_address, null);
   }
   const access = await getMailboxAccess(db, deps.fetch, config, m.sender_id ?? "");
   if (!access.ok) {
     // Google or Microsoft not answering, or the apps not set up yet, is tried again; a mailbox that is gone or can't send is final, kind mailbox, so the
     // place to write says Connect or Reconnect (CRM-E1.1).
     if (access.reason === "unavailable" || access.reason === "not_configured") {
-      return retryOrGiveUp(db, deps, row, "unavailable", MAILBOX_PROBLEMS[access.reason]);
+      return retryOrGiveUp(db, deps, queue, row, "unavailable", MAILBOX_PROBLEMS[access.reason]);
     }
-    return fail(db, deps, row, "mailbox", MAILBOX_PROBLEMS[access.reason], null);
+    return fail(db, deps, queue, row, "mailbox", MAILBOX_PROBLEMS[access.reason], null);
   }
   // The message was written from one address and its Message-ID is at that domain: it goes from that mailbox or not at all.
-  if (access.address.toLowerCase() !== m.from_address.toLowerCase()) return fail(db, deps, row, "mailbox", REASONS.other_mailbox, null);
+  if (access.address.toLowerCase() !== m.from_address.toLowerCase()) return fail(db, deps, queue, row, "mailbox", REASONS.other_mailbox, null);
   const text = buildMessage(m, replyDomain, deps.now());
   const microsoft = access.provider === "microsoft";
   // Graph takes the MIME message as base64 text and answers 202 with no body; Gmail takes it as base64url `raw` and answers its id.
@@ -163,20 +194,20 @@ async function sendOne(db: SendMailClient, deps: SendMailDeps, config: MailboxCo
     });
   } catch {
     // No answer: it may have gone. Neither provider takes an idempotency key, so a retry could send it twice to the client. Final (D-632).
-    return fail(db, deps, row, "uncertain", REASONS.uncertain, null);
+    return fail(db, deps, queue, row, "uncertain", REASONS.uncertain, null);
   } finally {
     clearTimeout(timer);
   }
   if (!res.ok) {
     // Busy or failing on their side: they took nothing, so it is tried again (D-632).
-    if (res.status === 429 || res.status >= 500) return retryOrGiveUp(db, deps, row, "unavailable", REASONS.unavailable);
+    if (res.status === 429 || res.status >= 500) return retryOrGiveUp(db, deps, queue, row, "unavailable", REASONS.unavailable);
     // They looked and said no: final. The sender's permission refused is kind mailbox (Reconnect); anything else, the message refused. Their words are
     // never kept: they can carry an address.
-    if (res.status === 401 || res.status === 403) return fail(db, deps, row, "mailbox", REASONS.not_allowed, null);
-    return fail(db, deps, row, "refused", REASONS.refused, null);
+    if (res.status === 401 || res.status === 403) return fail(db, deps, queue, row, "mailbox", REASONS.not_allowed, null);
+    return fail(db, deps, queue, row, "refused", REASONS.refused, null);
   }
   // Graph returns no id, and a Gmail answer may carry none we can read: our own Message-ID is then the send's id (D-633). It went either way.
   const providerId = microsoft ? m.message_id : await gmailId(res) ?? m.message_id;
-  await db.rpc("complete_conversation_mail", { p_event_id: row.event_id, p_attempt: row.attempt, p_provider_message_id: providerId });
+  await db.rpc(queue.complete, { p_event_id: row.event_id, p_attempt: row.attempt, p_provider_message_id: providerId });
   return "sent";
 }

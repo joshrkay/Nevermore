@@ -160,7 +160,7 @@ SET search_path = public, pg_temp
 AS $$
   SELECT
     -- sync:begin peo_send_notice
-    'Sent with the employer''s authorization for this PEO to consider them for a quote. The link is for your team alone; please don''t pass it on.'
+    'Draft wording: sent with the authorization of the employer, for this PEO alone to consider them for a quote. Please do not pass the link on.'
     -- sync:end peo_send_notice
 $$;
 
@@ -193,12 +193,15 @@ BEGIN
   -- Closing firms are read-only (ADR 0023), and so is a support session (ADR 0024): the one check, before anything is read or changed.
   PERFORM public.assert_firm_writable((SELECT zm.firm_id FROM public.quote_request_messages zm WHERE zm.id = p_message_id));
   PERFORM public.require_advisor();
-  -- Only the advisor who wrote it, of its own firm: any other message, another member's or another firm's, reads as none.
+  -- A message of the caller's own firm; another firm's reads as none. Only the advisor who wrote it sends it: it goes from their mailbox.
   SELECT * INTO m FROM public.quote_request_messages x
-  WHERE x.id = p_message_id AND x.direction = 'sent' AND x.sender_id = auth.uid() AND public.intake_in_my_firm(x.session_id)
+  WHERE x.id = p_message_id AND x.direction = 'sent' AND public.intake_in_my_firm(x.session_id)
   FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Message not found' USING ERRCODE = 'PT404';
+  END IF;
+  IF m.sender_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'Only the advisor who wrote this message can send it.' USING ERRCODE = 'PT409';
   END IF;
   IF m.bundle_link_id IS NOT NULL OR m.status <> 'queued' THEN
     RAISE EXCEPTION 'This message already has its link.' USING ERRCODE = 'PT409';
@@ -442,3 +445,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.peo_send_context(uuid, text) FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.peo_send_context(uuid, text) TO authenticated;
+
+-- The notice and the marker are the database's own, read by attach_peo_link alone.
+REVOKE ALL ON FUNCTION public.peo_send_notice() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.peo_link_marker() FROM PUBLIC, anon, authenticated, service_role;
