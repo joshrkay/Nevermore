@@ -424,3 +424,80 @@ BEGIN
   PERFORM pg_temp.is((pg_temp.lead_row('b1')).deleted_at, NULL::timestamptz, 'the unseen lead is not in the bin');
   PERFORM pg_temp.is((pg_temp.lead_row('z1')).deleted_at, NULL::timestamptz, 'nor the other firm''s');
 END $$;
+
+-- ---------- 2. Undo ----------
+-- Catches (D-202, D-811): Undo of a delete leaving the leads in the bin. The agent who deleted them undoes it, though they no longer see them.
+SELECT pg_temp.lead('u1', 'acme', 'acme_agent1', 'Undo Co');
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('u1')::text));
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'one lead put back');
+  PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at, NULL::timestamptz, 'out of the bin');
+END $$;
+
+-- Catches (D-202): someone else undoing a person's change (an owner of the same firm, who could see every lead).
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('u1')::text));
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_undo(%L, %L)', r ->> 'change_id', pg_temp.id('acme'))), ':', 1), 'PT404', 'another person can''t undo it');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at IS NOT NULL, true, 'still in the bin');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+END $$;
+
+-- Catches (D-202): an undo made twice (the second would put back what the person deleted again since).
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('u1')::text));
+  PERFORM public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM split_part(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'delete', '{}', jsonb_build_array(pg_temp.id('u1')::text))), ':', 1);
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_undo(%L, %L)', r ->> 'change_id', pg_temp.id('acme'))), ':', 1), 'PT409', 'undone once only');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at IS NOT NULL, true, 'the second delete stands');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+END $$;
+-- The owner takes it out of the bin for the tests below.
+UPDATE public.leads SET deleted_at = NULL WHERE id = pg_temp.id('u1');
+
+-- Catches (D-202, CRM-S3.7): an undo after the ten minutes.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('u1')::text));
+  PERFORM pg_temp.as_owner();
+  UPDATE public.bulk_changes SET undo_until = now() - interval '1 second' WHERE id = (r ->> 'change_id')::uuid;
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_undo(%L, %L)', r ->> 'change_id', pg_temp.id('acme'))), ':', 1), 'PT410', 'too late to undo');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at IS NOT NULL, true, 'still in the bin');
+END $$;
+UPDATE public.leads SET deleted_at = NULL WHERE id = pg_temp.id('u1');
+
+-- Catches (D-202): an undo that overwrites what someone did since. A lead taken out of the bin and changed since is skipped and named; the undo of a delete
+-- never puts it back in the bin.
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('u1')::text));
+  PERFORM pg_temp.claims_of('acme_owner');
+  UPDATE public.leads SET deleted_at = NULL, city = 'Salem' WHERE id = pg_temp.id('u1');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((u ->> 'restored')::int, 0, 'nothing put back');
+  PERFORM pg_temp.is(u #>> '{skipped,0,code}', 'changed_since', 'named as changed since');
+  PERFORM pg_temp.is(u #>> '{skipped,0,name}', 'Person u1', 'by its name');
+  PERFORM pg_temp.is((pg_temp.lead_row('u1')).deleted_at, NULL::timestamptz, 'it stays out of the bin');
+END $$;

@@ -106,6 +106,7 @@ DECLARE
   n_change integer := 0;
   undo_by timestamptz := now() + interval '10 minutes';
   maker bigint;
+  mark bigint;
   sel record;
   locked uuid[];
   n_unavailable integer := 0;
@@ -130,8 +131,10 @@ BEGIN
       made := true;
     END IF;
     UPDATE public.leads SET deleted_at = now() WHERE id = l.id;
-    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, lead_id, record_name, before, after)
-    VALUES (chg, firm, 'lead', l.id, l.name, jsonb_build_object('deleted_at', NULL), jsonb_build_object('deleted_at', now()));
+    -- The newest history entry of the lead once the change is done with it: an entry after it, by anyone, is a change made since (D-202).
+    SELECT COALESCE(max(h.id), 0) INTO mark FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text;
+    INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, lead_id, record_name, before, after, history_mark)
+    VALUES (chg, firm, 'lead', l.id, l.name, jsonb_build_object('deleted_at', NULL), jsonb_build_object('deleted_at', now()), mark);
     n_change := n_change + 1;
   END LOOP;
   IF made THEN
@@ -145,3 +148,55 @@ $$;
 
 REVOKE ALL ON FUNCTION public.bulk_leads_change(uuid, text, jsonb, jsonb, jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.bulk_leads_change(uuid, text, jsonb, jsonb, jsonb) TO authenticated;
+
+-- ---------- 5. Undo ----------
+-- Puts back every lead of the change nobody has changed since, and answers {action, restored, skipped: [{id, name, code, reason}], gone}. The level rule is
+-- not asked again (as bulk_accounts_undo, D-202): an agent who deleted leads no longer sees them in the bin, and the undo is theirs to make.
+CREATE FUNCTION public.bulk_leads_undo(p_change_id uuid, p_firm_id uuid DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  firm uuid;
+  ch public.bulk_changes;
+  rec public.bulk_change_records;
+  l public.leads;
+  restored integer := 0;
+  skipped jsonb := '[]'::jsonb;
+  since boolean;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  SELECT * INTO ch FROM public.bulk_changes c WHERE c.id = p_change_id AND c.firm_id = firm FOR UPDATE;
+  -- Only the person who made it, while the membership they made it under is still current (bulk_accounts_undo's rule).
+  IF ch.id IS NULL OR ch.actor_id IS DISTINCT FROM auth.uid() OR ch.actor_membership_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM public.firm_memberships m WHERE m.id = ch.actor_membership_id AND m.firm_id = firm AND m.user_id = auth.uid() AND public.membership_is_current(m.valid_from, m.valid_until)) THEN
+    RAISE EXCEPTION 'That change isn''t available to undo' USING ERRCODE = 'PT404';
+  END IF;
+  IF ch.undone_at IS NOT NULL THEN
+    RAISE EXCEPTION 'That change was already undone.' USING ERRCODE = 'PT409';
+  END IF;
+  IF now() > ch.undo_until THEN
+    RAISE EXCEPTION 'That change was made more than 10 minutes ago, so it can no longer be undone.' USING ERRCODE = 'PT410';
+  END IF;
+  FOR rec IN SELECT r.* FROM public.bulk_change_records r WHERE r.change_id = ch.id AND r.record_type = 'lead' ORDER BY r.record_id LOOP
+    SELECT * INTO l FROM public.leads x WHERE x.id = rec.lead_id AND x.firm_id = firm FOR NO KEY UPDATE;
+    -- Changed since: the lead's history has an entry for the field after the change finished with it, whoever made it (a value put back is a change too).
+    since := EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text AND h.id > rec.history_mark
+      AND h.field = 'deleted_at');
+    IF since THEN
+      skipped := skipped || jsonb_build_object('id', l.id, 'name', rec.record_name, 'code', 'changed_since', 'reason', 'It has been changed since.');
+      CONTINUE;
+    END IF;
+    UPDATE public.leads SET deleted_at = NULL WHERE id = l.id;
+    restored := restored + 1;
+  END LOOP;
+  UPDATE public.bulk_changes SET undone_at = now() WHERE id = ch.id;
+  RETURN jsonb_build_object('action', ch.action, 'restored', restored, 'skipped', skipped, 'gone', 0);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.bulk_leads_undo(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.bulk_leads_undo(uuid, uuid) TO authenticated;
