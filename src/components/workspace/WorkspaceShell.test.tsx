@@ -79,7 +79,8 @@ describe("the workspace menu", () => {
     await renderAt("/advisor");
     const href = (name: string) => within(menu()).getByRole("link", { name }).getAttribute("href");
     expect(href("Quotes")).toBe("/advisor");
-    expect(href("Inbox")).toBe("/advisor?mail=new");
+    // The inbox has its own page (CRM-E1.4); the queue's own new-mail filter stays the queue's (D-8).
+    expect(href("Inbox")).toBe("/inbox");
     expect(href("Leads")).toBe("/leads");
     expect(href("Accounts")).toBe("/accounts");
     expect(href("Reports")).toBe("/advisor/funnel");
@@ -90,9 +91,11 @@ describe("the workspace menu", () => {
     ["/advisor", "Quotes"],
     ["/advisor?status=under_review", "Quotes"],
     ["/advisor/submissions/abc", "Quotes"],
-    ["/advisor?mail=new", "Inbox"],
-    // The queue rewrites mail=new to the filter it stands for (CRM-S3.5a); Inbox stays marked, and Quotes is not.
-    ["/advisor?filter=has_new_peo_mail:is:true", "Inbox"],
+    ["/inbox", "Inbox"],
+    ["/inbox?view=new", "Inbox"],
+    ["/advisor?mail=new", "Quotes"],
+    // The queue's new-mail filter is the queue's own (D-8): Quotes is marked, not the inbox, which has its own page (CRM-E1.4).
+    ["/advisor?filter=has_new_peo_mail:is:true", "Quotes"],
     ["/advisor?view=won&filter=needs_action:is:true", "Quotes"],
     ["/leads", "Leads"],
     ["/accounts", "Accounts"],

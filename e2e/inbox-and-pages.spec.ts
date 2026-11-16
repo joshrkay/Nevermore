@@ -3,10 +3,10 @@ import pg from "pg";
 import { ANON_KEY, APP_URL, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
 import { totpCode } from "./stack/totp.mjs";
 
-// The queue on the table frame (story CRM-S3.5a, D-38, D-133). A member whose firm has 52 submissions, one of them with new PEO mail
-// from a PEO: the menu's Inbox badge says 1, Inbox opens the queue filtered to exactly that one row, "All statuses" brings every
-// submission back, and the browser's Back returns to the Inbox. The whole queue pages 50 a page ("1 to 50 of 52"), with Next and
-// Previous as links, and the address says where the person is.
+// The queue on the table frame (story CRM-S3.5a, D-38, D-133) and the inbox (CRM-E1.4, D-695). A member whose firm has 52 submissions, one of
+// them with new PEO mail from a PEO: the menu's Inbox badge says 1, Inbox opens the inbox listing that PEO's message, Quotes brings every
+// submission back, and the browser's Back returns to the inbox. The queue's own new-mail filter still lists exactly that one row (D-8). The
+// whole queue pages 50 a page ("1 to 50 of 52"), with Next and Previous as links, and the address says where the person is.
 
 const PASSWORD = "correct-horse-battery-staple";
 const stamp = Date.now();
@@ -138,28 +138,29 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await page.keyboard.press("Escape");
   });
 
-  await test.step("Inbox opens exactly the one row with new PEO mail, and the menu marks Inbox", async () => {
+  await test.step("Inbox opens the inbox, listing the PEO's message on its account, and the menu marks Inbox (CRM-E1.4)", async () => {
     await page.getByRole("link", { name: "Inbox, 1 with new mail" }).click();
-    await expect(page).toHaveURL(/\?filter=has_new_peo_mail:is:true$|\?filter=has_new_peo_mail%3Ais%3Atrue$/);
+    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
     await expect(page.getByText("1 to 1 of 1")).toBeVisible();
+    await expect(page.getByText("rep@trinet.test")).toBeVisible();
+    await expect(page.getByRole("link", { name: "TriNet" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Mail Waiting Co" })).toBeVisible();
-    await expect(page.getByRole("row")).toHaveCount(2);
-    await expect(page.getByText("Quiet Co")).toHaveCount(0);
-    await expect(page.getByText("Showing every submission")).toHaveCount(0);
+    await expect(page.getByText("From a PEO")).toBeVisible();
     await expect(page.getByRole("link", { name: "Inbox, 1 with new mail" })).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("link", { name: /^Quotes/ })).not.toHaveAttribute("aria-current", "page");
   });
 
-  await test.step("Quotes shows every submission again, and Back returns to the Inbox", async () => {
+  await test.step("Quotes shows every submission again, and Back returns to the inbox", async () => {
     await page.getByRole("link", { name: /^Quotes/ }).click();
     await expect(page.getByText("1 to 50 of 52")).toBeVisible();
     await expect(page.getByRole("link", { name: /^Quotes/ })).toHaveAttribute("aria-current", "page");
     await page.goBack();
-    await expect(page.getByText("1 to 1 of 1")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Mail Waiting Co" })).toBeVisible();
+    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(page.getByText("rep@trinet.test")).toBeVisible();
   });
 
-  await test.step("the old Inbox link (mail=new) still lands on the same row, and the address is rewritten", async () => {
+  await test.step("the queue's own new-mail link (mail=new) still lands on the one row, and the address is rewritten (D-8)", async () => {
     await page.goto(`${firmUrl(FIRM)}/advisor?mail=new`);
     await expect(page.getByRole("link", { name: "Mail Waiting Co" })).toBeVisible();
     await expect(page.getByText("1 to 1 of 1")).toBeVisible();

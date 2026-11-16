@@ -430,6 +430,7 @@ END $$;
 \i supabase/migrations/20261122130000_conversation_replies.sql
 \i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
 \i supabase/migrations/20261122160000_conversation_files.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
