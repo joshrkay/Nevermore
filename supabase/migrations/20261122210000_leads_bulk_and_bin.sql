@@ -820,3 +820,91 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
   RAISE WARNING 'the lead bin: could not schedule remove-binned-leads (%); run public.remove_binned_leads() every night another way', SQLERRM;
 END $$;
+
+-- ---------- 9. Export (D-811: through the existing export) ----------
+-- What can be exported (20261119130000, the newest definition), restated with its three lines and the fourth: the leads, for any current member (the reader
+-- applies the level rule itself). The columns are the table's, in the order a file shows them.
+CREATE OR REPLACE FUNCTION public.export_table_registry()
+RETURNS TABLE (name text, label text, who text, columns jsonb)
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT * FROM (VALUES
+    ('referral_partners', 'Referral partners', 'member',
+     '[{"id":"code","label":"Code"},{"id":"name","label":"Name"},{"id":"kind","label":"Kind"},{"id":"started_30d","label":"Started, 30 days"},{"id":"certified_30d","label":"Certified, 30 days"},{"id":"created_at","label":"Added"},{"id":"updated_at","label":"Last changed"}]'::jsonb),
+    ('firm_activity', 'The firm''s record', 'owner',
+     '[{"id":"at","label":"When"},{"id":"who","label":"Who"},{"id":"kind","label":"What"},{"id":"record_type","label":"Record type"},{"id":"record_id","label":"Record"},{"id":"subject","label":"About"},{"id":"role","label":"Role"},{"id":"row_count","label":"Rows"}]'::jsonb),
+    ('accounts', 'Accounts', 'member',
+     '[{"id":"name","label":"Account"},{"id":"trade_name","label":"Trade name"},{"id":"website","label":"Website"},{"id":"city","label":"City"},{"id":"state","label":"State"},{"id":"employees","label":"Employees"},{"id":"industry","label":"Industry"},{"id":"states_of_operation","label":"States of operation"},{"id":"current_provider","label":"Current provider"},{"id":"source","label":"Source"},{"id":"status","label":"Status"},{"id":"owner","label":"Owner"},{"id":"main_contact","label":"Main contact"},{"id":"main_contact_email","label":"Main contact email"},{"id":"main_contact_phone","label":"Main contact phone"},{"id":"opportunity","label":"Opportunity"},{"id":"opportunity_stage","label":"Opportunity stage"},{"id":"target_start","label":"Target start"},{"id":"open_opportunities","label":"Open opportunities"},{"id":"quote_requests_sent","label":"Quotes asked for"},{"id":"quotes_received","label":"Quotes back"},{"id":"earliest_quote_expires_on","label":"Nearest quote expiry"},{"id":"last_activity_at","label":"Last activity"},{"id":"created_at","label":"Created"},{"id":"archived","label":"Archived"}]'::jsonb),
+    ('leads', 'Leads', 'member',
+     '[{"id":"name","label":"Lead"},{"id":"title","label":"Title"},{"id":"business","label":"Business"},{"id":"email","label":"Email"},{"id":"phone","label":"Phone"},{"id":"city","label":"City"},{"id":"state","label":"State"},{"id":"employees","label":"Employees"},{"id":"current_provider","label":"Current provider"},{"id":"status","label":"Status"},{"id":"not_fit_reason","label":"Not a fit because"},{"id":"source","label":"Source"},{"id":"owner","label":"Owner"},{"id":"last_activity_at","label":"Last activity"},{"id":"created_at","label":"Created"}]'::jsonb)
+  ) t (name, label, who, columns)
+$$;
+
+REVOKE ALL ON FUNCTION public.export_table_registry() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.export_table_registry() TO service_role;
+
+-- A lead's codes in the words a person reads (src/data/leads.ts says the same). Internal.
+CREATE FUNCTION public.leads_words(p_kind text, p_code text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE p_kind
+    WHEN 'status' THEN CASE p_code WHEN 'new' THEN 'New' WHEN 'working' THEN 'Working' WHEN 'converted' THEN 'Converted' WHEN 'not_fit' THEN 'Not a fit' END
+    WHEN 'source' THEN CASE p_code WHEN 'added_by_hand' THEN 'Added by hand' WHEN 'import' THEN 'Import' WHEN 'referral_partner' THEN 'Referral partner'
+      WHEN 'firms_link' THEN 'Firm''s link' END
+    WHEN 'not_fit_reason' THEN CASE p_code WHEN 'too_small' THEN 'Too small' WHEN 'wrong_industry' THEN 'Wrong industry' WHEN 'not_interested' THEN 'Not interested'
+      WHEN 'bad_contact_details' THEN 'Bad contact details' WHEN 'other' THEN 'Other' END
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.leads_words(text, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- The leads' reader, run by export_rows after its checks. It reads the table's own query (leads_rows: the leads the caller may see by level, the bin left out,
+-- D-806) and no column the table does not list. Filters: an object of `filters` (the table's own), `search` and `time_zone`, each optional; a key it does not
+-- have is refused, so a typo never exports everything. A selection by ids is the leads among them the caller may see, not in the bin. In the table's own order
+-- (last activity, newest first).
+CREATE FUNCTION public.export_source_leads(p_firm_id uuid, p_filters jsonb, p_ids jsonb, p_limit integer)
+RETURNS SETOF jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  tz text;
+  checked jsonb;
+  ids uuid[];
+BEGIN
+  IF jsonb_typeof(p_filters) IS DISTINCT FROM 'object'
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_filters) k WHERE k NOT IN ('filters', 'search', 'time_zone'))
+     OR (p_filters ? 'search' AND jsonb_typeof(p_filters -> 'search') IS DISTINCT FROM 'string')
+     OR (p_filters ? 'time_zone' AND jsonb_typeof(p_filters -> 'time_zone') IS DISTINCT FROM 'string')
+     OR (p_filters ? 'filters' AND jsonb_typeof(p_filters -> 'filters') IS DISTINCT FROM 'array') THEN
+    RAISE EXCEPTION 'Those filters don''t apply to this table' USING ERRCODE = '22023';
+  END IF;
+  tz := public.workspace_time_zone(p_filters ->> 'time_zone');
+  checked := public.leads_filters_checked(p_firm_id, COALESCE(p_filters -> 'filters', '[]'::jsonb), (now() AT TIME ZONE tz)::date);
+  IF p_ids IS NOT NULL THEN
+    SELECT COALESCE(array_agg(i::uuid), '{}') INTO ids
+    FROM jsonb_array_elements_text(p_ids) i
+    WHERE i ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  END IF;
+  RETURN QUERY
+    SELECT jsonb_build_object(
+      'name', r.name, 'title', r.title, 'business', r.business, 'email', r.email, 'phone', r.phone, 'city', r.city, 'state', r.state,
+      'employees', r.employees, 'current_provider', r.current_provider, 'status', public.leads_words('status', r.status),
+      'not_fit_reason', public.leads_words('not_fit_reason', r.not_fit_reason), 'source', public.leads_words('source', r.source), 'owner', r.owner_name,
+      'last_activity_at', r.last_activity_at, 'created_at', r.created_at)
+    FROM public.leads_rows(p_firm_id, CASE WHEN ids IS NULL THEN p_filters ->> 'search' END) r
+    WHERE CASE WHEN ids IS NULL THEN public.leads_row_passes(r, checked, tz) ELSE r.id = ANY (ids) END
+    ORDER BY r.last_activity_at DESC NULLS LAST, r.id
+    LIMIT p_limit;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.export_source_leads(uuid, jsonb, jsonb, integer) FROM PUBLIC, anon, authenticated;

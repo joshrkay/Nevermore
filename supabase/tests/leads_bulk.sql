@@ -855,3 +855,29 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE id = pg_temp.id('young')), 1, 'the lead short of 30 days stays in the bin');
 END $$;
 UPDATE public.leads SET deleted_at = NULL WHERE id = pg_temp.id('young');
+
+-- ---------- 12. Export ----------
+-- Catches (D-811, CRM-S3.8): the leads table not exportable through the one export, or an export holding a lead the person does not see or one in the bin. The
+-- columns are the table's, in its words.
+SELECT pg_temp.lead('x1', 'acme', 'acme_agent1', 'Export Co');
+SELECT pg_temp.lead('xbin', 'acme', 'acme_agent1', 'Export Bin Co');
+UPDATE public.leads SET deleted_at = now(), email = 'x1@example.test' WHERE id = pg_temp.id('xbin');
+UPDATE public.leads SET email = 'x1@example.test', status = 'working' WHERE id = pg_temp.id('x1');
+DO $$
+DECLARE e jsonb; row1 jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  e := public.export_rows(pg_temp.id('acme'), 'leads', '{}', jsonb_build_array(pg_temp.id('x1')::text, pg_temp.id('xbin')::text, pg_temp.id('b1')::text));
+  PERFORM pg_temp.is((e ->> 'count')::int, 1, 'only the lead the agent sees, not in the bin');
+  PERFORM pg_temp.is((e ->> 'skipped')::int, 2, 'the others skipped');
+  row1 := e #> '{rows,0}';
+  PERFORM pg_temp.is(row1 ->> 'name', 'Person x1', 'its name');
+  PERFORM pg_temp.is(row1 ->> 'status', 'Working', 'the status in words');
+  PERFORM pg_temp.is(row1 ->> 'source', 'Added by hand', 'the source in words');
+  -- A whole table asks for a sign-in within 12 hours: the token says when.
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', pg_temp.id('acme_agent1'), 'role', 'authenticated', 'is_anonymous', false, 'email', 'acme_agent1@example.test',
+    'amr', jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', floor(extract(epoch FROM now()))::bigint)))::text, false);
+  e := public.export_rows(pg_temp.id('acme'), 'leads', '{"filters":[],"search":"x1@example.test"}', NULL);
+  PERFORM pg_temp.is((e ->> 'count')::int, 1, 'all that match: the bin left out');
+  PERFORM pg_temp.as_owner();
+END $$;
