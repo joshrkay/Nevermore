@@ -17,3 +17,10 @@ export function peoSendBlockPreview(p: { fileId: string; version: number | null;
     PEO_SEND_NOTICE,
   ];
 }
+
+/** "Hello Dana,", "Hello Omar and Ruth,": the line each PEO's message opens with, over the advisor's one note (M-2.2), from its own people's first names. */
+export function peoGreeting(names: readonly string[]): string {
+  const first = names.map((n) => n.trim().split(/\s+/)[0]).filter(Boolean);
+  const list = first.length <= 1 ? first.join("") : `${first.slice(0, -1).join(", ")} and ${first[first.length - 1]}`;
+  return list ? `Hello ${list},` : "Hello,";
+}

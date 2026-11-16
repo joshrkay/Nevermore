@@ -2263,6 +2263,22 @@ describe("AdvisorSubmissionPage", () => {
         expect(peoSend.sendToPeo).not.toHaveBeenCalled();
       });
 
+      // Catches (M-2.2): no way to send several PEOs at once from the submission page, or one offered over PEOs the panel doesn't list (one with
+      // no profile, one no longer listed), or ticking a PEO that isn't ready (TriNet misses answers and a document and fails its headcount check).
+      it("offers to send several PEOs at once, each listed PEO with a profile, the ready ones ticked", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        renderPage();
+        await within(await panel()).findByRole("heading", { name: "Justworks" });
+        fireEvent.click(within(await panel()).getByRole("button", { name: "Send to several PEOs" }));
+        const several = await within(await panel()).findByRole("region", { name: "Send to several PEOs" });
+        expect(within(several).getAllByRole("checkbox").map((b) => [b.getAttribute("aria-label") ?? b.closest("label")!.textContent, (b as HTMLInputElement).checked])).toEqual([
+          ["Justworks", true],
+          ["TriNet", false],
+        ]);
+      });
+
       // Catches: a send recorded from the bundle's "Sent this to ...?" question leaving the Quotes count one short for a minute.
       it("tells the menu's counts to refresh as soon as a send is recorded", async () => {
         api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));

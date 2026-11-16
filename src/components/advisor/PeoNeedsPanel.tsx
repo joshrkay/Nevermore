@@ -23,9 +23,8 @@ import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
 import { PanelFailed, PlaceholderLines, RecordLoading } from "@/components/workspace/states";
 import RecordSendPrompt from "./RecordSendPrompt";
 import SendToPeo from "./SendToPeo";
-import { planBundle } from "@/data/submissionBundle";
-import { certifiedAnswersDocument } from "@/data/certifiedAnswersDocument";
-import { issueBundleLink, supabaseBundleLinkDeps } from "@/lib/bundleLink";
+import SendToSeveralPeos from "./SendToSeveralPeos";
+import { peoLinkIssuer } from "@/lib/peoLinkIssuer";
 import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
 import CensusDownload from "@/components/CensusDownload";
@@ -198,15 +197,10 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           updateFrom={updateFrom(sent, certified.version)}
           openItems={c.toQuote.map((i) => i.label)}
           returnTo={`/advisor/submissions/${bundle.sessionId}`}
-          issueLink={async (quoteRequestId) => {
-            const source = {
-              audience: "advisor" as const, peo, catalog: bundle.catalog, intake: certified.intake, documents: certified.documents,
-              submission: bundle.submission!, fileId, version: certified.version, changedSince: certified.changedSince, today,
-            };
-            const answers = certifiedAnswersDocument({ data: certified.intake.data, provenance: certified.intake.provenance, submission: bundle.submission!, fileId });
-            const issued = await issueBundleLink({ quoteRequestId, plan: planBundle(source), answers }, await supabaseBundleLinkDeps());
-            return { id: issued.id, token: issued.token };
-          }}
+          issueLink={peoLinkIssuer({
+            audience: "advisor", peo, catalog: bundle.catalog, intake: certified.intake, documents: certified.documents,
+            submission: bundle.submission, fileId, version: certified.version, changedSince: certified.changedSince, today,
+          })}
           onSent={bundle.onSendRecorded}
           onSendYourself={() => setAsking(true)}
         />
@@ -282,6 +276,19 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
             : `From version ${certified.version ?? "on record"}, the prospect's last certification.`}{" "}
           Alphabetical in each group. Nothing here is a ranking.
         </p>
+        {/* M-2.2: one note, each chosen PEO sent its own message, link and open items by the same send as its card's. */}
+        {submission && (
+          <SendToSeveralPeos
+            sessionId={sessionId}
+            certified={certified}
+            catalog={catalog}
+            submission={submission}
+            fileId={fileId}
+            companyName={companyName}
+            returnTo={`/advisor/submissions/${sessionId}`}
+            onSent={onSendRecorded}
+          />
+        )}
         {group("Complete", groups.complete)}
         {group("Something missing", groups.missing)}
         <div className="space-y-1">
