@@ -685,9 +685,138 @@ BEGIN
     restored := restored + 1;
   END LOOP;
   UPDATE public.bulk_changes SET undone_at = now() WHERE id = ch.id;
+  -- `gone` is always 0 here: a lead leaves the database only by the nightly removal, 30 days in the bin (well past the ten minutes), or with its closing firm,
+  -- which undoes nothing. Kept so the answer has the accounts' shape.
   RETURN jsonb_build_object('action', ch.action, 'restored', restored, 'skipped', skipped, 'gone', 0);
 END;
 $$;
 
 REVOKE ALL ON FUNCTION public.bulk_leads_undo(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.bulk_leads_undo(uuid, uuid) TO authenticated;
+
+-- ---------- 7. The bin ----------
+-- The Deleted view (D-806): the firm's leads in the bin, newest deleted first, 50 a page, for its owners (and Nevermore support, who reads what an owner reads);
+-- anyone else is refused (42501). Each with when it was deleted and `removed_on`, the day the nightly removal takes it (30 days after, in UTC). Returns {"rows": [...], "total": n, "page": p, "page_size": 50}.
+CREATE FUNCTION public.leads_bin(p_firm_id uuid, p_page integer DEFAULT 1)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  page_size constant integer := 50;
+  firm uuid;
+  pg integer := COALESCE(p_page, 1);
+  result jsonb;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  IF public.firm_role(firm) IS DISTINCT FROM 'owner' AND NOT public.is_support_session(firm) THEN
+    RAISE EXCEPTION 'Only an owner of the firm can see deleted leads.' USING ERRCODE = '42501';
+  END IF;
+  IF pg < 1 OR pg > 100000 THEN
+    RAISE EXCEPTION 'A page number is 1 to 100000' USING ERRCODE = '22023';
+  END IF;
+  WITH binned AS MATERIALIZED (
+    SELECT l.*, row_number() OVER (ORDER BY l.deleted_at DESC, l.id) AS pos
+    FROM public.leads l
+    WHERE l.firm_id = firm AND l.deleted_at IS NOT NULL
+  )
+  SELECT jsonb_build_object(
+    'rows', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'id', b.id, 'name', b.name, 'business', b.business, 'email', b.email, 'phone', b.phone, 'status', b.status,
+        'owner', CASE WHEN public.crm_is_current_member(firm, b.owner_id) THEN b.owner_id END,
+        'owner_name', CASE WHEN public.crm_is_current_member(firm, b.owner_id) THEN public.crm_person_name(b.owner_id) END,
+        'deleted_at', b.deleted_at, 'removed_on', to_char((b.deleted_at + interval '30 days')::date, 'YYYY-MM-DD')) ORDER BY b.pos)
+      FROM binned b WHERE b.pos > (pg - 1)::bigint * page_size AND b.pos <= pg::bigint * page_size
+    ), '[]'::jsonb),
+    'total', (SELECT count(*) FROM binned),
+    'page', pg,
+    'page_size', page_size
+  ) INTO result;
+  RETURN result;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.leads_bin(uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.leads_bin(uuid, integer) TO authenticated;
+
+-- Restore (D-806): an owner takes leads out of the bin, back to the views they were in (status and owner untouched). Answers {restored, unavailable}:
+-- ids that are not the firm's leads in the bin (another firm's, made up, already restored) are counted, not named. At most 1,000 ids. Refused: anyone but an
+-- owner (42501), a closing firm and Nevermore support (PT423). Each lead restored is one entry in its history (deleted_at back to nothing).
+CREATE FUNCTION public.restore_leads(p_firm_id uuid, p_ids jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  firm uuid;
+  named uuid[];
+  requested integer;
+  n integer;
+BEGIN
+  firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
+  IF public.firm_role(firm) IS DISTINCT FROM 'owner' THEN
+    RAISE EXCEPTION 'Only an owner of the firm can restore deleted leads.' USING ERRCODE = '42501';
+  END IF;
+  IF p_ids IS NULL OR jsonb_typeof(p_ids) <> 'array' OR jsonb_array_length(p_ids) = 0
+     OR EXISTS (SELECT 1 FROM jsonb_array_elements(p_ids) e WHERE jsonb_typeof(e) <> 'string') THEN
+    RAISE EXCEPTION 'Choose the leads to restore.' USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_array_length(p_ids) > 1000 THEN
+    RAISE EXCEPTION 'Restore at most 1,000 leads at once.' USING ERRCODE = 'PT413';
+  END IF;
+  SELECT count(DISTINCT lower(e)) INTO requested FROM jsonb_array_elements_text(p_ids) e;
+  named := ARRAY(SELECT e::uuid FROM jsonb_array_elements_text(p_ids) e WHERE e ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+  WITH held AS (
+    SELECT x.id FROM public.leads x WHERE x.firm_id = firm AND x.id = ANY (named) AND x.deleted_at IS NOT NULL ORDER BY x.id FOR NO KEY UPDATE
+  ), done AS (
+    UPDATE public.leads l SET deleted_at = NULL FROM held WHERE l.id = held.id RETURNING l.id
+  )
+  SELECT count(*)::integer INTO n FROM done;
+  RETURN jsonb_build_object('restored', n, 'unavailable', GREATEST(requested - n, 0));
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.restore_leads(uuid, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.restore_leads(uuid, jsonb) TO authenticated;
+
+-- ---------- 8. The nightly removal (D-806) ----------
+-- Removes, for good, every firm's leads that have been in the bin for more than 30 days, with what stands on them: their calls, notes and tasks, their labels,
+-- what a bulk change kept for their undo (foreign keys that cascade) and their history (the capture trigger removes a deleted record's). Answers how many.
+-- For the scheduler and the service role; no person calls it.
+CREATE FUNCTION public.remove_binned_leads()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+SET timezone = 'UTC'
+AS $$
+DECLARE
+  n integer;
+BEGIN
+  DELETE FROM public.leads l WHERE l.deleted_at IS NOT NULL AND l.deleted_at < now() - interval '30 days';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.remove_binned_leads() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.remove_binned_leads() TO service_role;
+
+-- Every night at 04:41 UTC, where pg_cron is there (as the other daily jobs are scheduled); where it is not, this says so and nothing else.
+DO $$
+BEGIN
+  IF to_regprocedure('cron.schedule(text,text,text)') IS NULL THEN
+    RAISE NOTICE 'the lead bin: pg_cron is not available; run public.remove_binned_leads() every night another way';
+    RETURN;
+  END IF;
+  PERFORM cron.schedule('remove-binned-leads', '41 4 * * *', 'select public.remove_binned_leads();');
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'the lead bin: could not schedule remove-binned-leads (%); run public.remove_binned_leads() every night another way', SQLERRM;
+END $$;

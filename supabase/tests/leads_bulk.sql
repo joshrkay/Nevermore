@@ -800,3 +800,58 @@ BEGIN
 END $$;
 DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('zenith');
 UPDATE public.leads SET deleted_at = NULL WHERE id = pg_temp.id('z1');
+
+-- ---------- 10. The bin ----------
+-- Catches (D-806, CRM-L1.1): the bin shown to someone who is not an owner, or not showing an owner each lead in it with when it was deleted and the day it goes.
+SELECT pg_temp.lead('bin1', 'acme', 'acme_agent2', 'Bin Co');
+UPDATE public.leads SET deleted_at = '2026-11-01T10:00:00Z' WHERE id = pg_temp.id('bin1');
+DO $$
+DECLARE p jsonb; mine jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  p := public.leads_bin(pg_temp.id('acme'));
+  SELECT e INTO mine FROM jsonb_array_elements(p -> 'rows') e WHERE e ->> 'id' = pg_temp.id('bin1')::text;
+  PERFORM pg_temp.is(mine ->> 'name', 'Person bin1', 'the owner sees the deleted lead');
+  PERFORM pg_temp.is(mine ->> 'removed_on', '2026-12-01', 'with the day it is removed for good');
+  PERFORM pg_temp.is((mine ->> 'deleted_at')::timestamptz, '2026-11-01T10:00:00Z'::timestamptz, 'and when it was deleted');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM jsonb_array_elements(p -> 'rows') e WHERE e ->> 'id' = pg_temp.id('m1')::text), 0, 'a lead not in the bin is not in it');
+  PERFORM pg_temp.as_user('acme_lead', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.leads_bin(%L)', pg_temp.id('acme'))), ':', 1), '42501', 'a lead (role) does not see the bin');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- Catches (D-806, CRM-L1.1): Restore not taking a lead out of the bin, or anyone but an owner restoring. Restoring is one history entry; a lead not in the bin
+-- is not counted.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_lead', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.restore_leads(%L, %L)', pg_temp.id('acme'), jsonb_build_array(pg_temp.id('bin1')::text))), ':', 1), '42501',
+    'a lead (role) restores nothing');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  r := public.restore_leads(pg_temp.id('acme'), jsonb_build_array(pg_temp.id('bin1')::text, pg_temp.id('m1')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'restored')::int, 1, 'one lead restored');
+  PERFORM pg_temp.is((pg_temp.lead_row('bin1')).deleted_at, NULL::timestamptz, 'out of the bin');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.record_history h WHERE h.table_name = 'leads' AND h.record_key = pg_temp.id('bin1')::text AND h.field = 'deleted_at'
+    AND COALESCE(h.new_value, 'null'::jsonb) = 'null'::jsonb), 1, 'one history entry');
+END $$;
+
+-- ---------- 11. The nightly removal ----------
+-- Catches (D-806): a lead removed before its 30 days in the bin, or one past them kept, or its calls, notes, tasks and history kept after it.
+SELECT pg_temp.lead('old', 'acme', 'acme_agent1', 'Old Co');
+SELECT pg_temp.lead('young', 'zenith', 'zenith_agent', 'Young Co');
+INSERT INTO public.activities (firm_id, lead_id, kind, author_id, body) VALUES (pg_temp.id('acme'), pg_temp.id('old'), 'note', pg_temp.id('acme_agent1'), 'A note');
+UPDATE public.leads SET deleted_at = now() - interval '30 days 1 minute' WHERE id = pg_temp.id('old');
+UPDATE public.leads SET deleted_at = now() - interval '29 days 23 hours' WHERE id = pg_temp.id('young');
+DO $$
+DECLARE n integer;
+BEGIN
+  n := public.remove_binned_leads();
+  PERFORM pg_temp.is(n, 1, 'one lead removed');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE id = pg_temp.id('old')), 0, 'the lead past 30 days is gone');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.activities WHERE lead_id = pg_temp.id('old')), 0, 'with its note');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.record_history WHERE table_name = 'leads' AND record_key = pg_temp.id('old')::text), 0, 'and its history');
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE id = pg_temp.id('young')), 1, 'the lead short of 30 days stays in the bin');
+END $$;
+UPDATE public.leads SET deleted_at = NULL WHERE id = pg_temp.id('young');
