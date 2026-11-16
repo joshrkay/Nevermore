@@ -49,3 +49,28 @@ The `tdd` skill was the first tool call. One test, seen red, then only its code,
 All 25 mutations went red: M01 CHECK without acknowledged; M02 no assert_firm_writable; M03 no firm scope; M04 any status accepted; M05 a quoted or declined request moved; M06 a closed one moved; M07 same status accepted; M08 the status log trigger dropped; M09 an acknowledgement moves the opportunity to Quoted; M10 sending does not answer a question; M11 arriving mail acknowledges; M12 a send recorded by hand leaves the question open; M13 a send also returns Acknowledged to Sent; M14 menu count only Sent; M15 queue filter only Sent; M16 queue_rows flag only Sent (STILL GREEN until test 16b); M17 queue_page_fast flag only Sent; M18 waiting-since only Sent; M19 older-version only Sent and Quoted; M20 accounts waiting only Sent; M21 archiving leaves the new statuses open; M22 the withdrawal skips the new statuses; M23 the activity skips the new events; M24 a quote refused from a new status; M25 an expired quote closes itself.
 
 TypeScript mutations: the cycles 34 to 37 mutations are in their rows; the other TypeScript cycles were each seen red before their code (cycles 22 to 33).
+
+## 5.1b: the status buttons, rebuilt test-first
+
+Cycles 33 to 37 above were the deviation (34 to 36 written together before the code, 37's code ahead of its test; 33's helper only fed the buttons). Commit "5.1b: remove the status buttons to rebuild them test-first" took out the buttons, their tests and `setQuoteRequestStatus` with its test; the migration, the SQL tests, the status words, `OPEN_QUOTE_REQUEST_STATUSES` and everything else of 5.1 stayed. The `tdd` skill was the first tool call. Seams: `advisorApi.ts` (the rpc call) and `QuoteRequestsPanel` rendered as a person sees it. One test, run, seen red, then only its code. (Branch `lane/5.1b-redo`: the name `lane/5.1b` is held by another worktree at a95c8334.)
+
+| # | Test | Red (the failing line seen) | Green |
+|---|---|---|---|
+| 1 | advisorApi.test.ts: records an open status through advisor_set_quote_request_status | `TypeError: setQuoteRequestStatus is not a function` | green |
+| 2 | advisorApi.test.ts: says why the database refused an open status, in its words | `AssertionError: promise resolved "undefined" instead of rejecting` | green |
+| 3 | QuoteRequestsPanel.test.tsx: records that a PEO acknowledged with one click on a Sent request | `Unable to find an accessible element with the role "button" and name "Mark TriNet acknowledged"` | green |
+| 4 | tells the page once a status is recorded, so the card shows the new one | `AssertionError: expected "spy" to be called 1 times, but got 0 times` | green |
+| 5 | records that a PEO has a question open with one click on a Sent request | `Unable to find an accessible element with the role "button" and name "Mark TriNet question open"` | green (the buttons became a list, MARKS) |
+| 6 | does not offer Acknowledged on a request that is already Acknowledged | `AssertionError: expected <button ...> to be null` | green |
+| 7 | records Back to Sent from Acknowledged or Question open | `Unable to find an accessible element with the role "button" and name "Mark TriNet back to Sent"` | green |
+| 8 | offers none on a quoted, declined or closed quote request | `AssertionError: expected [ <button ...>, ...(2) ] to have a length of +0 but got 3` | green (isOpenQuoteRequest) |
+| 9 | shows the database's words when a status is refused, and does not tell the page it changed | `TestingLibraryElementError: Unable to find role="alert"` | green (the buttons became OpenStatusButtons with useSaveFailure) |
+| 10 | says the status wasn't recorded when the connection failed | none: green at once (cycle 9's failure words already turn a dropped connection into the fallback sentence); proven by mutation (the error's own text shown: red, `Expected element to have text content`) | green |
+| 11 | holds the status buttons while one is being recorded | `expect(element).toBeDisabled()` failed | green |
+| 12 | holds the status buttons with the reason when there is no connection, and records nothing | `expect(element).toHaveAttribute("aria-disabled", "true")` failed | green (useOfflineSave) |
+| 13 | offers no status buttons to Nevermore support | `AssertionError: expected [ <button ...>, ...(1) ] to have a length of +0 but got 2` (the test's `panel` helper gained a `support` option in the same step; all 45 earlier tests stayed green with it) | green (WorkspaceContext.isSupport, as StatusPanel does) |
+| 14 | shows Acknowledged and Question open in words with their days | `Unable to find an element with the text: Acknowledged · 1 day` | green (quoteStatusWords) |
+
+Not built, and why: a closing firm. The client holds no flag for it (no field in the workspace, nothing in the submission detail), so the buttons are offered and the database's refusal (`assert_firm_writable`) is shown in its words (cycle 9). The old version did the same. A Sent request's badge stays "Waiting" (an existing test), only Acknowledged and Question open carry days.
+
+Mutations (each turned a test red): rpc name; parameters; error ignored (advisorApi); wrong status sent; page not told; no filter on the current status; offered on any status; failure not shown; failure's own text instead of the fallback; not disabled while saving; no offline guard; offline reason dropped; support not excluded; days dropped; each of the three marks removed.
