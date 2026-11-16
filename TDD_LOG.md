@@ -1,0 +1,43 @@
+# TDD log: slice 5.11, CRM-Q4.1 (the quotes table, and Quotes in the menu)
+
+The `tdd` skill was the first tool call. One test, seen red, then only its code, seen green. Seams (D-13): (1) SQL tests in `supabase/tests`,
+(2) component tests of pages and forms.
+
+| # | Test | Red (the failing line seen) | Green |
+|---|---|---|---|
+| 1 | quotes_query.sql 1: one row for each PEO of an opportunity, with its columns | `ERROR:  function public.quotes_list(unknown) does not exist` (fixture fixed after: a File ID is placed with replication role replica; the owner reads as an email in the fixtures) | green |
+| 2 | quotes_query.sql 2: an opportunity left half done (an intake, no quote request) is a row; one with no intake, and one lost, are none | `FAIL: two quote requests and one opportunity left half done; one with no intake and one lost are none gave 2, expected 3` (fixture fixed first: a lost opportunity with an intake is lost through its submission) | green |
+| 3 | quotes_query.sql 3: who sees a row (the level rule on the account's owner), one firm at a time, nobody outside the firm | `FAIL: an agent reads the quotes of the accounts they own, not another agent's gave Kim Dental/-,Other Co/Paychex,Reyes Bakery/Justworks,...` (the refusal text was then corrected to the database's own words) | green |
+| 4 | quotes_query.sql 4: the table's own order, "needs me first": new mail, then soonest expiry (an expired quote first, D-1705), then longest wait | `FAIL: new mail first, then the soonest expiry ... gave Aa Co/TriNet,Bb Co/TriNet,Cc Co/TriNet,Dd Co/TriNet,Ee Co/TriNet,...` (cycle 3's expected order then moved to this order) | green |
+| 5 | quotes_query.sql 5: sort by a field either way, a blank last in both directions | `FAIL: by account, Z to A gave Ee Co/TriNet,Bb Co/TriNet,Gg Co/TriNet,...` | green |
+| 6 | quotes_query.sql 6: a sort, a direction or a page the table does not have is refused in words | `FAIL: a sort on something that is no field gave ok, expected 22023: The quotes table has no field "password" to sort by` | green |
+| 7 | quotes_query.sql 7: a status sorts by its place in the list | `FAIL: not sent, sent, acknowledged, quoted, declined ... gave Ee Co/TriNet,Bb Co/TriNet,...` | green |
+| 8 | quotes_query.sql 8: fifty rows a page, the total all of them | green on first run (the page cut came in with cycle 5's ordering); the cut was taken out, `FAIL: a full page gave 55, expected 50` was seen, and it was put back | green |
+| 9 | quotes_query.sql 9: filters on words and a status; every filter must hold | `FAIL: status is Quoted gave Ee Co/TriNet,Bb Co/TriNet,Gg Co/TriNet,...` | green |
+| 10 | quotes_query.sql 10: filters on days: sent between, expires in the next days, expires before | `FAIL: sent between two days, both ends in gave , expected Gg Co/TriNet,Cc Co/TriNet,Dd Co/TriNet` (a filter on a field not yet matched keeps nothing) | green |
+| 11 | quotes_query.sql 11: days waiting (open requests only) as a filter | `ERROR:  No field is of the kind <NULL>` | green |
+| 12 | quotes_query.sql 12: sort by days waiting, longest first, blanks last | `FAIL: longest wait first, the rest in the table's own order gave Ee Co/TriNet,Bb Co/TriNet,...` | green |
+| 13 | quotes_query.sql 13: has new mail (yes or no) | `FAIL: only the one with unread mail gave , expected Ee Co/TriNet` | green |
+| 14 | quotes_query.sql 14: owner, named, and "me" | `FAIL: owned by a named person gave , expected Other Co/Paychex` | green |
+| 15 | quotes_query.sql 15: owner "my team" | green on first run (the branch was written with cycle 14's); the branch was taken out, `FAIL: a lead of Sales reads what Sales owns ... gave , expected Other Co/Paychex` was seen, and it was put back | green |
+| 16 | quotes_query.sql 16: a filter on a field the table does not have, or a status it does not know, is refused in words | `FAIL: a field the table does not have gave 22023: No field is of the kind <NULL>, expected 22023: The quotes table has no field "fein" to filter by` | green |
+| 17 | quotes_query.sql 17: filters on admin fee, version sent, proposed start, target start, File ID and opportunity name | `FAIL: an admin fee over 30 gave , expected Reyes Bakery/Justworks` | green |
+| 18 | quotes_query.sql 18: search: every word in the account, the PEO or the File ID, ignoring case; the opportunity name is not searched | `FAIL: a PEO, in any case gave Reyes Bakery/Justworks,Reyes Bakery/TriNet,Other Co/Paychex,Kim Dental/-, expected Reyes Bakery/Justworks` | green |
+| 19 | quotes_query.sql 19: the count behind each view's tab (same rows, filters and search as the list) | `ERROR:  function public.quotes_view_counts(unknown, unknown) does not exist` | green |
+| 20 | quotes_query.sql 20: an opportunity whose owner has left reads as owned by no one | `FAIL: no owner id gave 92035c42-..., expected <NULL>` | green |
+| 21 | quotes_query.sql 21: emails (count on the PEO's thread, when the last came, filter by count) | `FAIL: one message on its thread gave <NULL>, expected 1` | green |
+| 22 | quotes_query.sql 22: quotes is a table the workspace keeps saved views and column choices for | `FAIL: quotes is a table the workspace keeps settings for gave 23514, expected rows:1` | green |
+| 23 | quotes_bulk.sql 1: change owner changes the opportunity's, once however many of its rows are chosen | `ERROR:  function public.bulk_quotes_change(unknown, unknown, jsonb, unknown, jsonb) does not exist` (the fixture helper that reads auth.users was then made security definer) | green |
+| 24 | quotes_bulk.sql 2: what the caller may not change is skipped with the reason; what they may not see is unavailable | `FAIL: nothing changed gave 1, expected 0` (the first version updated without asking; then a composite-row loop slip, `skipped` named no account, was found by printing the result and fixed) | green |
+| 25 | quotes_bulk.sql 3: who will own them, and what to change, asked in words; one already theirs is unchanged | `FAIL: no one chosen gave 22023: Choose a current member of the firm., expected 22023: Choose who will own these quotes.` | green |
+| 26 | quotes_bulk.sql 4: "all that match": the table's own filters and search choose the rows | `FAIL: two rows are sent: Reyes's TriNet and Other Co's Paychex gave 0, expected 2` | green |
+| 27 | quotes_bulk.sql 5: the rows are chosen one way; neither, both, an empty list, odd filters and more than a thousand are refused | `FAIL: neither keys nor filters: not every quote gave ok, expected 22023: Choose the quotes to change.` | green |
+| 28 | quotes_bulk.sql 6: close: each chosen quote request closes with one reason, a never-sent row has nothing to close | `ERROR:  Choose what to change: the owner, or close.` | green |
+| 29 | quotes_bulk.sql 7: close takes one of the four reasons | green on first run (the check was written with cycle 28); the check was taken out, `FAIL: no reason gave ok, expected 22023: Choose why: ...` was seen, and it was put back | green |
+| 30 | quotes_bulk.sql 8: a quote request already closed is counted, not closed again | green on first run (written with cycle 28); the branch was taken out, `FAIL: counted as unchanged gave 0, expected 1` was seen, and it was put back | green |
+| 31 | quotes_bulk.sql 9: closing stops the PEO's link, as a withdrawal does | green on first run (written with cycle 28); the revoke was taken out, `FAIL: its live link stops working ... gave <NULL>, expected withdrawn` was seen, and it was put back | green |
+| 32 | quotes_bulk.sql 10: close follows the level rule on the opportunity's owner | `FAIL: nothing closed gave 1, expected 0` | green |
+| 33 | quotes_bulk.sql 11: a won or lost opportunity is finished: its owner and its winning quote are not changed in bulk | `FAIL: its owner is not changed gave <NULL>, expected finished` | green |
+| 34 | quotes_bulk.sql 12: nothing on an archived account is changed in bulk, by either action | `FAIL: a quote of an archived account is not closed gave <NULL>, expected archived` (the three skips then became one internal function) | green |
+| 35 | quotes_bulk.sql 13: a closing firm and Nevermore support change nothing; support reads what a member reads | green on first run (assert_firm_writable came in with cycle 23's function); the guard was taken out, `FAIL: and changes nothing gave ok, expected PT423: Nevermore support can look, not change` was seen, and it was put back | green |
+| 36 | quotes_query.sql 23: export through the existing export: registered for members, reader closed to the API, the whole table in the table's own order, columns in words | `FAIL: any member may export quotes (they read what they may see) gave <NULL>, expected member` | green |
