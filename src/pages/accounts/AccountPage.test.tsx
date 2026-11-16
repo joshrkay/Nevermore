@@ -23,7 +23,7 @@ const listFirmMembers = vi.fn();
 vi.mock("@/lib/accountsApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountsApi")), listFirmMembers: (...a: unknown[]) => listFirmMembers(...a) }));
 vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn(), useToast: () => ({ toasts: [] }) }));
 const advisor = { documentUrl: vi.fn(), recordActivity: vi.fn(), fetchMyMailbox: vi.fn() };
-const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn() };
+const conversations = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), getAccountMessages: vi.fn() };
 vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...conversations }));
 vi.mock("@/lib/advisorApi", () => advisor);
 
@@ -106,6 +106,7 @@ beforeEach(() => {
   advisor.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "dana@example.com" });
   conversations.getConversation.mockResolvedValue({ conversationId: null, messages: [], mailbox: { connected: true, lastSendFailed: false } });
   conversations.listAttachableFiles.mockResolvedValue([]);
+  conversations.getAccountMessages.mockResolvedValue([]);
 });
 
 describe("AccountPage: Email", () => {
@@ -122,6 +123,24 @@ describe("AccountPage: Email", () => {
     await user.click(within(dialog).getByRole("button", { name: /^Write to Elena Marsh/ }));
     expect(await screen.findByRole("region", { name: "Emails" })).toBeInTheDocument();
     expect(conversations.getConversation).toHaveBeenCalledWith("f1", "c1");
+  });
+
+  // Catches: the account's page not showing the mail with its contacts (CRM-E1.3: one message shown on every record it belongs to, from 6.4's
+  // account_conversation_messages), or a message not saying which contact it is with.
+  it("shows the emails with the account's contacts on its Overview, newest first, each naming its contact", async () => {
+    conversations.getAccountMessages.mockResolvedValue([
+      { id: "m2", direction: "inbound", from: "elena@harborview.example", to: [], subject: "Re: Your renewal", body: "Friday?", status: "received",
+        failureKind: null, failureReason: null, at: "2026-11-11T09:00:00+00:00", contactId: "c1" },
+      { id: "m1", direction: "outbound", from: "dana@example.com", to: ["elena@harborview.example"], subject: "Your renewal", body: "Hi", status: "sent",
+        failureKind: null, failureReason: null, at: "2026-11-10T09:00:00+00:00", contactId: "c1" },
+    ]);
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Emails with the account's contacts" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Re: Your renewal");
+    expect(items[0]).toHaveTextContent("Elena Marsh");
+    expect(items[1]).toHaveTextContent("Your renewal");
+    expect(conversations.getAccountMessages).toHaveBeenCalledWith("f1", { accountId: "a1" });
   });
 
   // Catches: coming back from connecting a mailbox to the account's page with the place to write closed, so the unsent message seems lost (D-653).

@@ -171,6 +171,7 @@
 \i supabase/migrations/20261122110000_bundle_links.sql
 \i supabase/migrations/20261122130000_conversation_replies.sql
 \i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1107,7 +1108,7 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 6, 'recent_records', 0, 'referral_partners', 1,
-    'activities', 2, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'bulk_changes', 1, 'bulk_change_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
+    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'bulk_changes', 1, 'bulk_change_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');

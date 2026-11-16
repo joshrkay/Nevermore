@@ -17,6 +17,7 @@ import { useWorkspace } from "@/components/workspace/useWorkspace";
 import { useAuth } from "@/hooks/useAuth";
 import { listAccountTab, type AccountFields, type AccountPage as Page } from "@/lib/accountPageApi";
 import EmailAContact, { type ContactChoice } from "@/components/conversations/EmailAContact";
+import { AccountEmails } from "@/components/conversations/AccountEmails";
 import { contactName } from "@/data/accountPage";
 
 const isTab = (v: string | null): v is TabId => (TAB_IDS as readonly string[]).includes(v ?? "");
@@ -127,6 +128,16 @@ const AccountPage = () => {
         </TabsList>
         <TabsContent value="overview" className="mt-0">
           {firmId && <AccountOverview key={account.id} firmId={firmId} page={page} onSaved={saved} />}
+          {firmId && (
+            <div className="mt-6">
+              <AccountEmails
+                key={`emails-${account.id}`}
+                firmId={firmId}
+                accountId={account.id}
+                contactName={(cid) => { const c = tabs.contacts.rows.find((r) => r.id === cid); return c ? contactName(c) : null; }}
+              />
+            </div>
+          )}
         </TabsContent>
         {TAB_IDS.filter((t) => t !== "overview").map((t) => (
           <TabsContent key={t} value={t} className="mt-0">

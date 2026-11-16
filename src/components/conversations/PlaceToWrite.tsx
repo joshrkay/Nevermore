@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { PlaceholderLines } from "@/components/workspace/states";
 import { formatDay } from "@/data/accountPage";
-import { getConversation, listAttachableFiles, sendConversationMessage, workTheQueue, type ConversationMessage } from "@/lib/conversationApi";
+import { getConversation, listAttachableFiles, openConversation, sendConversationMessage, workTheQueue, type ConversationMessage } from "@/lib/conversationApi";
 import { useDraft } from "./useDraft";
 
 /** Who the place to write writes to: a contact (a lead's page mounts the same place to write with slice 8.5, D-603). */
@@ -37,6 +37,12 @@ export const conversationKey = (firmId: string, contactId: string) => ["conversa
  */
 const PlaceToWrite = ({ firmId, recipient, returnTo }: PlaceToWriteProps) => {
   const query = useQuery({ queryKey: conversationKey(firmId, recipient.contactId), queryFn: () => getConversation(firmId, recipient.contactId) });
+  // Showing the conversation is opening it: its new-mail mark is cleared for the firm through the newest message shown, never past it (6.4, D-607).
+  const newest = query.data?.newMail ? query.data.messages[0]?.at : undefined;
+  const conversationId = query.data?.conversationId;
+  useEffect(() => {
+    if (conversationId && newest) void openConversation(firmId, conversationId, newest).catch(() => undefined);
+  }, [firmId, conversationId, newest]);
   const hasAddress = (recipient.email ?? "").trim() !== "";
   // Do not email and no address are the database's refusals too (PT409); here they hide the place to write and say why.
   const writable = hasAddress && !recipient.doNotEmail;

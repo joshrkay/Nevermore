@@ -1049,6 +1049,16 @@ export type Database = {
           p_cc?: string[] | null
           p_in_reply_to?: string | null
           p_firm_id?: string | null
+          // Files from the contact's account's files, each sent as an expiring link (20261122160000, D-605); 22023 for any other.
+          p_document_ids?: string[] | null
+        }
+        Returns: Json
+      }
+      // The files a message to this contact may carry (20261122160000): [{id, file_name, category, created_at}]; PT404 a contact the caller may not see.
+      conversation_files_for: {
+        Args: {
+          p_contact_id: string
+          p_firm_id?: string | null
         }
         Returns: Json
       }

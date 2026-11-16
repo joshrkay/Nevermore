@@ -18,7 +18,7 @@ import type { ContactFields, ContactPage as Page } from "@/lib/contactPageApi";
 /**
  * A contact's page (story CRM-C1.1, screen 18; D-37: `/contacts/:id` inside the workspace layout). The database decides who may see the contact (its account's
  * visibility) and who may change it (the level rule on its own owner, D-209); this draws what it answers. The calls, notes and tasks, Log a call, Add a task, Add a
- * note, Move and the edit of each entry are the account page's own, on this contact. The emails with the contact are Epic 6's (D-186).
+ * note, Move and the edit of each entry are the account page's own, on this contact. The emails with the contact and the place to write are `PlaceToWrite` (CRM-E1.2, D-680).
  */
 const ContactPage = () => {
   const { id = "" } = useParams();

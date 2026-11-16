@@ -166,6 +166,8 @@
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122160000_conversation_files.sql
 SET client_min_messages = notice;
 
@@ -537,4 +539,29 @@ BEGIN
   PERFORM pg_temp.is(m ? 'recorded_at', true, 'with when it was written');
   PERFORM pg_temp.is((SELECT string_agg(f ->> 'file_name', ',' ORDER BY (f ->> 'n')::int) FROM jsonb_array_elements(m -> 'files') f), 'census.xlsx,loss-runs.pdf', 'its files by name');
   PERFORM pg_temp.is((SELECT count(*)::int FROM jsonb_array_elements(m -> 'files') f WHERE f ? 'token'), 0, 'never a token');
+END $$;
+
+-- ---------- 7. Emailing a lead makes it Working (D-808, D-639: CRM-L1.3's rule joined by CRM-E1.2). Catches: a lead written to and left New, or a lead
+-- set Not a fit moved back by a message ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM public.send_conversation_message(p_lead_id => pg_temp.id('ortiz'), p_subject => 'Hello', p_body => 'Hi Ana', p_firm_id => pg_temp.id('acme'));
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT status FROM public.leads WHERE id = pg_temp.id('ortiz')), 'working', 'a New lead written to is Working');
+  PERFORM pg_temp.lead('unfit', 'acme', 'acme_agent1');
+  UPDATE public.leads SET email = 'unfit@example.test', status = 'not_fit', not_fit_reason = 'too_small' WHERE id = pg_temp.id('unfit');
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM public.send_conversation_message(p_lead_id => pg_temp.id('unfit'), p_subject => 'Hello', p_body => 'Hi', p_firm_id => pg_temp.id('acme'));
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT status FROM public.leads WHERE id = pg_temp.id('unfit')), 'not_fit', 'a Not a fit lead stays so');
+END $$;
+
+-- ---------- 8. At most 10 files on one message, said in words (D-685). Catches: an eleventh file refused by a constraint's own words ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.send_conversation_message(p_contact_id => %L, p_subject => 'S', p_body => 'B', p_firm_id => %L, p_document_ids => ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 11)))$q$,
+    pg_temp.id('lucia'), pg_temp.id('acme'))), '22023: At most 10 files can go with one message.', 'an eleventh file');
+  RESET ROLE;
 END $$;

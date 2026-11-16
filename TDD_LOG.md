@@ -37,3 +37,37 @@ red, then only the code that passes it.
 | 29 | FileLinkPage: downloads the file with the token from the link (after #), under its name; a link that no longer works says so | `Error: Failed to resolve import "./FileLinkPage" from "src/pages/FileLinkPage.test.tsx". Does the file exist?` | green |
 | 30 | seo.guard: tells crawlers not to index the private routes, now with the file link page /f (and the router, the title table and vercel.json's no-referrer, no-store for it) | `AssertionError: /f: expected false to be true` | green |
 | 31 | dataPolicy: classifies the tables conversation_message_files and conversation_file_downloads (a stored table with no data class) | `AssertionError: conversation_message_files is stored but belongs to no data class: expected [] to not deeply equal []` | green |
+| 32 | PlaceToWrite: clears the conversation's new-mail mark through the newest message shown (6.4's open_conversation, merged during this slice: a reply read on the contact's page left new for the firm) | `AssertionError: expected "spy" to be called with arguments: [ 'f1', 'v1', …(1) ]` | green |
+| 33 | AccountPage: shows the emails with the account's contacts on its Overview, newest first, each naming its contact (6.4's account_conversation_messages: one message on every record it belongs to) | `TestingLibraryElementError: Unable to find role="list" and name "Emails with the account's contacts"` | green |
+| 34 | SQL conversation_files 7: emailing a lead makes it Working; Not a fit stays (D-808, D-639: a lead written to left New) | `ERROR:  FAIL: a New lead written to is Working gave new, expected working` | green |
+| 35 | SQL conversation_files 8: at most 10 files on one message, said in words (an eleventh file refused in a constraint's words) | `ERROR:  FAIL: an eleventh file gave 22023: That file can't go with this message. ..., expected 22023: At most 10 files can go with one message.` | green |
+
+## Mutations (each change made, its tests run, then put back)
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | Do not email no longer hides the place to write | red |
+| M2 | the place to write offered with no mailbox | red |
+| M3 | a failed message reads Sent | red |
+| M4 | a reply sent with no In-Reply-To | red |
+| M5 | the draft not kept across the trip | red |
+| M6 | ticked files dropped from the send | red |
+| M7 | the opportunity's main contact not first | red |
+| M8 | the new-mail mark never cleared | red |
+| M9 | Email gone from the account's page | red |
+| M10 | a file still being checked allowed | red |
+| M11 | another employer's census allowed | red |
+| M12 | the send never checks its files | red |
+| M13 | the token kept instead of its hash | red |
+| M14 | a link that never runs out | red |
+| M15 | a download not logged | red |
+| M16 | a guess not counted | red |
+| M17 | a lead written to stays New | red |
+| M18 | the message carries no links | red |
+| M19 | a message with files sent without the app's address | red |
+| M20 | a malformed token sent to the database | red |
+| M21 | a link that opens nothing answered as a file | red |
+| M22 | the file page asks with no token | red |
+| M23 | eleven files allowed | red |
+
+Deviations, said plainly: cycle 8 had a second test that passed at once and was deleted; cycle 15's first green carried cycle 16's rule and it was taken out before cycle 16's test; cycle 24's fields had gone in with cycle 20's green and were taken out to see the red; cycle 28's test was never red (cycle 27's green copied bundle-link's refusals), and M20 and M21 show it catches them. Registry updates that existing tests asked for (data_isolation, help_from_nevermore, close_a_firm, fileLinks, the deploy list, seo, dataPolicy, the closing plan) were made when those tests went red.

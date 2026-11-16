@@ -14,7 +14,7 @@ const fetchMyMailbox = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({ fetchMyMailbox: () => fetchMyMailbox() }));
 const startBrokerSignIn = vi.fn();
 vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: (...a: unknown[]) => startBrokerSignIn(...a) }));
-const api = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn() };
+const api = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), openConversation: vi.fn() };
 vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...api }));
 
 const { default: PlaceToWrite } = await import("./PlaceToWrite");
@@ -120,6 +120,15 @@ describe("PlaceToWrite: the conversation", () => {
     expect(items[1]).toHaveTextContent("Your renewal");
     expect(items[1]).toHaveTextContent("Hi Elena, the renewal is in.");
     expect(screen.queryByText("No emails yet")).toBeNull();
+  });
+
+  // Catches: a reply read on the contact's page left marked new for the firm (6.4's open_conversation), or the mark cleared past what the page showed.
+  it("clears the conversation's new-mail mark through the newest message shown", async () => {
+    api.getConversation.mockResolvedValue({ ...conversation([reply, message()]), conversationId: "v1", newMail: true });
+    api.openConversation.mockResolvedValue(undefined);
+    renderPlace();
+    await screen.findByRole("list", { name: "Emails with Elena Marsh" });
+    await waitFor(() => expect(api.openConversation).toHaveBeenCalledWith("f1", "v1", "2026-11-11T09:00:00+00:00"));
   });
 });
 

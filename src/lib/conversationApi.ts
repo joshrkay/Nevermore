@@ -13,8 +13,8 @@ export interface ConversationMessage {
   to: string[];
   subject: string;
   body: string;
-  /** queued: recorded, on its way; sent; failed, with its kind and the reason in the writer's words (D-632). Received mail is always sent. */
-  status: "queued" | "sent" | "failed";
+  /** queued: recorded, on its way; sent; failed, with its kind and the reason in the writer's words (D-632). Received mail is "received" (6.4). */
+  status: "queued" | "sent" | "failed" | "received";
   failureKind: "mailbox" | "refused" | "uncertain" | "unavailable" | null;
   failureReason: string | null;
   at: string;
@@ -22,6 +22,8 @@ export interface ConversationMessage {
 
 export interface Conversation {
   conversationId: string | null;
+  /** Mail came in that nobody in the firm has opened since (6.4, D-607): opening the place to write clears it. */
+  newMail?: boolean;
   messages: ConversationMessage[];
   /** The writer's own mailbox (D-634): not connected after a send failed for a mailbox reason is Reconnect. */
   mailbox: { connected: boolean; lastSendFailed: boolean };
@@ -39,7 +41,7 @@ function messageOf(m: Raw): ConversationMessage {
     to: texts(m.to_addresses),
     subject: text(m.subject),
     body: text(m.body_text),
-    status: m.status === "sent" || m.status === "failed" ? m.status : "queued",
+    status: m.status === "sent" || m.status === "failed" || m.status === "received" ? m.status : "queued",
     failureKind: (m.failure_kind as ConversationMessage["failureKind"]) ?? null,
     failureReason: typeof m.failure_reason === "string" ? m.failure_reason : null,
     at: text(m.sent_at) || text(m.recorded_at),
@@ -53,9 +55,32 @@ export async function getConversation(firmId: string, contactId: string): Promis
   const row = (data ?? {}) as { conversation?: Raw | null; messages?: Raw[]; mailbox?: { connected?: boolean; last_send_failed?: boolean } };
   return {
     conversationId: row.conversation ? text(row.conversation.id) : null,
+    newMail: row.conversation?.new_mail === true,
     messages: (row.messages ?? []).map(messageOf),
     mailbox: { connected: row.mailbox?.connected === true, lastSendFailed: row.mailbox?.last_send_failed === true },
   };
+}
+
+/** A message on an account's (or an opportunity's) page, with the contact whose conversation it is on. */
+export interface AccountMessage extends ConversationMessage {
+  contactId: string;
+}
+
+/**
+ * The mail with an account's contacts, newest first, from the one row each message is (account_conversation_messages, 6.4; D-601): for an account, or
+ * for an opportunity (its account's contacts).
+ */
+export async function getAccountMessages(firmId: string, of: { accountId?: string; opportunityId?: string }): Promise<AccountMessage[]> {
+  const { data, error } = await supabase.rpc("account_conversation_messages", {
+    p_account_id: of.accountId ?? null, p_opportunity_id: of.opportunityId ?? null, p_firm_id: firmId,
+  });
+  if (error) throw refusal(error, "We couldn't load the emails. Try again.");
+  return (((data ?? {}) as { messages?: Raw[] }).messages ?? []).map((m) => ({ ...messageOf(m), contactId: text(m.contact_id) }));
+}
+
+/** Clears the conversation's new-mail mark for the firm through the newest message shown (open_conversation, 6.4). A failure leaves the mark: it is no error. */
+export async function openConversation(firmId: string, conversationId: string, seenThrough: string): Promise<void> {
+  await supabase.rpc("open_conversation", { p_conversation_id: conversationId, p_seen_through: seenThrough, p_firm_id: firmId });
 }
 
 export interface MessageToSend {

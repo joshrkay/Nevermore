@@ -38,9 +38,12 @@ describe("private file links", () => {
     // The one exception, the bundle link (ADR 0003, slice 6.6b): the function signs a file for 60 seconds after the database's check and
     // fetches it itself, passing the bytes on; the link is never handed to the browser (supabase/functions/bundle-link/handler.test.ts).
     const BUNDLE_LINK = join("supabase", "functions", "bundle-link", "handler.ts");
-    const signers = [...APP, ...FUNCTIONS].filter((file) => file !== BUNDLE_LINK && /createSigned(Upload)?Urls?\b/.test(read(file)));
+    // And the file link on a message to a contact (slice 6.3, D-605, D-684), the same way (supabase/functions/message-file/handler.test.ts).
+    const MESSAGE_FILE = join("supabase", "functions", "message-file", "handler.ts");
+    const signers = [...APP, ...FUNCTIONS].filter((file) => file !== BUNDLE_LINK && file !== MESSAGE_FILE && /createSigned(Upload)?Urls?\b/.test(read(file)));
     expect(signers).toEqual([join("src", "lib", "advisorApi.ts")]);
     expect(read(BUNDLE_LINK)).toMatch(/createSignedUrl\(file\.path, 60\)/);
+    expect(read(MESSAGE_FILE)).toMatch(/createSignedUrl\(file\.path, 60\)/);
     const calls = read(join("src", "lib", "advisorApi.ts")).match(/createSigned\w*\(/g) ?? [];
     expect(calls).toEqual(["createSignedUrl("]);
   });
@@ -119,7 +122,7 @@ describe("private file links", () => {
     expect(users(/\/storage\/v1\//)).toEqual([]);
     // No function answers a browser with a link to a stored file: signing is the browser's own call, under its own rights.
     // The bundle link signs and follows a link itself and answers with the bytes (above).
-    for (const file of FUNCTIONS.filter((f) => !/receive-mail|bundle-link/.test(f))) {
+    for (const file of FUNCTIONS.filter((f) => !/receive-mail|bundle-link|message-file/.test(f))) {
       expect(read(file), file).not.toMatch(/signedUrl|signedURL|createSigned/);
     }
   });
