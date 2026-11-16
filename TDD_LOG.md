@@ -16,3 +16,18 @@ One test, seen red, then only its code, seen green.
 9. `AdvisorSubmissionPage` "offers to send several PEOs at once, each listed PEO with a profile, the ready ones ticked": red `Unable to find an accessible element with the role "button" and name "Send to several PEOs"`; green (in What each PEO still needs).
 10. `SendToSeveralPeos` "stops a PEO whose contacts couldn't be loaded, says so, and sends the rest": red `expect(element).toHaveTextContent()` (no "Won't be sent" on Oasis); green.
 11. `SendToSeveralPeos` "closes, and opens again at the choosing step with each PEO's contacts read afresh": red `Unable to find an accessible element with the role "button" and name "Close"`; green.
+
+## Mutations (after the cycles)
+
+Each rule of `SendToSeveralPeos.tsx` broken in turn, its test file run (`scratchpad/mutate.py`): 13 mutations. Two survived the first run and each
+got a test, then all 13 went red:
+
+- every PEO ticked by default: killed. Eligibility checks left out of "ready": **survived** (TriNet was not ready for its missing items anyway);
+  test 12 "leaves a PEO unticked that has everything it needs to quote but fails an eligibility check" added, now killed.
+- every PEO's contacts on each send; no greeting; authorization not checked; no-contact not stopped; a refusal ending the run; the mailbox check
+  skipped; one PEO's plan for every link; failed contacts not stopped; open items hidden in the review; onSent never called: each killed.
+- Close keeping the last opening's reads: **survived**; test 13 "forgets the last opening's reads when closed" added, now killed.
+- On the page: `SendToSeveralPeos` out of What each PEO still needs makes cycle 9's page test red (it was red before the code).
+
+12. (mutation gap) "leaves a PEO unticked that has everything it needs to quote but fails an eligibility check": written after the mutation, which it kills.
+13. (mutation gap) "forgets the last opening's reads when closed": written after the mutation, which it kills.

@@ -258,4 +258,28 @@ describe("SendToSeveralPeos", () => {
     expect(within(again).getByRole("button", { name: "Review" })).toBeInTheDocument();
     await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(6));
   });
+
+  // Break caught (found by mutation): a PEO with everything it needs to quote but an eligibility check not met counted as ready and ticked.
+  it("leaves a PEO unticked that has everything it needs to quote but fails an eligibility check", async () => {
+    const strict = parsePeoCatalog([{ id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], min_headcount: 20, sources: { answers: sourced, min_headcount: sourced } } }]);
+    render(<SendToSeveralPeos {...props} catalog={strict} />);
+    fireEvent.click(screen.getByRole("button", { name: "Send to several PEOs" }));
+    const region = await screen.findByRole("region", { name: "Send to several PEOs" });
+    expect(within(region).getByRole("checkbox", { name: "Justworks" })).not.toBeChecked();
+    expect(await peoRow(region, "Justworks")).toHaveTextContent("Not ready: Doesn't meet · Minimum headcount");
+  });
+
+  // Break caught (found by mutation): reopening after a failed read still showing the old failure (or old recipients) before the new read answers.
+  it("forgets the last opening's reads when closed", async () => {
+    loadPeoSendContext.mockImplementationOnce(async () => { throw new Error("network"); });
+    const region = await open();
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(3));
+    fireEvent.click(within(region).getByRole("button", { name: "Close" }));
+    loadPeoSendContext.mockImplementation(() => new Promise(() => undefined));
+    fireEvent.click(screen.getByRole("button", { name: "Send to several PEOs" }));
+    const again = await screen.findByRole("region", { name: "Send to several PEOs" });
+    fireEvent.click(within(again).getByRole("button", { name: "Review" }));
+    expect(await within(again).findAllByRole("article")).toHaveLength(2);
+    expect(again).not.toHaveTextContent("couldn't load");
+  });
 });
