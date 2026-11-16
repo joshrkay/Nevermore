@@ -28,3 +28,4 @@ One test per cycle: the test, the failing line seen, then green. SQL tests run o
 24. `leads_bulk.sql` §7 "the word stays in the firm's list" (D-805: an accounts' Undo that made a word no longer takes it off the leads that carry it; found while building labels). Red: `FAIL: the word stays in the firm's list gave 0, expected 1`. Green.
 25. `leads_bulk.sql` §8 "the two the agent sees that match" (CRM-S3.6, D-44: "all that match" is the table's own filters and search, never ids and filters together). Red: `FAIL: the two the agent sees that match gave 0, expected 2`. Green.
 26. `leads_bulk.sql` §8 "the preview says too many" (CRM-S3.7: at most 1,000; the preview says so, the change is refused PT413 in words). Red: `FAIL: the preview says too many gave false, expected true`. Green.
+27. `leads_bulk.sql` §9 "no preview" (ADR 0023, 0024: a closing firm previews, changes and undoes nothing). Red: `FAIL: no preview gave ok, expected PT423`. Green.

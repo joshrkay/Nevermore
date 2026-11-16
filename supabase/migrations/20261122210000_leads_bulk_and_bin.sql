@@ -455,6 +455,7 @@ DECLARE
   lbl uuid;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
   params := public.bulk_lead_params_checked(p_action, p_params);
   SELECT * INTO sel FROM public.bulk_leads_resolve(firm, p_filters, p_ids);
   IF p_action IN ('label_add', 'label_remove') THEN
@@ -520,6 +521,7 @@ DECLARE
   old_ll public.lead_labels;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
   params := public.bulk_lead_params_checked(p_action, p_params);
   SELECT m.id INTO maker FROM public.firm_memberships m WHERE m.firm_id = firm AND m.user_id = auth.uid() AND public.membership_is_current(m.valid_from, m.valid_until);
   SELECT * INTO sel FROM public.bulk_leads_resolve(firm, p_filters, p_ids);
@@ -639,6 +641,7 @@ DECLARE
   prev uuid;
 BEGIN
   firm := public.firm_to_act_for(p_firm_id);
+  PERFORM public.assert_firm_writable(firm);
   SELECT * INTO ch FROM public.bulk_changes c WHERE c.id = p_change_id AND c.firm_id = firm FOR UPDATE;
   -- Only the person who made it, while the membership they made it under is still current (bulk_accounts_undo's rule).
   IF ch.id IS NULL OR ch.actor_id IS DISTINCT FROM auth.uid() OR ch.actor_membership_id IS NULL OR NOT EXISTS (

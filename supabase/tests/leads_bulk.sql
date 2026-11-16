@@ -777,3 +777,26 @@ BEGIN
     'PT413: That is 1001 leads. A bulk change takes at most 1,000: narrow the selection and try again.', 'the change refused');
   PERFORM pg_temp.as_owner();
 END $$;
+
+-- ---------- 9. A closing firm and Nevermore support change nothing (ADR 0023, ADR 0024) ----------
+-- Catches: a bulk change, its preview or its Undo let through for a firm that is closing.
+CREATE TEMP TABLE kept (k text PRIMARY KEY, v jsonb);
+GRANT ALL ON kept TO authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  INSERT INTO kept VALUES ('z_delete', public.bulk_leads_change(pg_temp.id('zenith'), 'delete', '{}', NULL, jsonb_build_array(pg_temp.id('z1')::text)));
+  PERFORM pg_temp.as_owner();
+END $$;
+INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('zenith'), pg_temp.id('zenith_owner'), now() + interval '30 days');
+DO $$
+DECLARE chg text := (SELECT v ->> 'change_id' FROM kept WHERE k = 'z_delete');
+BEGIN
+  PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_preview(%L, %L, %L, NULL, %L)', pg_temp.id('zenith'), 'delete', '{}', jsonb_build_array(pg_temp.id('z1')::text))), ':', 1), 'PT423', 'no preview');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('zenith'), 'status', '{"status":"working"}', jsonb_build_array(pg_temp.id('z1')::text))), ':', 1), 'PT423', 'no change');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_undo(%L, %L)', chg, pg_temp.id('zenith'))), ':', 1), 'PT423', 'no undo');
+  PERFORM pg_temp.as_owner();
+END $$;
+DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('zenith');
+UPDATE public.leads SET deleted_at = NULL WHERE id = pg_temp.id('z1');
