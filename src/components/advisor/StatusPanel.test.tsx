@@ -88,6 +88,20 @@ describe("StatusPanel: the withdrawal offered with Won, Lost or Archived", () =>
     expect(setStatus).not.toHaveBeenCalled();
   });
 
+  // Break caught (found by mutation): the PEO whose quote the employer took told to set the submission aside, or a withdrawal offered on a move
+  // that closes no quote request (back to Sent to PEOs).
+  it("never offers it to the winner, and offers it only with Won, Lost or Archived", async () => {
+    offer();
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "won" } });
+    fireEvent.change(screen.getByLabelText("Which quote did the employer take?"), { target: { value: "7" } });
+    expect(screen.getByRole("checkbox", { name: "Send a withdrawal to Insperity" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(closeSubmissionAndWithdraw).toHaveBeenCalledTimes(1));
+    expect(closeSubmissionAndWithdraw.mock.calls[0][0]).toMatchObject({ status: "won", wonQuoteRequestId: 7 });
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "sent_to_carrier" } });
+    expect(screen.queryByRole("checkbox", { name: /Send a withdrawal/ })).not.toBeInTheDocument();
+  });
+
   // Break caught: an advisor who skips the withdrawal still mailing the PEOs, or unable to move the submission without writing to them. Their links
   // are revoked by the move itself (set_submission_status, supabase/tests/follow_up_and_withdraw.sql 19).
   it("lets the advisor skip it: the move alone, and nothing is sent", async () => {
