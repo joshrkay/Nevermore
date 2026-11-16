@@ -21,3 +21,38 @@ The `tdd` skill was invoked first. One test per cycle: the test written, run and
 16. `data_isolation.sql`, `help_from_nevermore.sql`, `close_a_firm.sql` (existing registry tests) on the new `send_peo_update`. Red: `FAIL: privileged functions and the registry disagree`; `FAIL: every function that asks a membership helper is classified ... gave send_peo_update`; `FAIL: no function that changes data is left out of the closing's read-only list ... gave send_peo_update`. Green (registered beside `send_to_peo` in all three: advisor, firm-scoped probe, secret read; a write; guarded). `peo_update_changes` was made no definer, so no registry needs it.
 17. `QuoteRequestsPanel.test.tsx` "marks a quote as given on the older version until the advisor records a new answer". Red: `Unable to find an element with the text: Quote given on version 1; version 2 sent since`. Green (`quotedOnOlderNote` in `src/data/quoteRequests.ts`, shown under the quote).
 18. `quoteRequests.test.ts` "the version a quote was given on, in the change log, is named in words". Red: `Expected: "Quote given on version: 1 → 2" Received: "quoted_version: 1 → 2"`. Green.
+19. The gate: `queue_query.sql` (existing) went red on the new column's check: `ERROR:  new row for relation "quote_requests" violates check constraint "quote_requests_quoted_version_check"` (a quoted fixture with `sent_version` 0). The two new columns copy `sent_version`, which is unchecked, so their `> 0` checks were dropped. Green. And `AdvisorSubmissionPage.test.tsx` cycle 15's test, run with the whole file, saw the earlier send test's call on the shared mock (`expected "spy" to not be called at all`); it clears the mock first. Green.
+
+## Mutations (each rule broken in turn; a test must go red)
+
+| Mutation | Test that went red |
+|---|---|
+| `updateFrom` offers a declined or closed PEO | `quoteRequests.test.ts` "is the version a PEO still open ... holds" |
+| "Quote given on version" shown when the quote answered the version sent | `QuoteRequestsPanel.test.tsx` "marks a quote as given on the older version ..." |
+| `SendToPeo` sends an update without `update: true` | `SendToPeo.test.tsx` "offers a PEO holding an older version the update ..." |
+| `PeoNeedsPanel` does not pass `updateFrom` | `AdvisorSubmissionPage.test.tsx` "offers the update on the card ..." |
+| `sendToPeo` always calls `send_to_peo` | `peoSendApi.test.ts` (cycle 13's red) |
+| SQL label list differs from `FIELD_LABELS` | `schemaSync.test.ts` (cycle 3) |
+| `send_peo_update` keeps no `update_from_version` | `peo_update.sql` 1: `the version the PEO held gave <NULL>, expected 1` |
+| the summary carries each changed answer's value | `peo_update.sql` 2: `the note, then what changed gave ...` |
+| the census's changed people not counted | `peo_update.sql` 2 |
+| no refusal for a declined PEO | `peo_update.sql` 5: `declined gave ok` |
+| no refusal for a closed quote request | `peo_update.sql` 5: `closed gave ok` |
+| no refusal when the PEO already has the latest | `peo_update.sql` 3: `the latest version, already sent gave ok` |
+| no refusal for a PEO never sent to | `peo_update.sql` 4: `never sent to gave ok` |
+| `issue_bundle_link` always revokes as `replaced` | `peo_update.sql` 6: `revoked as newer_version gave replaced` |
+| `issue_bundle_link` always revokes as `newer_version` | `peo_update.sql` 6: `a second link for version 2 replaces the first gave newer_version` |
+| `quoted_version` follows `sent_version` on every write | `peo_update.sql` 8: `the quote marked as given on version 1 gave 2` |
+| `quoted_version` set only when a request becomes quoted | `peo_update.sql` 9: `a new answer: given on version 2 gave 1` |
+| `send_peo_update` without its own closing and support guard | `peo_update.sql` 10: `a support session, on a PEO with no update gave PT409` |
+| the update leaves TriNet's `sent_version` behind | `peo_update.sql` 7 (cycle 8) |
+
+Every mutation went red; none was left green.
+
+## The gate (after merging `claude/admiring-keller-dd7w1a`, with 6.7, into `lane/6.8`)
+
+- `npm run lint`: 0 errors, 13 warnings (none in this slice's files).
+- `npm run typecheck:functions`: clean.
+- `npm test`: 285 files, 5942 tests; 5941 passed and one failed, `AdvisorPeosPage.test.tsx` "closes the history when a version is published ...", a file this slice does not touch, while the SQL suite ran beside it; run alone twice, 60 of 60 passed.
+- `npm run build`: built.
+- `supabase/tests/run.sh` on port 5436: all 96 SQL tests passed.

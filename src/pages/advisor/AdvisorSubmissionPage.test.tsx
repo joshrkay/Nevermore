@@ -2244,6 +2244,7 @@ describe("AdvisorSubmissionPage", () => {
       // Catches (M-2.3): a PEO holding an older certified version left with only a first send on its card, so the update is never offered there, or
       // the offer made to a PEO that already holds the latest.
       it("offers the update on the card of a PEO holding an older version, and a plain send where it holds the latest", async () => {
+        peoSend.sendToPeo.mockClear();
         api.loadSubmission.mockResolvedValue(detail({
           pipelineStatus: "sent_to_carrier", currentVersion: 2, submission: { ...detail().submission!, version: 2 },
           quoteRequests: [

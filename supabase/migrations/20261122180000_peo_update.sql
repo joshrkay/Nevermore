@@ -7,9 +7,10 @@
 -- 'newer_version'. A quote the PEO gave stays, marked as given on the version it was given on, until the advisor records a new answer.
 
 -- ---------- 1. A message names the version the PEO held when it is an update ----------
--- Added to, nothing replaced (ADR 0007): null on every message that is not an update (D-1611).
+-- Added to, nothing replaced (ADR 0007): null on every message that is not an update (D-1611). A version, unchecked as
+-- sent_version is, which it copies.
 ALTER TABLE public.quote_request_messages
-  ADD COLUMN update_from_version integer CONSTRAINT quote_request_messages_update_from_version_check CHECK (update_from_version > 0);
+  ADD COLUMN update_from_version integer;
 
 -- ---------- 2. What changed between two certified versions, in words a PEO may read ----------
 -- Each answer's label, in the field review's order (FIELD_LABELS in src/data/provenance.ts, from the intake schema; src/data/schemaSync.test.ts keeps
@@ -290,7 +291,7 @@ GRANT EXECUTE ON FUNCTION public.issue_bundle_link(bigint, integer, uuid, jsonb,
 -- A quote request that was quoted stays quoted when an update is sent; its quote was given on the version the PEO held, which quoted_version keeps,
 -- until the advisor records a new answer. Set by a trigger, so every way a quote is recorded sets it. Null while the request is not quoted.
 ALTER TABLE public.quote_requests
-  ADD COLUMN quoted_version integer CONSTRAINT quote_requests_quoted_version_check CHECK (quoted_version > 0);
+  ADD COLUMN quoted_version integer; -- unchecked as sent_version is, which it copies
 
 CREATE FUNCTION public.quote_request_quoted_version()
 RETURNS trigger
