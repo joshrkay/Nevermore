@@ -19,10 +19,10 @@ export const opportunityPath = (opportunityId: string) => `/opportunities/${enco
 /** A contact's own page (CRM-C1.1). */
 export const contactPath = (contactId: string) => `/contacts/${encodeURIComponent(contactId)}`;
 
-export const TAB_IDS = ["overview", "contacts", "opportunities", "quotes", "activity", "files"] as const;
+export const TAB_IDS = ["overview", "contacts", "opportunities", "quotes", "renewals", "activity", "files"] as const;
 export type TabId = (typeof TAB_IDS)[number];
 export const TAB_LABELS: Record<TabId, string> = {
-  overview: "Overview", contacts: "Contacts", opportunities: "Opportunities", quotes: "Quotes", activity: "Activity", files: "Files",
+  overview: "Overview", contacts: "Contacts", opportunities: "Opportunities", quotes: "Quotes", renewals: "Renewals", activity: "Activity", files: "Files",
 };
 export const tabAddress = (tab: TabId) => (tab === "overview" ? "?" : `?tab=${tab}`);
 

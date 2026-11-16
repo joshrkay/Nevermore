@@ -167,7 +167,7 @@ function readSort<K extends TableFields>(table: TableDefinition<K, never, never>
   const direction = text.startsWith("-") ? "desc" : "asc";
   const field = text.replace(/^-/, "");
   if (field === "") return null;
-  return has(table.fields, field) ? { sort: { field: field as keyof K & string, direction } } : { unknown: text };
+  return has(table.fields, field) && !(table.unsortable as readonly string[] | undefined)?.includes(field) ? { sort: { field: field as keyof K & string, direction } } : { unknown: text };
 }
 
 /** The table's search for what was typed or linked: trimmed, whole characters only, at most 200, and nothing at all until it is long enough. */

@@ -27,6 +27,15 @@ export const suggestedOpportunityName = (targetStart: string): string => {
   return `${MONTHS[month - 1]} ${year} PEO search`;
 };
 
+/**
+ * The name Start the renewal offers (D-449): "January 2028 renewal" from the renewal's date. A date that is not a day that exists gives "Renewal"; the person can
+ * type any name (D-438).
+ */
+export const suggestedRenewalName = (renewsOn: string): string => {
+  const named = suggestedOpportunityName(renewsOn);
+  return named === "PEO search" ? "Renewal" : named.replace(/ PEO search$/, " renewal");
+};
+
 const DOLLARS = /^\d+(\.\d{1,2})?$/;
 const stripped = (v: string) => v.trim().replace(/^\$/, "").replace(/,/g, "").trim();
 

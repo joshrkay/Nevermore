@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { ActivityItem, ActivityType } from "@/lib/activityApi";
 import type { ContactRow } from "@/lib/accountPageApi";
+import type { StartingRenewal } from "./NewOpportunityDialog";
 
 // What a person can do to an account's calls, notes and tasks (story CRM-E1.5), offered to the places that draw them through one context
 // (accountActions.tsx provides it). Without a provider (a Nevermore support session, an archived account) there are no actions.
@@ -17,6 +18,8 @@ export interface AccountActions {
   addContact: () => void;
   /** Opens the New opportunity form on this account (CRM-A2.3). Offered where `canAdd` is. */
   newOpportunity: () => void;
+  /** Opens the New opportunity form filled in for a renewal, which saving links to it ("Start the renewal", CRM-A2.4b, D-449). Offered where `canAdd` is. */
+  startRenewal: (renewal: StartingRenewal) => void;
   /** Whether a contact may be offered a move to another account: the person may change this account (the database asks the rest, D-209). */
   canMove: boolean;
   /** Opens Move on a contact of this account. */
