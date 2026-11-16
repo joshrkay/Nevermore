@@ -37,8 +37,15 @@ const api = {
   correctQuoteRequestNote: vi.fn(),
   reissueQuoteRequestAddress: vi.fn(),
   recordActivity: vi.fn(),
+  fetchMyMailbox: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// Sending the bundle to a PEO (M-2.1): the send's steps and the composer's read, and the bundle link the send issues (6.6b).
+const peoSend = { loadPeoSendContext: vi.fn(), sendToPeo: vi.fn() };
+vi.mock("@/lib/peoSendApi", () => peoSend);
+const issueBundleLink = vi.fn();
+vi.mock("@/lib/bundleLink", () => ({ issueBundleLink: (...a: unknown[]) => issueBundleLink(...a), supabaseBundleLinkDeps: async () => ({}) }));
+vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: vi.fn() }));
 // Which PEOs the employer authorized (M-1.1): TriNet may receive the packet, Insperity was never authorized.
 const loadPeoAuthorizations = vi.fn(async () => [] as unknown[]);
 vi.mock("@/lib/peoAuthorizationsApi", () => ({ loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a) }));
@@ -1929,7 +1936,7 @@ describe("AdvisorSubmissionPage", () => {
       expect(justworks).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
       expect(justworks).toHaveTextContent("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
       // Complete: its one main action is the bundle, beside its files.
-      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Download Workers' compensation application data", "Download bundle"]);
+      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Download Workers' compensation application data", "Download bundle", "Send to Justworks"]);
     });
 
     it("turns what a PEO still needs into a draft in Ask the prospect, for the advisor to edit and send: the click sends nothing", async () => {
@@ -2207,6 +2214,29 @@ describe("AdvisorSubmissionPage", () => {
         await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
         expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
         await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      // Catches (M-2.1): no way to send a PEO its bundle from the submission page, a send of another PEO's bundle or another version, or a link issued
+      // for anything but the quote request the send made, with that PEO's own plan and the certified answers.
+      it("sends a PEO its bundle from its card, issuing the link from that PEO's plan for the quote request the send made", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        peoSend.sendToPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 41 });
+        issueBundleLink.mockResolvedValue({ url: "https://app.example/b/x", expiresAt: "2026-12-16T00:00:00Z", version: 1, notIncluded: [], id: 3, token: "t" });
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Send to Justworks" }));
+        const form = await within(justworks).findByRole("form", { name: "Send to Justworks" });
+        fireEvent.change(within(form).getByLabelText("Other addresses"), { target: { value: "quotes@justworks.example" } });
+        fireEvent.change(within(form).getByLabelText("Your note"), { target: { value: "Here it is." } });
+        fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+        await waitFor(() => expect(peoSend.sendToPeo).toHaveBeenCalledTimes(1));
+        const sent = peoSend.sendToPeo.mock.calls[0][0] as { sessionId: string; peo: string; to: string[]; issueLink: (id: number) => Promise<unknown> };
+        expect([sent.sessionId, sent.peo, sent.to]).toEqual(["s1", "Justworks", ["quotes@justworks.example"]]);
+        await expect(sent.issueLink(7)).resolves.toEqual({ id: 3, token: "t" });
+        const [input] = issueBundleLink.mock.calls[0] as [{ quoteRequestId: number; plan: { peo: string; version: number }; answers: { version: number } }];
+        expect([input.quoteRequestId, input.plan.peo, input.plan.version, input.answers.version]).toEqual([7, "Justworks", 1, 1]);
       });
 
       // Catches: a send recorded from the bundle's "Sent this to ...?" question leaving the Quotes count one short for a minute.

@@ -35,6 +35,9 @@ interface IssuedLink {
 }
 
 export interface BundleLinkIssued {
+  /** The link's id and its token, which a send to the PEO joins to its message (attach_peo_link, slice 6.6); the token is kept nowhere. */
+  id: number;
+  token: string;
   url: string;
   expiresAt: string;
   version: number;
@@ -85,7 +88,7 @@ export async function issueBundleLink(
     p_open_items: plan.missing.map((m) => m.label),
   });
   const origin = deps.origin ?? window.location.origin;
-  return { url: `${origin}/b/${issued.token}`, expiresAt: issued.expires_at, version: issued.version, notIncluded: made.notIncluded };
+  return { id: issued.id, token: issued.token, url: `${origin}/b/${issued.token}`, expiresAt: issued.expires_at, version: issued.version, notIncluded: made.notIncluded };
 }
 
 /** The app's own storage, database and PEO template workbooks, for issueBundleLink. Loaded only when a link is issued. */

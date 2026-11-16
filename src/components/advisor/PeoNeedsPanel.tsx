@@ -22,6 +22,10 @@ import BundleDownload from "@/components/BundleDownload";
 import { DownloadsOffNotice } from "@/components/workspace/downloadsOff";
 import { PanelFailed, PlaceholderLines, RecordLoading } from "@/components/workspace/states";
 import RecordSendPrompt from "./RecordSendPrompt";
+import SendToPeo from "./SendToPeo";
+import { planBundle } from "@/data/submissionBundle";
+import { certifiedAnswersDocument } from "@/data/certifiedAnswersDocument";
+import { issueBundleLink, supabaseBundleLinkDeps } from "@/lib/bundleLink";
 import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
 import CensusDownload from "@/components/CensusDownload";
@@ -182,6 +186,30 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           </div>
         )}
       </div>
+      {/* M-2.1: the bundle sent from the advisor's own mailbox, by link, on this PEO's quote request. The link is issued from the same plan as the
+          download, for the quote request the send made, and carries the certified answers as JSON. */}
+      {bundle.submission && (
+        <SendToPeo
+          sessionId={bundle.sessionId}
+          peo={peo.name}
+          companyName={companyName}
+          fileId={fileId}
+          version={certified.version}
+          openItems={c.toQuote.map((i) => i.label)}
+          returnTo={`/advisor/submissions/${bundle.sessionId}`}
+          issueLink={async (quoteRequestId) => {
+            const source = {
+              audience: "advisor" as const, peo, catalog: bundle.catalog, intake: certified.intake, documents: certified.documents,
+              submission: bundle.submission!, fileId, version: certified.version, changedSince: certified.changedSince, today,
+            };
+            const answers = certifiedAnswersDocument({ data: certified.intake.data, provenance: certified.intake.provenance, submission: bundle.submission!, fileId });
+            const issued = await issueBundleLink({ quoteRequestId, plan: planBundle(source), answers }, await supabaseBundleLinkDeps());
+            return { id: issued.id, token: issued.token };
+          }}
+          onSent={bundle.onSendRecorded}
+          onSendYourself={() => setAsking(true)}
+        />
+      )}
       {asking && (
         <RecordSendPrompt
           sessionId={bundle.sessionId}
