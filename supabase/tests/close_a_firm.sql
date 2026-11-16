@@ -176,6 +176,7 @@
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122220000_lead_page.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -544,6 +545,10 @@ BEGIN
     ('add a contact', 'agent_a', format($q$SELECT public.add_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('move a contact', 'agent_a', format($q$SELECT public.move_contact(%L, %L, false, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('change a contact', 'agent_a', format($q$SELECT public.update_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L, 1)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
+    ('change a lead', 'agent_a', format($q$SELECT public.update_lead(%L, 'Owen', p_firm_id => %L, p_version => 1)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), closing_msg),
+    ('mark a lead Not a fit', 'agent_a', format($q$SELECT public.mark_lead_not_fit(%L, 'other', %L)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), closing_msg),
+    ('reopen a lead', 'agent_a', format($q$SELECT public.reopen_lead(%L, %L)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), closing_msg),
+    ('log a call on a lead', 'agent_a', format($q$SELECT public.log_lead_activity('call', %L, p_outcome => 'spoke', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000b1'::uuid, fa), closing_msg),
     ('write to a contact', 'agent_a', format($q$SELECT public.send_conversation_message(p_contact_id => %L, p_subject => 'Hello', p_body => 'Hi', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
     ('add a sender as a contact', 'agent_a', format($q$SELECT public.add_sender_as_contact(%L, 'A', 'B', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
     ('change accounts in bulk', 'agent_a', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
@@ -1341,7 +1346,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'create_lead', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
     'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw'];

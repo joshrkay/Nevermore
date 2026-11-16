@@ -227,6 +227,7 @@
 \i supabase/migrations/20261122160000_conversation_files.sql
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122220000_lead_page.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1552,6 +1553,22 @@ INSERT INTO callable VALUES
    'a current member of the firm who may see the task''s account marks it done or open again; refused as log_activity is'),
   ('account_activity_options(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the contacts and opportunities of an account and the firm''s current members, for the log form, to someone who may see the account; NULL for anyone else');
+-- CRM-L2.1 (20261122220000_lead_page.sql; supabase/tests/lead_page.sql): a lead's page, its save, Not a fit and Reopen, and its calls, notes and tasks.
+INSERT INTO callable VALUES
+  ('lead_page(p_firm_id uuid, p_lead_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads the page of a lead they may see, by the level rule (one in the bin an owner''s or support''s); NULL, the same as for a lead that is not there, for anyone else'),
+  ('lead_activity(p_firm_id uuid, p_lead_id uuid, p_filter text, p_limit integer, p_offset integer)', 'own', NULL,
+   'the same for a page of the lead''s calls, notes and tasks; NULL for anyone else'),
+  ('lead_activity_options(p_firm_id uuid, p_lead_id uuid)', 'own', NULL,
+   'the firm''s current members a task on a lead they may see can be for; NULL for anyone else'),
+  ('update_lead(p_lead_id uuid, p_name text, p_title text, p_business text, p_email text, p_phone text, p_city text, p_state text, p_employees integer, p_current_provider text, p_note text, p_owner_id uuid, p_firm_id uuid, p_version integer)', 'own', NULL,
+   'a current member of the firm the call acts for saves a lead''s own fields from a version, by the level rule on its owner; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see, the same as for one that is not there, 55000 for one Converted, Not a fit or in the bin'),
+  ('mark_lead_not_fit(p_lead_id uuid, p_reason text, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for marks a lead Not a fit with a reason, by the level rule; refused as update_lead is'),
+  ('reopen_lead(p_lead_id uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for reopens a Not a fit lead, by the level rule; refused as update_lead is'),
+  ('log_lead_activity(p_kind text, p_lead_id uuid, p_at timestamp with time zone, p_outcome text, p_body text, p_title text, p_due_on date, p_for uuid, p_follow_up_title text, p_follow_up_due_on date, p_follow_up_for uuid, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for, who may see the lead, logs a call, a note or a task on it; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for a lead the caller may not see or that is not there, 55000 for one Converted, Not a fit or in the bin');
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
 INSERT INTO callable VALUES
   ('search_records(p_firm_id uuid, p_query text)', 'own', NULL,
@@ -2214,6 +2231,17 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('set_task_done', 'advisor', 'by_id',
    $$SELECT public.set_task_done({atask}, true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"type": "task"');
 
+-- CRM-L2.1: a lead's page ({alead} is the firm's lead owned by its agent, the member). The save's version may be stale, which is an answer, not a refusal.
+-- Not a fit and Reopen meet the member's lead as it is: marked (an answer) and refused as not Not a fit (55000), past every guard of firm and sight.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('lead_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_page({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('lead_activity', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_activity({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('lead_activity_options', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.lead_activity_options({firm}, {alead}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('update_lead', 'advisor', 'by_id', $$SELECT public.update_lead({alead}, 'Probe', p_firm_id => {firm}, p_version => 1)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"conflict": (false|true)'),
+  ('mark_lead_not_fit', 'advisor', 'by_id', $$SELECT public.mark_lead_not_fit({alead}, 'other', {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"not_fit_reason": "other"'),
+  ('reopen_lead', 'advisor', 'by_id', $$SELECT public.reopen_lead({alead}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^55000$'),
+  ('log_lead_activity', 'advisor', 'by_id', $$SELECT public.log_lead_activity('note', {alead}, p_body => 'Probe', p_firm_id => {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"type": "note"');
+
 -- CRM-S1.2b: search and recent records. A caller who is no member of the firm is refused (42501); the members of the firm get an answer. The one a member may not
 -- see is told false, the same as for a record that is not there.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -2257,7 +2285,8 @@ BEGIN
       (f, 'acontact', (SELECT c.id::text FROM public.contacts c JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
       (f, 'aconv', (SELECT v.id::text FROM public.conversations v JOIN public.contacts c ON c.id = v.contact_id JOIN public.accounts a ON a.id = c.account_id WHERE c.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND a.owner_id IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1)),
       (f, 'anote', (SELECT x.id::text FROM public.activities x JOIN public.accounts a ON a.id = x.account_id WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'note' AND a.owner_id IS NOT NULL ORDER BY x.created_at, x.id LIMIT 1)),
-      (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1));
+      (f, 'atask', (SELECT x.id::text FROM public.activities x WHERE x.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND x.kind = 'task' ORDER BY x.created_at, x.id LIMIT 1)),
+      (f, 'alead', (SELECT l.id::text FROM public.leads l WHERE l.firm_id = pg_temp.id(CASE f WHEN 'a' THEN 'firm_a' ELSE 'firm_b' END) AND l.owner_id IS NOT NULL ORDER BY l.created_at, l.id LIMIT 1));
     -- A deletion that failed, to retry, on an archived intake of the firm (so no certification is hidden from retention review by
     -- an open deletion): written as the superuser, and taken away again below.
     INSERT INTO public.intake_deletions (session_id, trigger, reason, status)
@@ -2475,7 +2504,7 @@ BEGIN
         END LOOP;
         -- The positive control: the firm's member at its own address, and (for what any member may do, not a row that is the
         -- firm's member's own, such as their private saved view) the member of both firms.
-        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
+        FOREACH who IN ARRAY ARRAY[member] || CASE WHEN e.who = 'advisor' AND e.call !~ '\{(view|acct|acontact|anote|atask|aconv|anewmsg|alead)\}' THEN ARRAY['dual'] ELSE '{}'::text[] END LOOP
           r := pg_temp.call_at(who, f, pg_temp.fill(e.call, f));
           IF r = ANY (e.refused) OR (e.member_ok IS NOT NULL AND r !~ e.member_ok) THEN
             RAISE EXCEPTION 'FAIL: % at their own firm''s address calling % on its row gave %', who, e.fn, r;
@@ -4087,6 +4116,20 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('account_activity_options', 'firm_scoped', 'the contacts, opportunities and members the log form offers, for someone who may see the account; nothing for anyone else (4e)'),
   ('activities_guard', 'trigger', 'the note rule (D-200) and the account rule of calls, notes and tasks, held by the table whoever writes: a note''s text only by its writer within a day, additions only appended, an account only by following its contact or opportunity; not executable through the API'),
   ('can_edit_activity', 'service_only', 'whether the caller may change a call, note or task as their own (a note: its writer within a day; else the writer, the person it is for or whoever the level rule gives the account); the reading functions answer it as can_edit; no API role can call it (D-200)');
+-- CRM-L2.1 (20261122220000_lead_page.sql; supabase/tests/lead_page.sql): a lead's page and its writes.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('lead_page', 'firm_scoped', 'a current member of the firm who may see the lead (by level) reads its page; the same nothing for another firm''s lead as for one that is not there (4e)'),
+  ('lead_activity', 'firm_scoped', 'the same for a page of the lead''s calls, notes and tasks (4e)'),
+  ('lead_activity_options', 'firm_scoped', 'the firm''s members the log form offers, for someone who may see the lead; nothing for anyone else (4e)'),
+  ('update_lead', 'firm_scoped', 'a current member of the firm the call acts for saves a lead''s own fields from a version, when the level rule gives it them; refused for another firm''s lead as for one that is not there (4e)'),
+  ('mark_lead_not_fit', 'firm_scoped', 'the same for marking a lead Not a fit (4e)'),
+  ('reopen_lead', 'firm_scoped', 'the same for reopening a Not a fit lead (4e)'),
+  ('log_lead_activity', 'firm_scoped', 'a current member of the firm the call acts for, who may see the lead, logs a call, note or task on it; another firm''s lead is as not there (4e)'),
+  ('lead_visible', 'service_only', 'whether the caller may see a lead: the leads table''s own row rule, for the functions that read past it; no API role can call it'),
+  ('lead_status_began', 'service_only', 'when a lead last became a status, from its history, for the page''s status bar; no API role can call it'),
+  ('lead_to_change', 'service_only', 'the lead a write acts on, held, after the sight and level checks; no API role can call it'),
+  ('activity_record_seen', 'service_only', 'whether the caller may see the account or lead a call, note or task is on; no API role can call it'),
+  ('activity_lead_read_only', 'service_only', 'why a call, note or task on a lead can''t be changed (the lead is read, not changed); no API role can call it');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('contact_page', 'firm_scoped', 'a current member of the firm who may see the contact''s account (by level) reads its page; the same nothing for another firm''s contact as for one that is not there (4e)'),
   ('contact_activity', 'firm_scoped', 'the same for a page of the contact''s calls, notes and tasks (4e)'),
