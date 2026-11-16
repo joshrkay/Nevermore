@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
+import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, olderVersionNote, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
 
 describe("the receiving subdomain for reply addresses", () => {
   it("is off unless a subdomain is set", () => {
@@ -89,11 +89,33 @@ describe("the update a PEO is offered", () => {
     expect(updateFrom(undefined, 3)).toBeNull();
     expect(updateFrom({ status: "sent", sent_version: 2 }, null)).toBeNull();
   });
+
+  // Break caught (N-1.2): a PEO that acknowledged, or has a question open, never offered the newer version, though it is waiting on the broker most of all.
+  it("is offered to a PEO that acknowledged or has a question open, as to one that is Sent", () => {
+    expect(updateFrom({ status: "acknowledged", sent_version: 1 }, 2)).toBe(1);
+    expect(updateFrom({ status: "question_open", sent_version: 1 }, 2)).toBe(1);
+  });
 });
 
 // M-2.3. Break caught: the change log naming the new column by its database name when a new answer moves the version a quote was given on.
 describe("the version a quote was given on, in the change log", () => {
   it("is named in words", () => {
     expect(describeQuoteRequestEvent({ field: "quoted_version", old_value: "1", new_value: "2" })).toBe("Quote given on version: 1 → 2");
+  });
+});
+
+// N-1.2. Break caught: the "Sent v1, current v2" warning vanishing from a PEO the moment it acknowledges or asks a question, while it still holds the old version.
+describe("the older-version note", () => {
+  it("shows for a PEO that is Sent, Acknowledged, has a question open or has quoted, and for none that declined or was closed", () => {
+    for (const status of ["sent", "acknowledged", "question_open", "quoted"]) expect(olderVersionNote({ status, sent_version: 1 }, 2)).toBe("Sent v1, current v2");
+    for (const status of ["declined", "closed"]) expect(olderVersionNote({ status, sent_version: 1 }, 2)).toBeNull();
+  });
+});
+
+// N-1.2. Break caught: a new status shown by its database word ("question_open") on the log of a quote request.
+describe("the change log's new statuses", () => {
+  it("names Acknowledged and Question open in words", () => {
+    expect(describeQuoteRequestEvent({ field: "status", old_value: "sent", new_value: "acknowledged" })).toBe("Status: Waiting → Acknowledged");
+    expect(describeQuoteRequestEvent({ field: "status", old_value: "acknowledged", new_value: "question_open" })).toBe("Status: Acknowledged → Question open");
   });
 });

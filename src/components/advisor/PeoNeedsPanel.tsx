@@ -13,7 +13,7 @@ import {
   type PeoCompletenessEntry,
 } from "@/data/peoCompleteness";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
-import { formatDay, updateFrom } from "@/data/quoteRequests";
+import { formatDay, isOpenQuoteRequest, updateFrom } from "@/data/quoteRequests";
 import { documentFile, type QuoteRequestMessageRow, type QuoteRequestRow } from "@/lib/advisorApi";
 import { recordSubmissionFileDownload } from "@/lib/activityReports";
 import type { PipelineStatus } from "@/data/advisor";
@@ -213,7 +213,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
         />
       )}
       {/* M-2.4: on the PEO's own thread, once the product has sent it something and while its quote request is open. */}
-      {bundle.submission && sent && (sent.status === "sent" || sent.status === "quoted") && lastSent && (
+      {bundle.submission && sent && (isOpenQuoteRequest(sent.status) || sent.status === "quoted") && lastSent && (
         <FollowUpOrWithdraw
           quoteRequestId={sent.id}
           peo={peo.name}

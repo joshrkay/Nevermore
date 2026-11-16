@@ -13,6 +13,7 @@ import {
 } from "@/data/advisor";
 import { setStatus, type QuoteRequestMessageRow, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
 import { closingWithdrawalNote, peoNames, replySubject } from "@/data/peoFollowUp";
+import { isOpenQuoteRequest } from "@/data/quoteRequests";
 import { closeSubmissionAndWithdraw } from "@/lib/peoFollowUpApi";
 import { getOpportunityOfSubmission } from "@/lib/opportunityPageApi";
 import { ConsoleCloseDialog } from "./ConsoleCloseDialog";
@@ -83,7 +84,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   // M-2.4: the PEOs an Archived move closes that the product wrote to (a send recorded by hand has no thread to answer), each told once, on its own thread.
   // Won and Lost close on the opportunity (D-470), whose dialog does not offer the withdrawal yet (D-1717, D-1719).
   const sentByUs = (q: QuoteRequestRow) => mail.filter((m) => m.quote_request_id === q.id && m.direction === "sent");
-  const stillOpen = next === "archived" ? quoteRequests.filter((q) => (q.status === "sent" || q.status === "quoted") && sentByUs(q).length > 0) : [];
+  const stillOpen = next === "archived" ? quoteRequests.filter((q) => (isOpenQuoteRequest(q.status) || q.status === "quoted") && sentByUs(q).length > 0) : [];
   const newest = stillOpen.flatMap(sentByUs).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
   const [tell, setTell] = useState(true);
   const [tellSubject, setTellSubject] = useState<string | null>(null);

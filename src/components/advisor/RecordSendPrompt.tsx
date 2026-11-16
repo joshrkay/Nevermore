@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { PipelineStatus } from "@/data/advisor";
 import { localToday } from "@/data/peoProfiles";
-import { canRecordSend, formatDay } from "@/data/quoteRequests";
+import { canRecordSend, formatDay, isOpenQuoteRequest } from "@/data/quoteRequests";
 import { recordQuoteSend, type QuoteRequestRow } from "@/lib/advisorApi";
 import { unchangedSinceOpened, type BuiltFrom } from "@/lib/certificationCheck";
 import { failureWords } from "@/components/workspace/form";
@@ -28,7 +28,7 @@ interface RecordSendPromptProps {
  *
  * Recording a send again replaces the request's send date and version, and reopens a closed one: so for a PEO that
  * already has a quote request it says when the send was recorded, and offers to record it again as sent today only
- * while the request is still waiting (a resend), never once it is quoted, declined or closed.
+ * while the request is still waiting on the PEO (Sent, Acknowledged or Question open: a resend, which also answers a question), never once it is quoted, declined or closed.
  */
 const RecordSendPrompt = ({ sessionId, peo, stage, builtFrom, existing, onRecorded, onClose }: RecordSendPromptProps) => {
   const [saving, setSaving] = useState(false);
@@ -50,7 +50,7 @@ const RecordSendPrompt = ({ sessionId, peo, stage, builtFrom, existing, onRecord
   };
 
   const recorded = existing ? `Already recorded as sent to ${peo}${existing.sent_on ? ` on ${formatDay(existing.sent_on)}` : ""}.` : null;
-  const offer = !existing || existing.status === "sent";
+  const offer = !existing || isOpenQuoteRequest(existing.status);
   if (!offer) {
     return (
       <div role="status" className="flex flex-wrap items-center gap-2 text-sm border border-border rounded-md p-2">

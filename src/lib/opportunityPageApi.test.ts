@@ -163,6 +163,14 @@ describe("listOpportunityActivity", () => {
     expect(got.rows[2]).toMatchObject({ type: "note", id: "n1", body: "Elena wants all three", opportunity: { id: "o1", name: "January 2027 PEO search" } });
   });
 
+  // Catches (N-1.2): the whole activity panel failing ("not the agreed shape") the first time a PEO acknowledges or asks a question, because the event list
+  // is the four old words.
+  it("reads a quote request's acknowledgement and question as events", async () => {
+    rpc.mockResolvedValue({ data: { count: 2, rows: [{ ...quote, event: "acknowledged" }, { ...quote, entry_key: "quote_request_event:10", event: "question_open" }] }, error: null });
+    const got = (await listOpportunityActivity("f1", "o1"))!;
+    expect(got.rows.map((r) => (r.type === "quote" ? r.event : null))).toEqual(["acknowledged", "question_open"]);
+  });
+
   // Catches: an opportunity that has gone (PT404) shown as a failure of the activity panel.
   it("answers null when the person may not see the opportunity", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "PT404", message: "That opportunity isn't available" } });

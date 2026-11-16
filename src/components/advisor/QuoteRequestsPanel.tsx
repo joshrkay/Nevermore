@@ -1,4 +1,6 @@
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
+import { quoteStatusWords } from "@/data/opportunityPage";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
@@ -10,13 +12,13 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import {
-  canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
+  canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isOpenQuoteRequest, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
   QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
   type QuoteNoteKind,
 } from "@/data/quoteRequests";
 import {
-  addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, updateQuoteRequest,
-  type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
+  addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, setQuoteRequestStatus, updateQuoteRequest,
+  type OpenQuoteStatus, type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
 
@@ -121,6 +123,43 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
       </div>
     </div>
+  );
+};
+
+const MARKS: { value: OpenQuoteStatus; label: string; words: string }[] = [
+  { value: "acknowledged", label: "Acknowledged", words: "acknowledged" },
+  { value: "question_open", label: "Question open", words: "question open" },
+  { value: "sent", label: "Back to Sent", words: "back to Sent" },
+];
+
+/** What a PEO has said short of a quote or a decline (CRM-Q3.1): one click records Acknowledged, Question open, or back to Sent. */
+const OpenStatusButtons = ({ request, onChanged }: { request: QuoteRequestRow; onChanged: () => void }) => {
+  const [saving, setSaving] = useState(false);
+  const offlineSave = useOfflineSave();
+  // A support session reads the firm's data and changes none of it (ADR 0024).
+  const isSupport = useContext(WorkspaceContext)?.isSupport ?? false;
+  const failure = useSaveFailure("The status wasn't recorded. Check your connection and try again.");
+  const mark = async (status: OpenQuoteStatus) => {
+    setSaving(true);
+    failure.clear();
+    try {
+      await setQuoteRequestStatus(request.id, status);
+      onChanged();
+    } catch (err) {
+      failure.failed(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (isSupport) return null;
+  return (
+    <>
+      {MARKS.filter((m) => m.value !== request.status).map((m) => (
+        <button key={m.value} onClick={offlineSave.guard(() => mark(m.value))} {...offlineSave.buttonProps} disabled={saving} aria-label={`Mark ${request.peo_name} ${m.words}`} className="text-xs text-primary underline">{m.label}</button>
+      ))}
+      {offlineSave.reason}
+      <SaveFailed message={failure.message} className="text-xs w-full" />
+    </>
   );
 };
 
@@ -308,7 +347,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                     <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-semibold whitespace-nowrap">New PEO mail</span>
                   )}
                   <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
-                    {isQuoteRequestStatus(r.status) ? QUOTE_REQUEST_LABELS[r.status] : r.status}
+                    {isQuoteRequestStatus(r.status) ? (r.status === "acknowledged" || r.status === "question_open" ? quoteStatusWords(r.status, QUOTE_REQUEST_LABELS[r.status], r.sent_on, localToday()) : QUOTE_REQUEST_LABELS[r.status]) : r.status}
                   </span>
                 </span>
               </div>
@@ -354,6 +393,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                   {r.status !== "closed" && (
                     <button onClick={() => setAnswering(r.id)} className="text-xs text-primary underline">Record answer</button>
                   )}
+                  {isOpenQuoteRequest(r.status) && <OpenStatusButtons request={r} onChanged={onChanged} />}
                   <button onClick={() => setNoting(r.id)} className="text-xs text-primary underline">Add a note</button>
                 </div>
               )}

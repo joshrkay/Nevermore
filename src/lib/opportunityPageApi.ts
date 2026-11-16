@@ -123,7 +123,7 @@ export interface OpportunityQuoteEvent {
   at: string;
   quoteRequestId: number;
   peoName: string;
-  event: "sent" | "quoted" | "declined" | "closed";
+  event: "sent" | "acknowledged" | "question_open" | "quoted" | "declined" | "closed";
   who: string;
   whoKind: "member" | "nevermore" | "system";
 }
@@ -239,7 +239,7 @@ const changeSchema = z.object({
 });
 const quoteEventSchema = z.object({
   type: z.literal("quote"), entry_key: z.string().min(1), at: z.string().min(1), quote_request_id: z.number().int(), peo_name: z.string(),
-  event: z.enum(["sent", "quoted", "declined", "closed"]), who: z.string(), who_kind: whoKind,
+  event: z.enum(["sent", "acknowledged", "question_open", "quoted", "declined", "closed"]), who: z.string(), who_kind: whoKind,
 });
 const activityShape = z.union([changeSchema, quoteEventSchema, activityItemSchema]);
 

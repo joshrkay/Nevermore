@@ -5,11 +5,13 @@ import { PIPELINE_TRANSITIONS, type PipelineStatus } from "./advisor";
 // supabase/migrations/20261110090000_quote_requests.sql.
 
 /** Where one PEO's quote request stands. src/data/schemaSync.test.ts keeps this list equal to the database's. */
-export const QUOTE_REQUEST_STATUSES = ["sent", "quoted", "declined", "closed"] as const;
+export const QUOTE_REQUEST_STATUSES = ["sent", "acknowledged", "question_open", "quoted", "declined", "closed"] as const;
 export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
 
 export const QUOTE_REQUEST_LABELS: Record<QuoteRequestStatus, string> = {
   sent: "Waiting",
+  acknowledged: "Acknowledged",
+  question_open: "Question open",
   quoted: "Quoted",
   declined: "Declined",
   closed: "Closed",
@@ -68,6 +70,15 @@ export const isQuoteNoteKind = (k: unknown): k is QuoteNoteKind =>
 
 export const quoteNoteKindLabel = (kind: string) => (isQuoteNoteKind(kind) ? QUOTE_NOTE_KIND_LABELS[kind] : kind);
 
+/**
+ * The statuses of a PEO that has the packet and has not answered with a quote or a decline: Sent, Acknowledged and Question open (CRM-Q3.1). A
+ * submission archived, won or lost closes every one of them; wherever a Sent quote request counts as open, these count.
+ */
+export const OPEN_QUOTE_REQUEST_STATUSES = ["sent", "acknowledged", "question_open"] as const;
+
+export const isOpenQuoteRequest = (status: unknown): boolean =>
+  typeof status === "string" && (OPEN_QUOTE_REQUEST_STATUSES as readonly string[]).includes(status);
+
 export const isQuoteRequestStatus = (s: unknown): s is QuoteRequestStatus =>
   typeof s === "string" && (QUOTE_REQUEST_STATUSES as readonly string[]).includes(s);
 
@@ -95,14 +106,14 @@ export function describeQuote(q: {
 }
 
 /**
- * "Sent v2, current v3" when a PEO still working on the submission (its request sent or quoted) has an older
+ * "Sent v2, current v3" when a PEO still working on the submission (its request sent, acknowledged, with a question open, or quoted) has an older
  * version than the latest certified; null otherwise. The quote itself stands: the advisor decides whether to resend.
  */
 export function olderVersionNote(
   r: { status: string; sent_version: number | null },
   currentVersion: number | null,
 ): string | null {
-  if (r.status !== "sent" && r.status !== "quoted") return null;
+  if (!(isOpenQuoteRequest(r.status) || r.status === "quoted")) return null;
   if (r.sent_version === null || currentVersion === null || r.sent_version >= currentVersion) return null;
   return `Sent v${r.sent_version}, current v${currentVersion}`;
 }
@@ -112,7 +123,7 @@ export function olderVersionNote(
  * has an older version" counts it) that was sent an older version than the latest certified. Null when there is no update to offer.
  */
 export function updateFrom(r: { status: string; sent_version: number | null } | undefined, currentVersion: number | null): number | null {
-  if (!r || (r.status !== "sent" && r.status !== "quoted")) return null;
+  if (!r || !(isOpenQuoteRequest(r.status) || r.status === "quoted")) return null;
   if (r.sent_version === null || currentVersion === null || r.sent_version >= currentVersion) return null;
   return r.sent_version;
 }

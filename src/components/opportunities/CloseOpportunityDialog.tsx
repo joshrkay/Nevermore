@@ -10,6 +10,7 @@ import { formatDay, STAGE_LABELS } from "@/data/accountPage";
 import { isConflict } from "@/lib/recordVersion";
 import { adminFeeWords, opportunityFieldLabel } from "@/data/opportunityPage";
 import { changedLine, commissionProblems, LOST_REASONS, renewalAfter } from "@/data/opportunityClose";
+import { isOpenQuoteRequest } from "@/data/quoteRequests";
 import { CommissionFields } from "./CommissionFields";
 import {
   markOpportunityLost, markOpportunityWon, OpportunityError, type OpportunityCloseConflict, type OpportunityClosed, type OpportunityQuote, type PlacementCommission,
@@ -138,7 +139,7 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
   }, [startDay]);
 
   const renewal = form.watch("renewal_date") as string;
-  const closing = outcome === "won" ? quotes.filter((q) => q.id !== chosen?.id && (q.status === "sent" || q.status === "quoted")) : [];
+  const closing = outcome === "won" ? quotes.filter((q) => q.id !== chosen?.id && (isOpenQuoteRequest(q.status) || q.status === "quoted")) : [];
 
   return (
     <Dialog open onOpenChange={(open) => {
