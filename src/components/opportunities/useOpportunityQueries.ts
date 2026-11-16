@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ACCOUNT_REFRESH_MS, TAB_STEP } from "@/components/accounts/useAccountQueries";
-import { getOpportunityPage, listOpportunityActivity, type OpportunityActivityFilter, type OpportunityPage } from "@/lib/opportunityPageApi";
+import { getOpportunityOutcome, getOpportunityPage, listOpportunityActivity, type OpportunityActivityFilter, type OpportunityOutcome, type OpportunityPage } from "@/lib/opportunityPageApi";
 
 /** The key every query of one opportunity's page starts with, so everything on it can be asked again together. */
 export const opportunityKey = (firmId: string | null, opportunityId: string) => ["opportunity", firmId, opportunityId] as const;
@@ -60,4 +60,16 @@ export function useOpportunityActivityQuery(firmId: string | null, opportunityId
     }
   }, [dropped, query]);
   return { query, data };
+}
+
+/** How the opportunity ended and what its win made: the lost reason, the placement with its payments, and each quote's close reason (CRM-O1.3b). */
+export function useOpportunityOutcomeQuery(firmId: string | null, opportunityId: string, submissionId: string | null | undefined) {
+  return useQuery<OpportunityOutcome>({
+    queryKey: [...opportunityKey(firmId, opportunityId), "outcome", submissionId],
+    queryFn: () => getOpportunityOutcome(firmId as string, opportunityId, submissionId ?? null),
+    // Asked once the page has said which intake it holds (undefined until then), so it is not asked twice.
+    enabled: firmId !== null && submissionId !== undefined,
+    refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
+    retry: false,
+  });
 }

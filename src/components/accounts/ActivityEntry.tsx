@@ -73,17 +73,21 @@ export function ActivityActions({ row }: { row: ActivityRow }) {
   );
 }
 
-/** Log a call or a note on one contact, from the Contacts tab (the contact's page does the same, CRM-C1.1). Nothing without actions (a Nevermore support session, an archived account). */
+/**
+ * Log a call or a note on one contact, from the Contacts tab (the contact's page does the same, CRM-C1.1), Move it, and Merge it with another contact of the account.
+ * Nothing without actions (a Nevermore support session). On an archived account nothing can be added (D-222), so logging and Move are hidden; Merge adds nothing and stays (D-642).
+ */
 export function ContactActions({ contact }: { contact: ContactRow }) {
   const actions = useAccountActions();
-  if (!actions?.canAdd) return null;
+  if (!actions?.canAdd && !actions?.canMerge) return null;
   const button = "min-h-9 text-sm text-primary underline underline-offset-2 hover:text-primary/90";
   const name = contactName(contact);
   return (
     <span className="flex flex-wrap gap-x-3">
-      <button type="button" className={button} onClick={() => actions.log("call", contact.id)}>Log a call<span className="sr-only"> with {name}</span></button>
-      <button type="button" className={button} onClick={() => actions.log("note", contact.id)}>Add a note<span className="sr-only"> on {name}</span></button>
-      {actions.canMove && <button type="button" className={button} onClick={() => actions.move(contact)}>Move<span className="sr-only"> {name} to another account</span></button>}
+      {actions.canAdd && <button type="button" className={button} onClick={() => actions.log("call", contact.id)}>Log a call<span className="sr-only"> with {name}</span></button>}
+      {actions.canAdd && <button type="button" className={button} onClick={() => actions.log("note", contact.id)}>Add a note<span className="sr-only"> on {name}</span></button>}
+      {actions.canMerge && <button type="button" className={button} onClick={() => actions.merge(contact)}>Merge<span className="sr-only"> {name} with another contact</span></button>}
+      {actions.canAdd && actions.canMove && <button type="button" className={button} onClick={() => actions.move(contact)}>Move<span className="sr-only"> {name} to another account</span></button>}
     </span>
   );
 }

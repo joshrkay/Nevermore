@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
@@ -19,7 +19,10 @@ const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
-const client = { getOpportunityPage: vi.fn(), listOpportunityActivity: vi.fn(), updateOpportunity: vi.fn() };
+const client = {
+  getOpportunityPage: vi.fn(), listOpportunityActivity: vi.fn(), updateOpportunity: vi.fn(), getOpportunityOutcome: vi.fn(), markOpportunityWon: vi.fn(), markOpportunityLost: vi.fn(),
+  reopenOpportunity: vi.fn(), recordCommissionPayment: vi.fn(),
+};
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...client }));
 const activity = { logActivity: vi.fn(), updateActivity: vi.fn(), addToNote: vi.fn(), setTaskDone: vi.fn(), getActivityOptions: vi.fn() };
 vi.mock("@/lib/activityApi", async () => ({ ...(await vi.importActual<object>("@/lib/activityApi")), ...activity }));
@@ -70,6 +73,8 @@ const page = (over: Partial<Page> = {}, o: Partial<typeof opportunity> = {}): Pa
   ...over,
 });
 
+const noOutcome = { lostReason: null, lostNote: null, placement: null, payments: [], receivedToDate: 0, quotes: {} };
+
 /** The top of the page: the name, the facts, the stage bar and what would move it on. */
 const header = () => screen.getByRole("heading", { level: 1 }).closest("header") as HTMLElement;
 
@@ -101,6 +106,7 @@ beforeEach(() => {
   });
   client.getOpportunityPage.mockResolvedValue(page());
   client.listOpportunityActivity.mockResolvedValue({ count: 0, rows: [] });
+  client.getOpportunityOutcome.mockResolvedValue(noOutcome);
   search.noteRecentRecord.mockResolvedValue(true);
 });
 afterEach(() => vi.useRealTimers());
@@ -159,14 +165,13 @@ describe("OpportunityPage: the trail and the header", () => {
     expect(line).not.toHaveTextContent(/Target start|employees/);
   });
 
-  // Catches: buttons that belong to later stories drawn as dead buttons (D-402: Email the contact, Send to a PEO; Mark won or lost is CRM-O1.3b).
-  it("has no Email the contact, Send to a PEO or Mark won or lost", async () => {
+  // Catches: buttons that belong to later stories drawn as dead buttons (D-402: Email the contact, Send to a PEO). Mark won or lost is CRM-O1.3b's, tested below.
+  it("has no Email the contact or Send to a PEO", async () => {
     renderPage();
     await screen.findByRole("heading", { level: 1 });
     expect(screen.queryByRole("button", { name: /^Email/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Send to/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /Send to/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Mark won or lost/ })).toBeNull();
   });
 });
 
@@ -1126,5 +1131,392 @@ describe("OpportunityPage: small things the review found", () => {
     expect(links).toContain("/accounts/a%201");
     expect(links).toContain("/advisor/submissions/i%201");
     expect(links.filter((h) => h?.includes(" "))).toEqual([]);
+  });
+});
+
+
+// ---------- CRM-O1.3b: Mark won or lost (screen 26), the won or lost banner, Record a payment ----------
+
+const quotedQuote = (id: number, peo: string, fee: number | null) => ({ id, peoName: peo, status: "quoted", sentOn: "2026-10-29", quoteReceivedOn: "2026-11-03", quoteExpiresOn: "2026-12-05", adminFeePepm: fee });
+const quotedPage = (over: Partial<Page> = {}, o: Partial<typeof opportunity> = {}) =>
+  page({ quotes: [quotedQuote(12, "PEO A", 132), quotedQuote(13, "PEO B", 118), { ...quotedQuote(14, "PEO C", null), status: "sent", quoteReceivedOn: null }], ...over }, { stage: "quoted", ...o });
+const closedPlacement = {
+  id: "pl1", peoName: "PEO B", startDate: "2027-01-01", brokerOfRecord: "Acme Benefits", endedOn: null, renewsOn: "2028-01-01",
+  commission: { basis: "share" as const, rate: 20, expectedYearly: 12744 }, version: 1,
+};
+const wonOutcome = { ...noOutcome, placement: closedPlacement, payments: [{ id: "p1", receivedOn: "2027-02-10", amount: 1500, note: null, version: 1 }], receivedToDate: 1500, quotes: { 12: { closeReason: null, proposedStart: "2027-01-15" }, 13: { closeReason: null, proposedStart: null } } };
+const dialog = () => screen.getByRole("dialog");
+
+describe("OpportunityPage: Mark won or lost opens the dialog (D-431, D-463)", () => {
+  // Catches: Mark won or lost missing from the header (D-431), or offered to someone the level rule refuses, on a closed opportunity, or in a support session.
+  it("puts Mark won or lost in the header for whoever may change an open opportunity, and for no one else", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage());
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(within(header()).getByRole("button", { name: "Mark won or lost" })).toBeInTheDocument();
+    cleanup();
+  });
+
+  it.each([
+    ["a person the level rule does not give it to", () => quotedPage({ canChange: false }), workspace()],
+    ["a won opportunity", () => quotedPage({}, { stage: "won" }), workspace()],
+    ["a lost opportunity", () => quotedPage({}, { stage: "lost" }), workspace()],
+    ["a Nevermore support session", () => quotedPage(), workspace({ isSupport: true })],
+  ])("offers no Mark won or lost to %s", async (_who, pageOf, ws) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf());
+    renderPage("/opportunities/o1", ws);
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("button", { name: "Mark won or lost" })).not.toBeInTheDocument();
+  });
+
+  // Catches: Won offered with no quote the employer could have taken, which the database would refuse after the person filled it in (D-463).
+  it("shows Won disabled with why when no quote is quoted yet", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [{ ...quotedQuote(14, "PEO C", null), status: "sent" }] }, { stage: "in_market" }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    const won = within(dialog()).getByRole("radio", { name: /Won/ });
+    expect(won).toBeDisabled();
+    expect(won).toHaveAccessibleDescription("Won needs a quote the employer took. None of this opportunity's quotes is quoted yet");
+  });
+
+  // Catches: the dialog offering a quote that is not quoted, or hiding the admin fee the commission is worked from (D-463).
+  it("offers only the quoted quotes, each with its admin fee, and lists what Won will do", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage());
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    const d = within(dialog());
+    expect(d.getByRole("radio", { name: /PEO A.*\$132 per employee per month/ })).toBeInTheDocument();
+    expect(d.getByRole("radio", { name: /PEO B.*\$118 per employee per month/ })).toBeInTheDocument();
+    expect(d.queryByRole("radio", { name: /PEO C/ })).not.toBeInTheDocument();
+    await userEvent.click(d.getByRole("radio", { name: /PEO B/ }));
+    expect(d.getByText("Harborview Dental Group becomes a client.")).toBeInTheDocument();
+    expect(d.getByText("PEO C's open quote is closed.")).toBeInTheDocument();
+    expect(d.getByText("A renewal for Jan 1, 2028 is added to the account.")).toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: marking won (D-464 to D-466)", () => {
+  const openWon = async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage());
+    client.getOpportunityOutcome.mockResolvedValue({ ...noOutcome, quotes: { 12: { closeReason: null, proposedStart: "2027-01-15" }, 13: { closeReason: null, proposedStart: null } } });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    return within(dialog());
+  };
+
+  // Catches: the defaults of D-465 wrong: the start is the quote's proposed start, else the opportunity's target start; the renewal a year after it; the broker the firm.
+  it("defaults the start to the quote's proposed start, else the target start, the renewal a year on, and the broker to the firm", async () => {
+    const d = await openWon();
+    await userEvent.click(d.getByRole("radio", { name: /PEO B/ }));
+    expect(d.getByLabelText("Start date")).toHaveValue("2027-01-01");
+    expect(d.getByLabelText("Renewal date")).toHaveValue("2028-01-01");
+    expect(d.getByLabelText("Broker of record")).toHaveValue("Acme Benefits");
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    expect(d.getByLabelText("Start date")).toHaveValue("2027-01-15");
+    expect(d.getByLabelText("Renewal date")).toHaveValue("2028-01-15");
+  });
+
+  // Catches: a start the person typed overwritten by a later choice of quote.
+  it("keeps a start the person typed when they change the quote", async () => {
+    const d = await openWon();
+    await userEvent.click(d.getByRole("radio", { name: /PEO B/ }));
+    await userEvent.clear(d.getByLabelText("Start date"));
+    await userEvent.type(d.getByLabelText("Start date"), "2027-03-01");
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    expect(d.getByLabelText("Start date")).toHaveValue("2027-03-01");
+  });
+
+  // Catches: a win sent with no quote chosen, no broker or a renewal not after the start (D-463, D-465): said in words, nothing sent.
+  it("asks for the quote and the broker, and for a renewal after the start, before it sends anything", async () => {
+    const d = await openWon();
+    await userEvent.click(d.getByRole("button", { name: "Mark won" }));
+    expect(await d.findByText("Choose the quote the employer took.")).toBeInTheDocument();
+    await userEvent.click(d.getByRole("radio", { name: /PEO B/ }));
+    await userEvent.clear(d.getByLabelText("Broker of record"));
+    await userEvent.clear(d.getByLabelText("Renewal date"));
+    await userEvent.type(d.getByLabelText("Renewal date"), "2026-12-01");
+    await userEvent.click(d.getByRole("button", { name: "Mark won" }));
+    expect(await d.findByText("Say who the broker of record is.")).toBeInTheDocument();
+    expect(d.getByText("The renewal must come after the start.")).toBeInTheDocument();
+    expect(client.markOpportunityWon).not.toHaveBeenCalled();
+  });
+
+  // Catches: the yearly figure not worked from the share, the admin fee of the chosen quote and the employees, or not overwritable (D-466).
+  it("works the expected commission out, shows the arithmetic, and lets the person overwrite the figure", async () => {
+    const d = await openWon();
+    await userEvent.click(d.getByRole("radio", { name: /PEO B/ }));
+    await userEvent.selectOptions(d.getByLabelText("Commission basis"), "share");
+    await userEvent.type(d.getByLabelText("Share (percent)"), "20");
+    expect(d.getByLabelText("Expected commission, a year")).toHaveValue("12744");
+    expect(d.getByText("20% × $118 × 45 employees × 12 months = $12,744")).toBeInTheDocument();
+    await userEvent.clear(d.getByLabelText("Expected commission, a year"));
+    await userEvent.type(d.getByLabelText("Expected commission, a year"), "9000");
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    expect(d.getByLabelText("Expected commission, a year")).toHaveValue("9000");
+  });
+
+  // Catches: the win sent with anything but the version the page loaded (D-46), the chosen quote, the dates, the broker and the commission as typed; and a page left stale.
+  it("sends the win with the version, the quote, the placement's dates and broker and the commission, then closes and reloads the page", async () => {
+    const d = await openWon();
+    client.markOpportunityWon.mockResolvedValue({ conflict: false, stage: "won", version: 5 });
+    await userEvent.click(d.getByRole("radio", { name: /PEO B/ }));
+    await userEvent.selectOptions(d.getByLabelText("Commission basis"), "share");
+    await userEvent.type(d.getByLabelText("Share (percent)"), "20");
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "won", version: 5 }));
+    await userEvent.click(d.getByRole("button", { name: "Mark won" }));
+    await waitFor(() => expect(client.markOpportunityWon).toHaveBeenCalledWith(
+      "f1", "o1", { quoteRequestId: 13, startDate: "2027-01-01", renewalDate: "2028-01-01", brokerOfRecord: "Acme Benefits", commission: { basis: "share", rate: 20, expectedYearly: 12744 } }, 4,
+    ));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Marked won");
+    expect(client.getOpportunityPage.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  // Catches: a win with no commission sending a commission (D-466: optional).
+  it("sends no commission when none was chosen", async () => {
+    const d = await openWon();
+    client.markOpportunityWon.mockResolvedValue({ conflict: false, stage: "won", version: 5 });
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    await userEvent.click(d.getByRole("button", { name: "Mark won" }));
+    await waitFor(() => expect(client.markOpportunityWon).toHaveBeenCalledWith("f1", "o1", expect.objectContaining({ quoteRequestId: 12, commission: null }), 4));
+  });
+
+  // Catches: the database's refusal lost: it is said in its own words beside Mark won, and what was typed stays.
+  it("says the database's refusal in its own words and keeps what was typed", async () => {
+    const d = await openWon();
+    client.markOpportunityWon.mockRejectedValue(new OpportunityError("invalid", "The renewal must come after the start."));
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    await userEvent.click(d.getByRole("button", { name: "Mark won" }));
+    expect(await d.findByText("The renewal must come after the start.")).toBeInTheDocument();
+    expect(d.getByLabelText("Broker of record")).toHaveValue("Acme Benefits");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  // Catches: a win over someone else's change saved anyway, or the person told nothing (D-46): nothing is saved, the dialog says who changed what and offers a reload.
+  it("says who changed the opportunity first, saves nothing, and reloads on request", async () => {
+    const d = await openWon();
+    client.markOpportunityWon.mockResolvedValue({
+      conflict: true, currentVersion: 6, stage: "lost", changed: [{ field: "lost_reason", value: "price", who: "marcus@x.example", at: "2026-11-12T10:00:00+00:00" }],
+    });
+    await userEvent.click(d.getByRole("radio", { name: /PEO A/ }));
+    await userEvent.click(d.getByRole("button", { name: "Mark won" }));
+    expect(await d.findByText("Someone else changed this opportunity")).toBeInTheDocument();
+    expect(d.getByText(/It is now Lost\. Nothing was saved\./)).toBeInTheDocument();
+    expect(d.getByText(/lost reason.*marcus@x\.example/)).toBeInTheDocument();
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "lost", version: 6 }));
+    await userEvent.click(d.getByRole("button", { name: "Reload the opportunity" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByRole("region", { name: "Outcome" })).toHaveTextContent("Lost");
+  });
+});
+
+describe("OpportunityPage: marking lost (D-468)", () => {
+  const openLost = async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage());
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    const d = within(dialog());
+    await userEvent.click(d.getByRole("radio", { name: /Lost/ }));
+    return d;
+  };
+
+  // Catches: a reason that is free text, or a list that is not the agreed one (D-468).
+  it("asks for a reason from the fixed list", async () => {
+    const d = await openLost();
+    const options = within(d.getByLabelText("Reason")).getAllByRole("option").map((o) => o.textContent);
+    expect(options).toEqual(["Choose a reason", "Stayed with current provider", "Price", "Went direct to a PEO", "No decision", "Other"]);
+    await userEvent.click(d.getByRole("button", { name: "Mark lost" }));
+    expect(await d.findByText("Choose why the search was lost.")).toBeInTheDocument();
+    expect(client.markOpportunityLost).not.toHaveBeenCalled();
+  });
+
+  // Catches: Other accepted with no note (D-468), or a note over 500 characters sent to be refused.
+  it("requires a note for Other, at most 500 characters", async () => {
+    const d = await openLost();
+    await userEvent.selectOptions(d.getByLabelText("Reason"), "other");
+    await userEvent.click(d.getByRole("button", { name: "Mark lost" }));
+    expect(await d.findByText("Say what happened. Other needs a note.")).toBeInTheDocument();
+    await userEvent.click(d.getByLabelText("Note"));
+    await userEvent.paste("x".repeat(501));
+    await userEvent.click(d.getByRole("button", { name: "Mark lost" }));
+    expect(await d.findByText("Keep the note to 500 characters.")).toBeInTheDocument();
+    expect(client.markOpportunityLost).not.toHaveBeenCalled();
+  });
+
+  // Catches: the loss sent with the wrong version or without the reason and note as typed.
+  it("sends the loss with the reason, the note and the version, then closes", async () => {
+    const d = await openLost();
+    client.markOpportunityLost.mockResolvedValue({ conflict: false, stage: "lost", version: 5 });
+    await userEvent.selectOptions(d.getByLabelText("Reason"), "other");
+    await userEvent.type(d.getByLabelText("Note"), "Closed the practice");
+    await userEvent.click(d.getByRole("button", { name: "Mark lost" }));
+    await waitFor(() => expect(client.markOpportunityLost).toHaveBeenCalledWith("f1", "o1", { reason: "other", note: "Closed the practice" }, 4));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Marked lost");
+  });
+});
+
+describe("OpportunityPage: the won or lost banner (D-426, D-472)", () => {
+  const wonPage = (over: Partial<Page> = {}, o: Partial<typeof opportunity> = {}) => quotedPage(over, { stage: "won", ...o });
+
+  // Catches: the banner wording (D-472) or the commission line (D-467) wrong: PEO, start, renewal, expected a year and received to date.
+  it("shows Won with the PEO, the start and the renewal, and the commission expected and received", async () => {
+    client.getOpportunityPage.mockResolvedValue(wonPage());
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    renderPage();
+    const banner = await screen.findByRole("region", { name: "Outcome" });
+    expect(banner).toHaveTextContent("Won · PEO B · from Jan 1, 2027 · renews Jan 1, 2028");
+    expect(within(banner).getByText("Commission: $12,744 expected a year · $1,500 received so far")).toBeInTheDocument();
+  });
+
+  // Catches: a win with no commission expected showing "$0" or "undefined".
+  it("says no commission is expected when none was recorded", async () => {
+    client.getOpportunityPage.mockResolvedValue(wonPage());
+    client.getOpportunityOutcome.mockResolvedValue({ ...wonOutcome, placement: { ...closedPlacement, commission: null }, payments: [], receivedToDate: 0 });
+    renderPage();
+    expect(await screen.findByText("Commission: none expected recorded")).toBeInTheDocument();
+  });
+
+  // Catches: the lost reason shown as its stored code, or a loss with no banner.
+  it("shows Lost with the reason in words", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "lost" }));
+    client.getOpportunityOutcome.mockResolvedValue({ ...noOutcome, lostReason: "went_direct" });
+    renderPage();
+    expect(await screen.findByRole("region", { name: "Outcome" })).toHaveTextContent("Lost · Went direct to a PEO");
+  });
+
+  // Catches: a closed opportunity drawn with no banner because the outcome could not be read: it says so and offers Try again, it does not pass for open.
+  it("says when how it ended could not be read, and tries again", async () => {
+    client.getOpportunityPage.mockResolvedValue(wonPage());
+    client.getOpportunityOutcome.mockRejectedValueOnce(new Error("boom"));
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    renderPage();
+    const banner = await screen.findByRole("region", { name: "Outcome" });
+    expect(await within(banner).findByText(/Couldn.t load how this opportunity ended/)).toBeInTheDocument();
+    await userEvent.click(within(banner).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/Won · PEO B/)).toBeInTheDocument();
+  });
+
+  // Catches: Reopen shown to someone D-462 does not allow (an agent who is not the opportunity's owner), or hidden from the owner and a firm owner.
+  it("offers Reopen to the opportunity's owner and a firm owner, and to no one else", async () => {
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    client.getOpportunityPage.mockResolvedValue(wonPage());
+    renderPage();
+    await screen.findByRole("region", { name: "Outcome" });
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    cleanup();
+
+    client.getOpportunityPage.mockResolvedValue(wonPage({}, { ownerId: "u2" }));
+    renderPage("/opportunities/o1", workspace());
+    await screen.findByRole("region", { name: "Outcome" });
+    expect(screen.queryByRole("button", { name: "Reopen" })).not.toBeInTheDocument();
+    cleanup();
+
+    renderPage("/opportunities/o1", workspace({ isOwner: true, role: "Owner" }));
+    await screen.findByRole("region", { name: "Outcome" });
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+  });
+
+  // Catches: Reopen shown on an archived account or in a support session, where the database refuses it.
+  it("offers no Reopen or Record a payment on an archived account or in a support session", async () => {
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    client.getOpportunityPage.mockResolvedValue(wonPage({ account: { id: "a1", name: "Harborview Dental Group", archived: true }, canAdd: false, canChange: false }));
+    renderPage();
+    await screen.findByRole("region", { name: "Outcome" });
+    expect(screen.queryByRole("button", { name: "Reopen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record a payment" })).not.toBeInTheDocument();
+  });
+
+  // Catches: a reopen with no question first (it deletes the placement and the renewal), or sent from a stale version (D-469).
+  it("asks before reopening, says what it undoes, and reopens from the version loaded", async () => {
+    client.getOpportunityPage.mockResolvedValue(wonPage());
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    client.reopenOpportunity.mockResolvedValue({ conflict: false, stage: "quoted", version: 6 });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+    const d = within(screen.getByRole("alertdialog"));
+    expect(d.getByText(/placement and the renewal made with the win are deleted/)).toBeInTheDocument();
+    expect(client.reopenOpportunity).not.toHaveBeenCalled();
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "quoted", version: 6 }));
+    await userEvent.click(d.getByRole("button", { name: "Reopen" }));
+    await waitFor(() => expect(client.reopenOpportunity).toHaveBeenCalledWith("f1", "o1", 4));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Outcome" })).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Reopened");
+  });
+
+  // Catches: the reopen's refusals (a renewal being worked, payments to delete first) hidden: they are said in the database's words and nothing closes.
+  it("says why a reopen was refused, in the database's words", async () => {
+    client.getOpportunityPage.mockResolvedValue(wonPage());
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    client.reopenOpportunity.mockRejectedValue(new OpportunityError("invalid", "Delete its payments first", "PT409"));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Reopen" }));
+    expect(await screen.findByText("Delete its payments first")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Outcome", hidden: true })).toBeInTheDocument();
+  });
+
+  // Catches: a close reason (D-424) missing from a closed quote in the Quotes panel, or shown as the stored code.
+  it("shows a closed quote's close reason in the Quotes panel", async () => {
+    client.getOpportunityPage.mockResolvedValue(wonPage({ quotes: [quotedQuote(13, "PEO B", 118), { ...quotedQuote(14, "PEO C", null), status: "closed" }] }));
+    client.getOpportunityOutcome.mockResolvedValue({ ...wonOutcome, quotes: { 13: { closeReason: null, proposedStart: null }, 14: { closeReason: "went_elsewhere", proposedStart: null } } });
+    renderPage();
+    const row = (await screen.findByRole("link", { name: "PEO C" })).closest("tr") as HTMLElement;
+    expect(await within(row).findByText(/The employer went elsewhere/)).toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: Record a payment (D-467)", () => {
+  const openPayment = async (ws: Workspace = workspace()) => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "won" }));
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    renderPage("/opportunities/o1", ws);
+    await userEvent.click(await screen.findByRole("button", { name: "Record a payment" }));
+    return within(dialog());
+  };
+
+  // Catches: a payment with no day or an amount of zero or less sent to be refused (D-467: an amount above zero), or a note over 500 characters.
+  it("asks for the day and an amount above zero before it sends anything", async () => {
+    const d = await openPayment();
+    await userEvent.clear(d.getByLabelText("Received on"));
+    await userEvent.type(d.getByLabelText("Amount"), "0");
+    await userEvent.click(d.getByRole("button", { name: "Record payment" }));
+    expect(await d.findByText("Enter the day it was received, like 2027-02-10.")).toBeInTheDocument();
+    expect(d.getByText("Enter an amount above zero, like 1500.")).toBeInTheDocument();
+    expect(client.recordCommissionPayment).not.toHaveBeenCalled();
+  });
+
+  // Catches: the payment sent to the wrong placement, the amount as text, or the banner left showing the old total.
+  it("records the payment against the placement, and the banner shows what is received to date", async () => {
+    const d = await openPayment();
+    client.recordCommissionPayment.mockResolvedValue({ receivedToDate: 2500, expectedYearly: 12744 });
+    await userEvent.clear(d.getByLabelText("Received on"));
+    await userEvent.type(d.getByLabelText("Received on"), "2027-03-10");
+    await userEvent.type(d.getByLabelText("Amount"), "1000");
+    await userEvent.type(d.getByLabelText("Note"), "Second");
+    client.getOpportunityOutcome.mockResolvedValue({ ...wonOutcome, receivedToDate: 2500 });
+    await userEvent.click(d.getByRole("button", { name: "Record payment" }));
+    await waitFor(() => expect(client.recordCommissionPayment).toHaveBeenCalledWith("f1", "pl1", { receivedOn: "2027-03-10", amount: 1000, note: "Second" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Payment recorded");
+    expect(await screen.findByText("Commission: $12,744 expected a year · $2,500 received so far")).toBeInTheDocument();
+  });
+
+  // Catches: the database's refusal (a level rule, an archived account) lost.
+  it("says the database's refusal in its own words", async () => {
+    const d = await openPayment();
+    client.recordCommissionPayment.mockRejectedValue(new OpportunityError("notAllowed", "Only the opportunity's owner can record commission."));
+    await userEvent.type(d.getByLabelText("Amount"), "1000");
+    await userEvent.click(d.getByRole("button", { name: "Record payment" }));
+    expect(await d.findByText("Only the opportunity's owner can record commission.")).toBeInTheDocument();
+  });
+
+  // Catches: Record a payment shown to someone who may not change the opportunity.
+  it("is offered only to whoever may change the opportunity", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage({ canChange: false }, { stage: "won" }));
+    client.getOpportunityOutcome.mockResolvedValue(wonOutcome);
+    renderPage();
+    await screen.findByRole("region", { name: "Outcome" });
+    expect(screen.queryByRole("button", { name: "Record a payment" })).not.toBeInTheDocument();
   });
 });
