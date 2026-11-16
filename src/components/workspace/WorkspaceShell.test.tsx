@@ -103,6 +103,8 @@ describe("the workspace menu", () => {
     ["/accounts", "Accounts"],
     ["/accounts?view=clients", "Accounts"],
     ["/accounts/abc", "Accounts"],
+    // An opportunity's page belongs to Accounts (CRM-O1.1b, D-421).
+    ["/opportunities/abc", "Accounts"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],
