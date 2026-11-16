@@ -307,4 +307,19 @@ describe("PeoThreadPanel", () => {
     expect(lines.join("\n")).toContain("Reply address: — → a.b.c");
     expect(lines.join("\n")).not.toContain("Status");
   });
+
+  // Catches: a download by the bundle link (slice 6.6b, ADR 0003) missing from the thread, credited to a person, or buried in the change log.
+  it("shows each download by the bundle link on the thread, by the link, and not in the change log", () => {
+    panel({
+      events: [
+        event({ id: 1, field: "bundle_download", old_value: null, new_value: "The packet (EAA-2026-0042-packet-v3.pdf)", changed_by: null, changed_by_email: null, changed_at: "2026-11-12T09:00:00Z" }),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));
+    const thread = screen.getByRole("list", { name: "TriNet thread, newest first" });
+    const items = within(thread).getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toContain("Downloaded The packet (EAA-2026-0042-packet-v3.pdf), by the bundle link");
+    expect(screen.queryByText(/Change log/)).not.toBeInTheDocument();
+  });
 });

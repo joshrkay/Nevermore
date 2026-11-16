@@ -319,6 +319,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: `${DELETED_WITH_INTAKE} An attachment is stored only once it has been scanned for malware; one the scanner flags is never stored, only its signature.`,
   },
   {
+    id: "bundle_links",
+    label: "Bundle links sent to PEOs",
+    sensitivity: "restricted",
+    examples: "The link a PEO opens to download one certified version of a submission's bundle (ADR 0003): which quote request and version it is for, the files it lists (copies of the packet, the census file, the application data, the supplement and the answers as JSON; the uploaded documents are named, not copied), the open items when it was issued, when it stops working and why it was revoked. The link's token is never kept, only a hash of it. Each download is on the quote request's timeline.",
+    stored: { tables: ["bundle_links"], buckets: ["bundle-links"], elsewhere: [] },
+    retention: `${WITH_INTAKE} A link stops working 30 days after it is issued, or when it is revoked; its row and files stay with the intake.`,
+    deletion: `${DELETED_WITH_INTAKE} Kept when a firm closes, as its intakes are.`,
+  },
+  {
     id: "mailbox_token",
     label: "Advisor mailbox connection",
     sensitivity: "restricted",
@@ -359,9 +368,9 @@ export const DATA_CLASSES: DataClass[] = [
     id: "operational",
     label: "Operational monitoring and abuse limits",
     sensitivity: "internal",
-    examples: "Failure counts and codes (errors, failed uploads, AI failures, refused access), the alerts raised from them, a record of each AI call (ids, codes and the names of the fields it read, never their values), the counters that rate-limit AI use (a one-way hash of the network address, never the address), and the per-year counter that numbers File IDs.",
+    examples: "Failure counts and codes (errors, failed uploads, AI failures, refused access), the alerts raised from them, a record of each AI call (ids, codes and the names of the fields it read, never their values), the counters that rate-limit AI use and guesses at a bundle link (a one-way hash of the network address, never the address), and the per-year counter that numbers File IDs.",
     stored: {
-      tables: ["ops_events", "ops_alerts", "ai_extraction_events", "ai_request_log", "ai_ip_log", "ai_global_usage", "submission_reference_counters"],
+      tables: ["ops_events", "ops_alerts", "ai_extraction_events", "ai_request_log", "ai_ip_log", "ai_global_usage", "submission_reference_counters", "bundle_link_misses"],
       buckets: [],
       elsewhere: ["Supabase and Vercel logs"],
     },

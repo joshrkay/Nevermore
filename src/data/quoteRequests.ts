@@ -141,8 +141,26 @@ const shown = (field: string, value: string | null) => {
  */
 export const isChangeLogEvent = (e: { field: string }) => e.field !== "underwriter_question";
 
+// Why a bundle link stopped working (bundle_links.revoked_reason, 20261122110000), in words.
+const BUNDLE_LINK_REVOKED: Record<string, string> = {
+  replaced: "a new link replaced it",
+  newer_version: "a newer version was sent",
+  withdrawn: "the quote request was withdrawn",
+  submission_closed: "the submission was closed",
+  authorization_withdrawn: "the employer withdrew this PEO",
+  revoked_by_advisor: "revoked by an advisor",
+};
+
+/** "Issued for version 3" or "Revoked: <reason>", as the database logs a bundle link (slice 6.6b). */
+const describeBundleLinkEvent = (v: string) => {
+  const reason = /^Revoked: (\w+)$/.exec(v)?.[1];
+  if (reason) return `Bundle link revoked: ${BUNDLE_LINK_REVOKED[reason] ?? reason}`;
+  return `Bundle link ${v.charAt(0).toLowerCase()}${v.slice(1)}`;
+};
+
 /** One line for a recorded change to a quote request, or a correction to one of its notes. */
 export function describeQuoteRequestEvent(e: { field: string; old_value: string | null; new_value: string | null }): string {
+  if (e.field === "bundle_link") return describeBundleLinkEvent(e.new_value ?? "");
   if (e.field in MAIL_EVENT_LABELS) return `${MAIL_EVENT_LABELS[e.field]} (message ${e.new_value ?? "?"})`;
   return `${FIELD_NAMES[e.field] ?? e.field}: ${shown(e.field, e.old_value)} → ${shown(e.field, e.new_value)}`;
 }

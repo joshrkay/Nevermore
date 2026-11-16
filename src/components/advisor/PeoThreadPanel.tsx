@@ -155,6 +155,16 @@ const Entry = ({ entry, showPeo, prospectUserId, corrected, onMoved }: { entry: 
       </div>
     );
   }
+  if (entry.kind === "download") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {peo}
+        <span className={`${badge} bg-muted font-semibold`}>Download</span>
+        <span>{`Downloaded ${entry.file}, by the bundle link.`}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(entry.at)}</span>
+      </div>
+    );
+  }
   const who = actorName(entry.by.id, entry.by.email, prospectUserId);
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">

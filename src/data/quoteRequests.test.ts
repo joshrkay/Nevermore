@@ -33,6 +33,12 @@ describe("a quote request's change log", () => {
     expect(describeQuoteRequestEvent({ field: "note_body", old_value: "A", new_value: "B" })).toBe("Note text: A → B");
   });
 
+  // Catches: a bundle link issued or revoked (slice 6.6b) shown by its column name, or with an empty "before" arrow that reads as a change.
+  it("describes a bundle link being issued and revoked in words", () => {
+    expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Issued for version 3" })).toBe("Bundle link issued for version 3");
+    expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Revoked: newer_version" })).toBe("Bundle link revoked: a newer version was sent");
+  });
+
   it("describes a reply address being issued and reissued", () => {
     expect(describeQuoteRequestEvent({ field: "reply_address", old_value: null, new_value: "a.b.c" })).toBe("Reply address: — → a.b.c");
     expect(describeQuoteRequestEvent({ field: "reply_address", old_value: "a.b.c", new_value: "a.b.d" })).toBe("Reply address: a.b.c → a.b.d");

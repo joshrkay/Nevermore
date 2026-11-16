@@ -72,7 +72,9 @@ export type TimelineEntry =
   | { kind: "message"; key: string; at: string; requestId: number; peo: string; message: ThreadMessage; attachments: ThreadAttachment[] }
   | { kind: "note"; key: string; at: string; requestId: number; peo: string; note: ThreadNote }
   | { kind: "send"; key: string; at: string; requestId: number; peo: string; sentOn: string; version: string | null; by: { id: string | null; email: string | null } }
-  | { kind: "status"; key: string; at: string; requestId: number; peo: string; from: string; to: string; by: { id: string | null; email: string | null } };
+  | { kind: "status"; key: string; at: string; requestId: number; peo: string; from: string; to: string; by: { id: string | null; email: string | null } }
+  // A file downloaded by the bundle link (slice 6.6b): "<what it is> (<file name>)", by no person.
+  | { kind: "download"; key: string; at: string; requestId: number; peo: string; file: string };
 
 const time = (iso: string) => {
   const t = Date.parse(iso);
@@ -116,6 +118,8 @@ export function buildTimeline(input: {
     } else if (e.field === "status" && e.old_value !== null && e.new_value) {
       // The first status ("sent") is the send itself, which has its own entry.
       entries.push({ kind: "status", key: `status-${e.id}`, at: e.changed_at, requestId: e.quote_request_id, peo: peo.get(e.quote_request_id)!, from: e.old_value, to: e.new_value, by });
+    } else if (e.field === "bundle_download" && e.new_value) {
+      entries.push({ kind: "download", key: `download-${e.id}`, at: e.changed_at, requestId: e.quote_request_id, peo: peo.get(e.quote_request_id)!, file: e.new_value });
     }
   }
   return entries.sort((a, b) => time(b.at) - time(a.at) || (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
@@ -123,7 +127,7 @@ export function buildTimeline(input: {
 
 /** Whether the thread shows an event, so the change log can leave it out and hold the rest. */
 export const isThreadEvent = (e: { field: string; old_value: string | null; note_id: number | null }) =>
-  e.note_id === null && (e.field === "sent_on" || (e.field === "status" && e.old_value !== null));
+  e.note_id === null && (e.field === "sent_on" || e.field === "bundle_download" || (e.field === "status" && e.old_value !== null));
 
 /**
  * Whether a quote request has mail a person at the PEO wrote that no advisor has opened: a received message that

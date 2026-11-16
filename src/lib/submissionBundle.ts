@@ -68,18 +68,23 @@ function uniqueName(name: string, taken: Set<string>): string {
 /** A name as the contents page mentions a file left out: never a control character that would break its lines. */
 const printable = (name: string) => name.replace(/\p{Cc}/gu, "_");
 
-/** The bundle as one zip: CONTENTS.txt first, then each file, the documents under documents/. */
-export async function buildBundle(plan: BundlePlan, deps: BundleDeps): Promise<BuiltBundle> {
-  const maxBytes = deps.maxBytes ?? BUNDLE_MAX_BYTES;
-  const entries: (ZipEntry & { what: string })[] = [];
+/** A file the bundle makes from the certified version (not an uploaded document): its name, its bytes and what it is. */
+export interface MadeFile {
+  name: string;
+  blob: Blob;
+  what: string;
+}
+
+/**
+ * The files a bundle makes from the certified version, in order: the packet, the census file, the workers' comp application data and the
+ * PEO's supplement, and what couldn't be made. The zip (buildBundle) and the bundle link (src/lib/bundleLink.ts) both start here.
+ */
+export async function madeBundleFiles(plan: BundlePlan, deps: Pick<BundleDeps, "readTemplate">): Promise<{ files: MadeFile[]; notIncluded: BundleOutcome["notIncluded"] }> {
+  const files: MadeFile[] = [];
   const notIncluded: BundleOutcome["notIncluded"] = [];
-  // Every entry, made or uploaded, under a safe name no other entry has.
-  const taken = new Set<string>();
-  const entryName = (folder: string, name: string) => uniqueName(`${folder}${safeFileName(name)}`, taken);
-  const add = async (name: string, blob: Blob, what: string) => entries.push({ name: entryName("", name), data: await readBytes(blob), what });
 
   const packet = buildManuscriptPdf(plan.manuscript, { revealSensitive: false });
-  await add(packet.filename, packet.blob, "the packet, as certified, dates of birth masked");
+  files.push({ name: packet.filename, blob: packet.blob, what: "the packet, as certified, dates of birth masked" });
 
   if (plan.census) {
     const { layout } = plan.census;
@@ -89,19 +94,33 @@ export async function buildBundle(plan: BundlePlan, deps: BundleDeps): Promise<B
     } else {
       const file = await censusFile(plan.census.rows, layout, { fileId: plan.fileId, version: plan.version, template });
       if (file.ok === false) notIncluded.push({ what: "Census file", why: file.message });
-      else await add(file.filename, file.blob, `the ${plan.census.what}`);
+      else files.push({ name: file.filename, blob: file.blob, what: `the ${plan.census.what}` });
     }
   }
 
   const application = buildWorkersCompPdf(plan.application);
-  await add(application.filename, application.blob, "workers' comp application data, our own summary in the standard application's order");
+  files.push({ name: application.filename, blob: application.blob, what: "workers' comp application data, our own summary in the standard application's order" });
 
   if (plan.supplement?.cantTell) {
     notIncluded.push({ what: plan.supplement.title, why: `${plan.version !== null ? `Version ${plan.version}` : "The certification on record"} was certified before we kept the answers to ${plan.peo}'s own questions. Certifying again adds them.` });
   } else if (plan.supplement) {
     const supplement = buildSupplementPdf(plan.supplement);
-    await add(supplement.filename, supplement.blob, `${plan.supplement.title}, for ${plan.peo} only`);
+    files.push({ name: supplement.filename, blob: supplement.blob, what: `${plan.supplement.title}, for ${plan.peo} only` });
   }
+  return { files, notIncluded };
+}
+
+/** The bundle as one zip: CONTENTS.txt first, then each file, the documents under documents/. */
+export async function buildBundle(plan: BundlePlan, deps: BundleDeps): Promise<BuiltBundle> {
+  const maxBytes = deps.maxBytes ?? BUNDLE_MAX_BYTES;
+  const entries: (ZipEntry & { what: string })[] = [];
+  // Every entry, made or uploaded, under a safe name no other entry has.
+  const taken = new Set<string>();
+  const entryName = (folder: string, name: string) => uniqueName(`${folder}${safeFileName(name)}`, taken);
+
+  const made = await madeBundleFiles(plan, deps);
+  const notIncluded = made.notIncluded;
+  for (const f of made.files) entries.push({ name: entryName("", f.name), data: await readBytes(f.blob), what: f.what });
 
   let size = entries.reduce((n, e) => n + e.data.length, 0);
   for (const [i, d] of plan.documents.entries()) {
