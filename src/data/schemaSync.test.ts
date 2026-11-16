@@ -22,6 +22,7 @@ import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
+import { PEO_AUTHORIZATION_VERSION } from "@/data/legalWording";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
@@ -618,6 +619,11 @@ describe("server and client intake rules agree", () => {
   // A prospect agrees to the wording in src/data/intakeConsent.ts; the database refuses any other version.
   it("asks for agreement to the consent version the database requires", () => {
     expect(quoted(blocks("intake_consent_version").join("\n"))).toEqual([INTAKE_CONSENT_VERSION]);
+  });
+
+  // M-1.1: the employer authorizes a PEO under the wording in src/data/legalWording.ts; the database refuses any other version (EA005).
+  it("asks for authorization under the PEO authorization version the database requires", () => {
+    expect(quoted(blocks("peo_authorization_version").join("\n"))).toEqual([PEO_AUTHORIZATION_VERSION]);
   });
 });
 

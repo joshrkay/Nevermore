@@ -163,6 +163,7 @@
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
 SET client_min_messages = notice;
 
@@ -233,14 +234,14 @@ END $$;
 -- The hash the edge function sends for a token or an address: SHA-256 of its text, in hex.
 CREATE FUNCTION pg_temp.h(t text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT encode(extensions.digest(t, 'sha256'), 'hex') $$;
 
--- Slice 6.6a defines public.peo_authorized (M-1.1). Until it is merged, a stub for this test only: authorized unless the test has withdrawn
--- the PEO for the intake (the setting test.withdrawn holds '<session>/<peo in lower case>').
-DO $$
+-- The employer's say over a PEO (M-1.1, slice 6.6a's peo_authorizations), recorded as the superuser: an appended row, authorized or withdrawn.
+CREATE FUNCTION pg_temp.authorize(intake text, peo text, yes boolean) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE pid bigint;
 BEGIN
-  IF to_regprocedure('public.peo_authorized(uuid, text)') IS NULL THEN
-    EXECUTE $f$CREATE FUNCTION public.peo_authorized(p_session_id uuid, p_peo text) RETURNS boolean LANGUAGE sql STABLE AS $b$
-      SELECT position(p_session_id::text || '/' || lower(p_peo) IN COALESCE(current_setting('test.withdrawn', true), '')) = 0 $b$ $f$;
-  END IF;
+  SELECT p.id INTO pid FROM public.peos p WHERE lower(p.name) = lower(peo);
+  IF pid IS NULL THEN INSERT INTO public.peos (name) VALUES (peo) RETURNING id INTO pid; END IF;
+  INSERT INTO public.peo_authorizations (session_id, peo_id, peo_name, authorized, wording_version, wording_text, signed_by)
+  SELECT s.id, pid, peo, yes, 'draft-1', 'I authorize this PEO to receive my packet.', s.user_id FROM public.chamber_sessions s WHERE s.id = pg_temp.id(intake);
 END $$;
 
 -- ---------- set up: two firms, a member of each, an intake of each certified once, a quote request on each ----------
@@ -273,6 +274,7 @@ CREATE FUNCTION pg_temp.qr(n text) RETURNS bigint LANGUAGE sql STABLE AS $$ SELE
 CREATE FUNCTION pg_temp.quote_request(n text, intake text, peo text) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE r bigint;
 BEGIN
+  PERFORM pg_temp.authorize(intake, peo, true);
   INSERT INTO public.quote_requests (session_id, peo_name, status, sent_version) VALUES (pg_temp.id(intake), peo, 'sent', 1) RETURNING id INTO r;
   INSERT INTO qr VALUES (n, r);
   RETURN r;
@@ -400,17 +402,27 @@ BEGIN
   PERFORM pg_temp.as_owner();
 END $$;
 
+-- A quote request recorded before M-1.1 shipped, for a PEO the employer never authorized (M-1.1: it stays open; nothing more is sent).
+CREATE FUNCTION pg_temp.quote_request_unauthorized(n text, intake text, peo text) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE r bigint;
+BEGIN
+  INSERT INTO public.quote_requests (session_id, peo_name, status, sent_version) VALUES (pg_temp.id(intake), peo, 'sent', 1) RETURNING id INTO r;
+  INSERT INTO qr VALUES (n, r);
+  RETURN r;
+END $$;
 -- ---------- 8. A PEO the employer has not authorized gets no link (M-1.1, ADR 0003) ----------
 -- Catches: a link issued to a PEO the employer never chose, or withdrew.
 DO $$
-DECLARE c bigint := pg_temp.quote_request('reyes_adp', 'reyes', 'ADP TotalSource');
+DECLARE c bigint := pg_temp.quote_request('reyes_adp', 'reyes', 'ADP TotalSource'); never bigint := pg_temp.quote_request_unauthorized('reyes_never', 'reyes', 'Oasis Advantage');
 BEGIN
-  PERFORM set_config('test.withdrawn', pg_temp.id('reyes')::text || '/adp totalsource', false);
+  PERFORM pg_temp.authorize('reyes', 'ADP TotalSource', false);
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
-  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.issue_bundle_link(%s, 1, gen_random_uuid(), pg_temp.files())$q$, c)), ':', 1),
-                     '42501', 'a PEO without the employer''s authorization');
+  -- assert_peo_authorized's own refusal (slice 6.6a), as a send's: 22023 with the employer's words.
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.issue_bundle_link(%s, 1, gen_random_uuid(), pg_temp.files())$q$, c)),
+                     '22023: The employer withdrew ADP TotalSource. Nothing more can be sent to it.', 'a PEO the employer withdrew');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.issue_bundle_link(%s, 1, gen_random_uuid(), pg_temp.files())$q$, never)),
+                     '22023: The employer hasn''t authorized Oasis Advantage to receive their packet. Ask them to add it.', 'a PEO the employer never authorized');
   PERFORM pg_temp.as_owner();
-  PERFORM set_config('test.withdrawn', '', false);
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.bundle_links WHERE quote_request_id = c), 0, 'no link was made');
 END $$;
 
@@ -566,11 +578,11 @@ END $$;
 -- Catches: a link that keeps serving the bundle in the moment between the employer withdrawing the PEO and the revoke reaching it.
 DO $$
 BEGIN
-  PERFORM set_config('test.withdrawn', pg_temp.id('reyes')::text || '/insperity', false);
+  PERFORM pg_temp.authorize('reyes', 'Insperity', false);
   PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.bundle_link_open(pg_temp.h((SELECT token FROM tok WHERE name = 'reyes')), pg_temp.h('203.0.113.7')), '{"state": "gone"}'::jsonb, 'withdrawn');
   PERFORM pg_temp.as_owner();
-  PERFORM set_config('test.withdrawn', '', false);
+  PERFORM pg_temp.authorize('reyes', 'Insperity', true);
 END $$;
 
 -- ---------- 17. Guessing: 20 misses in an hour from one address, then that address is refused for the hour ----------
@@ -656,9 +668,13 @@ BEGIN
     END IF;
     PERFORM pg_temp.is(public.bundle_link_file(c.token_hash, c.n, pg_temp.h(c.address)), NULL::jsonb, c.why);
   END LOOP;
-  PERFORM set_config('test.withdrawn', pg_temp.id('reyes')::text || '/insperity', false);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.authorize('reyes', 'Insperity', false);
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.bundle_link_file(live, 1, pg_temp.h('203.0.113.21')), NULL::jsonb, 'a PEO the employer withdrew');
-  PERFORM set_config('test.withdrawn', '', false);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.authorize('reyes', 'Insperity', true);
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.quote_request_events WHERE field = 'bundle_download'), before, 'none of them is on a timeline');
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.bundle_link_misses WHERE address_hash = pg_temp.h('203.0.113.20')), 3, 'the unknown, expired and revoked tokens were misses');

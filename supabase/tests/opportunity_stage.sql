@@ -166,6 +166,7 @@
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
 SET client_min_messages = notice;
 
@@ -403,14 +404,26 @@ BEGIN
   INSERT INTO public.submission_status_history (session_id, from_status, to_status) VALUES (pg_temp.id(intake), from_status, to_status);
 END $$;
 
--- An intake of a firm at Ready for market, certified as far as the pipeline is concerned, with its opportunity.
+-- The employer's authorization of a PEO (M-1.1, 20261122100000), written as the superuser so the sends below are allowed; the PEO is listed first if
+-- it is not (Paychex is not one of the five).
+CREATE FUNCTION pg_temp.authorize(sid uuid, peo text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO public.peos (name) SELECT peo WHERE NOT EXISTS (SELECT 1 FROM public.peos p WHERE lower(p.name) = lower(peo));
+  INSERT INTO public.peo_authorizations (session_id, peo_id, peo_name, authorized, wording_version, wording_text, signed_by)
+  SELECT sid, p.id, p.name, true, public.peo_authorization_version(), 'I authorize ' || p.name || '.', s.user_id
+  FROM public.peos p, public.chamber_sessions s WHERE lower(p.name) = lower(peo) AND s.id = sid;
+END $$;
+
+-- An intake of a firm at Ready for market, certified as far as the pipeline is concerned, with its opportunity, and the PEOs this test sends to
+-- authorized by its employer.
 CREATE FUNCTION pg_temp.ready(n text, firm text, p_account text DEFAULT 'a1') RETURNS uuid LANGUAGE plpgsql AS $$
-DECLARE sid uuid := pg_temp.intake(n, firm);
+DECLARE sid uuid := pg_temp.intake(n, firm); peo text;
 BEGIN
   PERFORM pg_temp.fmove(n, 'submitted');
   PERFORM pg_temp.fmove(n, 'under_review');
   PERFORM pg_temp.fmove(n, 'ready_for_market');
   PERFORM pg_temp.opportunity('o_' || n, p_account, 'acme_owner', n);
+  FOREACH peo IN ARRAY ARRAY['TriNet', 'Justworks', 'Insperity', 'Paychex'] LOOP PERFORM pg_temp.authorize(sid, peo); END LOOP;
   RETURN sid;
 END $$;
 

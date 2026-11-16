@@ -165,6 +165,7 @@
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
 SET client_min_messages = notice;
 
@@ -1341,6 +1342,7 @@ DECLARE
     'end_support_session', 'a platform admin''s own support session (CRM-P2.4): no member''s change to the firm''s data, and a support session itself is refused every guarded write',
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',
+    'set_peo_authorization', 'the employer''s own say over which PEOs may receive their packet (M-1.1, D-623): not the firm''s to freeze; a withdrawal must close that PEO''s quote request even while the firm is closing',
     'record_history_capture', 'the trigger that writes a record''s history (CRM-S5.2): it runs inside a write that already asked the guard (referral partners are written only by the two guarded partner functions) and no API role can run it or write the table; the history table has no write grant or policy for an API role at all',
         'report_client_event', 'the platform''s monitoring',
     'request_firm_closure', 'the closing''s own door',

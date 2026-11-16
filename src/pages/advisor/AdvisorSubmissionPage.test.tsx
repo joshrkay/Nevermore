@@ -39,6 +39,9 @@ const api = {
   recordActivity: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// Which PEOs the employer authorized (M-1.1): TriNet may receive the packet, Insperity was never authorized.
+const loadPeoAuthorizations = vi.fn(async () => [] as unknown[]);
+vi.mock("@/lib/peoAuthorizationsApi", () => ({ loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a) }));
 // The account that holds the submission (D-213), as the database answers it: its id and name, or null.
 const submissionAccount = vi.fn();
 vi.mock("@/lib/accountPageApi", () => ({ getSubmissionAccount: (...a: unknown[]) => submissionAccount(...a) }));
@@ -1645,6 +1648,31 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalled());
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["menu-counts"] }));
     invalidate.mockRestore();
+  });
+
+  // M-1.1, D-608. Break caught: the advisor can't see who may receive the packet on the submission's page; asking the employer to add a PEO names
+  // answers (so it reads as a question about the intake), or sends without the advisor reading it.
+  it("shows who may receive the packet, and asks the employer to add a PEO through Ask the prospect, naming no answers", async () => {
+    loadPeoAuthorizations.mockResolvedValue([
+      { peo: "Insperity", state: "not_asked", signedAt: null, wordingVersion: null },
+      { peo: "TriNet", state: "authorized", signedAt: "2026-11-14T10:00:00Z", wordingVersion: "2026-11-draft-1" },
+    ]);
+    // An answer marked Needs follow-up, which a plain request would start with: the ask to add a PEO must name none.
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "ready_for_market",
+      reviews: { pay_frequency: {
+        field: "pay_frequency", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+      } } as SubmissionDetail["reviews"],
+    }));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Who may receive the packet" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Ask the employer to add Insperity" }));
+    const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    expect(message.value).toMatch(/^We'd like to send your packet to Insperity\./);
+    expect(api.requestInformation).not.toHaveBeenCalled();
+    api.requestInformation.mockResolvedValue(undefined);
+    fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", message.value, [], []));
   });
 
   it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {

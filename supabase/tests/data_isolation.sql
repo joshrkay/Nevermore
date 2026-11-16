@@ -216,16 +216,8 @@
 \i supabase/migrations/20261121090000_leads.sql
 \i supabase/migrations/20261121100000_create_lead.sql
 \i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
--- Slice 6.6a defines public.peo_authorized (M-1.1), which issuing and opening a bundle link ask. Until it is merged, a stub for this test only:
--- every PEO authorized.
-DO $$
-BEGIN
-  IF to_regprocedure('public.peo_authorized(uuid, text)') IS NULL THEN
-    EXECUTE 'CREATE FUNCTION public.peo_authorized(p_session_id uuid, p_peo text) RETURNS boolean LANGUAGE sql STABLE AS ''SELECT true''';
-    EXECUTE 'REVOKE ALL ON FUNCTION public.peo_authorized(uuid, text) FROM PUBLIC, anon, authenticated, service_role';
-  END IF;
-END $$;
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -540,6 +532,10 @@ BEGIN
   -- A quote request on prospect A's submission, once it is ready for market (20261110090000), so it and its
   -- history have rows to protect.
   PERFORM public.set_submission_status(pa_cert, 'ready_for_market', 'Reviewed');
+  -- Prospect A authorizes TriNet (M-1.1, 20261122100000), so the send is allowed and the authorizations have a row to protect.
+  PERFORM pg_temp.become('prospect_a');
+  PERFORM public.set_peo_authorization(pa_cert, 'TriNet', true, public.peo_authorization_version(), 'I authorize TriNet to receive my packet.');
+  PERFORM pg_temp.become('advisor');
   PERFORM public.advisor_record_quote_send(pa_cert, 'TriNet', NULL);
   -- A note on it (20261111090000), so the notes have a row to protect.
   PERFORM public.advisor_add_quote_request_note(
@@ -565,6 +561,9 @@ BEGIN
   INSERT INTO public.advisor_notes (session_id, body) VALUES (pb_cert, 'Payroll looks complete');
   PERFORM public.review_submission_field(pb_cert, 'company_name', 'verified');
   PERFORM public.set_submission_status(pb_cert, 'ready_for_market', 'Reviewed');
+  PERFORM pg_temp.become('prospect_b');
+  PERFORM public.set_peo_authorization(pb_cert, 'Justworks', true, public.peo_authorization_version(), 'I authorize Justworks to receive my packet.');
+  PERFORM pg_temp.become('agent_b');
   PERFORM public.advisor_record_quote_send(pb_cert, 'Justworks', NULL);
   PERFORM public.advisor_add_quote_request_note(
     (SELECT id FROM public.quote_requests WHERE session_id = pb_cert), 'call', current_date, 'Their rep emailed');
@@ -817,6 +816,8 @@ INSERT INTO matrix VALUES
   ('public.information_requests',                       '{}', '{"A":1,"B":1}'),
   -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
   -- members' alone. The prospect never sees a quote request, even on their own submission.
+  -- Which PEOs each employer authorized (M-1.1, 20261122100000): the employer reads their own and the firm's members theirs; one each here.
+  ('public.peo_authorizations',                         '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
   ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
   ('public.quote_request_events',                       '{}', '{"A":7,"B":7}'),
   ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
@@ -1280,6 +1281,9 @@ INSERT INTO callable VALUES
   ('record_intake_consent(p_version text, p_text text)', 'own', NULL, 'records the caller''s own agreement'),
   ('prospect_submission_status(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s shared status; null for anyone else''s'),
   ('prospect_information_request(p_session_id uuid)', 'own', NULL, 'the advisor''s open request on the caller''s own intake; null for anyone else''s'),
+  ('set_peo_authorization(p_session_id uuid, p_peo text, p_authorized boolean, p_version text, p_text text)', 'own', NULL, 'the employer authorizes or withdraws a PEO on their own intake; 42501 for everyone else (supabase/tests/peo_authorizations.sql)'),
+  ('peo_authorization_states(p_session_id uuid)', 'own', NULL, 'each PEO''s state on the caller''s own intake, or one of their firm''s; PT404 for anyone else''s (4e)'),
+  ('peo_authorization_version()', 'anyone', NULL, 'a constant: the version of the PEO authorization wording in force'),
   ('record_manuscript_download(p_session_id uuid)', 'own', NULL, 'records a download of the caller''s own certified intake''s Manuscript; nothing for anyone else''s'),
   ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
   ('is_own_final_manuscript(p_name text)',     'helper',  NULL, 'the manuscripts read policy calls it as the caller; true only for the file of the caller''s own final Manuscript'),
@@ -1916,6 +1920,7 @@ $$;
 
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_record_quote_send', 'advisor', 'by_id', $$SELECT public.advisor_record_quote_send({sid}, 'Probe PEO', NULL)::text$$),
+  ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
@@ -3082,6 +3087,9 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
   ('public.manuscript_versions', 'firm', 'by intake',
    $m$INSERT INTO public.manuscript_versions (session_id, version, file_id, storage_path, pdf_sha256, certified_data_hash, certified_signed_at, generated_by)
       VALUES ({intake}, 99, 'EAA-PROBE', {intake} || '/v99-probe.pdf', repeat('a', 64), 'h', now(), {u}) RETURNING ctid::text$m$),
+  -- M-1.1 (20261122100000): which PEOs the employer authorized, appended and never changed, written only through set_peo_authorization.
+  ('public.peo_authorizations', 'firm', 'by intake; the employer reads their own',
+   $m$INSERT INTO public.peo_authorizations (session_id, peo_id, peo_name, authorized, wording_version, wording_text, signed_by) SELECT {intake}, p.id, p.name, true, 'v', 'probe {tag}', {u} FROM public.peos p ORDER BY p.id LIMIT 1 RETURNING ctid::text$m$),
   ('public.profiles', 'firm', 'by the owner of an intake of the firm, or a colleague; a person reads their own',
    $m$SELECT ctid::text FROM public.profiles WHERE user_id = {u}$m$),
   ('public.quote_request_addresses', 'firm', 'by quote request',
@@ -3229,7 +3237,8 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
 -- SET clause that moves a row to another firm (move_to). Both are tried as callers who must be refused (5b).
 UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
-  'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
+  'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests',
+  'public.peo_authorizations');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
   'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures', 'public.support_sessions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
@@ -3857,6 +3866,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_status', 'service_only', 'whether an account is a prospect account or a client, worked out from its opportunities'' submissions; answers for any account by id, so no API role can call it: a query that has decided the caller may see the account asks it'),
   ('opportunity_stage', 'service_only', 'an opportunity''s stage, worked out from its submission''s pipeline stage; answers for any opportunity by id, so no API role can call it: a query that has decided the caller may see the opportunity asks it');
+-- M-1.1 (20261122100000): the employer's PEO authorizations.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('peo_authorized', 'service_only', 'whether the employer authorized a PEO, for any intake by id, so no API role can call it: the functions that send ask it after their own checks (M-1.1)'),
+  ('assert_peo_authorized', 'service_only', 'refuses a send to a PEO the employer never authorized or withdrew; for any intake by id, so no API role can call it: advisor_record_quote_send asks it after its firm check (M-1.1)'),
+  ('peo_authorization_version', 'public', 'a constant: the version of the PEO authorization wording in force'),
+  ('set_peo_authorization', 'own', 'the employer authorizes or withdraws a PEO on their own intake; refused for everyone else, the intake''s firm included (supabase/tests/peo_authorizations.sql)'),
+  ('peo_authorization_states', 'firm_scoped', 'each PEO''s state on one intake: its employer, or a current member of its firm; the same refusal as a submission that does not exist for everyone else (4e)');
 
 -- CRM-Q1.1b (20261119110000_chain_at_certification.sql; supabase/tests/chain_at_certification.sql): the chain made when an intake is first certified.
 INSERT INTO fn_class (fn, class, why) VALUES

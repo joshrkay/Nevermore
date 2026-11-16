@@ -88,10 +88,8 @@ BEGIN
   IF req.status = 'closed' THEN
     RAISE EXCEPTION 'This quote request is closed. Record a send to % to reopen it', req.peo_name USING ERRCODE = '22023';
   END IF;
-  -- The database refuses a link for a PEO the employer has not authorized, as it refuses a send (M-1.1; peo_authorized is slice 6.6a's).
-  IF NOT public.peo_authorized(req.session_id, req.peo_name) THEN
-    RAISE EXCEPTION 'The employer has not authorized % to receive their packet', req.peo_name USING ERRCODE = '42501';
-  END IF;
+  -- The database refuses a link for a PEO the employer has not authorized, or withdrew, as it refuses a send (M-1.1, slice 6.6a).
+  PERFORM public.assert_peo_authorized(req.session_id, req.peo_name);
   IF p_version IS NULL OR NOT EXISTS (SELECT 1 FROM public.chamber_certifications c WHERE c.session_id = req.session_id AND c.version = p_version) THEN
     RAISE EXCEPTION 'Version % of this submission was never certified', COALESCE(p_version::text, '(none)') USING ERRCODE = '22023';
   END IF;
@@ -399,7 +397,7 @@ REVOKE ALL ON FUNCTION public.intake_stored_files(uuid, uuid) FROM PUBLIC, anon,
 GRANT EXECUTE ON FUNCTION public.intake_stored_files(uuid, uuid) TO service_role;
 
 -- ---------- 9. Kept when a firm closes ----------
--- The closing's one list (20261121090000), restated with every line it had, and a link and its files kept: they are a quote request's, and a quote
+-- The closing's one list (20261122100000, slice 6.6a), restated with every line it had, and a link and its files kept: they are a quote request's, and a quote
 -- request is an intake's, which stays with its employer; they are deleted with the intake (section 8).
 CREATE OR REPLACE FUNCTION public.firm_closing_plan()
 RETURNS TABLE (ord integer, src text, action text, firm_column text, why text)
@@ -450,6 +448,7 @@ AS $$
     (900, 'public.intake_lifecycle_events', 'keep', NULL, 'an intake''s'),
     (900, 'public.manuscript_versions', 'keep', NULL, 'an intake''s'),
     (900, 'public.profiles', 'keep', NULL, 'the employer''s own profile'),
+    (900, 'public.peo_authorizations', 'keep', NULL, 'the employer''s own say over which PEOs may receive their packet; an intake''s'),
     (900, 'public.bundle_links', 'keep', NULL, 'a quote request''s links to its bundle: they go with the intake, under the intake retention rules'),
     (900, 'public.quote_request_addresses', 'keep', NULL, 'a quote request''s: quote requests belong to an intake'),
     (900, 'public.quote_request_events', 'keep', NULL, 'a quote request''s'),

@@ -20,6 +20,10 @@ const PUBLIC_COPY_FILES = [
   "src/data/legal.ts",
   // PEO Match shows PEO names from the database (public.peo_catalog(), src/lib/peoCatalog.ts), never in its own copy.
   "src/components/chamber/PEOMatchTab.tsx",
+  // The employer's authorization of each PEO (M-1.1): its wording and the boxes that record it. PEO names come from the database, never the copy.
+  "src/data/legalWording.ts",
+  "src/components/PacketRecipients.tsx",
+  "src/components/MyPacketRecipients.tsx",
   // Page titles and descriptions, and the summary in llms.txt (search results and AI assistants quote them).
   "src/data/seo.ts",
 ];
