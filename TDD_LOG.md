@@ -54,3 +54,16 @@ The `tdd` skill was the first tool call. One test, seen red, then only its code,
 | 47 | lead_page.sql 25 (from mutation): a lead's rows are as hidden as the lead, and its owner changes a call someone else logged | Mutants "activity seen: lead always seen" and "can_edit: no lead level rule" survived; with the test (one test for the two), both killed | green |
 | 48 | LeadPage.test (from mutation): no Reopen for someone who may only read the lead | Mutant "page: Reopen to anyone acting" survived; with the test, killed | green |
 | 49 | LeadPage.test (from mutation): a Not a fit lead's status bar marks no step | Mutant "status bar: Not a fit marks Working" survived; with the test, killed | green |
+
+## Mutation
+
+SQL (`lead_page.sql`), 22 mutants of the migration: 18 killed at once; 4 survived (Working's date from any status change, converted links past the account's
+sight, a lead's rows always seen, no lead level rule in can_edit_activity), each then killed by cycles 45 to 47. Screen, 17 mutants (LeadPage, LeadPanels,
+LeadStatusBar, NotFitDialog, convertingMakes, PlaceToWrite, LogActivityDialog, inboxTable, leadsTable): 15 killed at once; 2 survived (Reopen to anyone
+acting, a Not a fit lead marking Working in the status bar), each then killed by cycles 48 and 49. Final: 39 of 39 killed.
+
+## Gate
+
+`npm run lint`: 0 errors, 15 warnings (the base's). `npm run typecheck:functions`: clean. `npm run build`: built. `npm test`: 291 files, 6001 tests; run
+beside the SQL suite 63 tests in 5 files timed out under load, and those 5 files run alone pass (566 of 566). `supabase/tests/run.sh` on port 5437:
+all 99 SQL tests passed.
