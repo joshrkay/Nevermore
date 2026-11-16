@@ -241,7 +241,7 @@ to type the project ref back, then runs each step, prints a summary and the chec
 → Summary
   Migrations applied: 2 (20261104133000_queue_hides_empty_guest_drafts.sql, ...)
   Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, APP_BASE_URL, EMAIL_FROM, ...)
-  Functions deployed: 8 (chamber-extract, document-upload, document-extract, ...)
+  Functions deployed: 16 (chamber-extract, document-upload, document-extract, ...)
 
 → Checking the project
   ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
