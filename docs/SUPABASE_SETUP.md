@@ -193,6 +193,22 @@ magic-link template), and Supabase's built-in mailer only delivers to your own t
 addresses. With `RESEND_API_KEY` and `EMAIL_FROM` set, the script routes those emails through
 Resend (`smtp.resend.com`). It leaves SMTP alone if another provider is already configured.
 
+### The "contact me" form's captcha (Cloudflare Turnstile)
+
+The "Rather talk to someone first?" form on a firm's public address never opens without a check (slice 8.7b, D-1670 to D-1679). Two keys from one Cloudflare Turnstile widget switch it on:
+
+1. In the Cloudflare dashboard, Turnstile, add a widget (managed mode). Its hostnames must cover the site and every firm's address under it: the apex domain, which Turnstile
+   also accepts for its subdomains.
+2. **`TURNSTILE_SECRET_KEY`**: the widget's secret key, in `supabase/.env.production` (a function secret; `supabase/env.production.example` has the line). The `contact-request`
+   function checks every visitor's token with Cloudflare using it. The setup script deploys the function and sets the secret like any other.
+3. **`VITE_TURNSTILE_SITE_KEY`**: the widget's site key (publishable), in the app's build environment on Vercel and in a local `.env` (`.env.example`). It is the key the guest
+   intake already reads, so one widget serves both.
+
+With either one missing the form says "Asking to be contacted isn't available right now" and the function refuses everyone, so a missing key closes the form rather than opening it.
+The setup script's `--check` shows the function ("Function contact-request": its own 400 to an empty request, or its own 503 while the secret is unset, which is listed as a to-do)
+and the run warns while `TURNSTILE_SECRET_KEY` is unset. Turning the secret on after a deploy needs no redeploy of the function; `VITE_TURNSTILE_SITE_KEY` needs a new build of the app.
+The database's caps (20 requests an hour for one firm's link, 200 for all) stay, and the owners get one email per lead (kind `lead_from_link`, which needs `APP_BASE_URL` as well as the sender).
+
 ## Before you run it
 
 1. **Node 20 or later** and the **Supabase CLI 3.x** (`brew install supabase/tap/supabase`, or see

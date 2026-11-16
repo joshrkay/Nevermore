@@ -189,6 +189,7 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -335,7 +336,7 @@ END $$;
 DO $$
 DECLARE r jsonb; l public.leads;
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.request_contact('acme-brokers', 'Pat Visitor', 'pat@visitor.test', '(503) 555-0142', 'Visitor Co', 'Please call me about a PEO.'), 'taken', 'the answer');
   PERFORM pg_temp.as_owner();
   SELECT * INTO l FROM public.leads WHERE email = 'pat@visitor.test';
@@ -353,7 +354,7 @@ END $$;
 DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('acme-brokers', '  ', 'a@visitor.test')$q$),
     '22023: Enter your name.', 'no name');
   PERFORM pg_temp.as_owner();
@@ -365,7 +366,7 @@ END $$;
 DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('acme-brokers', 'Pat', NULL, '  ', 'Visitor Co', 'Hi')$q$),
     '22023: Enter an email address or a phone number so the firm can reach you.', 'neither');
   PERFORM pg_temp.as_owner();
@@ -377,7 +378,7 @@ END $$;
 DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('acme-brokers', 'Pat', 'not an email')$q$),
     '22023: Enter an email address like name@example.com.', 'a bad email');
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('acme-brokers', 'Pat', NULL, '12')$q$),
@@ -391,7 +392,7 @@ END $$;
 DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('no-such-firm', 'Pat', 'pat@visitor.test')$q$), 'PT404: No firm holds this address.', 'no firm');
   PERFORM pg_temp.is(split_part(pg_temp.refusal($q$SELECT public.request_contact('acme%', 'Pat', 'pat@visitor.test')$q$), ':', 1), 'PT404', 'a wildcard');
   PERFORM pg_temp.is(split_part(pg_temp.refusal($q$SELECT public.request_contact(NULL, 'Pat', 'pat@visitor.test')$q$), ':', 1), 'PT404', 'no address');
@@ -405,7 +406,7 @@ DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
   INSERT INTO public.firms (name, address, approved_at, decision, decided_at) VALUES ('Squat Brokers', 'squat-brokers', NULL, 'refused', now());
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('squat-brokers', 'Pat', 'pat@visitor.test')$q$), 'PT404: No firm holds this address.', 'a refused firm');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads), before, 'no lead was made');
@@ -417,7 +418,7 @@ DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
   INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('zenith'), pg_temp.id('zenith_owner'), now() + interval '30 days');
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('zenith-benefits', 'Pat', 'pat@visitor.test')$q$), 'PT423: This firm is not taking requests right now.', 'a closing firm');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads), before, 'no lead was made');
@@ -431,7 +432,7 @@ BEGIN
   INSERT INTO public.firms (name, address, approved_at) VALUES ('Gone Brokers', 'gone-brokers', now());
   INSERT INTO public.firm_closures (firm_id, asked_by, asked_at, closes_at, closed_at, deleted_counts)
   VALUES ((SELECT id FROM public.firms WHERE address = 'gone-brokers'), pg_temp.id('zenith_owner'), now() - interval '40 days', now() - interval '10 days', now() - interval '10 days', '{}'::jsonb);
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('gone-brokers', 'Pat', 'pat@visitor.test')$q$), 'PT404: No firm holds this address.', 'a closed firm');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads), before, 'no lead was made');
@@ -441,7 +442,7 @@ END $$;
 -- Break caught: one visitor pressing the button again (or a script repeating one address) piles up a lead for each press.
 DO $$
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.request_contact('acme-brokers', 'Pat Again', ' PAT@visitor.test ', NULL, NULL, 'Second go'), 'taken', 'the visitor is told it is taken all the same');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE lower(email) = 'pat@visitor.test' AND firm_id = pg_temp.id('acme')), 1, 'but there is still the one lead');
@@ -451,7 +452,7 @@ END $$;
 -- Break caught: a request with no message makes a lead with an empty note (a lead nobody can tell from one typed in).
 DO $$
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM public.request_contact('acme-brokers', 'Quinn Quiet', NULL, '(503) 555-0199');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT note FROM public.leads WHERE name = 'Quinn Quiet'), 'Asked to be contacted.', 'the note');
@@ -463,7 +464,7 @@ END $$;
 DO $$
 DECLARE before int := (SELECT count(*) FROM public.leads);
 BEGIN
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.request_contact('acme-brokers', 'Long Lou', 'lou@visitor.test', NULL, NULL, %L)$q$, repeat('x', 1001))),
     '22023: A message is at most 1,000 characters.', 'too long');
   PERFORM pg_temp.is(public.request_contact('acme-brokers', 'Long Lou', 'lou@visitor.test', NULL, NULL, repeat('x', 1000)), 'taken', 'exactly 1,000 is taken');
@@ -477,7 +478,7 @@ DO $$
 DECLARE i int; answer text;
 BEGIN
   INSERT INTO public.firms (name, address, approved_at) VALUES ('Birch Benefits', 'birch-benefits', now());
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   FOR i IN 1..20 LOOP
     PERFORM pg_temp.is(public.request_contact('birch-benefits', 'Visitor ' || i, 'v' || i || '@visitor.test'), 'taken', 'request ' || i);
   END LOOP;
@@ -489,7 +490,7 @@ BEGIN
   ALTER TABLE public.leads DISABLE TRIGGER leads_guard;
   UPDATE public.leads SET created_at = now() - interval '2 hours' WHERE firm_id = (SELECT id FROM public.firms WHERE address = 'birch-benefits');
   ALTER TABLE public.leads ENABLE TRIGGER leads_guard;
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.request_contact('birch-benefits', 'Visitor 22', 'v22@visitor.test'), 'taken', 'an hour later it takes requests again');
   PERFORM pg_temp.as_owner();
 END $$;
@@ -504,7 +505,7 @@ BEGIN
   FOR i IN 1..(200 - n) LOOP
     INSERT INTO public.leads (firm_id, name, email, source) VALUES (pg_temp.id('acme'), 'Bulk ' || i, 'bulk' || i || '@visitor.test', 'firms_link');
   END LOOP;
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.request_contact('birch-benefits', 'One Too Many', 'toomany@visitor.test'), 'busy', 'the 201st in an hour');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE email = 'toomany@visitor.test'), 0, 'made no lead');
@@ -526,13 +527,20 @@ BEGIN
 END $$;
 
 -- ---------- 15. Who may call it ----------
--- Break caught: the function is open to PUBLIC or has no pinned search path, or is closed to the guest who is its whole point.
+-- Break caught: the function is open to PUBLIC, anon or a signed-in person (the captcha can be skipped by calling the database), or has no pinned search path, or is closed to the edge function.
 DO $$
 DECLARE r text;
 BEGIN
+  -- D-1673: only the contact-request function (the service role), after Turnstile has checked the visitor, may call it.
   FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-    PERFORM pg_temp.is(has_function_privilege(r, 'public.request_contact(text, text, text, text, text, text)', 'EXECUTE'), true, r || ' may ask');
+    PERFORM pg_temp.is(has_function_privilege(r, 'public.request_contact(text, text, text, text, text, text)', 'EXECUTE'), false, r || ' may not ask: the captcha cannot be skipped');
   END LOOP;
+  PERFORM pg_temp.is(has_function_privilege('service_role', 'public.request_contact(text, text, text, text, text, text)', 'EXECUTE'), true, 'the contact-request function may');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('acme-brokers', 'Skip Sam', 'sam@visitor.test')$q$), '42501: permission denied for function request_contact', 'a visitor calling the database directly is refused');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.request_contact('acme-brokers', 'Skip Sam', 'sam@visitor.test')$q$), '42501: permission denied for function request_contact', 'and so is a signed-in person');
+  PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT p.prosecdef FROM pg_proc p WHERE p.proname = 'request_contact'), true, 'it runs as its owner: the visitor has no grant on leads');
   PERFORM pg_temp.is((SELECT p.proconfig::text LIKE '%search_path%' FROM pg_proc p WHERE p.proname = 'request_contact'), true, 'its search path is pinned');
   PERFORM pg_temp.as_anon();
@@ -548,14 +556,14 @@ BEGIN
   ALTER TABLE public.leads DISABLE TRIGGER leads_guard;
   UPDATE public.leads SET created_at = now() - interval '23 hours' WHERE email = 'lou@visitor.test';
   ALTER TABLE public.leads ENABLE TRIGGER leads_guard;
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM pg_temp.is(public.request_contact('acme-brokers', 'Long Lou', 'lou@visitor.test'), 'taken', 'asked again after 23 hours');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE email = 'lou@visitor.test'), 1, 'is still the one lead');
   ALTER TABLE public.leads DISABLE TRIGGER leads_guard;
   UPDATE public.leads SET created_at = now() - interval '25 hours' WHERE email = 'lou@visitor.test';
   ALTER TABLE public.leads ENABLE TRIGGER leads_guard;
-  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.as_service();
   PERFORM public.request_contact('acme-brokers', 'Long Lou', 'lou@visitor.test');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*)::int FROM public.leads WHERE email = 'lou@visitor.test'), 2, 'after 25 hours it is a second lead');
@@ -566,6 +574,97 @@ END $$;
 DO $$
 BEGIN
   PERFORM pg_temp.is((SELECT count(*)::int FROM pg_proc p, aclexplode(p.proacl) a WHERE p.proname = 'request_contact' AND a.grantee = 0), 0, 'PUBLIC has no grant on it');
+END $$;
+
+-- ---------- 18. The owners are told, by email, in the same transaction (D-1670, D-1671) ----------
+-- Break caught: a visitor asks to be contacted and no owner ever hears of it until they happen to open Leads.
+DO $$
+DECLARE e public.outbox_events; l public.leads;
+BEGIN
+  PERFORM pg_temp.as_service();
+  PERFORM public.request_contact('acme-brokers', 'Alert Ann', 'ann@visitor.test', NULL, 'Ann Co', 'Call me.');
+  PERFORM pg_temp.as_owner();
+  SELECT * INTO l FROM public.leads WHERE email = 'ann@visitor.test';
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.outbox_events WHERE kind = 'lead_from_link' AND payload ->> 'lead_id' = l.id::text), 1, 'one email is queued for the lead');
+  SELECT * INTO e FROM public.outbox_events WHERE kind = 'lead_from_link' AND payload ->> 'lead_id' = l.id::text;
+  PERFORM pg_temp.is(e.firm_id, pg_temp.id('acme'), 'it belongs to the firm, not to an intake');
+  PERFORM pg_temp.is(e.session_id, NULL::uuid, 'and has no intake');
+END $$;
+
+-- ---------- 19. What the email carries (D-1671) ----------
+-- Break caught: the email's payload picks up the visitor's email, phone or message (it would sit in an outbox row and in an inbox), or loses the lead's id (no link to the lead).
+DO $$
+DECLARE e public.outbox_events; l public.leads;
+BEGIN
+  SELECT * INTO l FROM public.leads WHERE email = 'ann@visitor.test';
+  SELECT * INTO e FROM public.outbox_events WHERE kind = 'lead_from_link' AND payload ->> 'lead_id' = l.id::text;
+  PERFORM pg_temp.is((SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e.payload) k), 'business,firm_name,lead_id,requested_at,visitor_name', 'only the visitor''s name, business, the firm''s name, the lead and when');
+  PERFORM pg_temp.is(e.payload ->> 'visitor_name', 'Alert Ann', 'the name');
+  PERFORM pg_temp.is(e.payload ->> 'business', 'Ann Co', 'the business');
+  PERFORM pg_temp.is(e.payload ->> 'firm_name', 'Acme Brokers', 'the firm''s name');
+  PERFORM pg_temp.is(e.dedupe_key, 'lead_from_link:' || l.id, 'deduplicated by the lead''s key');
+  PERFORM pg_temp.is(e.payload ->> 'requested_at' ~ '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$', true, 'when, in UTC');
+  PERFORM pg_temp.is(e.payload::text LIKE '%ann@visitor.test%' OR e.payload::text LIKE '%Call me%', false, 'no contact detail or message');
+END $$;
+
+-- ---------- 20. An ask that makes no lead tells nobody (D-1672) ----------
+-- Break caught: the same email pressed twice (told "taken") or a request past the hour's limit (told "busy") emails the owners again, so a script can flood their inboxes though the Leads table is capped.
+DO $$
+DECLARE before_n int; r text;
+BEGIN
+  SELECT count(*)::int INTO before_n FROM public.outbox_events WHERE kind = 'lead_from_link';
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(public.request_contact('acme-brokers', 'Alert Ann', 'ann@visitor.test'), 'taken', 'asked again');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.outbox_events WHERE kind = 'lead_from_link'), before_n, 'asking again emails nobody');
+  -- Fill the firm's hour (20 links' worth), then one more.
+  INSERT INTO public.firms (name, address, approved_at) VALUES ('Cedar Benefits', 'cedar-benefits', now());
+  INSERT INTO public.leads (firm_id, name, email, source) SELECT (SELECT id FROM public.firms WHERE address = 'cedar-benefits'), 'Filler ' || g, 'f' || g || '@filler.test', 'firms_link' FROM generate_series(1, 20) g;
+  SELECT count(*)::int INTO before_n FROM public.outbox_events WHERE kind = 'lead_from_link';
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(public.request_contact('cedar-benefits', 'Late Lee', 'lee@visitor.test'), 'busy', 'past the hour''s limit');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*)::int FROM public.outbox_events WHERE kind = 'lead_from_link'), before_n, 'a busy answer emails nobody');
+  DELETE FROM public.leads WHERE email LIKE '%@filler.test';
+END $$;
+
+-- ---------- 21. It is a firm's alert, like export_alert (D-1670) ----------
+-- Break caught: the email is not a firm's alert, so it is sent while the firm is suspended, a bounce suppresses an owner's address, or it is not ended when the firm closes.
+DO $$
+BEGIN
+  PERFORM pg_temp.is(public.outbox_kind_is_firm_alert('lead_from_link'), true, 'the alert is a firm''s alert');
+  PERFORM pg_temp.is(public.outbox_kind_is_firm_alert('export_alert') AND public.outbox_kind_is_firm_alert('member_left') AND public.outbox_kind_is_firm_alert('firm_closing')
+    AND public.outbox_kind_is_firm_alert('advisor_notification') AND public.outbox_kind_is_firm_alert('peo_mail_arrived'), true, 'the older firm alerts still are');
+  PERFORM pg_temp.is(public.outbox_kind_is_firm_alert('prospect_confirmation') OR public.outbox_kind_is_firm_alert('information_request')
+    OR public.outbox_kind_is_firm_alert('draft_expiry_reminder') OR public.outbox_kind_is_firm_alert('conversation_message') OR public.outbox_kind_is_firm_alert('peo_message'), false, 'and the others are not');
+END $$;
+
+-- ---------- 22. It waits while the firm is suspended, and is sent once it is lifted (D-1670) ----------
+-- Break caught: the owners' alert goes out while Nevermore holds the firm suspended (the dispatcher claims it), or is lost for good.
+DO $$
+DECLARE n int; acme uuid := pg_temp.id('acme');
+BEGIN
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_suspend_firm(acme, 'testing the alert');
+  PERFORM pg_temp.as_service();
+  SELECT count(*)::int INTO n FROM public.claim_outbox_events(ARRAY['lead_from_link'], 500, 5, 600) c WHERE c.firm_id = acme;
+  PERFORM pg_temp.is(n, 0, 'nothing of a suspended firm is claimed');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM public.admin_lift_firm_suspension(acme);
+  PERFORM pg_temp.as_service();
+  SELECT count(*)::int INTO n FROM public.claim_outbox_events(ARRAY['lead_from_link'], 500, 5, 600) c WHERE c.firm_id = acme;
+  PERFORM pg_temp.is(n > 0, true, 'once lifted the waiting alerts are claimed');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- 23. It is about a firm and no intake ----------
+-- Break caught: the kind is queued about an intake or about nothing (the dispatcher could not find the owners to tell).
+DO $$
+DECLARE intake uuid := pg_temp.intake('Link Intake Co', 'acme');
+BEGIN
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload) VALUES ('lead_from_link', %L, 'x', '{}')$q$, intake)) LIKE '23514:%', true, 'not about an intake');
+  PERFORM pg_temp.is(pg_temp.refusal($q$INSERT INTO public.outbox_events (kind, dedupe_key, payload) VALUES ('lead_from_link', 'y', '{}')$q$) LIKE '23514:%', true, 'nor about no firm');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.outbox_events (kind, firm_id, dedupe_key, payload) VALUES ('lead_from_link', %L, 'z', '{}')$q$, pg_temp.id('acme'))), 'rows:1', 'about a firm it is accepted');
 END $$;
 
 SELECT 'request_contact: all passed';

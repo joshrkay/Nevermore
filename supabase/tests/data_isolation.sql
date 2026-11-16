@@ -244,6 +244,7 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 SET client_min_messages = notice;
 
@@ -1366,8 +1367,6 @@ INSERT INTO callable VALUES
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
-  ('request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)', 'anyone', NULL,
-                                                                     'a visitor on a firm''s public link asks to be contacted (CRM-L1.2b): makes one lead of the firm the ADDRESS names, never one the caller names; capped per firm and overall, a repeat email is the same ask (supabase/tests/request_contact.sql)'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
   ('is_source_code(p_code text)',              'anyone',  NULL, 'pure: whether a referral or campaign code is well formed; the intake source check constraints call it as the writer'),
   ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
@@ -4543,7 +4542,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),
   ('admin_ops_summary', 'platform_wide', 'counts of the platform''s own monitoring events by kind, source and code, for platform admins; no firm''s row and no id'),
   ('report_client_event', 'platform_wide', 'a browser failure report from anyone, kept in the platform''s monitoring; keeps only an intake the caller owns or is a firm member of (4h)'),
-  ('request_contact', 'platform_wide', 'a visitor on a firm''s public link asks to be contacted: callable by anyone, signed out included, and writes one lead of the firm the address names; no firm is chosen by the caller and nothing of a firm is read back (CRM-L1.2b, supabase/tests/request_contact.sql)'),
+  ('request_contact', 'platform_wide', 'a visitor on a firm''s public link asks to be contacted: callable only by the contact-request edge function as the service role, after Turnstile has checked the visitor (D-1673, amending D-1662), and writes one lead of the firm the address names and one email to its owners; no firm is chosen by the caller and nothing of a firm is read back (CRM-L1.2b, supabase/tests/request_contact.sql)'),
   ('archive_chamber_session', 'own', 'the prospect''s Start over, on their own intake'),
   ('record_intake_consent', 'own', 'the caller''s own agreement'),
   ('prospect_final_manuscript', 'own', 'the prospect''s own final Manuscript'),
@@ -5046,7 +5045,7 @@ BEGIN
   -- firm_public_name is on the list on purpose (CRM-P1.3a): it is the one thing a firm address shows before sign-in: a firm's name, and nothing else (D-27).
   -- firm_takes_intakes (P-2.1) is the other: whether a firm's link takes intakes, a yes or no.
   WHERE p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');
-  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), firm_takes_intakes(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid), request_contact(p_address text, p_name text, p_email text, p_phone text, p_business text, p_message text)' THEN
+  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), firm_takes_intakes(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
     RAISE EXCEPTION 'FAIL: SECURITY DEFINER functions signed-out callers can run changed: %', missing;
   END IF;
 

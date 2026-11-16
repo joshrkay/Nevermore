@@ -1,7 +1,7 @@
 // Pure helpers for scripts/supabase-setup.mjs: parsing, validation, the SQL it runs and how it
 // reads the results. No I/O, so they are unit-tested (scripts/supabase-setup-lib.test.ts).
 
-export const FUNCTIONS = ["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "invite-member", "send-mail", "bundle-link", "message-file", "purge-intakes", "ops-monitor"];
+export const FUNCTIONS = ["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "invite-member", "send-mail", "bundle-link", "message-file", "purge-intakes", "ops-monitor", "contact-request"];
 
 /** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
 export const MALWARE_SCANNERS = ["scanii", "clamav", "http", "none"];
@@ -88,6 +88,12 @@ export function checkSecrets(env) {
   // Sending works without it, so it is not one of the email secrets; only the bounces are lost.
   if (set("RESEND_API_KEY") && !set("RESEND_WEBHOOK_SECRET")) {
     warnings.push("Bounces and spam complaints are not processed until RESEND_WEBHOOK_SECRET is set: the signing secret of a Resend webhook pointed at the resend-webhook function (docs/NOTIFICATIONS.md)");
+  }
+
+  // The 'contact me' form on a firm's link is never open without Turnstile's check (slice 8.7b): with no secret the contact-request function refuses everyone, and so does the form
+  // with no site key. Not an error: the rest of the product works.
+  if (!set("TURNSTILE_SECRET_KEY")) {
+    warnings.push("The 'contact me' form on a firm's link refuses everyone until TURNSTILE_SECRET_KEY is set (a Cloudflare Turnstile widget's secret key), with its site key as VITE_TURNSTILE_SITE_KEY in the app's build (docs/SUPABASE_SETUP.md)");
   }
 
   // The environment (ADR 0002): unset is production. A misspelt one would be read as production by the functions, so
@@ -639,8 +645,11 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     const p = seen.functions?.[fn];
     // A 401 with our own {"error":"Unauthorized"} body proves the function deployed and started:
     // the gateway answers 404 for a missing function and 5xx for one that can't boot.
-    const ok = !!p && p.status === 401 && p.ourError === true;
-    add(`Function ${fn}`, ok, p ? `answered ${p.status}${p.ourError ? " from the function itself" : ""}` : "not probed");
+    // contact-request is public (a visitor signs in nowhere): an empty request gets its own 400, or its own 503 while it is switched off for want of the Turnstile secret, which is a to-do.
+    const isPublic = fn === "contact-request";
+    const ok = !!p && p.ourError === true && p.status === (isPublic ? 400 : 401);
+    const switchedOff = isPublic && !!p && p.ourError === true && p.status === 503;
+    add(`Function ${fn}`, ok, p ? `answered ${p.status}${p.ourError ? " from the function itself" : ""}${switchedOff ? ": TURNSTILE_SECRET_KEY is not set, so the 'contact me' form refuses everyone" : ""}` : "not probed", !switchedOff);
   }
 
   // Only when the secrets file has a key to try: a refused key breaks every email, so it fails the setup (QA H5).

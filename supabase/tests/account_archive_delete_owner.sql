@@ -189,6 +189,7 @@
 \i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 SET client_min_messages = notice;
 
