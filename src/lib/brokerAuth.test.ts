@@ -40,6 +40,12 @@ describe("where a broker goes after signing in", () => {
     }
   });
 
+  // Catches: a broker who connects their mailbox from the inbox's banner (CRM-E1.4) landing on the queue instead of back in the inbox, with its view.
+  it("keeps the inbox, with its query", () => {
+    for (const kept of ["/inbox", "/inbox?view=new", "/inbox?view=sent&q=reyes"]) expect(brokerNext(kept), kept).toBe(kept);
+    for (const bad of ["/inboxx", "/inbox/1", "/inbox/../advisor", "/inbox?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+  });
+
   // Catches: a broker who signs in again for an Accounts export (or on an expired session) landing on the queue with the filters gone (D-223).
   it("keeps the Accounts page and an account's page, with their query", () => {
     for (const kept of [

@@ -173,6 +173,7 @@
 \i supabase/migrations/20261122130000_conversation_replies.sql
 \i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
 SET client_min_messages = notice;
 
 SET client_min_messages = notice;
