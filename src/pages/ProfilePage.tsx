@@ -13,6 +13,7 @@ import { motion } from "framer-motion";
 import LegalLinks from "@/components/LegalLinks";
 import DraftReminderToggle from "@/components/DraftReminderToggle";
 import SignOutButton from "@/components/SignOutButton";
+import MyPacketRecipients from "@/components/MyPacketRecipients";
 
 const ProfilePage = () => {
   const { user } = useAuth();
@@ -198,6 +199,11 @@ const ProfilePage = () => {
                   another browser) is offered the sign-in that gets to the setting. */}
               <div className="pt-4 border-t border-border">
                 <DraftReminderToggle id="profile-draft-reminders" offerSignIn />
+              </div>
+
+              {/* M-1.1, D-608: which PEOs may receive each certified packet; each change is saved as it is made. */}
+              <div className="pt-4 border-t border-border">
+                <MyPacketRecipients />
               </div>
             </CardContent>
           </Card>

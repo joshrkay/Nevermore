@@ -20,6 +20,8 @@ import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import { reportFailure } from "@/lib/monitoring";
 import VerifyEmailGate from "./VerifyEmailGate";
+import PacketRecipients from "@/components/PacketRecipients";
+import { PEO_AUTHORIZATION_QUESTION } from "@/data/legalWording";
 
 interface ReckoningTabProps {
   data: ChamberData;
@@ -242,6 +244,12 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
             <Link to={manuscriptUrl} className="underline">View your packet</Link>
           </div>
         )}
+        {/* M-1.1, D-608: once certified, which PEOs may receive the packet; none is allowed, and then nothing is sent. */}
+        {certification.status === "certified" && !needsRecertify && !peoChanged && !submitted && sessionId && (
+          <div className="border border-border rounded-xl p-4">
+            <PacketRecipients sessionId={sessionId} heading={PEO_AUTHORIZATION_QUESTION} />
+          </div>
+        )}
         {peoChanged && !needsRecertify && !submitted && (
           <div role="status" className="border border-primary/40 bg-primary/5 rounded-xl p-4 text-sm">
             {certifiedPeo ? `You certified for ${certifiedPeo}` : "You certified before choosing a PEO"}, and you've since
@@ -446,6 +454,11 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                   If you change any of your information later, you'll need to certify it again.
                 </p>
               </motion.div>
+              {sessionId && (
+                <div className="bg-card border border-border rounded-xl p-6 text-left mb-6">
+                  <PacketRecipients sessionId={sessionId} heading={PEO_AUTHORIZATION_QUESTION} />
+                </div>
+              )}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
