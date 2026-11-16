@@ -9,6 +9,7 @@ import { WorkspaceContext, type Workspace } from "@/components/workspace/workspa
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { toast } from "sonner";
 import { allStatuses, expectStatusesOutsideBusy, spoken } from "@/test/loading";
+import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
 
 // The opportunity's page through a faked client (story CRM-O1.1b, screen 19): what a person sees and does. The database's own rules (who may see an opportunity,
 // who may change it, the version, the stage) are tested in supabase/tests/opportunity_page.sql; here the client answers and the page draws it.
@@ -48,7 +49,7 @@ const workspace = (over: Partial<Workspace> = {}): Workspace => ({
 
 const opportunity = {
   id: "o1", version: 4, accountId: "a1", ownerId: "u1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1",
-  expectedClose: "2026-12-12", value: 7100 as number | null, source: "Referral" as string | null, nextStep: "Send PEO B the loss run" as string | null, submissionId: "i1" as string | null,
+  expectedClose: "2026-12-12", value: 7100 as number | null, source: "Referral" as string | null, referralPartner: null as { code: string; name: string } | null, nextStep: "Send PEO B the loss run" as string | null, submissionId: "i1" as string | null,
   createdAt: "2026-10-21T10:00:00+00:00", updatedAt: "2026-11-11T10:00:00+00:00", stage: "in_market" as Page["opportunity"]["stage"],
 };
 const intake = {
@@ -735,6 +736,14 @@ describe("OpportunityPage: the details", () => {
     expect(value("Owner")).toHaveTextContent("Dana Reyes");
   });
 
+  // Catches: a referral shown as a bare "Referral" so the partner that sent it is lost (D-439), or a partner shown for a source that is not Referral.
+  it("shows a referral as 'Referral · <partner>' when a partner is named, and the source alone otherwise", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({}, { referralPartner: { code: "harbor", name: "Harbor Brokers" } }));
+    renderPage();
+    await screen.findByRole("region", { name: "Details" });
+    expect(value("Source")).toHaveTextContent("Referral · Harbor Brokers");
+  });
+
   // Catches: an empty detail drawn as a blank, "null" or "0", or an opportunity with no owner drawn with a stale owner name.
   it("says Not provided for what is empty, and that there is no owner", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ owner: null }, { targetStart: null, employees: null, expectedClose: null, value: null, source: null, nextStep: null, ownerId: null }));
@@ -751,7 +760,7 @@ describe("OpportunityPage: the details", () => {
     };
     const saved = (over: object = {}) => ({
       conflict: false as const,
-      opportunity: { id: "o1", version: 5, accountId: "a1", ownerId: "u1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1", expectedClose: "2026-12-12", value: 7100, source: "Referral", nextStep: "Send PEO B the loss run", submissionId: "i1", createdAt: opportunity.createdAt, updatedAt: "2026-11-14T10:00:00+00:00", ...over },
+      opportunity: { id: "o1", version: 5, accountId: "a1", ownerId: "u1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1", expectedClose: "2026-12-12", value: 7100, source: "Referral", referralPartner: null, nextStep: "Send PEO B the loss run", submissionId: "i1", createdAt: opportunity.createdAt, updatedAt: "2026-11-14T10:00:00+00:00", ...over },
     });
 
     // Catches: Edit shown to someone the level rule refuses (D-422, D-209) or on an archived account (D-432), or missing for someone it serves.
@@ -828,10 +837,63 @@ describe("OpportunityPage: the details", () => {
       client.updateOpportunity.mockRejectedValue(new OpportunityError("notAllowed", "Only the opportunity's owner, a lead of the owner's team or an owner of the firm can change it.", "42501"));
       renderPage();
       const user = await open();
-      await user.type(screen.getByLabelText("Source"), "!");
+      await user.selectOptions(screen.getByLabelText("Source"), "Inbound");
       await user.click(screen.getByRole("button", { name: "Save" }));
       expect(await screen.findByText("Only the opportunity's owner, a lead of the owner's team or an owner of the firm can change it.")).toBeInTheDocument();
-      expect(screen.getByLabelText("Source")).toHaveValue("Referral!");
+      expect(screen.getByLabelText("Source")).toHaveValue("Inbound");
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    // Catches: Source left as free text (D-439), so a value off the list is typed and refused late; or the list in another order or without "No source" to clear it.
+    it("offers No source and the fixed list of sources, with the present one chosen", async () => {
+      renderPage();
+      await open();
+      const source = screen.getByLabelText("Source");
+      expect(source.tagName).toBe("SELECT");
+      expect(within(source).getAllByRole("option").map((o) => o.textContent)).toEqual(["No source", ...OPPORTUNITY_SOURCES]);
+      expect(source).toHaveValue("Referral");
+    });
+
+    // Catches: a legacy source (one saved before the list) dropped from the box, so the box shows "No source" and a save clears it; or one that cannot be saved as it is (the database accepts it unchanged).
+    it("keeps a legacy source as an option, labelled as it is, and saves it unchanged", async () => {
+      client.getOpportunityPage.mockResolvedValue(page({}, { source: "Trade show" }));
+      client.updateOpportunity.mockResolvedValue(saved({ source: "Trade show", nextStep: "Call Elena" }));
+      renderPage();
+      const user = await open();
+      const source = screen.getByLabelText("Source");
+      expect(within(source).getAllByRole("option").map((o) => o.textContent)).toEqual(["No source", ...OPPORTUNITY_SOURCES, "Trade show"]);
+      expect(source).toHaveValue("Trade show");
+      // Trying another source does not take the legacy one away.
+      await user.selectOptions(source, "Event");
+      expect(within(source).getByRole("option", { name: "Trade show" })).toBeInTheDocument();
+      await user.selectOptions(source, "Trade show");
+      await user.clear(screen.getByLabelText("Next step"));
+      await user.type(screen.getByLabelText("Next step"), "Call Elena");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(client.updateOpportunity).toHaveBeenCalledTimes(1));
+      expect(client.updateOpportunity.mock.calls[0][2]).toMatchObject({ source: "Trade show" });
+    });
+
+    // Catches: an opportunity with no source drawn with a stray option, or No source sent as anything but a blank (the database clears it).
+    it("sends No source as a blank", async () => {
+      client.updateOpportunity.mockResolvedValue(saved({ source: null }));
+      renderPage();
+      const user = await open();
+      await user.selectOptions(screen.getByLabelText("Source"), "");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(client.updateOpportunity).toHaveBeenCalledTimes(1));
+      expect(client.updateOpportunity.mock.calls[0][2]).toMatchObject({ source: "" });
+    });
+
+    // Catches: the database's "Choose a source from the list." (22023) lost or shown as a failure to retry, or what was chosen lost with it (the same way as the other refusals here).
+    it("shows the database's refusal of a source in its own words and keeps what was chosen", async () => {
+      client.updateOpportunity.mockRejectedValue(new OpportunityError("invalid", "Choose a source from the list.", "22023"));
+      renderPage();
+      const user = await open();
+      await user.selectOptions(screen.getByLabelText("Source"), "Event");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(await screen.findByText("Choose a source from the list.")).toBeInTheDocument();
+      expect(screen.getByLabelText("Source")).toHaveValue("Event");
       expect(toast.success).not.toHaveBeenCalled();
     });
 
@@ -862,7 +924,7 @@ describe("OpportunityPage: the details", () => {
       renderPage();
       const user = await open();
       expect(screen.getByLabelText("Owner")).toHaveValue("");
-      await user.type(screen.getByLabelText("Source"), "!");
+      await user.selectOptions(screen.getByLabelText("Source"), "Inbound");
       await user.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(client.updateOpportunity).toHaveBeenCalledTimes(1));
       expect(client.updateOpportunity.mock.calls[0][2]).toMatchObject({ ownerId: null });
@@ -897,7 +959,7 @@ describe("OpportunityPage: the details", () => {
         renderPage();
         const user = await open();
         await waitFor(() => expect(listFirmMembers).toHaveBeenCalled());
-        await user.type(screen.getByLabelText("Source"), "!");
+        await user.selectOptions(screen.getByLabelText("Source"), "Inbound");
         await user.click(screen.getByRole("button", { name: "Save" }));
         const dialog = await screen.findByRole("alertdialog");
         const rows = within(dialog).getAllByRole("row").slice(1).map((r) => r.textContent);
@@ -916,14 +978,14 @@ describe("OpportunityPage: the details", () => {
         client.updateOpportunity.mockResolvedValueOnce(conflict).mockResolvedValueOnce(saved({ version: 7 }));
         renderPage();
         const user = await open();
-        await user.type(screen.getByLabelText("Source"), "!");
+        await user.selectOptions(screen.getByLabelText("Source"), "Inbound");
         await user.click(screen.getByRole("button", { name: "Save" }));
         await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep mine" }));
         await waitFor(() => expect(client.updateOpportunity).toHaveBeenCalledTimes(2));
         expect(client.updateOpportunity.mock.calls[1][3]).toBe(6);
-        // Mine (the source) with their change kept to every field I left alone: the target start, the value and the owner.
+        // Mine (the source, now Inbound) with their change kept to every field I left alone: the target start, the value and the owner.
         expect(client.updateOpportunity.mock.calls[1][2]).toEqual({
-          name: "January 2027 PEO search", targetStart: "2027-02-01", employees: 45, mainContactId: "c1", expectedClose: "2026-12-12", value: 9000, source: "Referral!",
+          name: "January 2027 PEO search", targetStart: "2027-02-01", employees: 45, mainContactId: "c1", expectedClose: "2026-12-12", value: 9000, source: "Inbound",
           nextStep: "Send PEO B the loss run", ownerId: "u2",
         });
       });
@@ -948,7 +1010,7 @@ describe("OpportunityPage: the owner and main contact boxes show what a save wil
     renderPage();
     await user.click(await screen.findByRole("button", { name: /^Edit the opportunity/ }));
     await waitFor(() => expect(listFirmMembers).toHaveBeenCalled());
-    await user.type(screen.getByLabelText("Source"), "!");
+    await user.selectOptions(screen.getByLabelText("Source"), "Inbound");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep theirs" }));
     await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveValue("u2"));
@@ -964,7 +1026,7 @@ describe("OpportunityPage: the owner and main contact boxes show what a save wil
     client.updateOpportunity.mockResolvedValueOnce(theirs);
     renderPage();
     await user.click(await screen.findByRole("button", { name: /^Edit the opportunity/ }));
-    await user.type(screen.getByLabelText("Source"), "!");
+    await user.selectOptions(screen.getByLabelText("Source"), "Inbound");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep theirs" }));
     await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveValue("u2"));

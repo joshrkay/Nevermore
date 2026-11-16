@@ -8,6 +8,7 @@ import { accountKey } from "@/components/accounts/useAccountQueries";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
 import { formatDay, NOT_GIVEN, STAGE_LABELS } from "@/data/accountPage";
 import { dollarsWords, editOf, formOfEditable, formOfOpportunity, opportunityFieldsSchema, type OpportunityForm } from "@/data/opportunityPage";
 import { listAccountOwners } from "@/lib/accountCreateApi";
@@ -134,6 +135,15 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
     return listed;
   }, [options.data, contactNow, page.mainContact]);
 
+  // The source choice: No source, the fixed list (D-439), and the opportunity's own source and the one the form holds when they are older values off the list, labelled with
+  // their own text so they can be kept as they are (and chosen again after trying another).
+  const sourceNow = api.form.watch("source") as string;
+  const sourceOptions = useMemo(() => {
+    const listed = OPPORTUNITY_SOURCES as readonly string[];
+    const extra = [opportunity.source ?? "", sourceNow].filter((v, i, all) => v !== "" && !listed.includes(v) && all.indexOf(v) === i);
+    return [...listed, ...extra];
+  }, [opportunity.source, sourceNow]);
+
   return (
     <section aria-labelledby="opportunity-details-heading" className="border border-border rounded-xl p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -159,7 +169,14 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
           </Field>
           <Field name="expected_close" label="Expected close">{(field) => <Input {...field} type="date" />}</Field>
           <Field name="value" label="Value" help="Dollars a year, like 7100.">{(field) => <Input {...field} inputMode="decimal" />}</Field>
-          <Field name="source" label="Source">{(field) => <Input {...field} />}</Field>
+          <Field name="source" label="Source">
+            {(field) => (
+              <SelectInput {...field}>
+                <option value="">No source</option>
+                {sourceOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+              </SelectInput>
+            )}
+          </Field>
           <Field name="next_step" label="Next step">{(field) => <Textarea {...field} rows={3} />}</Field>
           <Field name="owner_id" label="Owner">
             {(field) => (
@@ -178,7 +195,7 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
           <Row label="Employees"><Given value={opportunity.employees === null ? null : opportunity.employees.toLocaleString("en-US")} /></Row>
           <Row label="Expected close"><Given value={opportunity.expectedClose ? formatDay(opportunity.expectedClose) : null} /></Row>
           <Row label="Value"><Given value={opportunity.value === null ? null : `${dollarsWords(opportunity.value)} a year`} /></Row>
-          <Row label="Source"><Given value={opportunity.source} /></Row>
+          <Row label="Source"><Given value={opportunity.source === "Referral" && opportunity.referralPartner ? `Referral · ${opportunity.referralPartner.name}` : opportunity.source} /></Row>
           <Row label="Next step"><Given value={opportunity.nextStep} /></Row>
           <Row label="Owner"><Given value={owner?.name ?? null} /></Row>
         </dl>

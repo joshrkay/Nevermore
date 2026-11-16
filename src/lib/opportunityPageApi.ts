@@ -27,6 +27,8 @@ export interface OpportunityFields {
   /** What the opportunity is worth a year, in dollars. */
   value: number | null;
   source: string | null;
+  /** The firm's referral partner that sent it, when the source is Referral and one is named (D-439); null otherwise. Shown, never chosen on this page. */
+  referralPartner: { code: string; name: string } | null;
   nextStep: string | null;
   /** The intake (submission) the opportunity holds; null before one is started. */
   submissionId: string | null;
@@ -185,6 +187,8 @@ type FieldsRow = {
   id: string; version: number; account_id: string; owner_id: string | null; name: string; target_start: string | null; employees: number | null;
   main_contact_id: string | null; expected_close: string | null; value: number | null; source: string | null; next_step: string | null; submission_id: string | null;
   created_at: string; updated_at: string;
+  /** Missing in an older answer: read as none. */
+  referral_partner?: { code: string; name: string } | null;
 };
 type EditableRow = Pick<FieldsRow, "name" | "target_start" | "employees" | "main_contact_id" | "expected_close" | "value" | "source" | "next_step" | "owner_id">;
 
@@ -192,6 +196,7 @@ const fieldsShape = z.object({
   id: z.string().min(1), version: z.number().int().min(1), account_id: z.string().min(1), owner_id: nullableText, name: z.string(), target_start: nullableText,
   employees: nullableNumber, main_contact_id: nullableText, expected_close: nullableText, value: nullableNumber, source: nullableText, next_step: nullableText,
   submission_id: nullableText, created_at: z.string().min(1), updated_at: z.string().min(1),
+  referral_partner: z.object({ code: z.string(), name: z.string() }).nullish(),
 });
 const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
 const editableSchema = z.object({
@@ -239,8 +244,8 @@ const activityShape = z.union([changeSchema, quoteEventSchema, activityItemSchem
 
 const fieldsOf = (f: FieldsRow): OpportunityFields => ({
   id: f.id, version: f.version, accountId: f.account_id, ownerId: f.owner_id, name: f.name, targetStart: f.target_start, employees: f.employees,
-  mainContactId: f.main_contact_id, expectedClose: f.expected_close, value: f.value, source: f.source, nextStep: f.next_step, submissionId: f.submission_id,
-  createdAt: f.created_at, updatedAt: f.updated_at,
+  mainContactId: f.main_contact_id, expectedClose: f.expected_close, value: f.value, source: f.source, referralPartner: f.referral_partner ?? null, nextStep: f.next_step,
+  submissionId: f.submission_id, createdAt: f.created_at, updatedAt: f.updated_at,
 });
 
 const activityOf = (a: z.infer<typeof activityShape>): OpportunityActivityRow => {
