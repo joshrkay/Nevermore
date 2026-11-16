@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { Building2, RefreshCw, SearchX } from "lucide-react";
 import { accountsTableWords } from "@/data/accountsPage";
 import { countAccountsViews, exportColumnsFor, fetchAccountsPage, useAccountsTable } from "@/components/accounts/accountsTable";
+import { useNewQuoteAction } from "@/components/newquote/useNewQuoteAction";
 import { NewAccountDialog } from "@/components/accounts/NewAccountDialog";
 import { AccountMenu } from "@/components/accounts/AccountMenu";
 import { BulkChangeDialog, type BulkKind, type BulkMade } from "@/components/accounts/BulkChangeDialog";
@@ -52,6 +53,7 @@ const AccountsPage = () => {
   const workspace = useContext(WorkspaceContext);
   const [making, setMaking] = useState(false);
   const canMake = !!firmId && !workspace?.isSupport;
+  const newQuote = useNewQuoteAction();
 
   // Row actions only on the accounts the person may change (D-24, level rule D-209): the database says which of the page's rows. Until it has answered, and if it
   // fails, none is offered; the table asks again with Refresh and after an action.
@@ -153,14 +155,15 @@ const AccountsPage = () => {
   const views = <ViewTabs table={table} address={address} hrefFor={hrefFor} counts={counts} saved={savedViews} />;
 
   // Nothing yet, or nothing matches (CRM-S2.2): a bare address with no rows means the firm has no accounts; a narrowed one is worded to be true either way.
-  // The buttons the story names arrive with the stories that build them (New quote CRM-Q2.1, Import CRM-X4.1): none is shown that does nothing. New account is CRM-A1.2's.
+  // New quote (CRM-Q2.1) is the primary action and New account (CRM-A1.2) the second; Import (CRM-X4.1) arrives with its story: none is shown that does nothing.
   const empty = (a: typeof address, { focusTable }: { focusTable: () => void }) => {
     if (!isNarrowed(a)) {
       return (
         <NothingYet
           icon={<Building2 className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />}
           sentence={accountsTableWords.nothingYet}
-          primary={canMake ? { label: "New account", onClick: () => setMaking(true) } : undefined}
+          primary={canMake ? newQuote : undefined}
+          secondary={canMake ? <button type="button" onClick={() => setMaking(true)} className="text-sm text-primary underline hover:text-foreground">New account</button> : undefined}
         />
       );
     }

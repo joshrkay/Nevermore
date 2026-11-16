@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { emailProblemsBySession } from "@/data/outbox";
 import { listEmailProblems, type EmailProblem } from "@/lib/advisorApi";
 import { countQueueViews } from "@/lib/queueApi";
+import { useNewQuoteAction } from "@/components/newquote/useNewQuoteAction";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
   fetchQueuePage, NEW_PEO_MAIL_FILTER, useQueueTable, type QueueContext,
@@ -33,6 +34,7 @@ const AdvisorDashboardPage = () => {
   });
   const context: QueueContext = { problems: problemsQuery.data ?? NO_PROBLEMS };
   const location = useTableAddress(table);
+  const newQuote = useNewQuoteAction();
   const { address, hrefFor, change } = location;
   const data = useTableRows(table, address, fetchQueuePage);
   const counts = useTableViewCounts(table, address, countQueueViews);
@@ -85,11 +87,10 @@ const AdvisorDashboardPage = () => {
   // Empty (story CRM-S2.2). The rule that tells the two kinds apart: a bare address (no tab, search or filter) that comes back with no rows is NOTHING YET,
   // because the firm has no submissions to show; a narrowed one is NOTHING MATCHES. The queue does not know how many submissions the firm has without
   // narrowing (the tabs' numbers are counted under the search and filters on screen, D-137), so a narrowed empty is worded to be true either way
-  // ("No submissions match these filters") and never claims some exist. Nothing here offers to create a submission: a member cannot make one yet
-  // (New quote arrives with CRM-Q2.1), and a narrowed question is never answered with "make a new one".
+  // ("No submissions match these filters") and never claims some exist. Only the bare address offers New quote (CRM-Q2.1, D-160, the primary action), and a narrowed question is never answered with "make a new one".
   const empty = (a: typeof address, { focusTable }: { focusTable: () => void }) => {
     if (!isNarrowed(a)) {
-      return <NothingYet icon={<Inbox className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />} sentence="Submissions appear here once a prospect has started filling in an intake." />;
+      return <NothingYet icon={<Inbox className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />} sentence="Submissions appear here once a prospect has started filling in an intake." primary={newQuote} />;
     }
     // The Inbox alone (only "has new PEO mail" in force) has an exact thing to say that is true even if the firm has no submissions at all.
     const inboxOnly = !a.view && !a.search && a.filters.length === 1 && same(a.filters[0], NEW_PEO_MAIL_FILTER);

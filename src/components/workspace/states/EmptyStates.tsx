@@ -26,12 +26,14 @@ function SpokenOnce({ children, className }: { children: ReactNode; className?: 
 export interface EmptyAction {
   label: string;
   to?: string;
+  /** Router state a link carries (New quote carries the page it opens over). */
+  state?: unknown;
   onClick?: () => void;
 }
 
 const Action = ({ action, className }: { action: EmptyAction; className: string }) =>
   action.to !== undefined ? (
-    <Link to={action.to} onClick={action.onClick} className={className}>{action.label}</Link>
+    <Link to={action.to} state={action.state} onClick={action.onClick} className={className}>{action.label}</Link>
   ) : (
     <button type="button" onClick={action.onClick} className={className}>{action.label}</button>
   );
@@ -41,7 +43,7 @@ export type EmptyLayout = "block" | "line";
 
 /**
  * Nothing yet. `sentence` says what belongs here. `primary` is the one action that creates the first record, left out when a person cannot make one
- * yet (the queue: New quote arrives with CRM-Q2.1). `secondary` is a second action, import where import applies (CRM-X4.1 passes it; nothing does today).
+ * yet (never offered to Nevermore support, which cannot write; the queue and Accounts offer New quote, CRM-Q2.1). `secondary` is a second action, import where import applies (CRM-X4.1 passes it; nothing does today).
  */
 export function NothingYet({ sentence, primary, secondary, icon, layout = "block" }: { sentence: string; primary?: EmptyAction; secondary?: ReactNode; icon?: ReactNode; layout?: EmptyLayout }) {
   const line = layout === "line";

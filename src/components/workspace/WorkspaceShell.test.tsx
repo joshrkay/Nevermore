@@ -34,6 +34,7 @@ const Rewrites = () => {
   return <p>The page</p>;
 };
 const Search = () => <span data-testid="search">{useLocation().search}</span>;
+const OpenedFrom = () => <span data-testid="opened-from">{JSON.stringify((useLocation().state as { backgroundLocation?: { pathname: string; search: string } } | null)?.backgroundLocation ?? null)}</span>;
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
 const renderAt = async (at: string) => {
@@ -43,7 +44,7 @@ const renderAt = async (at: string) => {
         <Routes>
           <Route element={<WorkspaceShell />}>
             <Route path="/advisor/rewrites" element={<><Rewrites /><Search /></>} />
-            <Route path="*" element={<><p>The page</p><Search /></>} />
+            <Route path="*" element={<><p>The page</p><Search /><OpenedFrom /></>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -90,13 +91,27 @@ describe("the workspace menu", () => {
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   });
 
-  it("holds Quotes, Inbox, Leads, Accounts and Reports, then Settings, and none of the sections that aren't built yet", async () => {
+  // Catches: New quote missing from the menu (CRM-Q2.1: it is in the menu on every page), not first as the story's menu order has it, or Home (not built, CRM-H1) shown.
+  it("holds New quote first, then Quotes, Inbox, Leads, Accounts and Reports, then Settings, and not Home, which isn't built yet", async () => {
     await renderAt("/advisor");
-    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"]);
-    for (const name of ["New quote", "Home"]) {
-      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-    }
+    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["New quote", "Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["New quote", "Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"]);
+    expect(screen.queryByRole("link", { name: "Home" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
+  });
+
+  // Catches: New quote opening as a page of its own that forgets where the agent was (CRM-Q2.1, D-1709: it opens over the page the agent was on, and Save and close returns there).
+  it("opens New quote carrying the page and address the agent was on, so the flow is drawn over it", async () => {
+    await renderAt("/accounts?view=clients");
+    fireEvent.click(within(menu()).getByRole("link", { name: "New quote" }));
+    await settle();
+    expect(JSON.parse(screen.getByTestId("opened-from").textContent ?? "null")).toMatchObject({ pathname: "/accounts", search: "?view=clients" });
+  });
+
+  // Catches: the shell not drawing New quote at its own address (the menu link would open nothing), or drawing it without the steps of the flow.
+  it("draws New quote's dialog at its own address, beside the menu", async () => {
+    await renderAt("/new-quote");
+    const dialog = await screen.findByRole("dialog", { name: "New quote" });
+    expect(within(dialog).getByLabelText("Business name")).toBeInTheDocument();
   });
 
   it("makes each item a real link to where it opens until its own epic", async () => {

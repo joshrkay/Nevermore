@@ -54,6 +54,17 @@ describe("createAccount", () => {
     expect(account).toMatchObject({ id: "a9", version: 1, name: "Harborview Dental East", source: "added_by_hand", employees: 12, statesOfOperation: ["OR"] });
   });
 
+  // Catches: New quote's step 1 making the account Added by hand because the source is not sent (D-211, D-1760), or every other caller sending a source it never chose.
+  it("sends the source New quote when step 1 of New quote makes the account, and no source otherwise", async () => {
+    rpc.mockResolvedValue({ data: { ...made, source: "new_quote" }, error: null });
+    const account = await createAccount("f1", { ...input, source: "new_quote" });
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_source: "new_quote" });
+    expect(account.source).toBe("new_quote");
+    rpc.mockClear();
+    await createAccount("f1", input);
+    expect(rpc.mock.calls[0][1]).not.toHaveProperty("p_source");
+  });
+
   it("names no owner when none is chosen, so the maker is the owner", async () => {
     rpc.mockResolvedValue({ data: made, error: null });
     await createAccount("f1", { ...input, ownerId: null });

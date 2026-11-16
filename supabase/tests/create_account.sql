@@ -153,6 +153,47 @@
 \i supabase/migrations/20261119140000_account_page.sql
 \i supabase/migrations/20261119145000_account_tab.sql
 \i supabase/migrations/20261119150000_create_account.sql
+\i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119230000_search_everywhere.sql
+\i supabase/migrations/20261119240000_contact_page.sql
+\i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
+\i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -333,7 +374,8 @@ BEGIN
     patch ->> 'street', patch ->> 'city', patch ->> 'state', patch ->> 'postal_code', patch ->> 'industry', (patch ->> 'employees')::int,
     CASE WHEN patch ? 'states' THEN ARRAY(SELECT jsonb_array_elements_text(patch -> 'states')) ELSE '{}'::text[] END, patch ->> 'provider',
     CASE WHEN owner_name IS NULL THEN NULL ELSE pg_temp.id(owner_name) END,
-    CASE WHEN firm IS NULL THEN NULL ELSE pg_temp.id(firm) END);
+    CASE WHEN firm IS NULL THEN NULL ELSE pg_temp.id(firm) END,
+    COALESCE(patch ->> 'source', 'added_by_hand'));
   RESET ROLE;
   RETURN r;
 EXCEPTION WHEN OTHERS THEN
@@ -353,6 +395,19 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 
 CREATE FUNCTION pg_temp.accounts_in(firm text) RETURNS bigint LANGUAGE sql AS $$ SELECT count(*) FROM public.accounts WHERE firm_id = pg_temp.id(firm) $$;
+
+-- ---------- an account made by New quote ----------
+-- Break caught: New quote's step 1 cannot say where the account came from, so the account is Added by hand (D-211 said "later New quote").
+DO $$
+DECLARE r jsonb;
+BEGIN
+  r := pg_temp.make('acme_agent1', '{"name": "Quoted first", "source": "new_quote"}');
+  PERFORM pg_temp.is(r ->> 'source', 'new_quote', 'an account made by New quote has the source New quote');
+  PERFORM pg_temp.is((SELECT a.source FROM public.accounts a WHERE a.id = (r ->> 'id')::uuid), 'new_quote', 'and the table holds it');
+  PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"name": "Wrong source", "source": "lead"}') LIKE '22023:%', true, 'a source other than Added by hand or New quote is refused in words');
+  PERFORM pg_temp.is(pg_temp.make_refusal('acme_agent1', '{"name": "Wrong source", "source": "employer_intake"}') LIKE '22023:%', true, 'the employer''s intake is not a source a member may claim');
+  RAISE NOTICE 'create_account: new quote source passed';
+END $$;
 
 -- ---------- what it makes ----------
 -- Break caught: the account is not made in the firm the person acts for, its owner is not its maker (D-214), its source is anything but Added by hand (D-211),
