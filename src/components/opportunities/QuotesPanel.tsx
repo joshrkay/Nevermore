@@ -3,6 +3,7 @@ import { EmptyLine, ListPanel, Pill, Rows, type Column } from "@/components/acco
 import { submissionPath } from "@/components/accounts/accountColumns";
 import { PanelFailed, PlaceholderLine } from "@/components/workspace/states";
 import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
+import { quoteCloseWords } from "@/data/opportunityClose";
 import { adminFeeWords, quoteStatusWords } from "@/data/opportunityPage";
 import type { OpportunityPage, OpportunityQuote } from "@/lib/opportunityPageApi";
 import { useStillNeeds } from "./useStillNeeds";
@@ -15,13 +16,24 @@ const muted = (words: string) => <span className="text-muted-foreground">{words}
 const notYet = muted("Not yet");
 const linkClass = "text-primary underline underline-offset-2 hover:text-primary/90";
 
-export function QuotesPanel({ firmId, page }: { firmId: string; page: OpportunityPage }) {
+export function QuotesPanel({ firmId, page, closeReasons = {} }: {
+  firmId: string;
+  page: OpportunityPage;
+  /** By quote request id: why a closed quote closed (D-424, CRM-O1.3b). Empty until it is read. */
+  closeReasons?: Readonly<Record<number, string | null>>;
+}) {
   const { quotes, intake } = page;
   const needs = useStillNeeds(firmId, intake?.submissionId ?? null, quotes.length > 0);
   const day = today();
   const columns: Column<OpportunityQuote>[] = [
     { header: "PEO", cell: (q) => (intake ? <Link to={submissionPath(intake.submissionId)} className={linkClass}>{q.peoName}</Link> : q.peoName) },
-    { header: "Status", cell: (q) => <Pill>{quoteStatusWords(q.status, quoteStatusLabel(q.status), q.sentOn, day)}</Pill> },
+    {
+      header: "Status",
+      cell: (q) => {
+        const why = q.status === "closed" ? quoteCloseWords(closeReasons[q.id] ?? null) : null;
+        return <><Pill>{quoteStatusWords(q.status, quoteStatusLabel(q.status), q.sentOn, day)}</Pill>{why && <span className="ml-2 text-xs text-muted-foreground">{why}</span>}</>;
+      },
+    },
     { header: "Sent", cell: (q) => (q.sentOn ? formatDay(q.sentOn) : notYet), className: "whitespace-nowrap" },
     { header: "Admin fee", cell: (q) => (q.adminFeePepm !== null ? adminFeeWords(q.adminFeePepm) : notYet) },
     { header: "Expires", cell: (q) => (q.quoteExpiresOn ? formatDay(q.quoteExpiresOn) : notYet), className: "whitespace-nowrap" },

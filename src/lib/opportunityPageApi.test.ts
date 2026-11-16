@@ -1,9 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
-vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
+// A read of a table: every step of the chain answers itself, and awaiting it (or maybeSingle) gives the table's answer.
+const tables: Record<string, { data: unknown; error: unknown }> = {};
+const reads: { table: string; calls: [string, unknown[]][] }[] = [];
+const from = (table: string) => {
+  const entry = { table, calls: [] as [string, unknown[]][] };
+  reads.push(entry);
+  const answer = () => tables[table] ?? { data: null, error: null };
+  const chain: Record<string, unknown> = {
+    then: (resolve: (v: unknown) => unknown) => Promise.resolve(answer()).then(resolve),
+    maybeSingle: () => Promise.resolve(answer()),
+  };
+  for (const m of ["select", "eq", "order", "in"]) chain[m] = (...a: unknown[]) => (entry.calls.push([m, a]), chain);
+  return chain;
+};
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a), from: (t: string) => from(t) } }));
 
-const { getOpportunityPage, listOpportunityActivity, updateOpportunity, OpportunityError } = await import("./opportunityPageApi");
+const {
+  getOpportunityPage, listOpportunityActivity, updateOpportunity, OpportunityError, markOpportunityWon, markOpportunityLost, reopenOpportunity, recordCommissionPayment,
+  getOpportunityOutcome, getOpportunityOfSubmission, getFirmName,
+} = await import("./opportunityPageApi");
 type OpportunityEdit = import("./opportunityPageApi").OpportunityEdit;
 
 // What the opportunity's page asks the database (CRM-O1.1a: opportunity_page, opportunity_activity, update_opportunity). The database decides the rules; these
@@ -200,5 +217,188 @@ describe("updateOpportunity", () => {
   it("is a failure when the answer is neither a save nor a conflict", async () => {
     rpc.mockResolvedValue({ data: { conflict: false }, error: null });
     expect(await caught(() => updateOpportunity("f1", "o1", edit, 4))).toBeInstanceOf(OpportunityError);
+  });
+});
+
+
+describe("closing an opportunity (CRM-O1.3b: opportunity_mark_won, opportunity_mark_lost, opportunity_reopen)", () => {
+  const win = { quoteRequestId: 12, startDate: "2027-01-01", renewalDate: "2028-01-01", brokerOfRecord: "Acme Benefits", commission: { basis: "share" as const, rate: 20, expectedYearly: 12744 } };
+  const wonAnswer = { conflict: false, record: { id: "o1", stage: "won", version: 5, quote_request_id: 12 } };
+
+  // Catches: the quote, a date, the broker or the commission sent under the wrong parameter, or the version (D-46) left out.
+  it("marks won with the quote, the placement's dates and broker, the commission, the firm and the version the person started from", async () => {
+    rpc.mockResolvedValue({ data: wonAnswer, error: null });
+    const done = await markOpportunityWon("f1", "o1", win, 4);
+    expect(rpc).toHaveBeenCalledWith("opportunity_mark_won", {
+      p_opportunity_id: "o1", p_quote_request_id: 12, p_start_date: "2027-01-01", p_renewal_date: "2028-01-01", p_broker_of_record: "Acme Benefits", p_firm_id: "f1", p_version: 4,
+      p_commission_basis: "share", p_commission_rate: 20, p_commission_expected_yearly: 12744,
+    });
+    expect(done).toEqual({ conflict: false, stage: "won", version: 5 });
+  });
+
+  // Catches: a commission the person did not give sent as zeros, which the database would refuse or keep (D-466: optional).
+  it("sends no commission when none was given", async () => {
+    rpc.mockResolvedValue({ data: wonAnswer, error: null });
+    await markOpportunityWon("f1", "o1", { ...win, commission: null }, 4);
+    expect(rpc).toHaveBeenCalledWith("opportunity_mark_won", expect.objectContaining({ p_commission_basis: null, p_commission_rate: null, p_commission_expected_yearly: null }));
+  });
+
+  // Catches: the reason and the note sent in the wrong order or without the version (D-468).
+  it("marks lost with the reason, the note, the firm and the version", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "o1", stage: "lost", version: 5, lost_reason: "other", lost_note: "Closed" } }, error: null });
+    const done = await markOpportunityLost("f1", "o1", { reason: "other", note: "Closed" }, 4);
+    expect(rpc).toHaveBeenCalledWith("opportunity_mark_lost", { p_opportunity_id: "o1", p_reason: "other", p_note: "Closed", p_firm_id: "f1", p_version: 4 });
+    expect(done).toEqual({ conflict: false, stage: "lost", version: 5 });
+  });
+
+  // Catches: a blank note sent as text, which the database would keep as a note for a reason that needs none.
+  it("sends a blank note as none", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "o1", stage: "lost", version: 5, lost_reason: "price", lost_note: null } }, error: null });
+    await markOpportunityLost("f1", "o1", { reason: "price", note: "  " }, 4);
+    expect(rpc).toHaveBeenCalledWith("opportunity_mark_lost", expect.objectContaining({ p_note: null }));
+  });
+
+  // Catches: a reopen that does not carry the version, so it could undo an outcome someone else already changed (D-469).
+  it("reopens from the version the person started from", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false, record: { id: "o1", stage: "quoted", version: 6 } }, error: null });
+    const done = await reopenOpportunity("f1", "o1", 5);
+    expect(rpc).toHaveBeenCalledWith("opportunity_reopen", { p_opportunity_id: "o1", p_firm_id: "f1", p_version: 5 });
+    expect(done).toEqual({ conflict: false, stage: "quoted", version: 6 });
+  });
+
+  // Catches: a stale close treated as done, or the person left without who changed what (D-46).
+  it("answers a stale close with the stage now and who changed what, not as a failure", async () => {
+    const changed = [{ field: "lost_reason", value: "price", who: "marcus@x.example", at: "2026-11-12T10:00:00+00:00" }];
+    rpc.mockResolvedValue({ data: { conflict: true, currentVersion: 6, current: { stage: "lost" }, changed }, error: null });
+    expect(await markOpportunityWon("f1", "o1", win, 4)).toEqual({ conflict: true, currentVersion: 6, stage: "lost", changed });
+    expect(await reopenOpportunity("f1", "o1", 4)).toMatchObject({ conflict: true, currentVersion: 6 });
+  });
+
+  // Catches: the reopen refusals (PT409: renewal being worked, payments to delete first) said as a failed connection instead of in the database's words (D-469).
+  it("says each refusal in the database's own words, the reopen's PT409 included", async () => {
+    for (const [code, kind] of [["22023", "invalid"], ["42501", "notAllowed"], ["PT409", "invalid"], ["PT423", "readOnly"], ["55000", "readOnly"], ["PT404", "notFound"]] as const) {
+      rpc.mockResolvedValue({ data: null, error: { code, message: "Delete its payments first" } });
+      const e = (await caught(() => reopenOpportunity("f1", "o1", 4))) as InstanceType<typeof OpportunityError>;
+      expect(e.kind).toBe(kind);
+      if (code !== "PT404") expect(e.message).toBe("Delete its payments first");
+    }
+  });
+
+  // Catches: an answer that is not the agreed shape taken for a success.
+  it("is a failure when the answer is not the agreed shape", async () => {
+    rpc.mockResolvedValue({ data: { conflict: false }, error: null });
+    expect(await caught(() => markOpportunityLost("f1", "o1", { reason: "price", note: "" }, 4))).toBeInstanceOf(OpportunityError);
+  });
+});
+
+describe("recordCommissionPayment (CRM-O1.3a: record_commission_payment, D-467)", () => {
+  // Catches: the day, the amount or the note sent under the wrong parameter; the answer's totals read as text.
+  it("sends the day, amount and note against the placement and answers what is received to date", async () => {
+    rpc.mockResolvedValue({
+      data: { payment: { id: "p1", placement_id: "pl1", received_on: "2027-02-10", amount: 1500, note: "First", version: 1 }, received_to_date: 1500, expected_yearly: 12744 }, error: null,
+    });
+    const got = await recordCommissionPayment("f1", "pl1", { receivedOn: "2027-02-10", amount: 1500, note: "First" });
+    expect(rpc).toHaveBeenCalledWith("record_commission_payment", { p_placement_id: "pl1", p_received_on: "2027-02-10", p_amount: 1500, p_note: "First", p_firm_id: "f1" });
+    expect(got).toEqual({ receivedToDate: 1500, expectedYearly: 12744 });
+  });
+
+  // Catches: a refusal (an archived account, a level rule) said as a failed connection.
+  it("says a refusal in the database's words", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Only the opportunity's owner can record commission." } });
+    const e = (await caught(() => recordCommissionPayment("f1", "pl1", { receivedOn: "2027-02-10", amount: 1, note: "" }))) as InstanceType<typeof OpportunityError>;
+    expect(e).toMatchObject({ kind: "notAllowed", message: "Only the opportunity's owner can record commission." });
+  });
+});
+
+describe("getOpportunityOutcome (D-467, D-472, D-424: read from the tables the firm's row security shows)", () => {
+  beforeEach(() => {
+    reads.length = 0;
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+
+  // Catches: the banner missing the placement's PEO, start, broker or commission, the renewal's date, the payments to date, or a quote's close reason.
+  it("reads the lost reason, the placement with its renewal and payments, and each quote's close reason and proposed start", async () => {
+    tables.opportunities = { data: { lost_reason: null, lost_note: null }, error: null };
+    tables.placements = {
+      data: { id: "pl1", peo_name: "PEO B", start_date: "2027-01-01", broker_of_record: "Acme Benefits", ended_on: null, commission_basis: "share", commission_rate: "20.00", commission_expected_yearly: "12744.00", version: 2 },
+      error: null,
+    };
+    tables.renewals = { data: { renews_on: "2028-01-01" }, error: null };
+    tables.commission_payments = { data: [{ id: "p1", received_on: "2027-02-10", amount: "1500.00", note: null, version: 1 }, { id: "p2", received_on: "2027-03-10", amount: 500, note: "Second", version: 1 }], error: null };
+    tables.quote_requests = { data: [{ id: 12, close_reason: null, proposed_start_on: "2027-01-01" }, { id: 13, close_reason: "went_elsewhere", proposed_start_on: null }], error: null };
+    const got = await getOpportunityOutcome("f1", "o1", "i1");
+    expect(got).toEqual({
+      lostReason: null, lostNote: null,
+      placement: {
+        id: "pl1", peoName: "PEO B", startDate: "2027-01-01", brokerOfRecord: "Acme Benefits", endedOn: null, renewsOn: "2028-01-01",
+        commission: { basis: "share", rate: 20, expectedYearly: 12744 }, version: 2,
+      },
+      payments: [{ id: "p1", receivedOn: "2027-02-10", amount: 1500, note: null, version: 1 }, { id: "p2", receivedOn: "2027-03-10", amount: 500, note: "Second", version: 1 }],
+      receivedToDate: 2000,
+      quotes: { 12: { closeReason: null, proposedStart: "2027-01-01" }, 13: { closeReason: "went_elsewhere", proposedStart: null } },
+    });
+    expect(reads.find((r) => r.table === "placements")?.calls).toContainEqual(["eq", ["opportunity_id", "o1"]]);
+    expect(reads.find((r) => r.table === "quote_requests")?.calls).toContainEqual(["eq", ["session_id", "i1"]]);
+  });
+
+  // Catches: a banner that fails for a win with no commission or a loss with no placement.
+  it("has no placement and no payments for an opportunity that is not won, and reads the lost reason", async () => {
+    tables.opportunities = { data: { lost_reason: "other", lost_note: "Closed the practice" }, error: null };
+    tables.placements = { data: null, error: null };
+    tables.quote_requests = { data: [], error: null };
+    const got = await getOpportunityOutcome("f1", "o1", null);
+    expect(got).toMatchObject({ lostReason: "other", lostNote: "Closed the practice", placement: null, payments: [], receivedToDate: 0, quotes: {} });
+  });
+
+  // Catches: a failed read taken for "no outcome", which would show a won opportunity with no banner.
+  it("is a failure when a table cannot be read", async () => {
+    tables.opportunities = { data: null, error: { code: "XX000", message: "boom" } };
+    expect(await caught(() => getOpportunityOutcome("f1", "o1", null))).toBeInstanceOf(OpportunityError);
+  });
+});
+
+describe("getOpportunityOfSubmission (D-470: the console finds the opportunity a submission belongs to)", () => {
+  beforeEach(() => {
+    reads.length = 0;
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+  // Catches: the console opening a dialog for another opportunity, or for one when the submission has none.
+  it("finds the opportunity that holds the submission, with its firm, or none", async () => {
+    tables.opportunities = { data: { id: "o1", firm_id: "f1" }, error: null };
+    expect(await getOpportunityOfSubmission("i1")).toEqual({ id: "o1", firmId: "f1" });
+    expect(reads[0].calls).toContainEqual(["eq", ["intake_id", "i1"]]);
+    tables.opportunities = { data: null, error: null };
+    expect(await getOpportunityOfSubmission("i1")).toBeNull();
+  });
+  // Catches: a read that fails hiding the console's status control: it is "no opportunity", and the database still refuses a win on one it can't see.
+  it("is none when the read fails", async () => {
+    tables.opportunities = { data: null, error: { code: "XX000", message: "boom" } };
+    expect(await getOpportunityOfSubmission("i1")).toBeNull();
+  });
+});
+
+describe("getFirmName (D-465: the broker of record is offered as the firm's name)", () => {
+  beforeEach(() => {
+    reads.length = 0;
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+  // Catches: the broker offered as another firm's name or an id; and a failed read stopping the dialog (the field is then left for the person to fill in).
+  it("reads the firm's own name, and is empty when it cannot", async () => {
+    tables.firms = { data: { name: "Acme Benefits" }, error: null };
+    expect(await getFirmName("f1")).toBe("Acme Benefits");
+    expect(reads[0].calls).toContainEqual(["eq", ["id", "f1"]]);
+    tables.firms = { data: null, error: { code: "XX000", message: "boom" } };
+    expect(await getFirmName("f1")).toBe("");
+  });
+});
+
+describe("getOpportunityOfSubmission: what is not an opportunity", () => {
+  beforeEach(() => {
+    reads.length = 0;
+  });
+  // Catches: a row with no id (another table's answer) taken for an opportunity.
+  it("is none for a row that is not an opportunity", async () => {
+    tables.opportunities = { data: { status: "quoted" }, error: null };
+    expect(await getOpportunityOfSubmission("i1")).toBeNull();
   });
 });
