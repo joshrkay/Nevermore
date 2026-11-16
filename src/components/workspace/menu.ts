@@ -32,6 +32,8 @@ export interface MenuItem {
  */
 export const INBOX_PARAM = { name: "mail", value: "new" } as const;
 
+/** The quotes table (CRM-Q4.1, D-1707): where the menu's Quotes opens. The queue (`/advisor`) stays, reached from its "Submissions" link, until it is retired. */
+export const QUOTES_PATH = "/quotes";
 const QUEUE = "/advisor";
 const isQueue = (pathname: string) => pathname === QUEUE;
 
@@ -62,11 +64,11 @@ export const MENU_ITEMS: MenuItem[] = [
   {
     key: "quotes",
     label: "Quotes",
-    to: QUEUE,
+    to: QUOTES_PATH,
     icon: FileText,
     countKey: "quotes",
     countWords: (n) => `${n} open`,
-    isCurrent: (pathname) => isQueue(pathname) || pathname.startsWith("/advisor/submissions/"),
+    isCurrent: (pathname) => pathname === QUOTES_PATH || pathname.startsWith(`${QUOTES_PATH}/`) || isQueue(pathname) || pathname.startsWith("/advisor/submissions/"),
   },
   // The inbox (CRM-E1.4): every message on the threads the person may see. Its number is the threads with new mail, PEO threads and conversations (D-695).
   { key: "inbox", label: "Inbox", to: INBOX_PATH, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: (pathname) => pathname === INBOX_PATH },
