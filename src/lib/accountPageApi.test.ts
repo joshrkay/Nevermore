@@ -88,7 +88,7 @@ describe("getAccountPage", () => {
       id: "a1", version: 3, name: "Harborview Dental Group", tradeName: "Harborview Dental", website: "https://www.harborviewdental.example", webDomain: "harborviewdental.example",
       phone: "(503) 555-0140", street: "410 SW Alder St", city: "Portland", state: "OR", postalCode: "97204", industry: "Dental practice", employees: 45,
       statesOfOperation: ["OR", "WA"], currentProvider: "Payroll vendor", source: "employer_intake", archivedAt: null, createdAt: "2026-10-28T10:00:00+00:00",
-      updatedAt: "2026-11-01T10:00:00+00:00", status: "prospect", owner: { id: "u1", name: "Dana Reyes" }, sourcePartner: "Kline CPA",
+      updatedAt: "2026-11-01T10:00:00+00:00", status: "prospect", owner: { id: "u1", name: "Dana Reyes" }, sourcePartner: "Kline CPA", possibleDuplicateOf: null,
     });
     expect(got.canChange).toBe(true);
     expect(got.tabs.contacts).toEqual({
@@ -124,6 +124,14 @@ describe("getAccountPage", () => {
     expect(got.account.owner).toBeNull();
     expect(got.account.sourcePartner).toBeNull();
     expect(got.account.status).toBe("client");
+  });
+
+  // Catches: the mark dropped on the way (the banner never shows), or an account the person may not see read as one with a name.
+  it("reads the possible-duplicate mark: the account it names, or only that one exists", async () => {
+    rpc.mockResolvedValue({ data: { ...page, account: { ...page.account, possible_duplicate_of: { id: "a9", name: "Harborview Dental" } } }, error: null });
+    expect((await getAccountPage("f1", "a1"))?.account.possibleDuplicateOf).toEqual({ id: "a9", name: "Harborview Dental" });
+    rpc.mockResolvedValue({ data: { ...page, account: { ...page.account, possible_duplicate_of: { id: null, name: null } } }, error: null });
+    expect((await getAccountPage("f1", "a1"))?.account.possibleDuplicateOf).toEqual({ id: null, name: null });
   });
 
   it("says when the person may not change the account, so the screen shows no Edit", async () => {

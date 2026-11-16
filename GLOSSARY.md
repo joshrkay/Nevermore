@@ -713,6 +713,14 @@ _Avoid_: combine, dedupe
 Taking the **Possible duplicate** mark off an account: the person has decided the two accounts are different businesses. Nothing is merged and nothing else changes; the account's history shows the mark taken off. Whoever may change the account may.
 _Avoid_: dismiss, ignore
 
+**Merge dialog** (story CRM-S4.3a, D-665 to D-667):
+The screen where a person merges two accounts or two contacts of one account: both records side by side, one choice for each field that differs (each starts on what the database would do for a field left alone), what will happen in words, and the warning that a merge can't be split again. It shows the database's reason instead of the button when the person may not merge them.
+_Avoid_: merge wizard, conflict screen
+
+**Possible duplicate banner** (story CRM-S4.3a, D-661):
+The note at the top of an account marked **Possible duplicate**, naming the other account, with Merge and **Keep separate** for whoever may change the account.
+_Avoid_: duplicate warning (that is what New account and Add a contact say while typing)
+
 **Merged-into address** (table `merged_records`, code: `resolve_merged_record`; story CRM-S4.3b, D-203):
 What the database keeps of a record that was merged away: which record it became (an account or a contact, by id, with the name it had). The removed record's old address leads to the kept record, also when that one is merged later, for a person who may see the kept record; for anyone else it leads nowhere, as a record that does not exist.
 _Avoid_: redirect, tombstone

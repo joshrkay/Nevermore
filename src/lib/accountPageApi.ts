@@ -54,6 +54,11 @@ export interface AccountDetails extends AccountFields {
   owner: { id: string; name: string } | null;
   /** The referral partner whose link the account's first intake came by, read from the intake. */
   sourcePartner: string | null;
+  /**
+   * The possible-duplicate mark (D-193, CRM-S4.3a): null when the account carries none; `{id, name}` of the account it may duplicate; `{id: null, name: null}` when that
+   * account is not the person's to see (the mark is still told, so "Keep separate" can be offered, but there is nothing to open or merge with).
+   */
+  possibleDuplicateOf?: { id: string | null; name: string | null } | null;
 }
 
 export interface ContactRow {
@@ -254,6 +259,7 @@ const detailsSchema = fieldsShape.extend({
   status: z.enum(["prospect", "client", "former_client"]),
   owner: z.object({ id: z.string().min(1), name: z.string() }).nullable(),
   source_partner: nullableText,
+  possible_duplicate_of: z.object({ id: nullableText, name: nullableText }).nullish(),
 });
 
 const editableSchema: z.ZodType<EditableRow> = z.object({
@@ -390,7 +396,7 @@ export async function getAccountPage(firmId: string, accountId: string): Promise
   if (!parsed.success) throw new AccountError("failed", FALLBACK);
   const { account, can_change: canChange, tabs } = parsed.data;
   return {
-    account: { ...fieldsOf(account as FieldsRow), status: account.status, owner: account.owner as { id: string; name: string } | null, sourcePartner: account.source_partner },
+    account: { ...fieldsOf(account as FieldsRow), status: account.status, owner: account.owner as { id: string; name: string } | null, sourcePartner: account.source_partner, possibleDuplicateOf: (account.possible_duplicate_of ?? null) as AccountDetails["possibleDuplicateOf"] },
     canChange,
     tabs: {
       contacts: { count: tabs.contacts.count, rows: tabs.contacts.rows.map(contactOf) },
