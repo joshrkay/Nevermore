@@ -9,7 +9,6 @@ import {
   partnerKindLabel,
   partnerLink,
   DEFAULT_FIRM_ID,
-  referralLinksWork,
   REFERRAL_PARTNER_KIND_LABELS,
   REFERRAL_PARTNER_KINDS,
   sourceRows,
@@ -36,6 +35,11 @@ describe("partners", () => {
 
   it("gives each partner a link to the front page with their code", () => {
     expect(partnerLink("acme-cfo")).toBe("https://nevermorepeo.com/?ref=acme-cfo");
+  });
+
+  // Break caught: every firm's partners are given the bare domain's link, so an intake from it files in the default firm (D-1704, D-101).
+  it("gives a partner of another firm a link at that firm's address, where the intake starts for that firm", () => {
+    expect(partnerLink("acme-cfo", { id: "00000000-0000-4000-8000-00000000eaa2", address: "beta-brokers" })).toBe("https://beta-brokers.nevermorepeo.com/?ref=acme-cfo");
   });
 });
 
@@ -106,14 +110,9 @@ describe("sourceRows", () => {
   });
 });
 
-describe("which firm's links reach it (D-101)", () => {
+describe("the default firm (D-101, D-121)", () => {
   it("names the default firm the database does", () => {
     const sql = readFileSync("supabase/migrations/20261116090000_firms.sql", "utf8");
     expect(/default_firm_id\(\)[\s\S]*?SELECT '([0-9a-f-]{36})'::uuid/.exec(sql)?.[1]).toBe(DEFAULT_FIRM_ID);
-  });
-
-  it("works for the default firm only", () => {
-    expect(referralLinksWork(DEFAULT_FIRM_ID)).toBe(true);
-    expect(referralLinksWork("00000000-0000-4000-8000-00000000eaa2")).toBe(false);
   });
 });

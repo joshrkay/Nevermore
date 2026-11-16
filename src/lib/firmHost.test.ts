@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom } from "./firmHost";
+import { firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom, getAQuoteUrl } from "./firmHost";
 
 // A firm address is <address>.<the site's domain> (story CRM-P1.3a, D-17). The app reads the firm from the host it
 // is served on; the database, never this, decides who gets in (D-18).
@@ -48,6 +48,15 @@ describe("the web address of a firm", () => {
     expect(firmUrl("acme-brokers")).toBe("https://acme-brokers.nevermorepeo.com");
     expect(firmUrl("  Acme-Brokers ")).toBe("https://acme-brokers.nevermorepeo.com");
     expect(firmUrl("acme", "example.org")).toBe("https://acme.example.org");
+  });
+});
+
+describe("the address that starts an intake for a firm (P-2.1, D-1713)", () => {
+  // Break caught: the "Get a quote" link points at the bare domain's /start, so the intake is filed in the default firm.
+  it("is the intake's start at the firm's own address, so the database files the intake there", () => {
+    expect(getAQuoteUrl("acme-brokers")).toBe("https://acme-brokers.nevermorepeo.com/start");
+    expect(getAQuoteUrl("  Acme-Brokers ")).toBe("https://acme-brokers.nevermorepeo.com/start");
+    expect(getAQuoteUrl("acme", "example.org")).toBe("https://acme.example.org/start");
   });
 });
 

@@ -1403,6 +1403,11 @@ export type Database = {
         Args: { p_address: string }
         Returns: string | null
       }
+      // Whether the link at a firm address takes intakes now (20261123110000).
+      firm_takes_intakes: {
+        Args: { p_address: string }
+        Returns: boolean
+      }
       // Signing up a firm and its approval (20261116170000).
       sign_up_firm: {
         Args: { p_name: string; p_address: string }

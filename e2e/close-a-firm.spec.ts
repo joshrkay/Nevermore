@@ -116,9 +116,9 @@ test("an owner asks to close the firm, a member sees the banner and can't change
     const bytes = await readFile(await download.path());
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const lines = bytes.toString("utf8").replace(/^\uFEFF/, "").split("\r\n");
-    // The columns the page shows (this firm has no link to show, so its code), under the page's own headings.
-    expect(lines[0]).toBe('Partner,Their code,"Started, 30 days","Certified, 30 days"');
-    expect(lines[1]).toBe("First Partners,first-partners,0,0");
+    // The columns the page shows (each partner's link, at the firm's own address, D-1704), under the page's own headings.
+    expect(lines[0]).toBe('Partner,Their link,"Started, 30 days","Certified, 30 days"');
+    expect(lines[1]).toBe(`First Partners,https://${FIRM}.nevermorepeo.com/?ref=first-partners,0,0`);
     expect(lines).toHaveLength(3);
     await expect(memberPage.getByText("Exported 1 referral partner.")).toBeVisible();
     const entry = await withDb((client) => client.query(

@@ -1074,6 +1074,7 @@ $$;
 \i supabase/migrations/20261122180000_peo_update.sql
 \i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
 \i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261123110000_firm_link.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

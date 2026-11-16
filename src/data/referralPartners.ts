@@ -4,6 +4,7 @@
 // (migration 20261106100000).
 
 import { SITE_ORIGIN } from "./site";
+import { firmUrl } from "@/lib/firmHost";
 import { cleanSourceCode, type IntakeSource } from "./intakeSource";
 import { FUNNEL_STEPS, type FunnelStep } from "./funnel";
 
@@ -37,17 +38,19 @@ export const partnerKindLabel = (kind: string) => (isReferralPartnerKind(kind) ?
 /** The longest partner name the database keeps. */
 export const PARTNER_NAME_MAX = 120;
 
-/** The link a partner shares: the site's front page with their code. */
-export const partnerLink = (code: string) => `${SITE_ORIGIN}/?ref=${encodeURIComponent(code)}`;
-
 /**
- * The firm every intake a browser starts belongs to (D-101): the one `default_firm_id()` returns (migration 20261116090000_firms.sql).
- * Starting an intake for another firm arrives with New quote (Epic 5).
+ * The default firm: the one `default_firm_id()` returns (migration 20261116090000_firms.sql), whose intakes are the ones started with no firm
+ * link (D-121).
  */
 export const DEFAULT_FIRM_ID = "00000000-0000-4000-8000-00000000eaa1";
 
-/** Whether a link carrying this firm's partner code reaches the firm: until intakes can start for other firms, only the default firm's does (D-101). */
-export const referralLinksWork = (firmId: string) => firmId === DEFAULT_FIRM_ID;
+/**
+ * The link a partner shares: their code on the address that starts an intake for the firm (D-1704, D-1743). A partner of any firm but the default
+ * one is given the firm's own address, which is what makes the intake the firm's; the default firm's stays the site's front page, where the
+ * links already out carry on working and an intake with no firm link belongs to it (D-121). With no firm given it is the front page's.
+ */
+export const partnerLink = (code: string, firm?: { id: string; address: string }) =>
+  `${firm && firm.id !== DEFAULT_FIRM_ID ? firmUrl(firm.address) : SITE_ORIGIN}/?ref=${encodeURIComponent(code)}`;
 
 /** A code to offer for a new partner, from its name: "Acme CFO Partners" gives "acme-cfo-partners". */
 export const suggestPartnerCode = (name: string) => cleanSourceCode(name) ?? "";

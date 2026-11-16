@@ -12,6 +12,17 @@ export async function fetchFirmName(address: string): Promise<string | null> {
 }
 
 /**
+ * Whether the link at this address takes new intakes now (P-2.1, D-1741): false for an address no firm holds and for a firm that is refused, suspended,
+ * closing or closed. A yes or no for anyone, signed in or not, and nothing about the firm. Only chooses what to show: the database refuses an intake started
+ * at a link that takes none, whatever the page says.
+ */
+export async function fetchFirmTakesIntakes(address: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("firm_takes_intakes", { p_address: address });
+  if (error) throw new Error("Couldn't check this link.");
+  return data === true;
+}
+
+/**
  * Whether the firm at this address is suspended and the signed-in caller is a current member of it (story CRM-P1.8). The
  * database answers true to no one else, so a stranger learns nothing. Only chooses what to show; the database refuses the
  * firm's data to a member of a suspended firm anyway.
