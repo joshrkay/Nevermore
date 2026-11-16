@@ -56,6 +56,8 @@ describe("createOpportunity", () => {
       p_value: 7100, p_source: "Referral", p_referral_partner_code: "acme-cfo", p_next_step: "Ask Elena.", p_owner_id: "u1", p_firm_id: "f1",
     });
   });
+  // Catches: a blank sent as an empty string or as the word typed (a date the database cannot read, a source "" it would take as a source, an owner it would look
+  // for), instead of nothing, which makes the maker the owner.
   it("sends nothing for what was left blank", async () => {
     rpc.mockResolvedValue({ data: { record: { id: "o1", version: 1, stage: "qualifying" } }, error: null });
     await createOpportunity("f1", "a1", { ...input, targetStart: "", expectedClose: "", employees: null, value: null, source: "", mainContactId: null, referralPartnerCode: null, ownerId: null });

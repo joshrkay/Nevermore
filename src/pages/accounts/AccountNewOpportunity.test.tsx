@@ -80,13 +80,13 @@ describe("New opportunity on an account's page", () => {
     expect(within(panel).getByRole("button", { name: "New opportunity" })).toBeInTheDocument();
   });
 
-  // Catches: a button where the database will refuse every write (a Nevermore support session, ADR 0024) or where nothing can be added (an archived account, D-222):
-  // no button that does nothing (D-24).
-  it("offers none to Nevermore support or on an archived account", async () => {
+  // Catches: a button where the database will refuse every write (a Nevermore support session, ADR 0024): no button that does nothing (D-24).
+  it("offers none to Nevermore support", async () => {
     renderPage("/accounts/a1", workspace({ isSupport: true }));
     await screen.findByRole("heading", { level: 1, name: "Harborview Dental Group" });
     expect(screen.queryByRole("button", { name: "New opportunity" })).toBeNull();
   });
+  // Catches: a button where nothing can be added (an archived account, D-222): no button that does nothing (D-24).
   it("offers none on an archived account", async () => {
     client.getAccountPage.mockResolvedValue(page({ account: { ...account, archivedAt: "2026-11-01T00:00:00+00:00" } }));
     renderPage();

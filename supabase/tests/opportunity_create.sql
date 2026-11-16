@@ -551,6 +551,64 @@ BEGIN
     1::bigint, 'and its history says the partner went');
 END $$;
 
+-- ---------- the source and the partner after the making: the CHECK and the save (D-439) ----------
+-- Break caught: a referral partner can sit on an opportunity whose source is not Referral (a direct write, or a save that changes the source and leaves the
+-- partner); a save takes any word as the new source; a save refuses an older free-text source that was left as it was (an old opportunity could then never be
+-- saved again); a save that moves the source off Referral keeps the partner, or the history does not say the partner went; the page's fields do not say which
+-- partner it is ("Referral · <partner>", D-439).
+CREATE FUNCTION pg_temp.save_opp(who text, opp uuid, p jsonb DEFAULT '{}') RETURNS text LANGUAGE plpgsql AS $$
+DECLARE o public.opportunities;
+BEGIN
+  SELECT * INTO o FROM public.opportunities WHERE id = opp;
+  RETURN pg_temp.as_call(who, pg_temp.addr(who), format(
+    'SELECT public.update_opportunity(%L::uuid, %L::text, %L::date, %L::integer, %L::uuid, %L::date, %L::numeric, %L::text, %L::text, %L::uuid, %L::uuid, %L::integer)::text',
+    o.id, CASE WHEN p ? 'name' THEN p ->> 'name' ELSE o.name END, o.target_start, o.employees, o.main_contact_id, o.expected_close, o.value,
+    CASE WHEN p ? 'source' THEN p ->> 'source' ELSE o.source END, o.next_step, NULL, pg_temp.firm_of(who), o.version));
+END $$;
+
+DO $$
+DECLARE r jsonb; oid uuid; legacy uuid; hmax bigint; j jsonb;
+BEGIN
+  r := pg_temp.create_opp('acme_agent1', 'a1', '{"source":"Referral","partner":"acme-cfo"}')::jsonb;
+  oid := (r -> 'record' ->> 'id')::uuid;
+  -- the CHECK refuses a direct write
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.opportunities SET source = 'Inbound' WHERE id = %L$q$, oid)), '23514', 'the partner stays only with the source Referral: a direct change of source');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$UPDATE public.opportunities SET source = NULL WHERE id = %L$q$, oid)), '23514', 'and with no source');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, source, referral_partner_code) VALUES (%L, %L, 'Direct', 'Inbound', 'acme-cfo')$q$, pg_temp.id('acme'), pg_temp.id('a1'))), '23514', 'a direct insert');
+  PERFORM pg_temp.is(pg_temp.attempt(format($q$INSERT INTO public.opportunities (firm_id, account_id, name, source, referral_partner_code) VALUES (%L, %L, 'Direct', 'Referral', 'acme-cfo')$q$, pg_temp.id('acme'), pg_temp.id('a1'))), 'rows:1', 'a Referral with a partner is fine');
+  INSERT INTO public.opportunities (firm_id, account_id, owner_id, name, source) VALUES (pg_temp.id('acme'), pg_temp.id('a1'), pg_temp.id('acme_agent1'), 'Legacy', 'Trade show') RETURNING id INTO legacy;
+  -- the page's fields name the partner
+  PERFORM pg_temp.is(public.crm_opportunity_fields((SELECT o FROM public.opportunities o WHERE o.id = oid)) -> 'referral_partner',
+    jsonb_build_object('code', 'acme-cfo', 'name', 'Acme''s CFO friend'), 'the fields name the partner, by code and name');
+  PERFORM pg_temp.is(r -> 'record' -> 'referral_partner', jsonb_build_object('code', 'acme-cfo', 'name', 'Acme''s CFO friend'), 'and so does what the making answers');
+  PERFORM pg_temp.is(public.crm_opportunity_fields((SELECT o FROM public.opportunities o WHERE o.id = legacy)) -> 'referral_partner', 'null'::jsonb, 'an opportunity with none says null');
+  -- an unknown new source is refused, and nothing is saved
+  PERFORM pg_temp.is(pg_temp.save_opp('acme_agent1', oid, '{"source":"Cold call"}'), '22023: Choose a source from the list.', 'a save takes no word that is not on the list');
+  PERFORM pg_temp.is(pg_temp.save_opp('acme_agent1', oid, '{"source":"inbound"}'), '22023: Choose a source from the list.', 'the list''s words are exact on a save too');
+  PERFORM pg_temp.is((SELECT source || '/' || version FROM public.opportunities WHERE id = oid), 'Referral/1', 'and nothing was saved');
+  -- a source left as it was is accepted even when it is not on the list
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save_opp('acme_agent1', legacy, '{"name":"Legacy renamed"}')), 'ok', 'an unchanged older source still saves');
+  PERFORM pg_temp.is((SELECT source || '/' || version FROM public.opportunities WHERE id = legacy), 'Trade show/2', 'and is kept');
+  PERFORM pg_temp.is(pg_temp.code(pg_temp.save_opp('acme_agent1', legacy, '{"source":"Event"}')), 'ok', 'it can move to one on the list');
+  PERFORM pg_temp.is(pg_temp.save_opp('acme_agent1', legacy, '{"source":"Webinar"}'), '22023: Choose a source from the list.', 'but not to another that is off it');
+  -- Referral -> Inbound clears the partner, in the one update, and the history says so
+  hmax := (SELECT COALESCE(max(h.id), 0) FROM public.record_history h);
+  j := pg_temp.save_opp('acme_agent1', oid, '{"source":"Inbound"}')::jsonb;
+  PERFORM pg_temp.is(j ->> 'conflict', 'false', 'the save is made');
+  PERFORM pg_temp.is(j -> 'record' ->> 'source', 'Inbound', 'the source moved');
+  PERFORM pg_temp.is(j -> 'record' -> 'referral_partner', 'null'::jsonb, 'the answer has no partner');
+  PERFORM pg_temp.is((SELECT referral_partner_code FROM public.opportunities WHERE id = oid), NULL::text, 'and none is kept');
+  PERFORM pg_temp.is((SELECT string_agg(h.field, ',' ORDER BY h.field) FROM public.record_history h WHERE h.id > hmax AND h.table_name = 'opportunities' AND h.record_key = oid::text),
+    'referral_partner_code,source', 'the history has the source and the partner going');
+  PERFORM pg_temp.is((SELECT h.old_value FROM public.record_history h WHERE h.id > hmax AND h.record_key = oid::text AND h.field = 'referral_partner_code'), '"acme-cfo"'::jsonb, 'and which partner it was');
+  PERFORM pg_temp.is((SELECT count(*) FROM jsonb_array_elements(public.record_version_changes(pg_temp.id('acme'), 'opportunities', oid::text, 1, 2)) c WHERE c ->> 'field' = 'referral_partner_code'), 1::bigint, 'the version shows it');
+  -- a Referral that stays a Referral keeps its partner
+  r := pg_temp.create_opp('acme_agent1', 'a1', '{"source":"Referral","partner":"acme-cfo"}')::jsonb;
+  PERFORM pg_temp.save_opp('acme_agent1', (r -> 'record' ->> 'id')::uuid);
+  PERFORM pg_temp.is((SELECT referral_partner_code FROM public.opportunities WHERE id = (r -> 'record' ->> 'id')::uuid), 'acme-cfo', 'a save that leaves the source Referral keeps the partner');
+  RAISE NOTICE 'opportunity_create: source and partner on a save passed';
+END $$;
+
 -- ---------- the main contact (D-438) ----------
 -- Break caught: a contact of another account (or another firm) is taken as the main contact; one of the account is refused.
 DO $$

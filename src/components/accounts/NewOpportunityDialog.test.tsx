@@ -17,6 +17,9 @@ vi.mock("@/lib/opportunityCreateApi", async () => {
 const { NewOpportunityDialog } = await import("./NewOpportunityDialog");
 const { OpportunityError } = await import("@/lib/opportunityCreateApi");
 
+// The words of opportunity_create's owner rule (20261120130000), the one 42501 that is about the Owner field.
+const OWNER_RULE_MESSAGE = "You can make an opportunity only for yourself and, as a lead, for people on your teams.";
+
 const context = (over: Record<string, unknown> = {}) => ({
   account: { id: "a1", name: "Harborview Dental Group", archived: false, employees: 45 },
   mainContact: { id: "c1", name: "Elena Marsh" },
@@ -160,6 +163,21 @@ describe("the New opportunity form (screen 25)", () => {
     createOpportunity.mockRejectedValueOnce(new OpportunityError("archived", "This account is archived. Nothing can be added to it.", "55000"));
     await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
     expect(await within(dialog).findByText("This account is archived. Nothing can be added to it.")).toBeInTheDocument();
+  });
+
+  // Catches: any 42501 put under Owner: a removed member's "not a member" refusal is about the whole form, and shown beside Owner it sends the person to a field
+  // they cannot fix. Only the owner rule's words belong beside Owner.
+  it("shows a 42501 that is not the owner rule for the whole form, not under Owner", async () => {
+    const { user, dialog } = await open();
+    createOpportunity.mockRejectedValueOnce(new OpportunityError("notAllowed", "Not a member of that firm", "42501"));
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    expect(await within(dialog).findByText("Not a member of that firm")).toBeInTheDocument();
+    expect(field(dialog, "Owner")).not.toHaveAttribute("aria-invalid", "true");
+    expect(field(dialog, "Owner")).not.toHaveAccessibleDescription(/Not a member/);
+    createOpportunity.mockRejectedValueOnce(new OpportunityError("notAllowed", OWNER_RULE_MESSAGE, "42501"));
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    await waitFor(() => expect(field(dialog, "Owner")).toHaveAttribute("aria-invalid", "true"));
+    expect(field(dialog, "Owner")).toHaveAccessibleDescription(OWNER_RULE_MESSAGE);
   });
 
   // Catches: a form over an account that cannot be read (it would save to nothing), or one that does not say an archived account takes none.

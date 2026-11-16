@@ -62,6 +62,9 @@ export function NewOpportunityDialog({ firmId, accountId, person = "You", onClos
   );
 }
 
+/** The owner rule's words (opportunity_create's 42501 for an owner the person may not give it to). Any other 42501, such as a removed member's "not a member", is about the whole form. */
+const OWNER_RULE = /only for yourself/i;
+
 /** The field a refusal's words are about, so they show under it; none for words about the whole form. */
 const fieldOf = (message: string): string | undefined => {
   if (/the owner\b|for yourself|someone who can see/i.test(message)) return "owner";
@@ -111,7 +114,7 @@ function NewOpportunityForm({ firmId, accountId, person, context, onClose, onCre
           ownerId: v.owner || null,
         });
       } catch (e) {
-        if (e instanceof OpportunityError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? "owner" : e.kind === "invalid" ? fieldOf(e.message) : undefined);
+        if (e instanceof OpportunityError && e.kind !== "failed") throw new SaveRefused(e.message, e.kind === "notAllowed" ? (OWNER_RULE.test(e.message) ? "owner" : undefined) : e.kind === "invalid" ? fieldOf(e.message) : undefined);
         throw e;
       }
     },
