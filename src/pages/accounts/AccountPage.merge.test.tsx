@@ -46,10 +46,12 @@ const Where = () => {
   const l = useLocation();
   return <><p data-testid="where">{l.pathname + l.search}</p><p data-testid="state">{JSON.stringify(l.state)}</p></>;
 };
+let queryClient: QueryClient;
 const renderPage = (path = "/accounts/a1", ws: Workspace = workspace()) => {
   const router = createMemoryRouter([{ path: "/accounts/:id", element: <><AccountPage /><Where /></> }, { path: "*", element: <Where /> }], { initialEntries: [path] });
+  queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } })}>
+    <QueryClientProvider client={queryClient}>
       <WorkspaceContext.Provider value={ws}><RouterProvider router={router} /></WorkspaceContext.Provider>
     </QueryClientProvider>,
   );
@@ -144,6 +146,20 @@ describe("the possible-duplicate banner", () => {
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/accounts/a9"));
     expect(merge.mergeAccounts).toHaveBeenCalledWith("f1", "a9", "a1", { name: "kept" }, { kept: 2, removed: 3 });
   });
+
+  // Catches: the Accounts table keeping the removed account's row after a merge made from its page.
+  it("asks the Accounts table again after a merge", async () => {
+    const user = userEvent.setup();
+    merge.mergeAccounts.mockResolvedValue({
+      record: { id: "a9", version: 3 }, removed: { id: "a1", name: "Harborview Dental LLC" }, moved: { contacts: 1, contactsMerged: 0, opportunities: 0, activities: 0, placements: 0, renewals: 0, labels: 0 },
+    });
+    renderPage();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    await user.click(within(await banner()).getByRole("button", { name: "Merge" }));
+    await screen.findByRole("group", { name: "Which value to keep" });
+    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(spy.mock.calls.map((c) => ((c[0] as { queryKey: readonly unknown[] }).queryKey).join("/"))).toContain("table/f1/accounts"));
+  });
 });
 
 describe("an old address", () => {
@@ -201,6 +217,15 @@ describe("merging two contacts of the account", () => {
     await user.click(within(pick).getByRole("button", { name: "Continue" }));
     await screen.findByRole("group", { name: "Which value to keep" });
     expect(merge.previewMerge).toHaveBeenCalledWith("f1", "contact", "c1", "c2");
+  });
+
+  // Catches: Move appearing on an archived account's contacts (nothing can be added to it, D-222) because Merge keeps the row's actions on screen.
+  it("offers only Merge on an archived account's contacts, not Move or the logging buttons", async () => {
+    client.getAccountPage.mockResolvedValue(page({ possibleDuplicateOf: null, archivedAt: "2026-11-01T10:00:00+00:00" }));
+    renderPage("/accounts/a1?tab=contacts");
+    await screen.findByRole("button", { name: "Merge Elena Marsh with another contact" });
+    expect(screen.queryByRole("button", { name: /to another account/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Log a call/ })).toBeNull();
   });
 
   // Catches: a contact merge offered where the person may not change the account (or Nevermore support).

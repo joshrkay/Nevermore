@@ -81,6 +81,38 @@ describe("MergeDialog: the choice", () => {
   });
 });
 
+describe("MergeDialog: reading and keys", () => {
+  // Catches: radios a screen reader can't place (the column headers are visual only), so two values that look alike can't be told apart.
+  it("names each radio by its value and the side it belongs to", async () => {
+    show();
+    const group = await screen.findByRole("group", { name: "Which value to keep" });
+    const phone = within(group).getByRole("group", { name: "Phone" });
+    expect(within(phone).getByRole("radio", { name: /^Blank\s*,\s*kept$/ })).toBeInTheDocument();
+    expect(within(phone).getByRole("radio", { name: /^\(503\) 555-0100\s*,\s*removed$/ })).toBeInTheDocument();
+  });
+
+  // Catches: Enter on a radio submitting the irreversible merge (implicit form submission); a merge is made from the Merge button only.
+  it("does not merge when Enter is pressed on a radio", async () => {
+    const user = userEvent.setup();
+    show();
+    const group = await screen.findByRole("group", { name: "Which value to keep" });
+    const radio = within(within(group).getByRole("group", { name: "Phone" })).getByRole("radio", { name: /^Blank\s*,\s*kept$/ });
+    radio.focus();
+    await user.keyboard("{Enter}");
+    expect(api.mergeAccounts).not.toHaveBeenCalled();
+  });
+
+  // Catches: swapping the kept record while a merge is in flight (the merge would go through for the pair shown before, under a screen that now shows the other).
+  it("cannot swap the kept record while a merge is being made", async () => {
+    const user = userEvent.setup();
+    api.mergeAccounts.mockReturnValue(new Promise(() => undefined));
+    show();
+    await screen.findByRole("group", { name: "Which value to keep" });
+    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Keep Harborview Marine LLC instead" })).toBeDisabled());
+  });
+});
+
 describe("MergeDialog: merging", () => {
   // Catches: the versions left off or taken from somewhere else (a merge over a change nobody saw), a choice not sent, or the page not told what was merged.
   it("merges with every choice on screen and the versions it showed, then says so", async () => {

@@ -81,9 +81,11 @@ const preview = (over: Partial<BulkOutcome> = {}): BulkOutcome => ({
 const made = (over: Partial<BulkOutcome> = {}): BulkOutcome => preview({ changeId: "chg1", undoUntil: new Date(Date.now() + 600_000).toISOString(), ...over });
 const undone = (over: Partial<UndoOutcome> = {}): UndoOutcome => ({ restored: 2, skipped: [], gone: 0, opportunities: { restored: 2, skipped: 0, gone: 0 }, ...over });
 
-const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+let queryClient: QueryClient;
+const renderAt = (url = "/accounts", ws: Workspace = workspace()) => {
+  queryClient = new QueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
       <WorkspaceContext.Provider value={ws}>
         <MemoryRouter initialEntries={[url]}>
           <Routes><Route path="/accounts" element={<AccountsPage />} /></Routes>
@@ -91,6 +93,7 @@ const renderAt = (url = "/accounts", ws: Workspace = workspace()) =>
       </WorkspaceContext.Provider>
     </QueryClientProvider>,
   );
+};
 const bar = () => screen.queryByRole("region", { name: "Selected rows" });
 const check = (name: string) => screen.getByRole("checkbox", { name });
 const selectTwo = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -180,5 +183,21 @@ describe("Merge in the bar", () => {
     await waitFor(() => expect(bar()).toBeNull());
     await waitFor(() => expect(listAccounts.mock.calls.length).toBeGreaterThan(before));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  // Catches: the removed account's cached page (and the kept one's) left as it was, so reopening either shows records that no longer match.
+  it("asks again for both accounts' pages after a merge", async () => {
+    const user = userEvent.setup();
+    merge.mergeAccounts.mockResolvedValue({ record: { id: "a1", version: 3 }, removed: { id: "a2", name: "Tidewater Veterinary" }, moved: { contacts: 1, contactsMerged: 0, opportunities: 0, activities: 0, placements: 0, renewals: 0, labels: 0 } });
+    renderAt();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    await selectTwo(user);
+    await user.click(await within(bar()!).findByRole("button", { name: "Merge" }));
+    await screen.findByRole("group", { name: "Which value to keep" });
+    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(merge.mergeAccounts).toHaveBeenCalled());
+    const keys = () => spy.mock.calls.map((c) => ((c[0] as { queryKey: readonly unknown[] }).queryKey).join("/"));
+    await waitFor(() => expect(keys()).toContain("account/f1/a1"));
+    expect(keys()).toContain("account/f1/a2");
   });
 });

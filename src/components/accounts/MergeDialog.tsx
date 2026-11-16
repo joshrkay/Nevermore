@@ -120,7 +120,7 @@ export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged
                 <span className="text-muted-foreground">Keeping </span><strong className="font-semibold">{keptName}</strong>
                 <span className="text-muted-foreground">. </span><strong className="font-semibold">{removedName}</strong><span className="text-muted-foreground"> will be removed.</span>
               </p>
-              <Button type="button" variant="outline" size="sm" onClick={swap}>Keep {removedName} instead</Button>
+              <Button type="button" variant="outline" size="sm" disabled={api.saving} onClick={swap}>Keep {removedName} instead</Button>
             </div>
             {reloaded && <p role="alert" className="text-sm text-warning">{reloaded}</p>}
             {data.problem ? (
@@ -143,8 +143,9 @@ export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged
                           <span aria-hidden="true" className="text-sm font-medium">{MERGE_FIELD_LABELS[f]}</span>
                           {(["kept", "removed"] as const).map((side) => (
                             <label key={side} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-muted">
-                              <input type="radio" name={`merge-${f}`} checked={chosen(f) === side} onChange={() => choose(f, side)} />
-                              <span className="break-words">{mergeValueWords(f, (side === "kept" ? data.kept : data.removed)[f])}</span>
+                              {/* Enter on a radio must not submit the form: a merge is made from the Merge button only. */}
+                              <input type="radio" name={`merge-${f}`} checked={chosen(f) === side} onChange={() => choose(f, side)} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} />
+                              <span className="break-words">{mergeValueWords(f, (side === "kept" ? data.kept : data.removed)[f])}<span className="sr-only">, {side}</span></span>
                             </label>
                           ))}
                         </fieldset>

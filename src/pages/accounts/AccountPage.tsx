@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Archive } from "lucide-react";
+import { ACCOUNTS_TABLE } from "@/components/accounts/accountsTable";
 import { AccountMenu } from "@/components/accounts/AccountMenu";
 import { restoreWithWords } from "@/components/accounts/restoreWithWords";
 import { Button } from "@/components/ui/button";
@@ -159,6 +160,8 @@ const AccountPage = () => {
         setMerging(null);
         void queryClient.invalidateQueries({ queryKey: accountKey(firmId, kept.id) });
         void queryClient.invalidateQueries({ queryKey: accountKey(firmId, removed.id) });
+        // The Accounts table still lists the removed account.
+        void queryClient.invalidateQueries({ queryKey: ["table", firmId, ACCOUNTS_TABLE.id] });
         // This page's account is gone when it was the one removed: the kept account's page takes its place.
         if (removed.id === account.id) navigate(`/accounts/${kept.id}`, { replace: true });
       }}
