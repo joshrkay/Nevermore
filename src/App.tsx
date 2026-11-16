@@ -38,6 +38,7 @@ const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
 const LeadPage = lazy(() => import("./pages/leads/LeadPage"));
+const OpportunityPage = lazy(() => import("./pages/opportunities/OpportunityPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
 const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPage"));
@@ -99,6 +100,7 @@ const AppRoutes = () => (
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/contacts/:id" element={<ContactPage />} />
+                  <Route path="/opportunities/:id" element={<OpportunityPage />} />
                   <Route path="/advisor/outbox" element={<AdvisorOutboxPage />} />
                   <Route path="/advisor/funnel" element={<AdvisorFunnelPage />} />
                   <Route path="/advisor/partners" element={<AdvisorPartnersPage />} />

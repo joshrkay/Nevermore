@@ -166,12 +166,17 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
@@ -372,9 +377,11 @@ BEGIN
   INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id) VALUES
     (fa, '00000000-0000-4000-8000-0000000000a1', 'peo_placement', 'Alpha PEO', current_date + 30, '00000000-0000-4000-8000-0000000000a8'),
     (fb, '00000000-0000-4000-8000-0000000000b1', 'peo_placement', 'Beta PEO', current_date + 30, '00000000-0000-4000-8000-0000000000b8');
-  -- CRM-O1.3a: a commission payment on each firm's placement; closing deletes it (with its history) before the placement and account it stands on.
-  INSERT INTO public.commission_payments (firm_id, account_id, placement_id, received_on, amount) VALUES
-    (fa, '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a8', current_date, 100), (fb, '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000b8', current_date, 100);
+  -- CRM-O1.3a: commission payments against each firm's placement; closing deletes them before the placements and accounts they stand on (the payments' key to a
+  -- placement has no cascade), and the migration after the merge (20261121150000) puts that step back after 20261121100000 restated the plan without it.
+  INSERT INTO public.commission_payments (firm_id, account_id, placement_id, received_on, amount, note) VALUES
+    (fa, '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a8', current_date - 5, 100.00, 'Alpha payment'),
+    (fb, '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000b8', current_date - 5, 200.00, 'Beta payment');
   -- CRM-S4.3b: where a merged-away account went, on each firm's account; closing deletes it before the accounts.
   INSERT INTO public.merged_records (firm_id, kind, removed_id, kept_id, removed_name) VALUES
     (fa, 'account', gen_random_uuid(), '00000000-0000-4000-8000-0000000000a1', 'Merged away'), (fb, 'account', gen_random_uuid(), '00000000-0000-4000-8000-0000000000b1', 'Merged away');
@@ -567,6 +574,7 @@ BEGIN
     ('change a renewal', 'agent_a', format($q$SELECT public.update_renewal(%L, 'Carrier', current_date, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), closing_msg),
     ('delete a renewal', 'agent_a', format($q$SELECT public.delete_renewal(%L, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), closing_msg),
     ('mark a renewal not renewed', 'agent_a', format($q$SELECT public.mark_renewal_not_renewed(%L, current_date, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), closing_msg),
+    ('record a commission payment', 'agent_a', format($q$SELECT public.record_commission_payment(%L, current_date, 10, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), closing_msg),
     ('undo a renewal not renewed', 'agent_a', format($q$SELECT public.undo_renewal_not_renewed(%L, %L, 1)$q$, '00000000-0000-4000-8000-0000000000b8'::uuid, fa), closing_msg),
     ('merge two accounts', 'agent_a', format($q$SELECT public.merge_accounts(%L, %L, '{}'::jsonb, 1, 1, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('merge two contacts', 'agent_a', format($q$SELECT public.merge_contacts(%L, %L, '{}'::jsonb, 1, 1, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
@@ -1373,7 +1381,7 @@ END $$;
 -- with the reason. A function in neither list fails, so whoever adds one has to decide.
 DO $$
 DECLARE
-  guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  guarded text[] := ARRAY['opportunity_create', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity',

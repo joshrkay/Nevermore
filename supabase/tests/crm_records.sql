@@ -165,12 +165,17 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
@@ -656,7 +661,7 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.fields_of('opportunities', ho), 'created,employees,next_step,target_start,value', 'an opportunity''s own fields');
   PERFORM pg_temp.is((SELECT version FROM public.opportunities WHERE id = ho), 2, 'at version 2');
   PERFORM pg_temp.is((SELECT replace(encode(t.tgargs, 'escape'), '\000', ',') FROM pg_trigger t WHERE t.tgrelid = 'public.opportunities'::regclass AND t.tgname = 'opportunities_history'),
-    'opportunities,id,account_id,owner_id,name,target_start,employees,main_contact_id,expected_close,value,source,next_step,lost_at,lost_by,lost_reason,lost_note,', 'the list (with lost_at and lost_by, CRM-O1.2, and lost_reason and lost_note, CRM-O1.3, added by track_more) is written in the trigger''s arguments');
+    'opportunities,id,account_id,owner_id,name,target_start,employees,main_contact_id,expected_close,value,source,next_step,lost_at,lost_by,lost_reason,lost_note,referral_partner_code,won_at,won_by,', 'the list (with lost_at and lost_by, CRM-O1.2, lost_reason and lost_note, CRM-O1.3a, referral_partner_code, CRM-A2.3, and won_at and won_by, CRM-O1.3b, which 20261121170000 adds and this whole-suite test loads) is written in the trigger''s arguments');
   RESET ROLE;
   RAISE NOTICE 'crm_records: history and version passed';
 END $$;

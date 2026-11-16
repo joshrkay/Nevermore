@@ -165,12 +165,17 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
 \i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
 \i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
 \i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
@@ -466,8 +471,8 @@ BEGIN
   j := r::jsonb;
   PERFORM pg_temp.is(j -> 'record' ->> 'id', pg_temp.id('hv')::text, 'the answer is the kept account');
   PERFORM pg_temp.is(j -> 'removed' ->> 'name', 'Harborview Marine LLC', 'and names the removed one');
-  PERFORM pg_temp.is(j -> 'moved', jsonb_build_object('contacts', 2, 'contacts_merged', 1, 'opportunities', 2, 'activities', 4, 'placements', 1, 'renewals', 1, 'labels', 1),
-    'and counts what moved: two contacts, one more merged into its twin, two opportunities, four calls/notes/tasks, a placement, a renewal, one label');
+  PERFORM pg_temp.is(j -> 'moved', jsonb_build_object('contacts', 2, 'contacts_merged', 1, 'opportunities', 2, 'activities', 4, 'placements', 1, 'renewals', 1, 'labels', 1, 'commission_payments', 0),
+    'and counts what moved: two contacts, one more merged into its twin, two opportunities, four calls/notes/tasks, a placement, a renewal, one label, no commission payments');
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('hv2')), 0::bigint, 'the removed account is gone');
   -- Fields: the kept account's, but a blank takes the removed one's (street, city, trade name, states), the chosen industry is the removed one's, employees the kept one's.
   PERFORM pg_temp.is((SELECT row(name, phone, state, street, city, trade_name, industry, employees, states_of_operation)::text FROM public.accounts WHERE id = pg_temp.id('hv')),
@@ -1010,6 +1015,58 @@ BEGIN
   SELECT a.* INTO made FROM public.accounts a JOIN public.opportunities o ON o.account_id = a.id WHERE o.intake_id = pg_temp.id('i_rc');
   PERFORM pg_temp.is(made.id IS NOT NULL, true, 'and has its account');
   PERFORM pg_temp.is(made.possible_duplicate_of, pg_temp.id('rc_k'), 'which is marked a possible duplicate of the account the matched one became');
+END $$;
+
+-- ---------- Commission payments ride a merge (Epic 4's CRM-O1.3a meets this story) ----------
+-- Break caught: a merge of two accounts whose removed one has a won placement with commission payments that either fails on the payments' (account, placement) key when the placement
+-- moves, or deletes the payments with the removed account (money lost); a payment that arrives with another version or without its history; a preview or an answer that does not count them.
+DO $$
+DECLARE r text; j jsonb; pv jsonb; pl uuid; p1 uuid; p2 uuid; v_before integer[]; h_before bigint[]; sum_before numeric;
+BEGIN
+  RESET ROLE;
+  PERFORM pg_temp.account('cp_k', 'acme', 'acme_owner', 'Payments Keep');
+  PERFORM pg_temp.account('cp_r', 'acme', 'acme_owner', 'Payments Remove');
+  PERFORM pg_temp.opportunity('o_cp', 'cp_r', 'acme_owner');
+  INSERT INTO public.placements (firm_id, account_id, opportunity_id, peo_name, broker_of_record) VALUES (pg_temp.id('acme'), pg_temp.id('cp_r'), pg_temp.id('o_cp'), 'Alpha PEO', 'Acme') RETURNING id INTO pl;
+  INSERT INTO fx VALUES ('cp_pl', pl);
+  INSERT INTO public.renewals (firm_id, account_id, kind, with_whom, renews_on, placement_id, opportunity_id)
+  VALUES (pg_temp.id('acme'), pg_temp.id('cp_r'), 'peo_placement', 'Alpha PEO', current_date + 90, pl, pg_temp.id('o_cp'));
+  -- Two payments through the function, the second corrected once so that its version is 2.
+  r := pg_temp.as_call('acme_owner', format($q$SELECT public.record_commission_payment(%L, current_date - 20, 1200.50, 'first', %L)::text$q$, pl, pg_temp.id('acme')));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a payment is recorded: ' || r);
+  p1 := (r::jsonb -> 'payment' ->> 'id')::uuid;
+  r := pg_temp.as_call('acme_owner', format($q$SELECT public.record_commission_payment(%L, current_date - 10, 300, 'second', %L)::text$q$, pl, pg_temp.id('acme')));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'and a second: ' || r);
+  p2 := (r::jsonb -> 'payment' ->> 'id')::uuid;
+  r := pg_temp.as_call('acme_owner', format($q$SELECT public.update_commission_payment(%L, current_date - 10, 350, 'second, corrected', %L, 1)::text$q$, p2, pg_temp.id('acme')));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'the second is corrected: ' || r);
+  RESET ROLE;
+  SELECT array_agg(version ORDER BY id), sum(amount) INTO v_before, sum_before FROM public.commission_payments WHERE placement_id = pl;
+  SELECT array_agg((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'commission_payments' AND h.record_key = x.id::text) ORDER BY x.id) INTO h_before FROM public.commission_payments x WHERE x.placement_id = pl;
+  PERFORM pg_temp.is(h_before[1] > 0 AND h_before[2] > 0, true, 'each payment has a history');
+  PERFORM pg_temp.is(sum_before, 1550.50::numeric, 'the payments add up to what was recorded');
+
+  -- The preview counts them.
+  pv := pg_temp.as_call('acme_owner', format($q$SELECT public.merge_preview(%L, 'account', %L, %L)::text$q$, pg_temp.id('acme'), pg_temp.id('cp_k'), pg_temp.id('cp_r')))::jsonb;
+  PERFORM pg_temp.is(pv -> 'moves' ->> 'commission_payments', '2', 'the preview counts the commission payments that would move');
+
+  -- The merge keeps the money.
+  r := pg_temp.merge_a('acme_owner', 'cp_k', 'cp_r');
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'two accounts merge, the removed one with a won placement and its payments: ' || r);
+  j := r::jsonb;
+  PERFORM pg_temp.is(j -> 'moved' ->> 'commission_payments', '2', 'the answer counts the payments that moved');
+  PERFORM pg_temp.is(j -> 'moved' ->> 'placements', '1', 'and the placement');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE id = pg_temp.id('cp_r')), 0::bigint, 'the removed account is gone');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.commission_payments WHERE account_id = pg_temp.id('cp_k') AND placement_id = pl), 2::bigint, 'both payments survive, on the kept account and its placement');
+  PERFORM pg_temp.is((SELECT sum(amount) FROM public.commission_payments WHERE placement_id = pl), sum_before, 'for the same total');
+  PERFORM pg_temp.is((SELECT array_agg(version ORDER BY id) FROM public.commission_payments WHERE placement_id = pl), v_before, 'with the versions they had');
+  PERFORM pg_temp.is((SELECT array_agg((SELECT count(*) FROM public.record_history h WHERE h.table_name = 'commission_payments' AND h.record_key = x.id::text) ORDER BY x.id)
+    FROM public.commission_payments x WHERE x.placement_id = pl), h_before, 'and every entry of their history');
+  PERFORM pg_temp.is((SELECT account_id FROM public.placements WHERE id = pl), pg_temp.id('cp_k'), 'the placement is on the kept account');
+  -- They are still the kept account's to see and to change, by the functions that change them.
+  r := pg_temp.as_call('acme_owner', format($q$SELECT public.update_commission_payment(%L, current_date - 20, 1300, 'first, corrected', %L, 1)::text$q$, p1, pg_temp.id('acme')));
+  PERFORM pg_temp.is(pg_temp.code(r), 'ok', 'a payment that moved can still be corrected: ' || r);
 END $$;
 
 SELECT 'All merge_records checks passed' AS result;

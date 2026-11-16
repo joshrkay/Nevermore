@@ -29,6 +29,9 @@ export function LeadActionsProvider({ firmId, leadId, leadName, userId, canAdd, 
     edit: (item) => setOpen({ mode: "edit", item }),
     addTo: (item) => setOpen({ mode: "add", item }),
     addContact: () => undefined,
+    // A lead has no opportunities or renewals to start (CRM-A2.3 and CRM-A2.4b are an account's): never offered.
+    newOpportunity: () => undefined,
+    startRenewal: () => undefined,
     canMove: false,
     move: () => undefined,
     // A lead has no contacts to merge (CRM-S4.3a is an account's): never offered.

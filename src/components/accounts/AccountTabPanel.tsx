@@ -4,13 +4,16 @@ import { PanelFailed, RefreshFailed } from "@/components/workspace/states";
 import { ACTIVITY_FILTERS_SHOWN } from "@/data/accountPage";
 import type { AccountFile, ActivityFilter, AccountListTab, AccountPage, AccountTabRows, TabRows } from "@/lib/accountPageApi";
 import { AccountFiles } from "./AccountFiles";
-import { AddContactButton, ContactsEmpty } from "./ActivityEntry";
+import { AddContactButton, ContactsEmpty, NewOpportunityButton } from "./ActivityEntry";
 import { activityColumns, contactColumns, EMPTY_WORDS, opportunityColumns, quoteColumns, TAB_LABELS } from "./accountColumns";
 import { EmptyLine, ListPanel, ListRowsLoading, Rows } from "./accountLists";
 import { useAccountTabQuery } from "./useAccountQueries";
 
 /** Pages (of fifty) the Contacts tab loads by itself looking for the contact named in the address. */
 const MAX_PAGES_FOR_A_CONTACT = 10;
+
+/** The button over a tab's list: Add contact over Contacts (CRM-A2.2), New opportunity over Opportunities (CRM-A2.3). */
+const tabAction = (tab: AccountListTab | "files") => (tab === "contacts" ? <AddContactButton /> : tab === "opportunities" ? <NewOpportunityButton /> : undefined);
 
 const NOUNS = { contacts: "the contacts", opportunities: "the opportunities", quotes: "the quotes", activity: "the activity", files: "the files" } as const;
 
@@ -72,7 +75,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
 
   if (!data) {
     return (
-      <ListPanel id={id} heading={heading} headingRef={headingRef} seeAll={tab === "contacts" ? <AddContactButton /> : undefined}>
+      <ListPanel id={id} heading={heading} headingRef={headingRef} seeAll={tabAction(tab)}>
         {filters}
         {query.isError ? (
           <PanelFailed what={NOUNS[tab]} error={query.error as Error} onRetry={() => void query.refetch()} />
@@ -86,7 +89,7 @@ export function AccountTabPanel({ firmId, accountId, tab, page, contactId }: {
   }
 
   return (
-    <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef} seeAll={tab === "contacts" ? <AddContactButton /> : undefined}>
+    <ListPanel id={id} heading={heading} count={data.count} headingRef={headingRef} seeAll={tabAction(tab)}>
       <RefreshFailed what={NOUNS[tab]} failed={query.isError} onRetry={() => void query.refetch()} retrying={query.isFetching} />
       {filters}
       {contactNote && <p role="status" className="mb-3 text-sm text-muted-foreground">{contactNote}</p>}

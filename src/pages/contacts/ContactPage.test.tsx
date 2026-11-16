@@ -218,12 +218,11 @@ describe("ContactPage: the emails", () => {
 
 describe("ContactPage: the opportunities", () => {
   // Catches: an opportunity that opens nothing (D-187: its submission's page, or plain text with none), or one shown without its stage.
-  it("lists the opportunities the contact is on, each named with its stage, opening its submission until it has a page", async () => {
+  it("lists the opportunities the contact is on, each named with its stage, opening its own page (D-430)", async () => {
     renderPage();
     const list = within(await screen.findByRole("region", { name: /Opportunities/ }));
-    expect(list.getByRole("link", { name: "Search 1" })).toHaveAttribute("href", "/advisor/submissions/i1");
-    expect(list.getByText("A search with no intake")).not.toHaveAttribute("href");
-    expect(list.queryByRole("link", { name: "A search with no intake" })).toBeNull();
+    expect(list.getByRole("link", { name: "Search 1" })).toHaveAttribute("href", "/opportunities/o1");
+    expect(list.getByRole("link", { name: "A search with no intake" })).toHaveAttribute("href", "/opportunities/o2");
     expect(list.getByText("In market")).toBeInTheDocument();
     expect(list.getAllByText(/^Main contact/)).toHaveLength(2);
   });
@@ -612,6 +611,22 @@ describe("ContactPage: edit in place", () => {
       expect(rows[2]).toContain("Do not emailYou didn't change thisYes");
       expect(dialog.textContent).not.toMatch(/owner_id|do_not_email|u2/);
       expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    // Catches: Keep theirs putting an owner in the form that the box has no option for, so it shows the first option while Save sends the other (u2).
+    it("shows their owner after Keep theirs even when the person could not have chosen them, and saves that owner", async () => {
+      client.updateContact.mockResolvedValueOnce(conflict).mockResolvedValueOnce(saved({ version: 6, owner: { id: "u2", name: "Marcus Hale" } }));
+      renderPage();
+      const user = await open();
+      await waitFor(() => expect(listFirmMembers).toHaveBeenCalled());
+      await user.type(screen.getByLabelText("Title"), "!");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep theirs" }));
+      await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveValue("u2"));
+      expect(within(screen.getByLabelText("Owner")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Dana Reyes", "Marcus Hale"]);
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(client.updateContact).toHaveBeenCalledTimes(2));
+      expect(client.updateContact.mock.calls[1][2]).toMatchObject({ ownerId: "u2" });
     });
 
     // Catches: Keep mine saving again from the old version (refused again).

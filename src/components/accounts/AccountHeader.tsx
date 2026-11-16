@@ -9,7 +9,8 @@ import { TAB_IDS, TAB_LABELS } from "./accountColumns";
 
 /**
  * The top of an account's page (screen 17): its name and status, then one line of industry, location, employees, website and owner, whichever of them it has.
- * Email (CRM-E1.2, slice 6.3) asks which contact and opens the place to write; New opportunity is not shown (D-186). Log a call and Add a task (CRM-E1.5) are offered only where there are actions to take: not in a Nevermore
+ * Email (CRM-E1.2, slice 6.3) asks which contact and opens the place to write. Log a call, Add a task (CRM-E1.5) and New opportunity (CRM-A2.3, D-436) are offered only where there are actions to take: not in a Nevermore
+
  * support session (ADR 0024) and not on an archived account, so nothing here is a button that does nothing (D-24).
  */
 export function AccountHeader({ account, menu, email }: { account: AccountDetails; menu?: ReactNode; email?: ReactNode }) {
@@ -40,7 +41,9 @@ export function AccountHeader({ account, menu, email }: { account: AccountDetail
         <div data-account-actions className="mt-4 flex flex-wrap gap-2">
           {actions?.canAdd && <Button type="button" onClick={() => actions.log("call")}>Log a call</Button>}
           {actions?.canAdd && <Button type="button" variant="outline" onClick={() => actions.log("task")}>Add a task</Button>}
+          {actions?.canAdd && <Button type="button" variant="outline" onClick={actions.newOpportunity}>New opportunity</Button>}
           {email}
+
         </div>
       )}
     </header>

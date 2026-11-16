@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Pill, EmptyLine, ListPanel, ListRowsLoading, Rows } from "@/components/accounts/accountLists";
-import { activityColumns, submissionPath } from "@/components/accounts/accountColumns";
+import { activityColumns, opportunityPath } from "@/components/accounts/accountColumns";
 import { useAccountActions } from "@/components/accounts/useAccountActions";
 import { PanelFailed, RefreshFailed } from "@/components/workspace/states";
 import { formatDay, STAGE_LABELS } from "@/data/accountPage";
@@ -14,7 +14,7 @@ import { useContactActivityQuery } from "./useContactQueries";
 
 const linkClass = "text-primary underline underline-offset-2 hover:text-primary/90";
 
-/** "Not on an opportunity yet" or the opportunities the contact is the main contact of, each named, with its stage. A name opens its submission's page until the opportunity has a page of its own (D-187), and is plain text with none. */
+/** "Not on an opportunity yet" or the opportunities the contact is the main contact of, each named, with its stage. A name opens the opportunity's own page (CRM-O1.1b, D-430, which replaced D-187). */
 export function ContactOpportunities({ opportunities }: { opportunities: ContactPage["opportunities"] }) {
   return (
     <ListPanel id="contact-opportunities" heading="Opportunities" count={opportunities.count}>
@@ -26,7 +26,7 @@ export function ContactOpportunities({ opportunities }: { opportunities: Contact
             {opportunities.rows.map((o) => (
               <li key={o.id} className="text-sm">
                 <span className="flex flex-wrap items-center gap-2">
-                  {o.submissionId ? <Link to={submissionPath(o.submissionId)} className={linkClass}>{o.name}</Link> : <span className="font-medium">{o.name}</span>}
+                  <Link to={opportunityPath(o.id)} className={linkClass}>{o.name}</Link>
                   <Pill>{STAGE_LABELS[o.stage]}</Pill>
                 </span>
                 <span className="text-muted-foreground">Main contact{o.targetStart ? ` · target start ${formatDay(o.targetStart)}` : ""}</span>

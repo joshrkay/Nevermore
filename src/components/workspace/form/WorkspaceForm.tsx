@@ -97,17 +97,31 @@ export const FormActions = ({ submitLabel = "Save", savingLabel = "Saving…", c
   );
 };
 
-const FieldContent = ({ field, label, required, help, children }: {
+const FieldContent = ({ field, label, required, help, group, children }: {
   field: ControllerRenderProps<FieldValues, string>;
   label: string;
   required: boolean;
   help?: ReactNode;
+  group: boolean;
   children: (field: ControllerRenderProps<FieldValues, string>) => ReactElement;
 }) => {
   // Read inside FormItem, which is what gives this field its ids.
   const { formItemId, formDescriptionId, formMessageId, error } = useFormField();
   const requiredId = `${formItemId}-required`;
   const describedBy = [required && requiredId, help && formDescriptionId, error && formMessageId].filter(Boolean).join(" ");
+  if (group) {
+    // A group of radio buttons: named by a legend (a <label> belongs to one control, not to a div that holds several), and the control the children draw takes the
+    // field's ref, so focus can go to the first one in error.
+    return (
+      <fieldset aria-describedby={describedBy || undefined} className="m-0 min-w-0 space-y-1 border-0 p-0">
+        <legend className={cn("mb-1 p-0 text-sm font-medium leading-none", error && "text-destructive")}>{label}</legend>
+        {required && <p id={requiredId} className="text-xs text-muted-foreground">Required</p>}
+        {children(field)}
+        {help && <FormDescription className="text-xs">{help}</FormDescription>}
+        <FormMessage role="alert" className="text-sm" />
+      </fieldset>
+    );
+  }
   return (
     <>
       <FormLabel>{label}</FormLabel>
@@ -126,11 +140,13 @@ const FieldContent = ({ field, label, required, help, children }: {
  * screen reader), the control, help text, and the error. The error is tied to the control (`aria-describedby`, `aria-invalid`)
  * and announced when it appears. `children` draws the control from the field's props: `{(field) => <Input {...field} />}`.
  */
-export const Field = ({ name, label, required = false, help, children }: {
+export const Field = ({ name, label, required = false, help, group = false, children }: {
   name: string;
   label: string;
   required?: boolean;
   help?: ReactNode;
+  /** The children are a group of radio buttons: the label is a fieldset's legend, and the children give the field's `ref` to their first enabled radio. */
+  group?: boolean;
   children: (field: ControllerRenderProps<FieldValues, string>) => ReactElement;
 }) => {
   const api = useApi();
@@ -140,7 +156,7 @@ export const Field = ({ name, label, required = false, help, children }: {
       name={name}
       render={({ field }) => (
         <FormItem className="space-y-1">
-          <FieldContent field={field} label={label} required={required} help={help}>{children}</FieldContent>
+          <FieldContent field={field} label={label} required={required} help={help} group={group}>{children}</FieldContent>
         </FormItem>
       )}
     />

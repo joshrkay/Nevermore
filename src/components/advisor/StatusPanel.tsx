@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import {
   isPipelineStatus,
   nextPipelineStatuses,
@@ -13,6 +14,8 @@ import {
 import { setStatus, type QuoteRequestMessageRow, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
 import { closingWithdrawalNote, peoNames, replySubject } from "@/data/peoFollowUp";
 import { closeSubmissionAndWithdraw } from "@/lib/peoFollowUpApi";
+import { getOpportunityOfSubmission } from "@/lib/opportunityPageApi";
+import { ConsoleCloseDialog } from "./ConsoleCloseDialog";
 import { PipelineBadge } from "./PipelineBadge";
 import { actorName, formatDateTime } from "./format";
 
@@ -25,13 +28,14 @@ interface StatusPanelProps {
   /** The prospect has certified it at least once. Until then it can only be archived. */
   certifiedOnce: boolean;
   history: StatusHistoryRow[];
-  /** The submission's quote requests: marking it won names the one whose quote the employer took. */
-  quoteRequests: readonly QuoteRequestRow[];
-  /** The PEO threads' mail: Won, Lost or Archived offers one withdrawal to each PEO still open that the product sent to (M-2.4). */
+  /** The submission's quote requests and the PEO threads' mail: archiving it offers one withdrawal to each PEO still open that the product sent to (M-2.4). Won and Lost are marked on the opportunity (D-470, D-1717). */
+  quoteRequests?: readonly QuoteRequestRow[];
   mail?: readonly QuoteRequestMessageRow[];
   /** The company, which the withdrawal's default text names. */
   companyName?: string;
   onChanged: () => void;
+  /** An opportunity was won or lost from here: the page asks again what holds its outcome (the accounts table, the opportunity's own page, the submission's read) for this firm. */
+  onOutcomeChanged?: (firmId: string) => void;
 }
 
 const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[s] : s ?? "—");
@@ -40,7 +44,7 @@ const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[
 const optionLabel = (current: PipelineStatus, s: PipelineStatus) =>
   current === "archived" && s === "submitted" ? `${PIPELINE_LABELS[s]} (reopen)` : PIPELINE_LABELS[s];
 
-const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, quoteRequests, mail = [], companyName = "this employer", onChanged }: StatusPanelProps) => {
+const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, quoteRequests = [], mail = [], companyName = "this employer", onChanged, onOutcomeChanged }: StatusPanelProps) => {
   // Only the next steps from where the intake is now, as the database allows (one step at a time; a
   // never-certified intake can only be archived).
   const options = nextPipelineStatuses(status, certifiedOnce);
@@ -50,15 +54,36 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const failure = useSaveFailure("The status wasn't changed. Check your connection and try again. What you typed is still here.");
   const offlineSave = useOfflineSave();
   const updateButton = useRef<HTMLButtonElement>(null);
-  const [winner, setWinner] = useState("");
-  const quoted = quoteRequests.filter((q) => q.status === "quoted");
-  const needsWinner = next === "won" && winner === "";
-  // M-2.4: the PEOs this move closes that the product wrote to (a send recorded by hand has no thread to answer), each told once, on its own thread.
-  const closing = next === "won" || next === "lost" || next === "archived";
+  // The opportunity the submission is on (D-470): there, Won and Lost are the opportunity's to close, in its own dialog, not this panel's to move. Every certified
+  // submission is on one, so there is no console way to win or lose one without it: while it is read, when it could not be, or when it is not one the person can open
+  // (its account is not theirs to see), the database would refuse the move, and the panel says why instead of offering one.
+  type Lookup = { state: "loading" } | { state: "found"; id: string; firmId: string } | { state: "none" } | { state: "failed" };
+  const [lookup, setLookup] = useState<Lookup>({ state: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [closing, setClosing] = useState<"won" | "lost" | null>(null);
+  // A support session reads the firm's data and changes none of it (ADR 0024).
+  const isSupport = useContext(WorkspaceContext)?.isSupport ?? false;
+  useEffect(() => {
+    let cancelled = false;
+    setLookup({ state: "loading" });
+    getOpportunityOfSubmission(sessionId).then(
+      (found) => !cancelled && setLookup(found ? { state: "found", ...found } : { state: "none" }),
+      () => !cancelled && setLookup({ state: "failed" }),
+    );
+    return () => { cancelled = true; };
+  }, [sessionId, attempt]);
+  const closesOnOpportunity = next === "won" || next === "lost";
+  const opportunity = lookup.state === "found" ? lookup : null;
+  const closeBlocked = !closesOnOpportunity ? null
+    : isSupport ? "Nevermore support can read this submission but not change it."
+    : lookup.state === "loading" ? "Checking this submission's opportunity…"
+    : lookup.state === "failed" ? "Couldn't read this submission's opportunity, so it can't be marked won or lost from here."
+    : lookup.state === "none" ? "This submission's opportunity isn't one you can open (it may belong to an account you can't see), so it can't be marked won or lost from here. Ask its owner or an owner of the firm."
+    : null;
+  // M-2.4: the PEOs an Archived move closes that the product wrote to (a send recorded by hand has no thread to answer), each told once, on its own thread.
+  // Won and Lost close on the opportunity (D-470), whose dialog does not offer the withdrawal yet (D-1717, D-1719).
   const sentByUs = (q: QuoteRequestRow) => mail.filter((m) => m.quote_request_id === q.id && m.direction === "sent");
-  const stillOpen = closing
-    ? quoteRequests.filter((q) => (q.status === "sent" || q.status === "quoted") && String(q.id) !== winner && sentByUs(q).length > 0)
-    : [];
+  const stillOpen = next === "archived" ? quoteRequests.filter((q) => (q.status === "sent" || q.status === "quoted") && sentByUs(q).length > 0) : [];
   const newest = stillOpen.flatMap(sentByUs).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
   const [tell, setTell] = useState(true);
   const [tellSubject, setTellSubject] = useState<string | null>(null);
@@ -83,16 +108,19 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
 
   const save = async () => {
     if (next === status) return;
+    if (closesOnOpportunity) {
+      if (opportunity && !closeBlocked) setClosing(next as "won" | "lost");
+      return;
+    }
     setSaving(true);
     failure.clear();
     try {
-      if (stillOpen.length > 0 && tell && (next === "won" || next === "lost" || next === "archived")) {
+      if (stillOpen.length > 0 && tell && next === "archived") {
         await closeSubmissionAndWithdraw({
-          sessionId, status: next, note, wonQuoteRequestId: next === "won" ? Number(winner) : null,
+          sessionId, status: next, note, wonQuoteRequestId: null,
           subject: tellSubject ?? replySubject(newest?.subject ?? null, companyName), body: tellBody,
         });
-      } else if (next === "won") await setStatus(sessionId, next, note, Number(winner));
-      else await setStatus(sessionId, next, note);
+      } else await setStatus(sessionId, next, note);
       setNote("");
       toast.success(`Status changed to ${PIPELINE_LABELS[next]}.`);
       onChanged();
@@ -131,22 +159,13 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             : `From ${PIPELINE_LABELS[status]} it can move to ${options.map((s) => optionLabel(status, s)).join(", ")}.`}
         </p>
         <p className="text-xs text-muted-foreground">{hint}</p>
-        {next === "won" && (
-          <>
-            <label htmlFor="won-quote" className="block text-xs text-muted-foreground pt-1">Which quote did the employer take?</label>
-            <select
-              id="won-quote"
-              value={winner}
-              onChange={(e) => setWinner(e.target.value)}
-              className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
-            >
-              <option value="">Choose a PEO</option>
-              {quoted.map((q) => (
-                <option key={q.id} value={String(q.id)}>{q.peo_name}</option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground">Every other open quote request closes.</p>
-          </>
+        {closesOnOpportunity && closeBlocked && (
+          <p role={lookup.state === "loading" ? "status" : "alert"} className="text-xs text-muted-foreground">
+            {closeBlocked}
+            {!isSupport && lookup.state === "failed" && (
+              <>{" "}<button type="button" onClick={() => setAttempt((n) => n + 1)} className="underline underline-offset-2">Try again</button></>
+            )}
+          </p>
         )}
         {stillOpen.length > 0 && (
           <fieldset className="space-y-2 border border-border rounded-md p-3">
@@ -179,6 +198,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             )}
           </fieldset>
         )}
+        {closesOnOpportunity && !closeBlocked && <p className="text-xs text-muted-foreground">Marking it {next} opens its opportunity's dialog, where you choose how it ended.</p>}
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>
         <textarea
           id="status-note"
@@ -188,13 +208,25 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
           rows={2}
           className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
         />
+        {closing && opportunity && (
+          <ConsoleCloseDialog
+            firmId={opportunity.firmId}
+            opportunityId={opportunity.id}
+            initial={closing}
+            onClose={() => setClosing(null)}
+            onDone={() => {
+              onOutcomeChanged?.(opportunity.firmId);
+              onChanged();
+            }}
+          />
+        )}
         <SaveFailed message={failure.message} returnFocusTo={updateButton} />
         {offlineSave.reason}
         <button
           ref={updateButton}
           onClick={offlineSave.guard(save)}
           {...offlineSave.buttonProps}
-          disabled={saving || next === status || needsWinner}
+          disabled={saving || next === status || closeBlocked !== null}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
         >
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Update status

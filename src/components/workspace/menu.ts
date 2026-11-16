@@ -67,8 +67,11 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "inbox", label: "Inbox", to: INBOX_PATH, icon: Mail, countKey: "inbox", countWords: (n) => `${n} with new mail`, isCurrent: (pathname) => pathname === INBOX_PATH },
   // The leads table and, with slice 8.5, a lead's page (CRM-L1.1a). Its number is the open leads (New or Working) the person may see.
   { key: "leads", label: "Leads", to: "/leads", icon: UserPlus, countKey: "leads", countWords: (n) => `${n} open`, isCurrent: (pathname) => pathname === "/leads" || pathname.startsWith("/leads/") },
-  // The accounts page and an account's page (CRM-A1.1a, CRM-A2.1b). The number beside it (screen 16) is not built yet.
-  { key: "accounts", label: "Accounts", to: "/accounts", icon: Building2, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/accounts" || pathname.startsWith("/accounts/") },
+  // The accounts page, an account's page and an opportunity's page (CRM-A1.1a, CRM-A2.1b, CRM-O1.1b, D-421). The number beside it (screen 16) is not built yet.
+  {
+    key: "accounts", label: "Accounts", to: "/accounts", icon: Building2, countKey: null, countWords: null,
+    isCurrent: (pathname) => pathname === "/accounts" || pathname.startsWith("/accounts/") || pathname.startsWith("/opportunities/"),
+  },
   { key: "reports", label: "Reports", to: "/advisor/funnel", icon: BarChart3, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/advisor/funnel" },
 ];
 

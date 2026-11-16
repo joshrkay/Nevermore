@@ -954,6 +954,34 @@ export type Database = {
         }
         Returns: Json
       }
+      // The opportunity's page (20261120120000): the opportunity with its stage, account, owner, main contact, quote requests, intake summary and contacts; raises PT404 for one
+      // that is not there or may not be seen. Its activity (calls, notes, tasks, history and the quote requests' events, newest first): {count, rows}. And the save of its own fields
+      // from a version: {conflict: false, record} or the conflict answer.
+      opportunity_page: {
+        Args: { p_firm_id: string; p_opportunity_id: string }
+        Returns: Json
+      }
+      opportunity_activity: {
+        Args: { p_firm_id: string; p_opportunity_id: string; p_filter?: string; p_limit?: number; p_offset?: number }
+        Returns: Json
+      }
+      update_opportunity: {
+        Args: {
+          p_opportunity_id: string
+          p_name: string
+          p_target_start: string | null
+          p_employees: number | null
+          p_main_contact_id: string | null
+          p_expected_close: string | null
+          p_value: number | null
+          p_source: string | null
+          p_next_step: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+        }
+        Returns: Json
+      }
       // Calls, notes and tasks (20261119180000): log one (a call may carry a follow-up task), change a call or task or a note's text, add to a note, mark a task done,
       // and what the log form offers. Each answers the row, {activity, follow_up} for log_activity.
       log_activity: {
@@ -1156,6 +1184,93 @@ export type Database = {
       move_contact: { Args: { p_contact_id: string; p_to_account_id: string; p_confirm?: boolean; p_firm_id?: string | null }; Returns: Json }
       contact_move_choices: { Args: { p_firm_id: string | null; p_contact_id: string; p_search?: string }; Returns: { id: string; name: string }[] }
       add_contact_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
+      // New opportunity on an account (20261120130000): the context is what the form needs ({account: {id, name, archived, employees}, main_contact, contacts, partners, owners});
+      // opportunity_create makes it (stage Qualifying, no intake) and answers {record} with its stage and referral_partner_code.
+      opportunity_create_context: { Args: { p_firm_id: string | null; p_account_id: string }; Returns: Json }
+      opportunity_create: {
+        Args: {
+          p_account_id: string
+          p_name: string | null
+          p_target_start: string | null
+          p_employees: number | null
+          p_main_contact_id: string | null
+          p_expected_close: string | null
+          p_value: number | null
+          p_source: string | null
+          p_referral_partner_code: string | null
+          p_next_step: string | null
+          p_owner_id?: string | null
+          p_firm_id?: string | null
+          // Start the renewal (20261121160000, D-449): the renewal this opportunity works, linked in the same transaction.
+          p_renewal_id?: string | null
+        }
+        Returns: Json
+      }
+      // Won, lost and reopened (20261120121000, restated by 20261121170000): each all or none, from the version the person started from, and answering
+      // {conflict: false, record: {id, stage, version, ...}} or {conflict: true, currentVersion, current: {stage}, changed}. A win and a reopening move the
+      // opportunity's version (won_at and won_by are tracked fields), and the answer names the new one.
+      opportunity_mark_won: {
+        Args: {
+          p_opportunity_id: string
+          p_quote_request_id: number
+          p_start_date?: string | null
+          p_renewal_date?: string | null
+          p_broker_of_record?: string | null
+          p_firm_id?: string | null
+          p_version?: number | null
+          p_commission_basis?: string | null
+          p_commission_rate?: number | null
+          p_commission_expected_yearly?: number | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      opportunity_mark_lost: {
+        Args: { p_opportunity_id: string; p_reason: string; p_note?: string | null; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
+      }
+      opportunity_reopen: { Args: { p_opportunity_id: string; p_firm_id?: string | null; p_version?: number | null }; Returns: Json }
+      // Commission received (20261120121000): record one against a placement ({payment, received_to_date, expected_yearly}), save one from its version ({conflict: false,
+      // record, received_to_date, expected_yearly} or {conflict: true, currentVersion, current: {received_on, amount, note}, changed}), delete one from its version
+      // ({deleted: true, amount, received_to_date} or the same conflict), and add, change or clear a placement's expected commission from the placement's version.
+      record_commission_payment: {
+        Args: { p_placement_id: string; p_received_on: string; p_amount: number; p_note?: string | null; p_firm_id?: string | null }
+        Returns: Json
+      }
+      update_commission_payment: {
+        Args: { p_payment_id: string; p_received_on: string; p_amount: number; p_note?: string | null; p_firm_id?: string | null; p_version?: number | null }
+        Returns: Json
+      }
+      delete_commission_payment: { Args: { p_payment_id: string; p_firm_id?: string | null; p_version?: number | null }; Returns: Json }
+      set_placement_commission: {
+        Args: {
+          p_placement_id: string
+          p_firm_id?: string | null
+          p_version?: number | null
+          p_basis?: string | null
+          p_rate?: number | null
+          p_expected_yearly?: number | null
+        }
+        Returns: Json
+      }
+      // How an opportunity ended, in one read (20261121170000): {lost_reason, lost_note, placement, renewal, payments, received_to_date, quotes}; raises PT404 as opportunity_page does.
+      opportunity_outcome: { Args: { p_firm_id: string; p_opportunity_id: string }; Returns: Json }
+      // Renewals (20261120110000, CRM-A2.4a): an account's renewals with days away, and adding, changing and deleting one from a version; "Didn't renew" and its undo.
+      account_renewals: { Args: { p_firm_id: string | null; p_account_id: string; p_time_zone?: string }; Returns: Json }
+      add_renewal: {
+        Args: { p_account_id: string; p_kind: string; p_with_whom: string; p_renews_on: string; p_placement_start_on?: string | null; p_firm_id?: string | null; p_time_zone?: string }
+        Returns: Json
+      }
+      update_renewal: {
+        Args: { p_renewal_id: string; p_with_whom: string; p_renews_on: string; p_firm_id?: string | null; p_version?: number | null; p_time_zone?: string }
+        Returns: Json
+      }
+      delete_renewal: { Args: { p_renewal_id: string; p_firm_id?: string | null; p_version?: number | null }; Returns: Json }
+      mark_renewal_not_renewed: {
+        Args: { p_renewal_id: string; p_not_renewed_on: string; p_firm_id?: string | null; p_version?: number | null; p_time_zone?: string }
+        Returns: Json
+      }
+      undo_renewal_not_renewed: { Args: { p_renewal_id: string; p_firm_id?: string | null; p_version?: number | null; p_time_zone?: string }; Returns: Json }
       // Spotting a duplicate while typing (20261121090000): {matches, more}; a match the person may see in full, one they may not as a mask.
       duplicate_account_check: { Args: { p_firm_id: string | null; p_name: string; p_website: string; p_state: string }; Returns: Json }
       duplicate_contact_check: { Args: { p_firm_id: string | null; p_email: string }; Returns: Json }
