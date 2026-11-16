@@ -870,7 +870,7 @@ export type Database = {
         Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
       }
-      // The leads table's query (20261121110000): {rows, total, page, page_size}; src/lib/leadsApi.ts reads it.
+      // The leads table's query (20261121110500): {rows, total, page, page_size}; src/lib/leadsApi.ts reads it.
       leads_list: {
         Args: {
           p_firm_id: string | null
@@ -1053,7 +1053,7 @@ export type Database = {
         }
         Returns: Json
       }
-      // Making a lead by hand (20261121100000): answers the lead's own fields (crm_lead_fields).
+      // Making a lead by hand (20261121095500): answers the lead's own fields (crm_lead_fields).
       create_lead: {
         Args: {
           p_name: string

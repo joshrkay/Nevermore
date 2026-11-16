@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh leads_query
--- The leads table's query (story CRM-L1.1a, slice 8.3, #190; docs/BROKER_CRM_BUILD.md D-806, D-809, D-814; 20261121110000_leads_table_query.sql).
+-- The leads table's query (story CRM-L1.1a, slice 8.3, #190; docs/BROKER_CRM_BUILD.md D-806, D-809, D-814; 20261121110500_leads_table_query.sql).
 -- leads_list and leads_view_counts: the leads a person may see, one page at a time, searched, filtered and sorted; the bin left out. Two firms: Acme sees by
 -- level, Zenith shows everyone everything. Every migration is loaded, in filename order (D-105), this story's last.
 \set ON_ERROR_STOP 1
@@ -163,12 +163,12 @@
 \i supabase/migrations/20261120111000_accounts_status_one_read.sql
 \i supabase/migrations/20261120120000_opportunity_page.sql
 \i supabase/migrations/20261120121000_won_lost_commission.sql
-\i supabase/migrations/20261121090000_leads.sql
+\i supabase/migrations/20261121085500_leads.sql
 \i supabase/migrations/20261121090000_spot_a_duplicate.sql
-\i supabase/migrations/20261121100000_create_lead.sql
+\i supabase/migrations/20261121095500_create_lead.sql
 \i supabase/migrations/20261121100000_merge_records.sql
 \i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
-\i supabase/migrations/20261121110000_leads_table_query.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
 \i supabase/migrations/20261122090000_conversations.sql
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql

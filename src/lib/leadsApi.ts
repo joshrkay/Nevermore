@@ -5,7 +5,7 @@ import { browserTimeZone } from "@/lib/accountsApi";
 import { AdvisorApiError, classifyApiError } from "@/lib/advisorApi";
 import type { TableFields, TableFilter, TablePage, TableSort, ViewCount } from "@/lib/tableQuery";
 
-// The leads table's query, run in the database (story CRM-L1.1a, slice 8.3; supabase/migrations/20261121110000_leads_table_query.sql): filters, sort, pages
+// The leads table's query, run in the database (story CRM-L1.1a, slice 8.3; supabase/migrations/20261121110500_leads_table_query.sql): filters, sort, pages
 // of 50, search and the counts for view tabs, for one firm at a time and the leads the caller may see by their level (D-809). The bin's leads are in none of it.
 
 /**

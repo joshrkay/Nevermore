@@ -1,8 +1,8 @@
 -- Merging main into the Epics 5-8 build line (2026-11-16, D-1717). Main gained Epic 4's placements and renewals (20261120110000), won and
--- lost with commission (20261120121000) and merging records (20261121100000) while this line gained leads (20261121090000) and Epic 6. Four
+-- lost with commission (20261120121000) and merging records (20261121100000) while this line gained leads (20261121085500) and Epic 6. Four
 -- things were changed on both lines, and the later file of each dropped the other's change; each is restated here with both kept.
 
--- 1. The tables a history may name: leads (20261121090000) wrote the list out and so dropped renewals, placements and commission_payments.
+-- 1. The tables a history may name: leads (20261121085500) wrote the list out and so dropped renewals, placements and commission_payments.
 DO $$
 DECLARE
   names text[];
@@ -20,7 +20,7 @@ BEGIN
 END $$;
 
 -- 2. Who may read a record's history, and whether its record still exists: main's renewals and placements (20261120110000) and commission
--- payments (20261120121000, which spliced its branch into the definition it found) with this line's leads (20261121090000). Leaving the
+-- payments (20261120121000, which spliced its branch into the definition it found) with this line's leads (20261121085500). Leaving the
 -- payments branch out made record_exists answer "still there" for a deleted payment, so deleting one was refused (42501).
 CREATE OR REPLACE FUNCTION public.record_history_can_see(p_firm_id uuid, p_table public.record_history_table, p_key text)
 RETURNS boolean

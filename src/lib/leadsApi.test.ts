@@ -74,7 +74,7 @@ describe("the leads table's fields agree with the database", () => {
   });
 
   it("has a row of the same columns as the database's, in its order, and the test's row is that row", () => {
-    const sql = readFileSync("supabase/migrations/20261121110000_leads_table_query.sql", "utf8");
+    const sql = readFileSync("supabase/migrations/20261121110500_leads_table_query.sql", "utf8");
     const body = sql.match(/CREATE TYPE public\.leads_row AS \(([\s\S]*?)\n\);/);
     expect(body).not.toBeNull();
     const created = body![1].split("\n").map((l) => l.trim().match(/^(\w+) /)?.[1]).filter((c): c is string => c !== undefined);

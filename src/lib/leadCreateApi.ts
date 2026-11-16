@@ -2,7 +2,7 @@ import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { AccountError, refusal } from "@/lib/accountPageApi";
 
-// What the New lead form asks the database (story CRM-L1.2a, slice 8.2; 20261121100000_create_lead.sql): one call, which makes the lead. The database decides
+// What the New lead form asks the database (story CRM-L1.2a, slice 8.2; 20261121095500_create_lead.sql): one call, which makes the lead. The database decides
 // every rule: who may make one and for whom (the level rule, D-809), a closing firm and Nevermore support, and each field. This only puts its answer and its
 // refusals into the page's shape and words. Refusals use the workspace's one error (AccountError: invalid, notAllowed, readOnly, failed), as every form does.
 

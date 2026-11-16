@@ -1,6 +1,6 @@
 -- The inbox (story CRM-E1.4, slice 6.5, #199; docs/BROKER_CRM_BUILD.md D-607, D-690 to D-699; supabase/tests/inbox.sql).
 --
--- A view of the product's own threads, worked out in the database on the workspace's table frame as the leads table is (20261121110000_leads_table_query.sql):
+-- A view of the product's own threads, worked out in the database on the workspace's table frame as the leads table is (20261121110500_leads_table_query.sql):
 -- every message, both directions, on the quote requests' PEO threads and the conversations with contacts and leads the caller may see, newest first. It
 -- reads only the product's own tables: never the agent's mailbox (ADR 0005), which the product can't read.
 --
@@ -384,7 +384,7 @@ REVOKE ALL ON FUNCTION public.inbox_list(uuid, jsonb, text, text, integer, text,
 GRANT EXECUTE ON FUNCTION public.inbox_list(uuid, jsonb, text, text, integer, text, text) TO authenticated;
 
 -- ---------- 3. The menu's Inbox count (CRM-S1.1c, D-695) ----------
--- menu_counts (20261121110000_leads_table_query.sql), restated with every count it had (quotes, inbox, leads). `inbox` was the intakes with new PEO mail; it is
+-- menu_counts (20261121110500_leads_table_query.sql), restated with every count it had (quotes, inbox, leads). `inbox` was the intakes with new PEO mail; it is
 -- now the threads with new mail the caller may see, PEO threads and conversations with contacts and leads: the threads the inbox's New view lists, read from
 -- the inbox's own rows so the two can't disagree. The queue's own "has new PEO mail" filter is unchanged (D-8).
 CREATE OR REPLACE FUNCTION public.menu_counts()
