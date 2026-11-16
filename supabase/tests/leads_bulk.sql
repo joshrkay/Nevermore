@@ -622,3 +622,57 @@ BEGIN
   PERFORM pg_temp.is((pg_temp.lead_row('n1')).status, 'new', 'New again after Undo');
   PERFORM pg_temp.is((pg_temp.lead_row('n1')).not_fit_reason, NULL::text, 'with no reason');
 END $$;
+
+-- Catches (CRM-L1.1): a Not a fit lead changed. It can be read but not changed, except that it can be reopened (Change status) or deleted.
+SELECT pg_temp.lead('n2', 'acme', 'acme_agent1', 'Wrong Co');
+UPDATE public.leads SET status = 'not_fit', not_fit_reason = 'wrong_industry' WHERE id = pg_temp.id('n2');
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'owner', jsonb_build_object('owner_id', pg_temp.id('acme_agent3')), NULL, jsonb_build_array(pg_temp.id('n2')::text));
+  PERFORM pg_temp.is(r #>> '{skipped,0,code}', 'not_fit', 'skipped: it is Not a fit');
+  PERFORM pg_temp.is(r #>> '{skipped,0,reason}', 'It is Not a fit, so it can be read but not changed. Reopen it first.', 'in words');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'not_fit', '{"reason":"other"}', NULL, jsonb_build_array(pg_temp.id('n2')::text));
+  PERFORM pg_temp.is(r #>> '{skipped,0,code}', 'not_fit', 'its reason is not changed in bulk either');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'status', '{"status":"working"}', NULL, jsonb_build_array(pg_temp.id('n2')::text));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('n2')).owner_id, pg_temp.id('acme_agent1'), 'its owner did not change');
+  PERFORM pg_temp.is((pg_temp.lead_row('n2')).status, 'working', 'reopened as Working');
+  PERFORM pg_temp.is((pg_temp.lead_row('n2')).not_fit_reason, NULL::text, 'its reason cleared');
+END $$;
+
+-- ---------- 6. Set a field ----------
+-- Catches (CRM-S3.7, D-811): Set a field not setting an optional field, offering the name, the status or the source, or writing a value the lead's own rules
+-- refuse. A blank value clears the field.
+SELECT pg_temp.lead('f1', 'acme', 'acme_agent1', 'Field Co');
+UPDATE public.leads SET title = 'Owner' WHERE id = pg_temp.id('f1');
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  PERFORM public.bulk_leads_change(pg_temp.id('acme'), 'field', '{"field":"city","value":"  Bend "}', NULL, jsonb_build_array(pg_temp.id('f1')::text));
+  PERFORM public.bulk_leads_change(pg_temp.id('acme'), 'field', '{"field":"title","value":""}', NULL, jsonb_build_array(pg_temp.id('f1')::text));
+  PERFORM public.bulk_leads_change(pg_temp.id('acme'), 'field', '{"field":"employees","value":12}', NULL, jsonb_build_array(pg_temp.id('f1')::text));
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'field', '{"field":"name","value":"X"}', jsonb_build_array(pg_temp.id('f1')::text))),
+    '22023: The name is required on every lead, so it can''t be set on many at once.', 'never the name');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'field', '{"field":"source","value":"import"}', jsonb_build_array(pg_temp.id('f1')::text))), ':', 1),
+    '22023', 'never the source');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.bulk_leads_change(%L, %L, %L, NULL, %L)', pg_temp.id('acme'), 'field', '{"field":"email","value":"not an email"}', jsonb_build_array(pg_temp.id('f1')::text))),
+    '22023: Enter an email address like name@example.com.', 'the lead''s own rule for an email');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((pg_temp.lead_row('f1')).city, 'Bend', 'the city set, trimmed');
+  PERFORM pg_temp.is((pg_temp.lead_row('f1')).title, NULL::text, 'a blank value clears the title');
+  PERFORM pg_temp.is((pg_temp.lead_row('f1')).employees, 12, 'a number set');
+END $$;
+
+-- Catches (D-202): Undo of Set a field not putting the old value back.
+DO $$
+DECLARE r jsonb; u jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent1', 'acme-brokers');
+  r := public.bulk_leads_change(pg_temp.id('acme'), 'field', '{"field":"city","value":"Eugene"}', NULL, jsonb_build_array(pg_temp.id('f1')::text));
+  u := public.bulk_leads_undo((r ->> 'change_id')::uuid, pg_temp.id('acme'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((u ->> 'restored')::int, 1, 'the field change undone');
+  PERFORM pg_temp.is((pg_temp.lead_row('f1')).city, 'Bend', 'the old city back');
+END $$;

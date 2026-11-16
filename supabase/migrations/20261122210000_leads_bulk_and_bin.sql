@@ -21,6 +21,66 @@ ALTER TABLE public.bulk_change_records
   ADD CONSTRAINT bulk_change_records_lead_fkey FOREIGN KEY (firm_id, lead_id) REFERENCES public.leads (firm_id, id) ON DELETE CASCADE;
 
 -- ---------- 2. What a bulk change asks for, checked ----------
+-- The optional standard fields Set a field offers on a lead (D-1646): never the name (required), the status, its reason and the source (the product's, or
+-- their own actions), the owner (its own action) or the note (a page's long text). Kept in step with src/lib/leadsBulkApi.ts.
+CREATE FUNCTION public.lead_bulk_fields()
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT ARRAY['title', 'business', 'email', 'phone', 'city', 'state', 'employees', 'current_provider']
+$$;
+
+REVOKE ALL ON FUNCTION public.lead_bulk_fields() FROM PUBLIC, anon, authenticated, service_role;
+
+-- The lead's value of one of those fields, as JSON (null for none). Internal.
+CREATE FUNCTION public.lead_field_json(l public.leads, p_field text)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(CASE p_field
+    WHEN 'title' THEN to_jsonb(l.title)
+    WHEN 'business' THEN to_jsonb(l.business)
+    WHEN 'email' THEN to_jsonb(l.email)
+    WHEN 'phone' THEN to_jsonb(l.phone)
+    WHEN 'city' THEN to_jsonb(l.city)
+    WHEN 'state' THEN to_jsonb(l.state)
+    WHEN 'employees' THEN to_jsonb(l.employees)
+    WHEN 'current_provider' THEN to_jsonb(l.current_provider)
+  END, 'null'::jsonb)
+$$;
+
+REVOKE ALL ON FUNCTION public.lead_field_json(public.leads, text) FROM PUBLIC, anon, authenticated, service_role;
+
+-- Writes one of those fields of one lead, one statement for each (as account_set_field does). Internal.
+CREATE FUNCTION public.lead_set_field(p_lead_id uuid, p_field text, p_value jsonb)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v text := p_value #>> '{}';
+BEGIN
+  IF p_field = 'title' THEN UPDATE public.leads SET title = v WHERE id = p_lead_id;
+  ELSIF p_field = 'business' THEN UPDATE public.leads SET business = v WHERE id = p_lead_id;
+  ELSIF p_field = 'email' THEN UPDATE public.leads SET email = v WHERE id = p_lead_id;
+  ELSIF p_field = 'phone' THEN UPDATE public.leads SET phone = v WHERE id = p_lead_id;
+  ELSIF p_field = 'city' THEN UPDATE public.leads SET city = v WHERE id = p_lead_id;
+  ELSIF p_field = 'state' THEN UPDATE public.leads SET state = v WHERE id = p_lead_id;
+  ELSIF p_field = 'employees' THEN UPDATE public.leads SET employees = v::integer WHERE id = p_lead_id;
+  ELSIF p_field = 'current_provider' THEN UPDATE public.leads SET current_provider = v WHERE id = p_lead_id;
+  ELSE
+    RAISE EXCEPTION 'That field can''t be set on many leads at once.' USING ERRCODE = '22023';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.lead_set_field(uuid, text, jsonb) FROM PUBLIC, anon, authenticated, service_role;
+
 -- What a bulk change of leads asks for, checked and tidied, as bulk_params_checked checks the accounts': {owner_id} | {} for delete. Anything else is refused
 -- (22023, in words). Internal.
 CREATE FUNCTION public.bulk_lead_params_checked(p_action text, p_params jsonb)
@@ -33,6 +93,12 @@ DECLARE
   prm jsonb := COALESCE(NULLIF(p_params, 'null'::jsonb), '{}'::jsonb);
   allowed text[];
   k text;
+  field text;
+  val jsonb;
+  s text;
+  n numeric;
+  n_emp integer;
+  problem text;
 BEGIN
   IF jsonb_typeof(prm) <> 'object' THEN
     RAISE EXCEPTION 'The change''s details are missing.' USING ERRCODE = '22023';
@@ -41,6 +107,7 @@ BEGIN
     WHEN 'owner' THEN ARRAY['owner_id']
     WHEN 'status' THEN ARRAY['status']
     WHEN 'not_fit' THEN ARRAY['reason']
+    WHEN 'field' THEN ARRAY['field', 'value']
     WHEN 'delete' THEN ARRAY[]::text[]
     ELSE NULL END;
   IF allowed IS NULL THEN
@@ -71,6 +138,46 @@ BEGIN
       RAISE EXCEPTION 'Choose why they are not a fit: too small, wrong industry, not interested, bad contact details or other.' USING ERRCODE = '22023';
     END IF;
     RETURN jsonb_build_object('reason', prm ->> 'reason');
+  END IF;
+  IF p_action = 'field' THEN
+    IF jsonb_typeof(prm -> 'field') IS DISTINCT FROM 'string' THEN
+      RAISE EXCEPTION 'Choose the field to set.' USING ERRCODE = '22023';
+    END IF;
+    field := prm ->> 'field';
+    IF field = 'name' THEN
+      RAISE EXCEPTION 'The name is required on every lead, so it can''t be set on many at once.' USING ERRCODE = '22023';
+    END IF;
+    IF NOT field = ANY (public.lead_bulk_fields()) THEN
+      RAISE EXCEPTION 'That field can''t be set on many leads at once. Choose an optional field the lead''s form lets you edit.' USING ERRCODE = '22023';
+    END IF;
+    val := COALESCE(prm -> 'value', 'null'::jsonb);
+    IF field = 'employees' THEN
+      IF jsonb_typeof(val) = 'null' THEN
+        n_emp := NULL;
+      ELSIF jsonb_typeof(val) = 'number' THEN
+        n := (val #>> '{}')::numeric;
+        IF n <> trunc(n) OR n < 0 OR n > 2147483647 THEN
+          RAISE EXCEPTION 'Employees must be a whole number, 0 or more.' USING ERRCODE = '22023';
+        END IF;
+        n_emp := n::integer;
+      ELSE
+        RAISE EXCEPTION 'Employees must be a whole number, 0 or more.' USING ERRCODE = '22023';
+      END IF;
+      RETURN jsonb_build_object('field', field, 'value', COALESCE(to_jsonb(n_emp), 'null'::jsonb));
+    END IF;
+    IF jsonb_typeof(val) NOT IN ('null', 'string') THEN
+      RAISE EXCEPTION 'That field takes text.' USING ERRCODE = '22023';
+    END IF;
+    s := NULLIF(btrim(val #>> '{}'), '');
+    IF field = 'state' THEN s := upper(s); END IF;
+    -- The lead's own rules for each field, in its own words (the name is given as something: this is not the name's check).
+    problem := public.lead_input_error('x',
+      CASE WHEN field = 'title' THEN s END, CASE WHEN field = 'business' THEN s END, CASE WHEN field = 'email' THEN s END, CASE WHEN field = 'phone' THEN s END,
+      CASE WHEN field = 'city' THEN s END, CASE WHEN field = 'state' THEN s END, NULL, CASE WHEN field = 'current_provider' THEN s END, NULL);
+    IF problem IS NOT NULL THEN
+      RAISE EXCEPTION '%', problem USING ERRCODE = '22023';
+    END IF;
+    RETURN jsonb_build_object('field', field, 'value', COALESCE(to_jsonb(s), 'null'::jsonb));
   END IF;
   RETURN '{}'::jsonb;
 END;
@@ -142,6 +249,13 @@ BEGIN
     reason := 'It is converted, so it can be read but not changed or deleted.';
     RETURN;
   END IF;
+  -- Not a fit is read, not worked (CRM-L1.1): it is reopened (a status of New or Working) or deleted, and nothing else.
+  IF l.status = 'not_fit' AND p_action NOT IN ('status', 'delete') THEN
+    outcome := 'skip';
+    code := 'not_fit';
+    reason := 'It is Not a fit, so it can be read but not changed. Reopen it first.';
+    RETURN;
+  END IF;
   IF p_action = 'owner' THEN
     outcome := CASE WHEN l.owner_id IS NOT DISTINCT FROM (p_params ->> 'owner_id')::uuid THEN 'same' ELSE 'change' END;
     RETURN;
@@ -150,8 +264,13 @@ BEGIN
     outcome := CASE WHEN l.status = p_params ->> 'status' THEN 'same' ELSE 'change' END;
     RETURN;
   END IF;
+  IF p_action = 'field' THEN
+    outcome := CASE WHEN public.lead_field_json(l, p_params ->> 'field') = COALESCE(p_params -> 'value', 'null'::jsonb) THEN 'same' ELSE 'change' END;
+    RETURN;
+  END IF;
   IF p_action = 'not_fit' THEN
-    outcome := CASE WHEN l.status = 'not_fit' AND l.not_fit_reason = p_params ->> 'reason' THEN 'same' ELSE 'change' END;
+    -- A lead already Not a fit was skipped above.
+    outcome := 'change';
     RETURN;
   END IF;
   outcome := 'change';
@@ -272,6 +391,10 @@ BEGIN
       row_before := jsonb_build_object('status', l.status, 'not_fit_reason', l.not_fit_reason);
       row_after := jsonb_build_object('status', 'not_fit', 'not_fit_reason', params ->> 'reason');
       UPDATE public.leads SET status = 'not_fit', not_fit_reason = params ->> 'reason' WHERE id = l.id;
+    ELSIF p_action = 'field' THEN
+      row_before := jsonb_build_object('field', params ->> 'field', 'value', public.lead_field_json(l, params ->> 'field'));
+      row_after := jsonb_build_object('field', params ->> 'field', 'value', params -> 'value');
+      PERFORM public.lead_set_field(l.id, params ->> 'field', params -> 'value');
     ELSE
       row_before := jsonb_build_object('deleted_at', NULL);
       row_after := jsonb_build_object('deleted_at', now());
@@ -338,7 +461,7 @@ BEGIN
     SELECT * INTO l FROM public.leads x WHERE x.id = rec.lead_id AND x.firm_id = firm FOR NO KEY UPDATE;
     -- Changed since: the lead's history has an entry for the field after the change finished with it, whoever made it (a value put back is a change too).
     since := EXISTS (SELECT 1 FROM public.record_history h WHERE h.firm_id = firm AND h.table_name = 'leads' AND h.record_key = l.id::text AND h.id > rec.history_mark
-      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' WHEN 'status' THEN 'status' WHEN 'not_fit' THEN 'status' ELSE 'deleted_at' END);
+      AND h.field = CASE ch.action WHEN 'owner' THEN 'owner_id' WHEN 'status' THEN 'status' WHEN 'not_fit' THEN 'status' WHEN 'field' THEN rec.after ->> 'field' ELSE 'deleted_at' END);
     IF since THEN
       skipped := skipped || jsonb_build_object('id', l.id, 'name', rec.record_name, 'code', 'changed_since', 'reason', 'It has been changed since.');
       CONTINUE;
@@ -350,6 +473,8 @@ BEGIN
         CONTINUE;
       END IF;
       UPDATE public.leads SET owner_id = prev WHERE id = l.id;
+    ELSIF ch.action = 'field' THEN
+      PERFORM public.lead_set_field(l.id, rec.before ->> 'field', COALESCE(rec.before -> 'value', 'null'::jsonb));
     ELSIF ch.action IN ('status', 'not_fit') THEN
       UPDATE public.leads SET status = rec.before ->> 'status', not_fit_reason = rec.before ->> 'not_fit_reason' WHERE id = l.id;
     ELSE
