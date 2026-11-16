@@ -633,7 +633,7 @@ BEGIN
       'sent_version', r.sent_version, 'admin_fee_pepm', r.admin_fee_pepm, 'expires_on', r.expires_on, 'proposed_start', r.proposed_start, 'target_start', r.target_start,
       'emails', r.emails, 'new_mail', r.new_mail, 'last_message_at', r.last_message_at, 'file_id', r.file_id, 'owner', r.owner_name)
     FROM public.quotes_rows(p_firm_id, CASE WHEN p_ids IS NULL THEN p_filters ->> 'search' END) r
-    WHERE true
+    WHERE CASE WHEN p_ids IS NOT NULL THEN r.key IN (SELECT lower(jsonb_array_elements_text(p_ids))) ELSE public.quotes_row_passes(r, checked, tz) END
     ORDER BY NOT r.new_mail,
       CASE WHEN r.status = 'quoted' THEN r.expires_on END NULLS LAST,
       CASE WHEN r.status IN ('sent', 'acknowledged', 'question_open') THEN r.sent_on END NULLS LAST,

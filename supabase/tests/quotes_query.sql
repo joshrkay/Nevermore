@@ -738,13 +738,14 @@ END $$;
 DO $$
 DECLARE j jsonb; ids jsonb;
 BEGIN
+  RESET ROLE;
+  -- a selection by keys: Aa's quote request, Ff's half-done opportunity, one that is not there, and Acme's quote (another firm's)
+  SELECT jsonb_build_array((SELECT 'q' || q.id FROM public.quote_requests q WHERE q.session_id = pg_temp.id('s_aa')), 'o' || pg_temp.id('o_ff')::text, 'q999999',
+    (SELECT 'q' || q.id FROM public.quote_requests q WHERE q.session_id = pg_temp.id('s_reyes') AND q.peo_name = 'TriNet')) INTO ids;
   PERFORM pg_temp.as_fresh('ord_owner', 'order-brokers');
   PERFORM pg_temp.is(pg_temp.exported_accounts(pg_temp.exported('{"filters":[{"field":"status","op":"any_of","value":["quoted"]}]}')), 'Bb Co,Gg Co,Aa Co', 'what the table shows for a filter');
   PERFORM pg_temp.is(pg_temp.exported_accounts(pg_temp.exported('{"search":"dd co"}')), 'Dd Co', 'for a search');
   PERFORM pg_temp.is(pg_temp.refusal($q$SELECT pg_temp.exported('{"fliters":[]}')$q$) LIKE '22023: Those filters don''t apply to this table%', true, 'a key the table does not have is refused');
-  -- a selection by keys: Aa's quote request, Ff's half-done opportunity, one that is not there, and Acme's quote (another firm's)
-  SELECT jsonb_build_array((SELECT 'q' || q.id FROM public.quote_requests q WHERE q.session_id = pg_temp.id('s_aa')), 'o' || pg_temp.id('o_ff')::text, 'q999999',
-    (SELECT 'q' || q.id FROM public.quote_requests q WHERE q.session_id = pg_temp.id('s_reyes') AND q.peo_name = 'TriNet')) INTO ids;
   j := pg_temp.exported('{}', ids);
   PERFORM pg_temp.is(pg_temp.exported_accounts(j), 'Aa Co,Ff Co', 'a selection gives the named rows, in the table''s order');
   PERFORM pg_temp.is(j ->> 'skipped', '2', 'and says how many gave no row: not there, another firm''s');
