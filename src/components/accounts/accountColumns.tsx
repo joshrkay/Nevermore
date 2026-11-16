@@ -8,7 +8,10 @@ import { Pill, type Column } from "./accountLists";
 // Every name opens its record: an opportunity's name opens its own page (CRM-O1.1b, `/opportunities/:id`, D-430, which replaces D-187); a quote's PEO opens its
 // submission's page until the quote has a page of its own (Epic 5); a contact's name opens the contact's page (CRM-C1.1, `/contacts/:id`).
 
-export const submissionPath = (submissionId: string) => `/advisor/submissions/${submissionId}`;
+export const submissionPath = (submissionId: string) => `/advisor/submissions/${encodeURIComponent(submissionId)}`;
+
+/** An account's own page. */
+export const accountPath = (accountId: string) => `/accounts/${encodeURIComponent(accountId)}`;
 
 /** An opportunity's own page (CRM-O1.1b). */
 export const opportunityPath = (opportunityId: string) => `/opportunities/${encodeURIComponent(opportunityId)}`;

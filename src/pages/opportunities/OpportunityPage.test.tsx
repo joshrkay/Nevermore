@@ -121,6 +121,7 @@ describe("OpportunityPage: the menu's recent records", () => {
     expect(search.noteRecentRecord).not.toHaveBeenCalled();
   });
 
+  // Catches: a failed note of the recent records (a convenience, D-620) taking the page down with it.
   it("is not stopped by a failing note", async () => {
     search.noteRecentRecord.mockRejectedValue(new Error("down"));
     renderPage();
@@ -170,7 +171,7 @@ describe("OpportunityPage: the trail and the header", () => {
 
 describe("OpportunityPage: the stage bar", () => {
   const bar = () => screen.getByRole("list", { name: "Stage" });
-  const labels = () => within(bar()).getAllByRole("listitem").map((li) => li.textContent);
+  const labels = () => within(bar()).getAllByRole("listitem").map((li) => li.textContent?.replace(" (done)", ""));
 
   // Catches: a bar that shows the wrong places (D-415: the first five, then Won, or Lost for a lost one).
   it("shows the first five stages and Won in the last place, the current one marked", async () => {
@@ -181,6 +182,7 @@ describe("OpportunityPage: the stage bar", () => {
     expect(current.map((li) => li.textContent)).toEqual(["In market"]);
   });
 
+  // Catches: a lost opportunity drawn with Won in the last place, or with no way to tell it is the current stage (D-415).
   it("shows Lost in the last place for a lost opportunity, and it is the current one", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ intake: null }, { stage: "lost", submissionId: null }));
     renderPage();
@@ -208,7 +210,7 @@ describe("OpportunityPage: the stage bar", () => {
 
   // Catches: a name taken from the wrong place: the prospect's first name, else the main contact's, else "the employer".
   it("names the employer when there is no prospect and no main contact", async () => {
-    client.getOpportunityPage.mockResolvedValue(page({ mainContact: null, intake: { ...intake, pipelineStatus: "draft", prospectName: null, certifiedAt: null } }, { stage: "intake_under_way" }));
+    client.getOpportunityPage.mockResolvedValue(page({ mainContact: null, contacts: [], intake: { ...intake, pipelineStatus: "draft", prospectName: null, certifiedAt: null, certifiedBy: null } }, { stage: "intake_under_way" }));
     renderPage();
     await screen.findByRole("heading", { level: 1 });
     expect(within(header()).getByText("Waiting for the employer to certify")).toBeInTheDocument();
@@ -398,6 +400,7 @@ describe("OpportunityPage: the quotes", () => {
     expect(advisor.loadSubmission).not.toHaveBeenCalled();
   });
 
+  // Catches: the empty quotes state of an opportunity with an intake said as if it had none, or the submission read for no quote request.
   it("says quotes appear once the opportunity is sent to a PEO, when it has an intake and none is sent", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ quotes: [] }, { stage: "ready_to_send" }));
     renderPage();
@@ -467,6 +470,7 @@ describe("OpportunityPage: the intake", () => {
     expect(within(panel).getByRole("link", { name: "Open intake" })).toHaveAttribute("href", "/advisor/submissions/i1");
   });
 
+  // Catches: "1 answers", or a nameless prospect shown as an empty name before "is filling it in".
   it("says one answer in the singular, and the prospect when no name was given", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ intake: { ...intake, certifiedAt: null, certifiedBy: null, answered: 1, prospectName: null, pipelineStatus: "draft" } }, { stage: "intake_under_way" }));
     renderPage();
@@ -482,6 +486,7 @@ describe("OpportunityPage: the intake", () => {
     expect(within(panel).getByRole("link", { name: "Record a send" })).toHaveAttribute("href", "/advisor/submissions/i1");
   });
 
+  // Catches: Ready to send and Record a send left on after the send was made, offering a second one from the wrong stage.
   it("does not say Ready to send or offer Record a send once it is in the market", async () => {
     renderPage();
     const panel = await screen.findByRole("region", { name: /^Intake/ });
@@ -573,6 +578,7 @@ describe("OpportunityPage: the activity", () => {
     expect(rows[5]).toHaveTextContent("Send PEO B the loss run");
   });
 
+  // Catches: a stage moved by a quote worded as a send (or with no cause), or a quote request event of one kind worded as another (D-413, D-427).
   it("words a stage moved by a quote, and an event of each kind", async () => {
     serveActivity([
       { ...stageMove, entryKey: "e3", cause: "quote_recorded", from: "in_market", to: "quoted" },
@@ -616,6 +622,7 @@ describe("OpportunityPage: the activity", () => {
     }
   });
 
+  // Catches: the empty activity said in the All words under a filter that narrowed it, or a filter with nothing shown as an error.
   it("says in the filter's words that there is nothing, and in the page's that there is no activity", async () => {
     const user = userEvent.setup();
     client.listOpportunityActivity.mockResolvedValue({ count: 0, rows: [] });
@@ -728,6 +735,7 @@ describe("OpportunityPage: the details", () => {
     expect(value("Owner")).toHaveTextContent("Dana Reyes");
   });
 
+  // Catches: an empty detail drawn as a blank, "null" or "0", or an opportunity with no owner drawn with a stale owner name.
   it("says Not provided for what is empty, and that there is no owner", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ owner: null }, { targetStart: null, employees: null, expectedClose: null, value: null, source: null, nextStep: null, ownerId: null }));
     renderPage();
@@ -847,7 +855,8 @@ describe("OpportunityPage: the details", () => {
       expect(screen.getByLabelText("Owner")).toHaveValue("u9");
     });
 
-    it("offers No owner for an opportunity that has none, and sends nothing for it", async () => {
+  // Catches: an opportunity with no owner sent an owner it never chose, so a save would give it to someone (D-209: no owner means keep).
+  it("offers No owner for an opportunity that has none, and sends nothing for it", async () => {
       client.getOpportunityPage.mockResolvedValue(page({ owner: null }, { ownerId: null }));
       client.updateOpportunity.mockResolvedValue(saved({ ownerId: null }));
       renderPage();
@@ -912,8 +921,148 @@ describe("OpportunityPage: the details", () => {
         await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep mine" }));
         await waitFor(() => expect(client.updateOpportunity).toHaveBeenCalledTimes(2));
         expect(client.updateOpportunity.mock.calls[1][3]).toBe(6);
-        expect(client.updateOpportunity.mock.calls[1][2]).toMatchObject({ source: "Referral!" });
+        // Mine (the source) with their change kept to every field I left alone: the target start, the value and the owner.
+        expect(client.updateOpportunity.mock.calls[1][2]).toEqual({
+          name: "January 2027 PEO search", targetStart: "2027-02-01", employees: 45, mainContactId: "c1", expectedClose: "2026-12-12", value: 9000, source: "Referral!",
+          nextStep: "Send PEO B the loss run", ownerId: "u2",
+        });
       });
     });
+  });
+});
+
+
+// ---------- review fixes ----------
+
+describe("OpportunityPage: the owner and main contact boxes show what a save will send", () => {
+  const theirs: OpportunityConflict = {
+    conflict: true, currentVersion: 6,
+    current: { name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1", expectedClose: "2026-12-12", value: 7100, source: "Referral", nextStep: "Send PEO B the loss run", ownerId: "u2" },
+    changed: [{ field: "owner_id", value: "u2", who: "bob@example.com", at: "2026-11-14T10:00:00+00:00" }],
+  };
+
+  // Catches: Keep theirs putting an owner in the form that the box has no option for, so it shows the first option ("Dana Reyes") while Save sends the other (u2).
+  it("shows their owner after Keep theirs even when the person could not have chosen them, and saves that owner", async () => {
+    const user = userEvent.setup();
+    client.updateOpportunity.mockResolvedValueOnce(theirs).mockResolvedValueOnce({ conflict: false, opportunity: { ...opportunity, version: 7, ownerId: "u2" } });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit the opportunity/ }));
+    await waitFor(() => expect(listFirmMembers).toHaveBeenCalled());
+    await user.type(screen.getByLabelText("Source"), "!");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep theirs" }));
+    await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveValue("u2"));
+    expect(within(screen.getByLabelText("Owner")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Dana Reyes", "Marcus Hale"]);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(client.updateOpportunity).toHaveBeenCalledTimes(2));
+    expect(client.updateOpportunity.mock.calls[1][2]).toMatchObject({ ownerId: "u2" });
+  });
+
+  it("names an owner it cannot find 'Someone in the firm'", async () => {
+    const user = userEvent.setup();
+    listFirmMembers.mockRejectedValue(new Error("down"));
+    client.updateOpportunity.mockResolvedValueOnce(theirs);
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit the opportunity/ }));
+    await user.type(screen.getByLabelText("Source"), "!");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Keep theirs" }));
+    await waitFor(() => expect(screen.getByLabelText("Owner")).toHaveValue("u2"));
+    expect(within(screen.getByLabelText("Owner")).getByRole("option", { name: "Someone in the firm" })).toBeInTheDocument();
+  });
+
+  // Catches: the contacts failing to load leaving the main contact box on "No main contact" while Save still sends the contact it held (c1).
+  it("keeps the present main contact in the box when the account's contacts could not be loaded", async () => {
+    const user = userEvent.setup();
+    activity.getActivityOptions.mockRejectedValue(new Error("down"));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /^Edit the opportunity/ }));
+    await waitFor(() => expect(activity.getActivityOptions).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByLabelText("Main contact")).not.toBeDisabled());
+    expect(screen.getByLabelText("Main contact")).toHaveValue("c1");
+    expect(within(screen.getByLabelText("Main contact")).getByRole("option", { name: "Elena Marsh" })).toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: who the guidance names", () => {
+  // Catches: "Waiting for <name> to answer" naming the main contact (Owen) when the person filling the intake in is Elena: the prospect's name is gone once the intake is submitted.
+  it("names the contact who fills in the intake, not the main contact, once the intake is submitted", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({
+      mainContact: { id: "c2", name: "Owen Park" },
+      contacts: [
+        { id: "c2", name: "Owen Park", title: null, email: null, phone: null, main: true, fillsInIntake: false },
+        { id: "c1", name: "Elena Marsh", title: null, email: null, phone: null, main: false, fillsInIntake: true },
+      ],
+      intake: { ...intake, pipelineStatus: "information_requested", prospectName: null, certifiedAt: null, certifiedBy: null, answered: 9 },
+    }, { stage: "intake_under_way" }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(within(header()).getByText("Waiting for Elena to answer")).toBeInTheDocument();
+  });
+
+  it("falls back to who certified, then to the main contact", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({
+      mainContact: { id: "c2", name: "Owen Park" }, contacts: [],
+      intake: { ...intake, pipelineStatus: "information_requested", prospectName: null, certifiedAt: "2026-10-28T10:00:00+00:00", certifiedBy: "Elena Marsh" },
+    }, { stage: "intake_under_way" }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(within(header()).getByText("Waiting for Elena to answer")).toBeInTheDocument();
+  });
+});
+
+describe("OpportunityPage: an archived account (D-432)", () => {
+  // Catches: Mark done, Open again and Edit still drawn on an archived account's opportunity, where nothing on it can be changed.
+  it("draws no Mark done, Open again or Edit on the activity", async () => {
+    const done = item({ type: "task", id: "task2", title: "Already done", doneAt: "2026-11-14T10:00:00+00:00", assignee: { id: "u1", name: "Dana Reyes" } });
+    serveActivity([task, done, call, note]);
+    client.getOpportunityPage.mockResolvedValue(page({ canAdd: false, canChange: false, account: { id: "a1", name: "Harborview Dental Group", archived: true } }));
+    renderPage();
+    await screen.findByRole("table", { name: "The opportunity's activity" });
+    expect(within(table()).getByText("Send PEO B the loss run")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Mark done|Open again|^Edit|Add to note/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Edit the opportunity/ })).toBeNull();
+  });
+});
+
+describe("OpportunityPage: small things the review found", () => {
+  const change = (field: string, from: unknown, to: unknown) => ({ ...fieldChange, entryKey: `c-${field}`, field, from, to }) as OpportunityActivityRow;
+
+  // Catches: lost_by shown as a uuid and lost_at as a raw timestamp in the history.
+  it("words lost_at and lost_by without showing a code or a timestamp", async () => {
+    serveActivity([change("lost_at", null, "2026-11-12T10:00:00+00:00"), change("lost_by", null, "00000000-0000-0000-0000-000000000001")]);
+    renderPage();
+    const rows = (await within(await screen.findByRole("table", { name: "The opportunity's activity" })).findAllByRole("row")).slice(1);
+    expect(rows.map((r) => within(r).getAllByRole("cell")[2].textContent)).toEqual(["Marked lost on Nov 12, 2026", "Lost by changed"]);
+  });
+
+  // Catches: an empty paragraph drawn in the Intake panel for a lost opportunity with no intake, which has nothing to wait for.
+  it("draws no empty words in the Intake panel of a lost opportunity with no intake", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ intake: null }, { stage: "lost", submissionId: null }));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: /^Intake/ });
+    expect(within(panel).getByText("No intake yet")).toBeInTheDocument();
+    expect(panel.querySelectorAll("p")).toHaveLength(1);
+  });
+
+  // Catches: the places already passed marked by colour alone, which a screen reader cannot hear.
+  it("says which places of the stage bar are done, in words", async () => {
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    const items = within(screen.getByRole("list", { name: "Stage" })).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual(["Qualifying (done)", "Intake under way (done)", "Ready to send (done)", "In market", "Quoted", "Won"]);
+  });
+
+  // Catches: an id with a character in it breaking the trail's link, the details' account link or a PEO's link (the paths encode their ids as the others do).
+  it("encodes the ids in the links it draws", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({
+      account: { id: "a 1", name: "Harborview Dental Group", archived: false }, quotes: [quote(1)], intake: { ...intake, submissionId: "i 1" },
+    }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    const links = screen.getAllByRole("link").map((l) => l.getAttribute("href"));
+    expect(links).toContain("/accounts/a%201");
+    expect(links).toContain("/advisor/submissions/i%201");
+    expect(links.filter((h) => h?.includes(" "))).toEqual([]);
   });
 });

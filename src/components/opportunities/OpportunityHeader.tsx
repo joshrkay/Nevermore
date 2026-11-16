@@ -12,8 +12,10 @@ import type { OpportunityPage } from "@/lib/opportunityPageApi";
  * is drawn: nothing here is a button that does nothing (D-24). The trail is drawn by the page.
  */
 export function OpportunityHeader({ page }: { page: OpportunityPage }) {
-  const { opportunity: o, mainContact, owner, intake } = page;
-  const guidance = nextStepWords(o.stage, intake?.pipelineStatus ?? null, intake?.prospectName ?? null, mainContact?.name ?? null);
+  const { opportunity: o, mainContact, owner, intake, contacts } = page;
+  // Who the intake waits on: the prospect by the name they gave (gone once the intake is submitted), else the contact made from them, else who certified it.
+  const waitingOn = intake?.prospectName ?? contacts.find((c) => c.fillsInIntake)?.name ?? intake?.certifiedBy ?? null;
+  const guidance = nextStepWords(o.stage, intake?.pipelineStatus ?? null, waitingOn, mainContact?.name ?? null);
   const places = stageBar(o.stage);
   return (
     <header className="mb-6">
@@ -39,6 +41,7 @@ export function OpportunityHeader({ page }: { page: OpportunityPage }) {
             className={`rounded-md px-3 py-2 ${p.current ? "bg-primary font-medium text-primary-foreground" : p.done ? "bg-primary/10 text-foreground" : "bg-muted text-muted-foreground"}`}
           >
             {p.label}
+            {p.done && <span className="sr-only"> (done)</span>}
           </li>
         ))}
       </ol>

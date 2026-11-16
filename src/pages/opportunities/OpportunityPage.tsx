@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { Archive } from "lucide-react";
 import { AccountActionsProvider } from "@/components/accounts/accountActions";
+import { accountPath } from "@/components/accounts/accountColumns";
 import { accountKey } from "@/components/accounts/useAccountQueries";
 import { OpportunityContacts } from "@/components/opportunities/ContactsPanel";
 import { OpportunityActivity } from "@/components/opportunities/OpportunityActivity";
@@ -57,15 +58,15 @@ const OpportunityPage = () => {
   if (!page) return <Frame><NotAvailable noun="opportunity" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
 
   const { account, opportunity } = page;
-  // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024). On an archived account
-  // nothing can be added (D-222, D-432), but an existing call or task can still be changed and a task marked done, as on the account's own page.
-  const canAct = firmId !== null && !isSupport;
+  // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024), and, as D-432 says, nothing on
+  // an archived account's opportunity can be changed, so there are no actions to offer there: no Add, Mark done, Open again or Edit.
+  const canAct = firmId !== null && !isSupport && !account.archived;
   const body = (
     <>
       <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted-foreground">
         <Link to="/accounts" className="text-primary hover:underline">Accounts</Link>
         <span aria-hidden="true"> / </span>
-        <Link to={`/accounts/${account.id}`} className="text-primary hover:underline">{account.name}</Link>
+        <Link to={accountPath(account.id)} className="text-primary hover:underline">{account.name}</Link>
         <span aria-hidden="true"> / </span>
         <span aria-current="page">{opportunity.name}</span>
       </nav>

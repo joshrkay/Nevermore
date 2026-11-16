@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ownerChoices } from "@/components/accounts/ownerChoices";
+import { accountPath } from "@/components/accounts/accountColumns";
 import { accountKey } from "@/components/accounts/useAccountQueries";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,6 +36,9 @@ const conflictFields = (ownerName: (id: string) => string, contactName: (id: str
   source: { label: "Source" },
   next_step: { label: "Next step" },
   owner_id: { label: "Owner", format: (v: unknown) => ownerName(String(v)) },
+  // Marking lost with no intake (CRM-O1.3b) changes the version too.
+  lost_at: { label: "Marked lost", format: day },
+  lost_by: { label: "Marked lost by", format: (v: unknown) => ownerName(String(v)) },
   // Moving an opportunity to another account (CRM-A2.2) changes its version too.
   account_id: { label: "Account", format: () => "Another account" },
 });
@@ -116,10 +121,18 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
   };
 
   // The owner choice: the present owner first (even one the person could not choose, so nothing changes by leaving it), then the people the database lets them give it to.
-  const owners = useMemo(() => {
-    const present = owner ? [{ value: owner.id, label: owner.name }] : [];
-    return [...present, ...(choosable.data ?? []).filter((m) => m.value !== owner?.id)];
-  }, [owner, choosable.data]);
+  const ownerNow = api.form.watch("owner_id") as string;
+  const owners = useMemo(() => ownerChoices(owner, choosable.data ?? [], people.data ?? [], ownerNow), [owner, choosable.data, people.data, ownerNow]);
+  // The main contact box likewise always holds the contact the form holds, named from the account's contacts, else "Another contact" (the list may not have loaded).
+  const contactNow = api.form.watch("main_contact_id") as string;
+  const contactOptions = useMemo(() => {
+    const listed = (options.data?.contacts ?? []).map((c) => ({ value: c.id, label: c.name }));
+    if (contactNow !== "" && !listed.some((c) => c.value === contactNow)) {
+      const label = contactNow === page.mainContact?.id ? page.mainContact.name : "Another contact";
+      return [...listed, { value: contactNow, label }];
+    }
+    return listed;
+  }, [options.data, contactNow, page.mainContact]);
 
   return (
     <section aria-labelledby="opportunity-details-heading" className="border border-border rounded-xl p-5">
@@ -140,7 +153,7 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
             {(field) => (
               <SelectInput {...field} disabled={options.isPending}>
                 <option value="">No main contact</option>
-                {(options.data?.contacts ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {contactOptions.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </SelectInput>
             )}
           </Field>
@@ -159,7 +172,7 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
         </WorkspaceForm>
       ) : (
         <dl>
-          <Row label="Account"><Link to={`/accounts/${account.id}`} className="text-primary underline underline-offset-2 hover:text-primary/90">{account.name}</Link></Row>
+          <Row label="Account"><Link to={accountPath(account.id)} className="text-primary underline underline-offset-2 hover:text-primary/90">{account.name}</Link></Row>
           <Row label="Stage">{STAGE_LABELS[opportunity.stage]}</Row>
           <Row label="Target start"><Given value={opportunity.targetStart ? formatDay(opportunity.targetStart) : null} /></Row>
           <Row label="Employees"><Given value={opportunity.employees === null ? null : opportunity.employees.toLocaleString("en-US")} /></Row>

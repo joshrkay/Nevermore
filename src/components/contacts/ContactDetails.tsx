@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ownerChoices } from "@/components/accounts/ownerChoices";
 import { CheckField } from "@/components/accounts/CheckField";
 import { Input } from "@/components/ui/input";
 import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
@@ -118,10 +119,8 @@ export function ContactDetailsPanel({ firmId, contact, canChange, onSaved }: {
   };
 
   // The owner choice: the contact's present owner first (even one the person could not choose, so nothing changes by leaving it), then the people the database lets them give it to.
-  const owners = useMemo(() => {
-    const present = contact.owner ? [{ value: contact.owner.id, label: contact.owner.name }] : [];
-    return [...present, ...(choosable.data ?? []).filter((m) => m.value !== contact.owner?.id)];
-  }, [contact.owner, choosable.data]);
+  const ownerNow = api.form.watch("owner_id") as string;
+  const owners = useMemo(() => ownerChoices(contact.owner, choosable.data ?? [], people.data ?? [], ownerNow), [contact.owner, choosable.data, people.data, ownerNow]);
   const ticked = api.form.watch("is_main") === true;
 
   return (

@@ -29,10 +29,11 @@ const answersWords = (n: number) => `${n} ${n === 1 ? "answer" : "answers"}`;
 export function IntakePanel({ page }: { page: OpportunityPage }) {
   const { intake, opportunity, mainContact } = page;
   if (!intake) {
+    const next = nextStepWords(opportunity.stage, null, null, mainContact?.name ?? null);
     return (
       <ListPanel id="opportunity-intake" heading="Intake">
         <p className="text-sm font-medium">No intake yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">{nextStepWords(opportunity.stage, null, null, mainContact?.name ?? null)}</p>
+        {next && <p className="mt-1 text-sm text-muted-foreground">{next}</p>}
       </ListPanel>
     );
   }
