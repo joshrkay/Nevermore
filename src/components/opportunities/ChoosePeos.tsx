@@ -6,14 +6,16 @@ import type { useStillNeeds } from "./useStillNeeds";
  * "Choose PEOs" on the opportunity's quotes panel (D-1727): 6.7's send to several PEOs, given the submission the page has read. Clicking asks the page to read the submission
  * (it is read for the quotes anyway, or now) and opens the component once it is here.
  */
-export function ChoosePeos({ needs, onChoose, returnTo, onSent }: {
+export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = false }: {
   needs: ReturnType<typeof useStillNeeds>;
   /** Asks the page to read the submission now, when it was not read for the quotes. */
   onChoose: () => void;
   returnTo: string;
   onSent: () => void;
+  /** Already chosen when drawn (New quote's step 4 opens at the choosing, D-1763). */
+  startChosen?: boolean;
 }) {
-  const [chosen, setChosen] = useState(false);
+  const [chosen, setChosen] = useState(startChosen);
   if (!chosen) {
     return (
       <button type="button" onClick={() => { setChosen(true); onChoose(); }} className="min-h-11 px-4 rounded-md border border-primary text-primary text-sm font-medium">

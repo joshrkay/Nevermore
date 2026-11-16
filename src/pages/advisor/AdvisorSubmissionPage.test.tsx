@@ -2273,6 +2273,10 @@ describe("AdvisorSubmissionPage", () => {
         api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
         api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
         peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        // The employer's say is read now, and an unauthorized PEO isn't ticked (5.8, D-1784): both are authorized, so ticked or not follows readiness alone.
+        loadPeoAuthorizations.mockResolvedValue([
+          { peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }, { peo: "TriNet", state: "authorized", signedAt: null, wordingVersion: null },
+        ]);
         renderPage();
         await within(await panel()).findByRole("heading", { name: "Justworks" });
         fireEvent.click(within(await panel()).getByRole("button", { name: "Send to several PEOs" }));

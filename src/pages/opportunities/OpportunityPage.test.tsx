@@ -2074,6 +2074,8 @@ describe("OpportunityPage: Choose PEOs (D-1727)", () => {
   // Catches: a certified search with no way to send its packet to several PEOs from its own page, or a button that opens nothing.
   it("opens Send to several PEOs on the quotes panel, from the certified answers, when the person chooses PEOs", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)] }));
+    // An unauthorized PEO isn't ticked (5.8, D-1784): the employer has authorized Justworks.
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([{ peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }]);
     renderPage();
     await userEvent.click(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("button", { name: "Choose PEOs" }));
     const sending = await screen.findByRole("region", { name: "Send to several PEOs" });
