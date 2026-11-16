@@ -18,3 +18,24 @@ the return address after sign-in through `brokerNext` (its existing unit seam). 
 | 11 | useFirstSend: on a PEO send, also offers sending from your own mail with the reply address in CC (and never on a contact's or a lead's send) | `Error: expect(element).toHaveTextContent()` (the dialog had no reply address) | green |
 | 12 | useFirstSend: when the mailbox can't be checked, sends nothing and says so | `AssertionError: expected "spy" to be called with arguments: [ 'Couldn\'t check your mailbox.' ]` (the check's rejection went unhandled; the expected words were then widened to also say nothing was sent, still red, before the code) | green |
 | 13 | Settings: describes the Mailbox as the one you write from, which Nevermore only sends from (the menu said "read replies in") | `Error: expect(element).toHaveTextContent()`; then, after a first wording with "never reads", `Error: expect(element).not.toHaveTextContent()` | green |
+
+## Mutations (each rule broken in turn; the slice's tests run; the file restored)
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | `brokerNext` no longer keeps `/contacts/<id>` and `/leads` | red (cycle 1) |
+| M2 | the line shows Connected whenever a token is kept, over a send refused for a mailbox reason | red (cycle 6) |
+| M3 | the Reconnect state no longer says the provider took the permission back | red (cycle 5) |
+| M4 | Reconnect labelled Connect | red (cycles 5, 6) |
+| M5 | the sign-in no longer told the place to write to come back to | red (cycles 3, 5, 10) |
+| M6 | a sign-in that can't start says nothing | red (cycle 7) |
+| M7 | a mailbox that can't be checked shows nothing | red (cycle 8) |
+| M8 | the first send sends with no mailbox | red (cycles 10, 11) |
+| M9 | the first send asks even when connected | red (cycle 9) |
+| M10 | sending from your own mail offered on every send, not only a PEO's | red (cycle 10) |
+| M11 | sending from your own mail without the reply address shown | red (cycle 11) |
+| M12 | a failed mailbox check sends anyway | red (cycle 12) |
+| M13 | Settings says the mailbox reads replies | red (cycle 13) |
+
+What no seam here sees: that Google's and Microsoft's consent screens ask for sending only. That is `mailboxScopes.test.ts`'s (M-4.1), and this slice
+asks through the same `startBrokerSignIn`, which cycles 3 and 10 pin.
