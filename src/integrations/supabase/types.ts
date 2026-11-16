@@ -319,6 +319,8 @@ export type Database = {
           status: string
           // M-2.3: the version a quote was given on, while quoted; older than sent_version after an update, until a new answer is recorded.
           quoted_version?: number | null
+          // Why it was withdrawn (M-2.4), one of WITHDRAWAL_REASONS, for advisors only; cleared when a send reopens it.
+          withdrawn_reason?: string | null
         }
         Insert: never
         Update: never
@@ -1362,6 +1364,22 @@ export type Database = {
       // Joins the bundle link to the message, which writes the fixed block under the note; PT404, PT409, 22023 for a link that isn't the message's.
       attach_peo_link: {
         Args: { p_message_id: number; p_link_id: number; p_token: string }
+        Returns: Json
+      }
+      // ---- M-2.4: follow up and withdraw (20261122190000_follow_up_and_withdraw.sql) ----
+      // A follow-up queued on the PEO's thread: {quote_request_id, message_id, version}; its fresh link is then joined by attach_peo_link.
+      follow_up_peo: {
+        Args: { p_quote_request_id: number; p_to: string[]; p_subject: string; p_note: string }
+        Returns: Json
+      }
+      // Closes the quote request with its reason, revokes its link and queues the withdrawal: {quote_request_id, message_id}.
+      withdraw_from_peo: {
+        Args: { p_quote_request_id: number; p_to: string[]; p_subject: string; p_note: string; p_reason: string }
+        Returns: Json
+      }
+      // set_submission_status to Won, Lost or Archived, and one withdrawal queued on each PEO still open: {message_ids}.
+      close_submission_and_withdraw: {
+        Args: { p_session_id: string; p_status: string; p_note: string | null; p_won_quote_request_id: number | null; p_subject: string; p_body: string }
         Returns: Json
       }
       // What the composer reads: {mailbox: {connected, address}, contacts: [{name, role, email}], reply_address}.

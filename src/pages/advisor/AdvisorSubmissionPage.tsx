@@ -280,6 +280,7 @@ const Detail = ({
             stage={detail.pipelineStatus}
             onSendRecorded={quotesChanged}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
+            mail={detail.quoteRequestMessages}
           />
           <PeoThreadPanel
             prospectUserId={detail.userId}
@@ -359,6 +360,8 @@ const Detail = ({
             certifiedOnce={!!detail.submission?.signer_name}
             history={detail.history}
             quoteRequests={detail.quoteRequests}
+            mail={detail.quoteRequestMessages}
+            companyName={detail.data.company_name ?? "this employer"}
             onChanged={quotesChanged}
           />
           <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} announceCatalog={!needsShowsCatalog} />

@@ -43,6 +43,9 @@ vi.mock("@/lib/advisorApi", () => api);
 // Sending the bundle to a PEO (M-2.1): the send's steps and the composer's read, and the bundle link the send issues (6.6b).
 const peoSend = { loadPeoSendContext: vi.fn(), sendToPeo: vi.fn() };
 vi.mock("@/lib/peoSendApi", () => peoSend);
+// Following up and withdrawing (M-2.4), and the withdrawal offered with Won, Lost or Archived.
+const peoFollowUp = { followUpPeo: vi.fn(), withdrawFromPeo: vi.fn(), closeSubmissionAndWithdraw: vi.fn() };
+vi.mock("@/lib/peoFollowUpApi", () => peoFollowUp);
 const issueBundleLink = vi.fn();
 vi.mock("@/lib/bundleLink", () => ({ issueBundleLink: (...a: unknown[]) => issueBundleLink(...a), supabaseBundleLinkDeps: async () => ({}) }));
 vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: vi.fn() }));
@@ -2278,6 +2281,54 @@ describe("AdvisorSubmissionPage", () => {
           ["Justworks", true],
           ["TriNet", false],
         ]);
+      });
+
+      // Catches (M-2.4): no way to follow up with or withdraw from a PEO the product sent to, a follow-up to people the PEO was never sent to, or its
+      // fresh link issued from another PEO's plan or for another quote request.
+      it("offers Follow up and Withdraw on the card of a PEO sent through the product, the follow-up's link from that PEO's plan", async () => {
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 1, submission: { ...detail().submission!, version: 1 },
+          quoteRequests: [{ id: 7, session_id: "s1", peo_name: "Justworks", status: "sent", sent_version: 1, sent_on: "2026-11-03",
+            quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null, withdrawn_reason: null }],
+          quoteRequestMessages: [{ id: 41, quote_request_id: 7, session_id: "s1", direction: "sent", status: "sent", from_address: "adv@example.com",
+            to_addresses: ["quotes@justworks.example"], subject: "Acme: EAA-1, version 1", recorded_at: "2026-11-03T10:00:00Z" }] as unknown as SubmissionDetail["quoteRequestMessages"],
+        }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoFollowUp.followUpPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 52 });
+        issueBundleLink.mockResolvedValue({ url: "https://app.example/b/x", expiresAt: "2026-12-16T00:00:00Z", version: 1, notIncluded: [], id: 4, token: "u" });
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).getByRole("button", { name: "Withdraw from Justworks" })).toBeInTheDocument();
+        fireEvent.click(within(justworks).getByRole("button", { name: "Follow up with Justworks" }));
+        const form = await within(justworks).findByRole("form", { name: "Follow up with Justworks" });
+        expect(within(form).getByLabelText("To")).toHaveValue("quotes@justworks.example");
+        fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+        await waitFor(() => expect(peoFollowUp.followUpPeo).toHaveBeenCalledTimes(1));
+        const sent = peoFollowUp.followUpPeo.mock.calls[0][0] as { quoteRequestId: number; issueLink: (id: number) => Promise<unknown> };
+        expect(sent.quoteRequestId).toBe(7);
+        await expect(sent.issueLink(7)).resolves.toEqual({ id: 4, token: "u" });
+        const [input] = issueBundleLink.mock.calls[0] as [{ quoteRequestId: number; plan: { peo: string; version: number } }];
+        expect([input.quoteRequestId, input.plan.peo, input.plan.version]).toEqual([7, "Justworks", 1]);
+      });
+
+      // Catches (M-2.4): the console's stage control marking a submission Lost with no withdrawal offered to the PEO the product sent it to.
+      it("offers the withdrawal when the status is changed to Lost, and sends it with the move", async () => {
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "sent_to_carrier", currentVersion: 1, submission: { ...detail().submission!, version: 1 },
+          quoteRequests: [{ id: 7, session_id: "s1", peo_name: "Justworks", status: "sent", sent_version: 1, sent_on: "2026-11-03",
+            quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null, withdrawn_reason: null }],
+          quoteRequestMessages: [{ id: 41, quote_request_id: 7, session_id: "s1", direction: "sent", status: "sent", from_address: "adv@example.com",
+            to_addresses: ["quotes@justworks.example"], subject: "Acme: EAA-1, version 1", recorded_at: "2026-11-03T10:00:00Z" }] as unknown as SubmissionDetail["quoteRequestMessages"],
+        }));
+        peoFollowUp.closeSubmissionAndWithdraw.mockResolvedValue({ messageIds: [52] });
+        renderPage();
+        const status = await panelOf("Status");
+        fireEvent.change(within(status).getByLabelText("Change status to"), { target: { value: "lost" } });
+        expect(within(status).getByRole("checkbox", { name: "Send a withdrawal to Justworks" })).toBeChecked();
+        fireEvent.click(within(status).getByRole("button", { name: "Update status" }));
+        await waitFor(() => expect(peoFollowUp.closeSubmissionAndWithdraw).toHaveBeenCalledTimes(1));
+        expect(peoFollowUp.closeSubmissionAndWithdraw.mock.calls[0][0]).toMatchObject({ sessionId: "s1", status: "lost", subject: "Re: Acme: EAA-1, version 1" });
+        expect(api.setStatus).not.toHaveBeenCalled();
       });
 
       // Catches: a send recorded from the bundle's "Sent this to ...?" question leaving the Quotes count one short for a minute.

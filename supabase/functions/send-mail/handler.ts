@@ -160,8 +160,9 @@ async function gmailId(res: Response): Promise<string | null> {
 
 async function sendOne(db: SendMailClient, deps: SendMailDeps, config: MailboxConfig, replyDomain: string, queue: Queue, row: Claimed): Promise<Outcome> {
   const claimed = row.message;
-  // A PEO's message carries its bundle link where the marker is; one claimed without a token is refused, never sent without its bundle.
-  if (queue.linkBase !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(claimed.link_token ?? "")) {
+  // A PEO's message carries its bundle link where the marker is; one claimed without a token is refused, never sent without its bundle. A withdrawal
+  // (M-2.4) holds no marker and carries no link: it goes as written.
+  if (queue.linkBase !== undefined && claimed.body_text.includes(PEO_LINK_MARKER) && !/^[A-Za-z0-9_-]{43}$/.test(claimed.link_token ?? "")) {
     return fail(db, deps, queue, row, "refused", REASONS.no_link, null);
   }
   const m: ClaimedMessage = queue.linkBase === undefined ? claimed : { ...claimed, body_text: claimed.body_text.replace(PEO_LINK_MARKER, `${queue.linkBase}${claimed.link_token}`) };

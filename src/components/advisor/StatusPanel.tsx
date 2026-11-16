@@ -10,7 +10,9 @@ import {
   prospectStatusAfter,
   type PipelineStatus,
 } from "@/data/advisor";
-import { setStatus, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
+import { setStatus, type QuoteRequestMessageRow, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
+import { closingWithdrawalNote, peoNames, replySubject } from "@/data/peoFollowUp";
+import { closeSubmissionAndWithdraw } from "@/lib/peoFollowUpApi";
 import { PipelineBadge } from "./PipelineBadge";
 import { actorName, formatDateTime } from "./format";
 
@@ -25,6 +27,10 @@ interface StatusPanelProps {
   history: StatusHistoryRow[];
   /** The submission's quote requests: marking it won names the one whose quote the employer took. */
   quoteRequests: readonly QuoteRequestRow[];
+  /** The PEO threads' mail: Won, Lost or Archived offers one withdrawal to each PEO still open that the product sent to (M-2.4). */
+  mail?: readonly QuoteRequestMessageRow[];
+  /** The company, which the withdrawal's default text names. */
+  companyName?: string;
   onChanged: () => void;
 }
 
@@ -34,7 +40,7 @@ const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[
 const optionLabel = (current: PipelineStatus, s: PipelineStatus) =>
   current === "archived" && s === "submitted" ? `${PIPELINE_LABELS[s]} (reopen)` : PIPELINE_LABELS[s];
 
-const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, quoteRequests, onChanged }: StatusPanelProps) => {
+const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, quoteRequests, mail = [], companyName = "this employer", onChanged }: StatusPanelProps) => {
   // Only the next steps from where the intake is now, as the database allows (one step at a time; a
   // never-certified intake can only be archived).
   const options = nextPipelineStatuses(status, certifiedOnce);
@@ -47,6 +53,16 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const [winner, setWinner] = useState("");
   const quoted = quoteRequests.filter((q) => q.status === "quoted");
   const needsWinner = next === "won" && winner === "";
+  // M-2.4: the PEOs this move closes that the product wrote to (a send recorded by hand has no thread to answer), each told once, on its own thread.
+  const closing = next === "won" || next === "lost" || next === "archived";
+  const sentByUs = (q: QuoteRequestRow) => mail.filter((m) => m.quote_request_id === q.id && m.direction === "sent");
+  const stillOpen = closing
+    ? quoteRequests.filter((q) => (q.status === "sent" || q.status === "quoted") && String(q.id) !== winner && sentByUs(q).length > 0)
+    : [];
+  const newest = stillOpen.flatMap(sentByUs).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
+  const [tell, setTell] = useState(true);
+  const [tellSubject, setTellSubject] = useState<string | null>(null);
+  const [tellBody, setTellBody] = useState(closingWithdrawalNote({ companyName }));
   const seen = prospectStatusAfter(next, history);
   const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
   // While withdrawn, the prospect sees it once they certify again, and certifying at "information
@@ -70,7 +86,12 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
     setSaving(true);
     failure.clear();
     try {
-      if (next === "won") await setStatus(sessionId, next, note, Number(winner));
+      if (stillOpen.length > 0 && tell && (next === "won" || next === "lost" || next === "archived")) {
+        await closeSubmissionAndWithdraw({
+          sessionId, status: next, note, wonQuoteRequestId: next === "won" ? Number(winner) : null,
+          subject: tellSubject ?? replySubject(newest?.subject ?? null, companyName), body: tellBody,
+        });
+      } else if (next === "won") await setStatus(sessionId, next, note, Number(winner));
       else await setStatus(sessionId, next, note);
       setNote("");
       toast.success(`Status changed to ${PIPELINE_LABELS[next]}.`);
@@ -126,6 +147,37 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             </select>
             <p className="text-xs text-muted-foreground">Every other open quote request closes.</p>
           </>
+        )}
+        {stillOpen.length > 0 && (
+          <fieldset className="space-y-2 border border-border rounded-md p-3">
+            <legend className="text-xs font-medium px-1">Tell the PEOs still open</legend>
+            <label className="flex items-start gap-2 text-sm min-h-11">
+              <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} className="mt-1" />
+              <span>{`Send a withdrawal to ${peoNames(stillOpen.map((q) => q.peo_name))}`}</span>
+            </label>
+            <p className="text-xs text-muted-foreground">Written once, it goes on each PEO's own thread from your mailbox. Their links stop working either way.</p>
+            {tell && (
+              <>
+                <label htmlFor="withdrawal-subject" className="block text-xs text-muted-foreground">Subject</label>
+                <input
+                  id="withdrawal-subject"
+                  value={tellSubject ?? replySubject(newest?.subject ?? null, companyName)}
+                  maxLength={300}
+                  onChange={(e) => setTellSubject(e.target.value)}
+                  className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+                />
+                <label htmlFor="withdrawal-body" className="block text-xs text-muted-foreground">The withdrawal</label>
+                <textarea
+                  id="withdrawal-body"
+                  value={tellBody}
+                  onChange={(e) => setTellBody(e.target.value)}
+                  maxLength={50000}
+                  rows={5}
+                  className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+                />
+              </>
+            )}
+          </fieldset>
         )}
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>
         <textarea

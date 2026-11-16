@@ -104,6 +104,17 @@ _Avoid_: stale quote, old quote
 One action that makes a **Send to a PEO** for each PEO the advisor ticks, one at a time: each its own quote request, its own **Bundle link** and its own message, addressed only to that PEO's own contacts, opening with its own greeting ("Hello Dana,") over the advisor's one note. A PEO is **ready** when nothing it needs to quote is missing and no eligibility check is not met; a ready PEO starts ticked, one that isn't starts unticked with what it is missing. A review shows each chosen PEO's recipients, greeting, files and open items before anything goes; one the employer hasn't authorized, or with no contact address, is not sent and the rest go. The result says Sent or Not sent, with the reason, for each.
 _Avoid_: bulk send, blast, mass mail
 
+**Follow-up** (code: `follow_up_peo`, `FollowUpOrWithdraw`; M-2.4, slice 6.9, D-1620 to D-1629):
+An advisor's email to a PEO already sent the bundle, on that PEO's own thread (In-Reply-To and References continue it), from their connected mailbox. It opens with default text kept in code, which the advisor edits, and carries a fresh **Bundle link** to the version already sent under the **Fixed block**, replacing the earlier link. Offered only while the quote request is open, the employer still authorizes the PEO, the advisor has not revoked its link, and the version sent is the one last certified (a newer one is an update, M-2.3).
+_Avoid_: reminder, chaser, nudge
+
+**Withdrawal** (code: `withdraw_from_peo`, `quote_requests.withdrawn_reason`; M-2.4, slice 6.9, D-1620 to D-1629):
+An advisor's email telling one PEO to set the submission aside, on its own thread, carrying no link. Sending it closes that PEO's quote request and revokes its **Bundle link** (reason withdrawn), and records why, for advisors only: the employer went elsewhere, the prospect withdrew this PEO, the PEO is not a fit, or other. Sending to the PEO again reopens the quote request and clears the reason. Not the employer withdrawing a PEO (M-1.1), which sends the PEO nothing.
+_Avoid_: cancellation, decline (a decline is the PEO's answer)
+
+**Closing withdrawal** (code: `close_submission_and_withdraw`; M-2.4, D-1624):
+The one **Withdrawal** the Status panel offers when a submission is marked Won, Lost or Archived: written once, sent on the thread of each PEO the move closes that the product sent to, never the winner. The advisor can untick it; the links of every PEO but the winner are revoked either way (reason submission_closed).
+
 **Fixed block** (M-2.1, D-674):
 What the database writes under the advisor's note on a send to a PEO, which the advisor can't edit: the link and the day it stops working, the File ID and version, the open items, the advisor's name, firm and phone, and the draft line from the legal-wording module.
 _Avoid_: signature, footer
