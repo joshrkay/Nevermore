@@ -4,6 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { BulkOutcome, BulkSelection } from "@/lib/bulkChangeApi";
 import { applyLeadsBulk, previewLeadsBulk, type LeadBulkAction } from "@/lib/leadsBulkApi";
+import { LEAD_NOT_FIT_REASON_LABELS, LEAD_STATUS_LABELS } from "@/data/leads";
+import { LEAD_NOT_FIT_REASONS } from "@/lib/leadsApi";
+import { listFirmMembers } from "@/lib/accountsApi";
+import { Input } from "@/components/ui/input";
+import { US_STATE_CODES } from "@/data/chamberValidation";
+import { LEAD_BULK_FIELDS } from "@/lib/leadsBulkApi";
+import { LEAD_FIELD_WORDS } from "./leadBulkWords";
 import { LEAD_BULK_TITLES, leadsWords, type LeadBulkKind } from "./leadBulkWords";
 
 // The dialog that says exactly what a bulk change of leads will do, from the database's own preview, before anything changes (story CRM-L1.1b, as CRM-S3.7's
@@ -25,7 +32,33 @@ const ASKS: Record<LeadBulkKind, string> = {
   delete: "Deleted leads go to the bin, in no view but Deleted.",
 };
 
-const binWords = (n: number) => `This will move ${leadsWords(n)} to the bin. An owner can restore ${n === 1 ? "it" : "them"} for 30 days; after that ${n === 1 ? "it is" : "they are"} removed for good.`;
+/** The change the choice makes, or null while nothing is chosen (nothing is asked of the database until it is). */
+const actionOf = (kind: LeadBulkKind, choice: string, value: string): LeadBulkAction | null => {
+  switch (kind) {
+    case "delete": return { action: "delete" };
+    case "status": return choice === "new" || choice === "working" ? { action: "status", status: choice } : null;
+    case "owner": return choice ? { action: "owner", ownerId: choice } : null;
+    case "field": {
+      const field = LEAD_BULK_FIELDS.find((f) => f === choice);
+      if (!field) return null;
+      const v = value.trim();
+      if (field === "employees") {
+        if (v === "") return { action: "field", field, value: null };
+        return /^\d+$/.test(v) ? { action: "field", field, value: Number(v) } : null;
+      }
+      return { action: "field", field, value: v === "" ? null : v };
+    }
+    case "not_fit": {
+      const reason = LEAD_NOT_FIT_REASONS.find((r) => r === choice);
+      return reason ? { action: "not_fit", reason } : null;
+    }
+    default: return null;
+  }
+};
+
+const SELECT = "flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm";
+
+const binWords =(n: number) => `This will move ${leadsWords(n)} to the bin. An owner can restore ${n === 1 ? "it" : "them"} for 30 days; after that ${n === 1 ? "it is" : "they are"} removed for good.`;
 
 export function LeadBulkDialog({ firmId, kind, selection, count, onClose, onMade }: {
   firmId: string;
@@ -37,7 +70,10 @@ export function LeadBulkDialog({ firmId, kind, selection, count, onClose, onMade
   onClose: () => void;
   onMade: (made: LeadBulkMade) => void;
 }) {
-  const wanted: LeadBulkAction | null = kind === "delete" ? { action: "delete" } : null;
+  const [choice, setChoice] = useState("");
+  const people = useQuery({ queryKey: ["bulk-owner-choices", firmId], queryFn: () => listFirmMembers(firmId), enabled: kind === "owner", retry: false, staleTime: 60_000 });
+  const [value, setValue] = useState("");
+  const wanted = actionOf(kind, choice, value);
   const key = JSON.stringify(wanted);
   const preview = useQuery({
     queryKey: ["lead-bulk-preview", firmId, key, "ids" in selection ? selection.ids : selection.filters],
@@ -77,6 +113,59 @@ export function LeadBulkDialog({ firmId, kind, selection, count, onClose, onMade
       <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
         <DialogTitle className="font-display text-xl font-bold">{title}</DialogTitle>
         <DialogDescription>{ASKS[kind]}</DialogDescription>
+        {kind === "status" && (
+          <div className="space-y-1">
+            <label htmlFor="lead-bulk-status" className="text-sm font-medium">New status</label>
+            <select id="lead-bulk-status" className={SELECT} value={choice} onChange={(e) => setChoice(e.target.value)} autoFocus>
+              <option value="">Choose a status</option>
+              <option value="new">{LEAD_STATUS_LABELS.new}</option>
+              <option value="working">{LEAD_STATUS_LABELS.working}</option>
+            </select>
+          </div>
+        )}
+        {kind === "owner" && (
+          <div className="space-y-1">
+            <label htmlFor="lead-bulk-owner" className="text-sm font-medium">New owner</label>
+            <select id="lead-bulk-owner" className={SELECT} value={choice} onChange={(e) => setChoice(e.target.value)} disabled={people.isPending} autoFocus>
+              <option value="">{people.isPending ? "Loading people" : "Choose a person"}</option>
+              {(people.data ?? []).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+            {people.isError && <p role="alert" className="text-sm text-destructive">Couldn't load the firm's people. Close this and try again.</p>}
+          </div>
+        )}
+        {kind === "field" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label htmlFor="lead-bulk-field" className="text-sm font-medium">Field</label>
+              <select id="lead-bulk-field" className={SELECT} value={choice} onChange={(e) => { setChoice(e.target.value); setValue(""); }} autoFocus>
+                <option value="">Choose a field</option>
+                {LEAD_BULK_FIELDS.map((f) => <option key={f} value={f}>{LEAD_FIELD_WORDS[f]}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="lead-bulk-value" className="text-sm font-medium">New value</label>
+              {choice === "state" ? (
+                <select id="lead-bulk-value" className={SELECT} value={value} onChange={(e) => setValue(e.target.value)}>
+                  <option value="">No state</option>
+                  {US_STATE_CODES.map((code) => <option key={code} value={code}>{code}</option>)}
+                </select>
+              ) : (
+                <Input id="lead-bulk-value" value={value} onChange={(e) => setValue(e.target.value)} inputMode={choice === "employees" ? "numeric" : undefined}
+                  type={choice === "phone" ? "tel" : choice === "email" ? "email" : "text"} aria-describedby="lead-bulk-value-help" />
+              )}
+              <p id="lead-bulk-value-help" className="text-xs text-muted-foreground">Leave it blank to clear the field.</p>
+            </div>
+          </div>
+        )}
+        {kind === "not_fit" && (
+          <div className="space-y-1">
+            <label htmlFor="lead-bulk-reason" className="text-sm font-medium">Reason</label>
+            <select id="lead-bulk-reason" className={SELECT} value={choice} onChange={(e) => setChoice(e.target.value)} autoFocus>
+              <option value="">Choose a reason</option>
+              {LEAD_NOT_FIT_REASONS.map((r) => <option key={r} value={r}>{LEAD_NOT_FIT_REASON_LABELS[r]}</option>)}
+            </select>
+          </div>
+        )}
         <div aria-live="polite" className="rounded-md border border-border bg-muted/40 p-3 text-sm">
           {wanted !== null && preview.isPending && <p role="status" className="text-muted-foreground">Checking what this will do…</p>}
           {preview.isError && <p role="alert" className="text-destructive">{preview.error instanceof Error ? preview.error.message : "Couldn't check that change. Try again."}</p>}

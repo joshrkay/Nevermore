@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { UNDO_WINDOW_MS } from "@/lib/bulkChangeApi";
 import { undoLeadsBulk } from "@/lib/leadsBulkApi";
 import type { LeadBulkMade } from "./LeadBulkDialog";
-import { leadsWords } from "./leadBulkWords";
+import { LEAD_NOT_FIT_REASON_LABELS, LEAD_STATUS_LABELS } from "@/data/leads";
+import { LEAD_FIELD_WORDS, leadsWords } from "./leadBulkWords";
 
 // What a bulk change of leads did, with Undo for the ten minutes the database allows (story CRM-L1.1b, D-202, as the Accounts page's BulkResultBar does): a line
 // over the table. It lives with the page, so leaving the page ends it. Every refusal of an undo comes back in the database's words.
@@ -12,6 +13,10 @@ const madeWords = ({ action, outcome }: LeadBulkMade): string => {
   const n = leadsWords(outcome.changed);
   switch (action.action) {
     case "delete": return `Moved ${n} to the bin.`;
+    case "field": return `Set ${LEAD_FIELD_WORDS[action.field]} on ${n}.`;
+    case "owner": return `Gave ${n} to ${outcome.ownerName ?? "the person chosen"}.`;
+    case "status": return `Set ${n} to ${LEAD_STATUS_LABELS[action.status]}.`;
+    case "not_fit": return `Marked ${n} Not a fit: ${LEAD_NOT_FIT_REASON_LABELS[action.reason]}.`;
     default: return `Changed ${n}.`;
   }
 };

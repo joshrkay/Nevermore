@@ -677,8 +677,8 @@ BEGIN
     'the only tables with the trigger are the ones that keep a history: accounts, contacts, leads, opportunities and referral partners');
   PERFORM pg_temp.is((SELECT count(*) FROM pg_trigger t WHERE t.tgfoid = 'public.record_history_capture()'::regprocedure AND encode(t.tgargs, 'escape') ~ 'chamber_data'), 0::bigint, 'and no list names an intake''s answers');
   -- Nothing else writes the history: the only function that inserts into it is the capture trigger.
-  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,record_history_capture',
-    'and only the capture trigger and the account labels'' trigger (CRM-S3.7b: a label is a row of its own table, not a column, so its change is written as the one field "labels") write a row');
+  PERFORM pg_temp.is((SELECT string_agg(p.proname, ',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prosrc ~* 'insert into public\.record_history'), 'account_labels_history,lead_labels_history,record_history_capture',
+    'and only the capture trigger and the account and lead labels'' triggers (CRM-S3.7b, CRM-L1.1b: a label is a row of its own table, not a column, so its change is written as the one field "labels") write a row');
   RAISE NOTICE 'record_history: an intake''s answers passed';
 END $$;
 

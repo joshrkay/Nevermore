@@ -133,6 +133,75 @@ describe("the leads' bulk bar (CRM-L1.1b)", () => {
     expect(bulk.undoLeadsBulk).toHaveBeenCalledWith("f1", "c1");
     expect(await screen.findByText("Undone. 2 leads put back.")).toBeInTheDocument();
   });
+
+  // Catches (D-811): Change status offering Converted or Not a fit, or the change sent without the status chosen.
+  it("changes the status to New or Working", async () => {
+    const user = userEvent.setup();
+    bulk.previewLeadsBulk.mockResolvedValue(outcome());
+    bulk.applyLeadsBulk.mockResolvedValue(outcome({ changeId: "c1", undoUntil: "2026-11-16T10:10:00Z" }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Change status" }));
+    const d = await screen.findByRole("dialog", { name: "Change status: 2 leads" });
+    const status = within(d).getByLabelText("New status");
+    expect(within(status).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose a status", "New", "Working"]);
+    await user.selectOptions(status, "working");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 leads" }));
+    expect(bulk.applyLeadsBulk).toHaveBeenCalledWith("f1", { action: "status", status: "working" }, { ids: ["l1", "l2"] });
+    expect(await screen.findByText("Set 2 leads to Working.")).toBeInTheDocument();
+  });
+
+  // Catches (D-811, CRM-L1.3): Not a fit without one reason from the short list.
+  it("marks them Not a fit with one reason for all", async () => {
+    const user = userEvent.setup();
+    bulk.previewLeadsBulk.mockResolvedValue(outcome());
+    bulk.applyLeadsBulk.mockResolvedValue(outcome({ changeId: "c1", undoUntil: "2026-11-16T10:10:00Z" }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Not a fit" }));
+    const d = await screen.findByRole("dialog", { name: "Not a fit: 2 leads" });
+    const reason = within(d).getByLabelText("Reason");
+    expect(within(reason).getAllByRole("option").map((o) => o.textContent)).toEqual(
+      ["Choose a reason", "Too small", "Wrong industry", "Not interested", "Bad contact details", "Other"]);
+    await user.selectOptions(reason, "too_small");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 leads" }));
+    expect(bulk.applyLeadsBulk).toHaveBeenCalledWith("f1", { action: "not_fit", reason: "too_small" }, { ids: ["l1", "l2"] });
+    expect(await screen.findByText("Marked 2 leads Not a fit: Too small.")).toBeInTheDocument();
+  });
+
+  // Catches (D-811): Change owner not offering the firm's people, or the change sent to someone else.
+  it("gives them to another member of the firm", async () => {
+    const user = userEvent.setup();
+    bulk.previewLeadsBulk.mockResolvedValue(outcome({ ownerName: "Marcus Hale" }));
+    bulk.applyLeadsBulk.mockResolvedValue(outcome({ ownerName: "Marcus Hale", changeId: "c1", undoUntil: "2026-11-16T10:10:00Z" }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Change owner" }));
+    const d = await screen.findByRole("dialog", { name: "Change owner: 2 leads" });
+    await user.selectOptions(await within(d).findByLabelText("New owner"), "u2");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 leads" }));
+    expect(bulk.applyLeadsBulk).toHaveBeenCalledWith("f1", { action: "owner", ownerId: "u2" }, { ids: ["l1", "l2"] });
+    expect(await screen.findByText("Gave 2 leads to Marcus Hale.")).toBeInTheDocument();
+  });
+
+  // Catches (CRM-S3.7): Set a field offering the name or the status, or a number sent as text.
+  it("sets an optional field, never the name or the status", async () => {
+    const user = userEvent.setup();
+    bulk.previewLeadsBulk.mockResolvedValue(outcome());
+    bulk.applyLeadsBulk.mockResolvedValue(outcome({ changeId: "c1", undoUntil: "2026-11-16T10:10:00Z" }));
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Set a field" }));
+    const d = await screen.findByRole("dialog", { name: "Set a field: 2 leads" });
+    const field = within(d).getByLabelText("Field");
+    expect(within(field).getAllByRole("option").map((o) => o.textContent)).toEqual(
+      ["Choose a field", "Title", "Business", "Email", "Phone", "City", "State", "Employees", "Current provider"]);
+    await user.selectOptions(field, "employees");
+    await user.type(within(d).getByLabelText("New value"), "40");
+    await user.click(await within(d).findByRole("button", { name: "Change 2 leads" }));
+    expect(bulk.applyLeadsBulk).toHaveBeenCalledWith("f1", { action: "field", field: "employees", value: 40 }, { ids: ["l1", "l2"] });
+    expect(await screen.findByText("Set Employees on 2 leads.")).toBeInTheDocument();
+  });
 });
 
 describe("the bin (CRM-L1.1b, D-806)", () => {
