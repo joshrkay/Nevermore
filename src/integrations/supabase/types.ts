@@ -1461,6 +1461,10 @@ export type Database = {
         Args: { p_peo: string; p_sent_on?: string | null; p_session_id: string }
         Returns: Json
       }
+      advisor_set_quote_request_status: {
+        Args: { p_quote_request_id: number; p_status: string }
+        Returns: Json
+      }
       advisor_update_quote_request: {
         Args: {
           p_admin_fee_pepm?: number | null

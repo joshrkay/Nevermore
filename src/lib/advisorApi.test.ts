@@ -83,6 +83,7 @@ const {
   setNeedsAction,
   setStatus,
   recordQuoteSend,
+  setQuoteRequestStatus,
   updateQuoteRequest,
   fetchIsAdmin,
   loadPeoDirectory,
@@ -597,6 +598,15 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_correct_quote_request_note", {
       p_note_id: 21, p_kind: "call", p_noted_on: "2026-11-11", p_body: "Loss runs, three years.",
     });
+  });
+
+  // N-1.2. Break caught: a status recorded through the answer function (which refuses the open statuses), or sent under the wrong parameter names.
+  it("records Acknowledged, Question open or Sent through advisor_set_quote_request_status, and says why when it is refused", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 7, status: "question_open" }, error: null });
+    await setQuoteRequestStatus(7, "question_open");
+    expect(rpc).toHaveBeenLastCalledWith("advisor_set_quote_request_status", { p_quote_request_id: 7, p_status: "question_open" });
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "22023", message: "TriNet is already Acknowledged." } });
+    await expect(setQuoteRequestStatus(7, "acknowledged")).rejects.toThrow("TriNet is already Acknowledged.");
   });
 
   it("opens a PEO mail attachment through a signed link from the peo-mail bucket, as a download under its own name", async () => {

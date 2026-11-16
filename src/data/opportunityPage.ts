@@ -4,6 +4,7 @@ import type { Json } from "@/integrations/supabase/types";
 import type { OpportunityStage } from "@/lib/accountPageApi";
 import type { OpportunityChangeRow, OpportunityEdit, OpportunityEditable, OpportunityFields, OpportunityQuoteEvent } from "@/lib/opportunityPageApi";
 import { formatDay, STAGE_LABELS, valueWords } from "./accountPage";
+import { isOpenQuoteRequest } from "./quoteRequests";
 
 // The words the opportunity's page says (story CRM-O1.1b, screen 19): the stage bar, what would move the stage on, how a quote request's row reads, and the form's
 // two conversions between what a person types and what the database holds. Words only: who may see or change an opportunity, and the stage itself, are the
@@ -162,6 +163,8 @@ export function historyWords(row: OpportunityChangeRow): string {
 export function quoteEventWords(row: OpportunityQuoteEvent): string {
   switch (row.event) {
     case "sent": return `Sent to ${row.peoName}`;
+    case "acknowledged": return `${row.peoName} acknowledged it has the packet`;
+    case "question_open": return `${row.peoName} has a question open`;
     case "quoted": return `${row.peoName} quoted`;
     case "declined": return `${row.peoName} declined`;
     default: return `${row.peoName}'s quote closed`;
@@ -182,12 +185,13 @@ export const dollarsWords = (n: number): string =>
 export const adminFeeWords = (pepm: number): string => `${dollarsWords(pepm)} per employee per month`;
 
 /**
- * What a quote request's status reads (D-424): "Sent" with "· N days" while it is sent (the days from the day it was sent to `today`, both YYYY-MM-DD), else the
- * status's own label. The account's lists word a sent request "Waiting"; this page words it as the screen does.
+ * What a quote request's status reads (D-424): "Sent", "Acknowledged" or "Question open" with "· N days" while it is open (CRM-Q3.1: the wait keeps counting;
+ * the days from the day it was sent to `today`, both YYYY-MM-DD), else the status's own label. The account's lists word a sent request "Waiting"; this page words it as the screen does.
  */
 export function quoteStatusWords(status: string, label: string, sentOn: string | null, today: string): string {
-  if (status !== "sent") return label;
-  if (!sentOn) return "Sent";
+  if (!isOpenQuoteRequest(status)) return label;
+  const word = status === "sent" ? "Sent" : label;
+  if (!sentOn) return word;
   const days = Math.max(0, dayNumber(today) - dayNumber(sentOn));
-  return `Sent · ${days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`}`;
+  return `${word} · ${days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`}`;
 }

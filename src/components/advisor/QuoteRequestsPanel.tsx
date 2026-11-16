@@ -10,13 +10,13 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import {
-  canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
+  canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isOpenQuoteRequest, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
   QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
   type QuoteNoteKind,
 } from "@/data/quoteRequests";
 import {
-  addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, updateQuoteRequest,
-  type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
+  addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, setQuoteRequestStatus, updateQuoteRequest,
+  type OpenQuoteStatus, type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
 
@@ -121,6 +121,45 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
       </div>
     </div>
+  );
+};
+
+const MARKS: { value: OpenQuoteStatus; label: string; words: string }[] = [
+  { value: "acknowledged", label: "Acknowledged", words: "acknowledged" },
+  { value: "question_open", label: "Question open", words: "question open" },
+  { value: "sent", label: "Back to Sent", words: "back to Sent" },
+];
+
+/**
+ * What a PEO has said short of a quote or a decline (CRM-Q3.1): one click records Acknowledged, Question open, or back to Sent once the question is
+ * answered. Only an agent records it; mail only suggests. Offered while the request is open, never for the status it is already in.
+ */
+const OpenStatusButtons = ({ request, onChanged }: { request: QuoteRequestRow; onChanged: () => void }) => {
+  const [saving, setSaving] = useState(false);
+  const failure = useSaveFailure("The status wasn't recorded. Check your connection and try again.");
+  const offlineSave = useOfflineSave();
+  const mark = async (status: OpenQuoteStatus) => {
+    setSaving(true);
+    failure.clear();
+    try {
+      await setQuoteRequestStatus(request.id, status);
+      onChanged();
+    } catch (err) {
+      failure.failed(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      {MARKS.filter((m) => m.value !== request.status).map((m) => (
+        <button key={m.value} onClick={offlineSave.guard(() => mark(m.value))} {...offlineSave.buttonProps} disabled={saving}
+          aria-label={`Mark ${request.peo_name} ${m.words}`} className="text-xs text-primary underline disabled:opacity-50">
+          {m.label}
+        </button>
+      ))}
+      <SaveFailed message={failure.message} className="text-xs w-full" />
+    </>
   );
 };
 
@@ -350,10 +389,11 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                   }}
                 />
               ) : (
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3">
                   {r.status !== "closed" && (
                     <button onClick={() => setAnswering(r.id)} className="text-xs text-primary underline">Record answer</button>
                   )}
+                  {isOpenQuoteRequest(r.status) && <OpenStatusButtons request={r} onChanged={onChanged} />}
                   <button onClick={() => setNoting(r.id)} className="text-xs text-primary underline">Add a note</button>
                 </div>
               )}

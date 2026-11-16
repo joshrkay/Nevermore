@@ -138,6 +138,18 @@ describe("StatusPanel: the withdrawal offered with Archived", () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 
+  // Break caught (N-1.2): a PEO that acknowledged, or asked a question, left out of the withdrawal because the panel looked only for Sent and Quoted; the database
+  // closes it with the rest (set_submission_status), so it would be closed without a word.
+  it("offers the withdrawal to a PEO that acknowledged or has a question open, as to a Sent one", () => {
+    render(
+      <StatusPanel sessionId="s1" prospectUserId="p1" status="quoted" certified certifiedOnce history={[]}
+        quoteRequests={[quote(7, "TriNet", "acknowledged"), quote(9, "Insperity", "question_open"), quote(10, "Paychex", "declined")]}
+        mail={[sentTo(41, 7), sentTo(42, 9), sentTo(43, 10)]} companyName="Reyes Bakery" onChanged={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "archived" } });
+    expect(screen.getByRole("checkbox", { name: "Send a withdrawal to TriNet and Insperity" })).toBeChecked();
+  });
+
   // Break caught (found by mutation): the PEO whose quote the employer took told to set the submission aside (archiving a won submission keeps the
   // winner, D-471), a withdrawal offered on a move that closes no quote request (back to Sent to PEOs), or one offered with Won or Lost, whose dialog
   // on the opportunity has none yet (so the panel must not promise a mail it does not send).
