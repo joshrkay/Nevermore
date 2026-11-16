@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getAccountRenewals, type AccountRenewals } from "@/lib/renewalsApi";
-import { getAccountPage, listAccountFiles, listAccountTab, type AccountFile, type ActivityFilter, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
+import { getAccountPage, getIntakeSays, listAccountFiles, listAccountTab, type AccountFile, type ActivityFilter, type AccountListTab, type AccountPage, type AccountTabRows, type TabRows } from "@/lib/accountPageApi";
 
 /** An account's page and its lists are asked again this often, and when the window gets focus (D-49). */
 export const ACCOUNT_REFRESH_MS = 60_000;
@@ -24,6 +24,11 @@ export function useAccountPageQuery(firmId: string | null, accountId: string) {
     refetchOnReconnect: (q) => keepsAsking(q),
     retry: false,
   });
+}
+
+/** What the intake says where the account differs (D-1715). Part of the account's queries, so a save asks it again; a failure shows no suggestions rather than an error. */
+export function useIntakeSaysQuery(firmId: string | null, accountId: string) {
+  return useQuery({ queryKey: [...accountKey(firmId, accountId), "intake-says"], queryFn: () => getIntakeSays(firmId as string, accountId), enabled: firmId !== null, retry: false });
 }
 
 /** How many rows a page of a tab holds. The database allows 100 at most, and the screen asks for fifty (D-44), each page starting after the rows already loaded. */

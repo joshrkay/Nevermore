@@ -151,6 +151,7 @@
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -384,7 +385,7 @@ BEGIN
 END $$;
 
 -- ---------- an intake that already sits on an opportunity gets no second chain; a draft and a missing intake have none ----------
--- Break caught: the step makes an account for an intake an agent started (New quote, Epic 5) that already belongs to an opportunity; or it makes a chain for
+-- Break caught: the step makes an account for an intake an agent started (New quote, Epic 5) that already belongs to an opportunity (it teaches that account instead, slice 5.12); or it makes a chain for
 -- a draft that was never certified.
 DO $$
 DECLARE sid uuid; a uuid; o uuid; r jsonb; before_accounts bigint;
@@ -397,7 +398,7 @@ BEGIN
   SELECT count(*) INTO before_accounts FROM public.accounts;
   PERFORM pg_temp.is(pg_temp.certify('i_agent', 'agent_made'), 'ok', 'the employer certifies an intake an agent started');
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts), before_accounts, 'no account was added');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = a), 0::bigint, 'nor a contact on the agent''s account');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = a AND prospect_user_id = pg_temp.id('agent_made') AND is_main), 1::bigint, 'the certifier is the agent''s account''s one contact, as the main one (CRM-Q1.2, D-1715)');
   PERFORM pg_temp.is((SELECT account_id FROM public.opportunities WHERE intake_id = sid), a, 'the intake stays on the agent''s opportunity');
   PERFORM pg_temp.is((SELECT name FROM public.opportunities WHERE id = o), 'Agent''s search', 'whose name is not changed');
 

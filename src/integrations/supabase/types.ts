@@ -916,6 +916,11 @@ export type Database = {
         Args: { p_firm_id: string; p_account_id: string }
         Returns: Json
       }
+      // What the account's latest certified intake says where the account differs (20261123190000): {field: value}, only for those fields; null for anyone who may not see the account.
+      account_intake_says: {
+        Args: { p_firm_id: string; p_account_id: string }
+        Returns: Json
+      }
       // An account's files that passed the virus check: {count, rows}, a page of at most 100; null for anyone who may not see the account.
       account_files: {
         Args: { p_firm_id: string; p_account_id: string; p_limit?: number; p_offset?: number }
