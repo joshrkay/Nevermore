@@ -9,7 +9,7 @@ const STATE_WORDS: Record<PeoAuthorizationStateName, string> = {
 };
 
 /** The draft an advisor sends through Ask the prospect, naming no answers: the employer adds the PEO themselves. */
-export const askToAddPeo = (peo: string) =>
+const askToAddPeo = (peo: string) =>
   `We'd like to send your packet to ${peo}. If you agree, tick ${peo} under "${PEO_AUTHORIZATION_PROFILE_HEADING}" on your profile. Nothing goes to ${peo} until you do.`;
 
 /**

@@ -49,3 +49,4 @@ One test per cycle: the test's name, the failing line seen, then green once it p
 44. `PacketRecipients.test.tsx` "says when the PEOs could not be loaded, and tries again on request": `→ Unable to find role="alert"` green
 45. `PacketRecipientsPanel.test.tsx` "says when who may receive the packet could not be loaded": `→ Unable to find role="alert"` green
 46. `MyPacketRecipients.test.tsx` "says when the certified intakes could not be loaded": `→ Unable to find role="alert"` green. (Cycles 45 and 46 were written in one step, for two components; each was seen red before its code.)
+47. `src/copy.guard.test.ts` with `legalWording.ts`, `PacketRecipients.tsx` and `MyPacketRecipients.tsx` added to the public copy: no failing line; passed on its first run (the wording names no PEO and claims no agency). Kept as the guard on the new copy.
