@@ -19,6 +19,10 @@
 //      webhook and the pending attachment is tried again. No scanner set at all leaves it pending and answers 200:
 //      replay the webhook from the provider's dashboard once one is set (docs/RUNBOOK.md).
 //
+// A reply to a conversation's address (`c.<name>.<16 hex>`, CRM-E1.3, D-606) is filed by the same call: the database looks in both address tables and
+// answers a conversation's message (conversation_message_id) instead of a quote request's, and its attachments follow the same rules, recorded on the
+// conversation's message and kept in the contact-mail bucket under its firm and conversation.
+//
 // A message never changes the quote request or its status. Logs carry ids, counts and failure codes only, never
 // addresses, subjects, file names or text.
 
@@ -36,6 +40,7 @@ const MAX_BODY_BYTES = 256 * 1024;
 const API = "https://api.resend.com";
 const API_TIMEOUT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type DbError = { message?: string; code?: string } | null;
 
@@ -244,7 +249,26 @@ export async function handleReceiveRequest(req: Request, deps: ReceiveDeps): Pro
       log(`MAIL_RECORD_FAILED: record_inbound_mail ${errorCode(recordError)}; the provider will retry`);
       return respond(500, { error: "Internal error" });
     }
-    const result = recorded as { message_id?: number; duplicate?: boolean; held?: boolean; held_reason?: string | null; session_id?: string | null } | null;
+    const result = recorded as {
+      message_id?: number; duplicate?: boolean; held?: boolean; held_reason?: string | null; session_id?: string | null;
+      conversation_message_id?: string; conversation_id?: string; firm_id?: string;
+    } | null;
+    // A reply to a conversation's address (CRM-E1.3): the database filed it on that conversation.
+    if (typeof result?.conversation_message_id === "string" && UUID.test(result.conversation_message_id)) {
+      const messageRef = result.conversation_message_id;
+      log(`MAIL_RECORDED: conversation_message=${messageRef} duplicate=${result.duplicate === true}`);
+      const target: AttachmentTarget = {
+        messageRef, record: "record_conversation_attachment", finish: "finish_conversation_attachment", bucket: "contact-mail",
+        // Under the firm and the conversation, so a firm's contact mail is one prefix of the bucket.
+        folder: `${safeSegment(result.firm_id)}/${safeSegment(result.conversation_id)}/${messageRef}`, intake: null,
+      };
+      const summary = await processAttachments({ client, deps, apiKey, event, target });
+      if (summary.retry) {
+        log(`MAIL_ATTACHMENT_RETRY: conversation_message=${messageRef} pending=${summary.pending}; the provider will retry`);
+        return respond(500, { error: "Internal error" });
+      }
+      return respond(200, { ok: true, duplicate: result.duplicate === true, held: false, attachments: summary });
+    }
     const messageId = result?.message_id;
     if (typeof messageId !== "number") {
       log("MAIL_RECORD_FAILED: record_inbound_mail answered nothing usable; the provider will retry");
@@ -252,7 +276,14 @@ export async function handleReceiveRequest(req: Request, deps: ReceiveDeps): Pro
     }
     log(`MAIL_RECORDED: message=${messageId} duplicate=${result?.duplicate === true} held=${result?.held === true}${result?.held_reason ? ` reason=${result.held_reason}` : ""}`);
 
-    const summary = await processAttachments({ client, deps, apiKey, event, messageId, sessionId: result?.session_id ?? null });
+    const sessionId = result?.session_id ?? null;
+    const summary = await processAttachments({
+      client, deps, apiKey, event,
+      target: {
+        messageRef: messageId, record: "record_inbound_attachment", finish: "finish_inbound_attachment", bucket: "peo-mail",
+        folder: `${sessionId ?? "held"}/${messageId}`, intake: sessionId,
+      },
+    });
     if (summary.retry) {
       log(`MAIL_ATTACHMENT_RETRY: message=${messageId} pending=${summary.pending}; the provider will retry`);
       return respond(500, { error: "Internal error" });
@@ -273,11 +304,30 @@ interface AttachmentSummary {
   retry: boolean;
 }
 
+/**
+ * Where a message's attachments are recorded and kept: a quote request's (PEO mail, under its intake in peo-mail) or a conversation's (contact mail, under
+ * its firm and conversation in contact-mail, CRM-E1.3). The rules are the same for both: the size cap, the file types, the scan.
+ */
+interface AttachmentTarget {
+  /** The message's id: a number on a quote request, a uuid on a conversation. */
+  messageRef: number | string;
+  record: "record_inbound_attachment" | "record_conversation_attachment";
+  finish: "finish_inbound_attachment" | "finish_conversation_attachment";
+  bucket: "peo-mail" | "contact-mail";
+  folder: string;
+  /** The intake a malware alert names; none for contact mail. */
+  intake: string | null;
+}
+
+/** A path segment from an id the database gave: a uuid, or nothing usable. */
+const safeSegment = (v: unknown): string => (typeof v === "string" && UUID.test(v) ? v : "unknown");
+
 async function processAttachments(ctx: {
-  client: ReceiveClient; deps: ReceiveDeps; apiKey: string; messageId: number; sessionId: string | null;
+  client: ReceiveClient; deps: ReceiveDeps; apiKey: string; target: AttachmentTarget;
   event: { emailId: string; attachmentCount: number };
 }): Promise<AttachmentSummary> {
-  const { client, deps, apiKey, messageId, sessionId, event } = ctx;
+  const { client, deps, apiKey, target, event } = ctx;
+  const messageId = target.messageRef;
   const summary: AttachmentSummary = { stored: 0, blocked: 0, not_kept: 0, pending: 0, retry: false };
   if (event.attachmentCount === 0) return summary;
 
@@ -290,7 +340,7 @@ async function processAttachments(ctx: {
   for (const file of listed.items.slice(0, MAX_ATTACHMENTS)) {
     const name = cleanFileName(file.filename || "attachment");
     const decision = attachmentDecision({ name, size: file.size });
-    const { data: row, error: rowError } = await client.rpc("record_inbound_attachment", {
+    const { data: row, error: rowError } = await client.rpc(target.record, {
       p_message_id: messageId,
       p_provider_attachment_id: file.id,
       p_file_name: name,
@@ -299,14 +349,14 @@ async function processAttachments(ctx: {
       p_not_kept_reason: decision.keep ? null : decision.reason,
     });
     if (rowError) throw new Error(`rpc_attachment_${errorCode(rowError)}`);
-    const att = row as { id?: number; status?: string } | null;
-    if (typeof att?.id !== "number") throw new Error("rpc_attachment_unusable");
+    const att = row as { id?: number | string; status?: string } | null;
+    if (!(typeof att?.id === "number" || (typeof att?.id === "string" && UUID.test(att.id)))) throw new Error("rpc_attachment_unusable");
     if (att.status === "stored") { summary.stored++; continue; }
     if (att.status === "blocked") { summary.blocked++; continue; }
     if (att.status === "not_kept") { summary.not_kept++; continue; }
 
     const settle = async (args: Record<string, unknown>) => {
-      const { error } = await client.rpc("finish_inbound_attachment", { p_attachment_id: att.id, ...args });
+      const { error } = await client.rpc(target.finish, { p_attachment_id: att.id, ...args });
       if (error) throw new Error(`rpc_finish_${errorCode(error)}`);
     };
 
@@ -363,19 +413,19 @@ async function processAttachments(ctx: {
       deps.log(`MALWARE_DETECTED source=receive-mail attachment=${att.id} engine=${scan.engine} signature=${scan.signature}`);
       await postScanAlert(
         { fetch: deps.fetch, env: deps.env, log: deps.log },
-        malwareAlert({ document: `mail-attachment-${att.id}`, intake: sessionId, signature: scan.signature, engine: scan.engine, source: "receive-mail" }),
+        malwareAlert({ document: `mail-attachment-${att.id}`, intake: target.intake, signature: scan.signature, engine: scan.engine, source: "receive-mail" }),
       );
       continue;
     }
-    const path = `${sessionId ?? "held"}/${messageId}/${att.id}-${storageKeyName(name)}`;
-    const { error: uploadError } = await client.storage.from("peo-mail").upload(path, data, { contentType: STORED_CONTENT_TYPE, upsert: true });
+    const path = `${target.folder}/${att.id}-${storageKeyName(name)}`;
+    const { error: uploadError } = await client.storage.from(target.bucket).upload(path, data, { contentType: STORED_CONTENT_TYPE, upsert: true });
     if (uploadError) {
       deps.log(`MAIL_ATTACHMENT_STORAGE_FAILED: message=${messageId} attachment=${att.id} ${errorCode(uploadError)}`);
       summary.pending++;
       summary.retry = true;
       continue;
     }
-    await settle({ p_verdict: scan.verdict, p_bucket: "peo-mail", p_path: path, p_sha256: await sha256Hex(data) });
+    await settle({ p_verdict: scan.verdict, p_bucket: target.bucket, p_path: path, p_sha256: await sha256Hex(data) });
     summary.stored++;
   }
   return summary;

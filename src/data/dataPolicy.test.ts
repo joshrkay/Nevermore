@@ -21,7 +21,7 @@ const buckets = new Set(
 describe("data classification against the schema", () => {
   it("finds the tables and buckets it checks", () => {
     expect(tables.size).toBeGreaterThanOrEqual(22);
-    expect([...buckets].sort()).toEqual(["bundle-links", "documents", "manuscripts", "peo-mail", "peo-templates", "quarantine"]);
+    expect([...buckets].sort()).toEqual(["bundle-links", "contact-mail", "documents", "manuscripts", "peo-mail", "peo-templates", "quarantine"]);
   });
 
   it.each([...tables].sort())("classifies the table %s", (table) => {

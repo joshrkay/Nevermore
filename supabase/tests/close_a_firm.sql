@@ -169,6 +169,8 @@
 \i supabase/migrations/20261122100000_peo_authorizations.sql
 \i supabase/migrations/20261122100500_conversations_closing.sql
 \i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
 \i supabase/migrations/20261122140000_peo_send.sql
 SET client_min_messages = notice;
 
@@ -331,6 +333,11 @@ BEGIN
   INSERT INTO public.conversation_messages (firm_id, conversation_id, direction, from_address, to_addresses, subject, body_text, message_id) VALUES
     (fa, '00000000-0000-4000-8000-0000000000ac', 'outbound', 'agent_a@mailbox.test', ARRAY['main@alpha.example'], 'Hello', 'Hi', '<ac@mailbox.test>'),
     (fb, '00000000-0000-4000-8000-0000000000bc', 'outbound', 'agent_b@mailbox.test', ARRAY['main@beta.example'], 'Hello', 'Hi', '<bc@mailbox.test>');
+  -- CRM-E1.3: a reply on the first firm's conversation with a file, which closing deletes before the messages they are on.
+  INSERT INTO public.conversation_messages (id, firm_id, conversation_id, direction, status, from_address, to_addresses, subject, body_text, message_id) VALUES
+    ('00000000-0000-4000-8000-0000000000ad', fa, '00000000-0000-4000-8000-0000000000ac', 'inbound', 'received', 'main@alpha.example', '{}', 'Re: Hello', 'Thanks', '<ad@alpha.example>');
+  INSERT INTO public.conversation_message_attachments (firm_id, message_id, provider_attachment_id, file_name, size_bytes, status) VALUES
+    (fa, '00000000-0000-4000-8000-0000000000ad', 'att_1', 'census.pdf', 1, 'pending');
   -- CRM-E1.5: calls, notes and tasks on those accounts, which closing deletes before the records they stand on.
   INSERT INTO public.activities (id, firm_id, account_id, kind, body, title, due_on) VALUES
     ('00000000-0000-4000-8000-0000000000a4', fa, '00000000-0000-4000-8000-0000000000a1', 'note', 'Alpha note', NULL, NULL),
@@ -534,6 +541,7 @@ BEGIN
     ('move a contact', 'agent_a', format($q$SELECT public.move_contact(%L, %L, false, %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
     ('change a contact', 'agent_a', format($q$SELECT public.update_contact(%L, 'Owen', 'Park', NULL, 'owen@example.test', NULL, NULL, NULL, false, false, %L, 1)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
     ('write to a contact', 'agent_a', format($q$SELECT public.send_conversation_message(p_contact_id => %L, p_subject => 'Hello', p_body => 'Hi', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
+    ('add a sender as a contact', 'agent_a', format($q$SELECT public.add_sender_as_contact(%L, 'A', 'B', p_firm_id => %L)$q$, '00000000-0000-4000-8000-0000000000a9'::uuid, fa), closing_msg),
     ('change accounts in bulk', 'agent_a', format($q$SELECT public.bulk_accounts_change(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('preview a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('undo a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
@@ -1100,7 +1108,7 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 6, 'recent_records', 0, 'referral_partners', 1,
-    'activities', 2, 'conversation_messages', 1, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'bulk_changes', 1, 'bulk_change_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
+    'activities', 2, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'bulk_changes', 1, 'bulk_change_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
@@ -1329,7 +1337,7 @@ DECLARE
   guarded text[] := ARRAY['accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
-    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
+    'update_account', 'create_account', 'create_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',
     'plan_mail_move', 'apply_mail_move', 'record_manuscript_version', 'request_intake_deletion', 'retry_intake_deletion', 'revoke_chamber_session',
     'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link'];
@@ -1347,6 +1355,7 @@ DECLARE
     'admin_stop_firm_closure', 'a platform admin''s, who is no member of the firm',
     'admin_suspend_firm', 'a platform admin''s',
     'advisor_open_quote_request_thread', 'marks a thread read, which is what reading is; allowed while a firm is closing',
+    'open_conversation', 'marks a conversation read for the firm (CRM-E1.3), which is what reading is; allowed while a firm is closing',
     'archive_chamber_session', 'the employer''s own intake: not the firm''s to freeze',
     'consume_ai_quota', 'the caller''s own allowance',
     'export_rows', 'a read that records itself in the firm''s record, which stays writable (ADR 0023): a closing firm''s members are offered their tables to take out (CRM-P1.7), so an export is the way out and not a change to the firm''s data; a support session is refused first (supabase/tests/export.sql)',
