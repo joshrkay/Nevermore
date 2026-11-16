@@ -50,7 +50,7 @@ const issueBundleLink = vi.fn();
 vi.mock("@/lib/bundleLink", () => ({ issueBundleLink: (...a: unknown[]) => issueBundleLink(...a), supabaseBundleLinkDeps: async () => ({}) }));
 vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: vi.fn() }));
 // Which PEOs the employer authorized (M-1.1): TriNet may receive the packet, Insperity was never authorized.
-const loadPeoAuthorizations = vi.fn(async () => [] as unknown[]);
+const loadPeoAuthorizations = vi.fn(async (..._a: unknown[]) => [] as unknown[]);
 vi.mock("@/lib/peoAuthorizationsApi", () => ({ loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a) }));
 // The account that holds the submission (D-213), as the database answers it: its id and name, or null.
 const submissionAccount = vi.fn();

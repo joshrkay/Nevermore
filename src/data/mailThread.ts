@@ -26,6 +26,9 @@ export interface ThreadMessage {
   body_truncated: boolean;
   sent_at: string | null;
   recorded_at: string;
+  /** A message the product sends (M-2.1): queued, sent or failed, and why it failed; absent on mail received or recorded by hand. */
+  status?: string;
+  failure_reason?: string | null;
 }
 
 export interface ThreadAttachment {
