@@ -1,5 +1,6 @@
 import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { accountKey } from "@/components/accounts/useAccountQueries";
 import { useNavigate } from "react-router-dom";
 import { Building2, RefreshCw, SearchX } from "lucide-react";
 import { accountsTableWords } from "@/data/accountsPage";
@@ -29,6 +30,7 @@ const NEW_ACCOUNT_BUTTON = "inline-flex h-10 items-center justify-center rounded
 
 const AccountsPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { table, names } = useAccountsTable();
   const { firmId } = useFirmReady();
   const location = useTableAddress(table);
@@ -238,8 +240,11 @@ const AccountsPage = () => {
             keptId={merging.kept}
             removedId={merging.removed}
             onClose={() => setMerging(null)}
-            onMerged={() => {
+            onMerged={({ kept, removed }) => {
               setMerging(null);
+              // Both accounts' own pages (and lists) are stale: the kept one has what moved, the removed one is gone.
+              void queryClient.invalidateQueries({ queryKey: accountKey(firmId, kept.id) });
+              void queryClient.invalidateQueries({ queryKey: accountKey(firmId, removed.id) });
               selection.clear();
               refresh();
             }}
