@@ -81,6 +81,17 @@ describe("the account's details: what the intake says", () => {
     expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ name: "Harborview Dental Group", website: "harborviewdental.example", industry: "Dental practice", currentProvider: "Paychex PEO" });
   });
 
+  // Catches: the website's Use it writing another answer (the name) into the website.
+  it("Use it for the website saves the website the intake gave and nothing else", async () => {
+    const user = userEvent.setup();
+    client.getIntakeSays.mockResolvedValueOnce({ name: "Harborview Dental Partners LLC", website: "harborview.example" }).mockResolvedValue({});
+    client.updateAccount.mockResolvedValue({ conflict: false, account });
+    renderPanel();
+    await user.click(await within(row("Website")).findByRole("button", { name: /^Use it/ }));
+    await waitFor(() => expect(client.updateAccount).toHaveBeenCalledTimes(1));
+    expect(client.updateAccount.mock.calls[0][2]).toMatchObject({ name: "Harborview Dental Group", website: "harborview.example" });
+  });
+
   // Catches: the address and the states of operation left out of what the intake says; a list of states used as one word instead of the list.
   it("says the street, the state and the states of operation, and Use it for the states sends the list", async () => {
     const user = userEvent.setup();
