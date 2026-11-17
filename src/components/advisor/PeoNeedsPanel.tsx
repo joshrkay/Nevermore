@@ -312,6 +312,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
             fileId={fileId}
             companyName={companyName}
             returnTo={`/advisor/submissions/${sessionId}`}
+            stage={stage}
             onSent={onSendRecorded}
           />
         )}
