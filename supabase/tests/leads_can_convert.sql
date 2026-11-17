@@ -4,6 +4,7 @@
 -- on these, so no button is offered that the database refuses (D-24, D-402), as accounts_can_change does for the accounts table. A lead can be converted when the caller
 -- may see it and change it by the level rule (D-809) and it is New or Working and not in the bin (convert_lead's own rule, D-1651). Two firms: Acme sees by level,
 -- Zenith shows everyone everything. Every migration is loaded, in filename order (D-105), this one's last.
+\set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql

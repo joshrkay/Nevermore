@@ -171,6 +171,34 @@ describe("listOpportunityActivity", () => {
     expect(got.rows.map((r) => (r.type === "quote" ? r.event : null))).toEqual(["acknowledged", "question_open"]);
   });
 
+  // Catches (#237): the whole activity panel failing ("not the agreed shape") the first time an intake is certified, because the four kinds of row were the only ones
+  // it knew, or an intake's row read with its who, version, File ID or invitee lost on the way.
+  it("reads an intake's events: started, invited, reminded and certified", async () => {
+    const base = { type: "intake", at: "2026-10-28T10:00:00+00:00", version: null, reference: null, invitee: null, who: "dana@x.example", who_kind: "member" };
+    rpc.mockResolvedValue({
+      data: {
+        count: 4,
+        rows: [
+          { ...base, entry_key: "intake_certified:c1", event: "certified", version: 2, reference: "EAA-2026-0117", who: "Elena Marsh", who_kind: "client" },
+          { ...base, entry_key: "intake_invitation:v2", event: "reminded", invitee: "Elena Marsh" },
+          { ...base, entry_key: "intake_invitation:v1", event: "invited", invitee: "Elena Marsh" },
+          { ...base, entry_key: "intake_started:s1", event: "started" },
+        ],
+      },
+      error: null,
+    });
+    const got = (await listOpportunityActivity("f1", "o1"))!;
+    expect(got.rows[0]).toEqual({ type: "intake", entryKey: "intake_certified:c1", at: "2026-10-28T10:00:00+00:00", event: "certified", version: 2, reference: "EAA-2026-0117", invitee: null, who: "Elena Marsh", whoKind: "client" });
+    expect(got.rows.map((r) => (r.type === "intake" ? r.event : null))).toEqual(["certified", "reminded", "invited", "started"]);
+    expect(got.rows[1]).toMatchObject({ invitee: "Elena Marsh", whoKind: "member", who: "dana@x.example" });
+  });
+
+  // Catches (#237): an event the screen has no words for drawn as one of the others (it would read as a certification) instead of failing where it can be seen.
+  it("is a failure when an intake's event is not one of the four", async () => {
+    rpc.mockResolvedValue({ data: { count: 1, rows: [{ type: "intake", entry_key: "x", at: "2026-10-28T10:00:00+00:00", event: "withdrawn", version: null, reference: null, invitee: null, who: "a", who_kind: "member" }] }, error: null });
+    expect(await caught(() => listOpportunityActivity("f1", "o1"))).toBeInstanceOf(OpportunityError);
+  });
+
   // Catches: an opportunity that has gone (PT404) shown as a failure of the activity panel.
   it("answers null when the person may not see the opportunity", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "PT404", message: "That opportunity isn't available" } });

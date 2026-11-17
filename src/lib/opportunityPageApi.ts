@@ -128,8 +128,28 @@ export interface OpportunityQuoteEvent {
   whoKind: "member" | "nevermore" | "system";
 }
 
+/**
+ * An event of the opportunity's intake (#237): a member started it for the client, the client was invited or reminded, or it was certified (the first time, or
+ * again as a later version). Read from what is recorded; never the invitation link's token.
+ */
+export interface OpportunityIntakeEvent {
+  type: "intake";
+  entryKey: string;
+  at: string;
+  event: "started" | "invited" | "reminded" | "certified";
+  /** The certified version, for a certification. */
+  version: number | null;
+  /** The File ID, for a certification. */
+  reference: string | null;
+  /** Who was invited or reminded: their name, or their address where no name is on file. */
+  invitee: string | null;
+  /** A member's email, or for a certification the employer's signer (`whoKind` "client": not a member of the firm). */
+  who: string;
+  whoKind: "member" | "client" | "system";
+}
+
 /** One entry of the opportunity's activity (D-427), newest first. `type` tells which. */
-export type OpportunityActivityRow = OpportunityChangeRow | OpportunityQuoteEvent | ActivityItem;
+export type OpportunityActivityRow = OpportunityChangeRow | OpportunityQuoteEvent | OpportunityIntakeEvent | ActivityItem;
 
 /** What the activity is narrowed to. The database narrows it, so counts and pages are of what is shown. */
 export const OPPORTUNITY_ACTIVITY_FILTERS = ["all", "calls", "notes", "tasks", "changes"] as const;
@@ -241,7 +261,11 @@ const quoteEventSchema = z.object({
   type: z.literal("quote"), entry_key: z.string().min(1), at: z.string().min(1), quote_request_id: z.number().int(), peo_name: z.string(),
   event: z.enum(["sent", "acknowledged", "question_open", "quoted", "declined", "closed"]), who: z.string(), who_kind: whoKind,
 });
-const activityShape = z.union([changeSchema, quoteEventSchema, activityItemSchema]);
+const intakeEventSchema = z.object({
+  type: z.literal("intake"), entry_key: z.string().min(1), at: z.string().min(1), event: z.enum(["started", "invited", "reminded", "certified"]),
+  version: z.number().int().nullable(), reference: nullableText, invitee: nullableText, who: z.string(), who_kind: z.enum(["member", "client", "system"]),
+});
+const activityShape = z.union([changeSchema, quoteEventSchema, intakeEventSchema, activityItemSchema]);
 
 const fieldsOf = (f: FieldsRow): OpportunityFields => ({
   id: f.id, version: f.version, accountId: f.account_id, ownerId: f.owner_id, name: f.name, targetStart: f.target_start, employees: f.employees,
@@ -258,6 +282,9 @@ const activityOf = (a: z.infer<typeof activityShape>): OpportunityActivityRow =>
   }
   if (a.type === "quote") {
     return { type: "quote", entryKey: a.entry_key, at: a.at, quoteRequestId: a.quote_request_id, peoName: a.peo_name, event: a.event, who: a.who, whoKind: a.who_kind };
+  }
+  if (a.type === "intake") {
+    return { type: "intake", entryKey: a.entry_key, at: a.at, event: a.event, version: a.version, reference: a.reference, invitee: a.invitee, who: a.who, whoKind: a.who_kind };
   }
   return activityItemOf(a);
 };

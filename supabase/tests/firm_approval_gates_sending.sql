@@ -4,6 +4,7 @@
 -- 20261124100000_firm_approval_gates_sending.sql). The three ways a send reaches a PEO (send_to_peo, follow_up_peo, withdraw_from_peo) all record a message
 -- with direction 'sent', and the rule is on that message, so none can skip it. Three firms: one approved, one waiting, one refused. Every migration is
 -- loaded, in filename order (D-105), this one's last.
+\set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
