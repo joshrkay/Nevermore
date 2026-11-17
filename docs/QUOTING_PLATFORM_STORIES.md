@@ -8,8 +8,9 @@
 | **Depends on** | `docs/research/2026-11-10-peo-quoting-platform.md` (the evidence), `docs/PRODUCTION_READINESS_PLAN.md` (what is built; its epics 0 and A to J, decisions D1 to D44), `docs/GO_TO_MARKET.md`, `docs/LEGAL_REVIEW.md` |
 
 Stories follow the readiness plan's rules: sizes are **S** (0.5 to 1.5 engineer-days) or **M** (2 to 4), never
-larger; owners are `FE`, `BE`, `FS`, `PM`, `DES`, `LEGAL`, `OPS`. Every story here is NOT STARTED unless it says
-what it builds on. The epics continue the readiness plan's letters from K (O is skipped, to avoid reading it as 0).
+larger; owners are `FE`, `BE`, `FS`, `PM`, `DES`, `LEGAL`, `OPS`. This file is the spec and does not track status: much of it is built, and what
+is built is recorded in `docs/BROKER_CRM_BUILD.md` (its slices and decision log) and `GLOSSARY.md`. A story's acceptance criteria say what done means, so
+read them against the code. The epics continue the readiness plan's letters from K (O is skipped, to avoid reading it as 0).
 
 Each schema or table change ships as its own migration first, with a SQL test, and keeps the browser and database
 rules equal through `src/data/schemaSync.test.ts`, as every existing story does. That is not repeated per story.
