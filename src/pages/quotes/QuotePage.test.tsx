@@ -653,4 +653,18 @@ describe("QuotePage: the quote document (N-2.2)", () => {
     await waitFor(() => expect(advisor.attachQuoteDocument).toHaveBeenCalledWith(3, 61));
     await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
   });
+
+  // Catches: an upload or a file choice offered during a Nevermore support session or on an archived account, where the database would refuse it (ADR 0024, D-432): a dead control.
+  it("offers no way to add a document in a support session or on an archived account, and still opens one that is there", async () => {
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    renderPage("/quotes/7", workspace({ isSupport: true }));
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    expect(within(panel).queryByLabelText("Upload the quote document")).not.toBeInTheDocument();
+    cleanup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" }, opportunity: { account: { id: "a1", name: "Harborview Dental Group", archived: true } } }));
+    renderPage();
+    const archived = await screen.findByRole("region", { name: "Quote document" });
+    expect(within(archived).queryByLabelText("Upload the quote document")).not.toBeInTheDocument();
+  });
 });

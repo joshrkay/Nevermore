@@ -756,3 +756,4 @@ One line per cycle: the test, the failing line seen, then green.
 24. QuotePage.test: a quote with no document offers an upload, for that quote, and the quotes are read again | red: Unable to find a label with the text of: Upload the quote document | green
 25. QuotePage.test: a file the virus check blocked is reported as not kept | red: expected "spy" to be called with arguments: [ Array(1) ] Number of calls: 0 | green
 26. QuotePage.test: the stored files that arrived on this quote request's emails can be named as the quote's document, without uploading again; blocked and other PEOs' files are not offered | red: Unable to find a label with the text of: Use a file from the emails | green
+27. QuotePage.test: no way to add a document in a support session or on an archived account (red seen by passing canChange always true, then restored to canAct) | red: expected document not to contain element, found <input type=file ...> (with the guard removed) | green
