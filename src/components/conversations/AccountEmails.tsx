@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import { AddSenderAsContact } from "@/components/conversations/AddSenderAsContact";
 import { PanelFailed, PlaceholderLines } from "@/components/workspace/states";
 import { formatDay } from "@/data/accountPage";
 import { getAccountMessages } from "@/lib/conversationApi";
@@ -31,11 +33,33 @@ export function AccountEmails({ firmId, accountId, opportunityId, contactName }:
           {query.data.map((m) => (
             <li key={m.id} className="text-sm border-b border-border pb-2 last:border-0">
               <p className="text-xs text-muted-foreground">
-                {m.direction === "inbound" ? "Received from" : "Sent to"}{" "}
-                <Link to={`/contacts/${m.contactId}`} className="text-primary underline underline-offset-2">{contactName(m.contactId) ?? "the contact"}</Link>
+                {m.direction === "inbound" && m.newSender ? (
+                  // A new sender wrote to a contact's conversation address: the mail is theirs, and sits on that contact's emails.
+                  <>
+                    Received from {m.fromName?.trim() || m.from} on{" "}
+                    <Link to={`/contacts/${m.contactId}`} className="text-primary underline underline-offset-2">{contactName(m.contactId) ?? "the contact"}&apos;s emails</Link>
+                  </>
+                ) : (
+                  <>
+                    {m.direction === "inbound" ? "Received from" : "Sent to"}{" "}
+                    <Link to={`/contacts/${m.contactId}`} className="text-primary underline underline-offset-2">{contactName(m.contactId) ?? "the contact"}</Link>
+                  </>
+                )}
                 {" · "}{formatDay(m.at)}
               </p>
               <p className="font-medium">{m.subject}</p>
+              {m.offerContact && (
+                <p className="text-xs">
+                  <AddSenderAsContact
+                    firmId={firmId}
+                    message={{ id: m.id, from: m.from, fromName: m.fromName ?? null }}
+                    onAdded={() => {
+                      toast.success("Contact added");
+                      void query.refetch();
+                    }}
+                  />
+                </p>
+              )}
             </li>
           ))}
         </ol>

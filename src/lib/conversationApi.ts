@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import { refusal } from "@/lib/contactApi";
+import { ContactError, refusal } from "@/lib/contactApi";
 
 // What the place to write asks the database (story CRM-E1.2, slice 6.3; 20261122090000_conversations.sql, 20261122160000_conversation_files.sql). The
 // database decides every rule (who may write, Do not email, the files a message may carry, a closing firm, Nevermore support); this only puts its answers
@@ -18,6 +18,12 @@ export interface ConversationMessage {
   failureKind: "mailbox" | "refused" | "uncertain" | "unavailable" | null;
   failureReason: string | null;
   at: string;
+  /** Who sent a received message, by name when the mail said (6.4). */
+  fromName?: string | null;
+  /** The sender was seen on no earlier message of the conversation (6.4): marked on the message. */
+  newSender?: boolean;
+  /** The sender is offered as a contact of the conversation's account (CRM-E1.3): the database says so, and says it of no lead's conversation (D-662). */
+  offerContact?: boolean;
 }
 
 export interface Conversation {
@@ -45,6 +51,9 @@ function messageOf(m: Raw): ConversationMessage {
     failureKind: (m.failure_kind as ConversationMessage["failureKind"]) ?? null,
     failureReason: typeof m.failure_reason === "string" ? m.failure_reason : null,
     at: text(m.sent_at) || text(m.recorded_at),
+    fromName: typeof m.from_name === "string" ? m.from_name : null,
+    newSender: m.new_sender === true,
+    offerContact: m.offer_contact === true,
   };
 }
 
@@ -140,4 +149,26 @@ export async function workTheQueue(): Promise<void> {
   } catch {
     /* the schedule sends it */
   }
+}
+
+/** What a new sender is added with: the address is the message's own, so it is not asked for. */
+export interface SenderAsContact {
+  firstName: string;
+  lastName: string;
+  title: string;
+  phone: string;
+}
+
+/**
+ * Adds the sender of a received message as a contact on the account of the conversation's contact (add_sender_as_contact, 6.4), through add_contact and every
+ * one of its rules. Refusals come back in the database's words (a last name wanted, an account archived since, a sender already added).
+ */
+export async function addSenderAsContact(firmId: string, messageId: string, contact: SenderAsContact): Promise<{ id: string }> {
+  const { data, error } = await supabase.rpc("add_sender_as_contact", {
+    p_message_id: messageId, p_first_name: contact.firstName, p_last_name: contact.lastName, p_title: contact.title, p_phone: contact.phone, p_firm_id: firmId,
+  });
+  if (error) throw refusal(error, "Couldn't add the contact. Check your connection and try again.");
+  const id = ((data ?? {}) as { record?: { id?: unknown } }).record?.id;
+  if (typeof id !== "string" || id === "") throw new ContactError("failed", "Couldn't add the contact. Check your connection and try again.");
+  return { id };
 }
