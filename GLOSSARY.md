@@ -1150,6 +1150,10 @@ _Avoid_: status, pipeline stage, quote status
 What the AI made of a PEO's reply on a quote request thread (N-1.1): acknowledged, question open, quoted or declined, or nothing (then there is none). It is only a suggestion, shown under the reply; the agent **accepts** it (the status is recorded as if the agent had set it, and a quote or a decline only once its own form has recorded it) or **dismisses** it, once. What is kept is which suggestion it was, whether it was accepted or dismissed, and who and when: never the reply's words or the model's. The reply is data to the model, never instructions. Not a **Document candidate**, which is an answer read from a document.
 _Avoid_: AI status, auto-status, extraction
 
+**Quote reading**:
+What the AI proposed from a quote's document (N-2.3, `readQuoteDocument`): the figures it found, in the shape the Record a quote form takes, each with the page it was read on, and no figure it did not find (a figure not found is left out, never 0). It is only a proposal: nothing is stored until the broker checks or corrects each figure and records the quote. The document is data to the model, never instructions. Not a **Reply suggestion** (what a PEO's message means) and not a **Document candidate** (a prospect's document read into the intake).
+_Avoid_: auto-quote, extraction, import
+
 **Also heard**:
 An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
 _Avoid_: alternative, rejected value
