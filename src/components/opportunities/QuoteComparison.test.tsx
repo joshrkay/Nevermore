@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import type { ComparedQuote, NewComparisonNote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
+import type { ComparedQuote, ComparisonNote, NewComparisonNote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
 
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
@@ -126,7 +126,7 @@ describe("the administrative fee", () => {
 });
 
 describe("the broker's notes (N-3.2)", () => {
-  const note = (over: Record<string, unknown> = {}) => ({ id: 1, quoteRequestId: 1, area: "admin_fee", visibility: "internal", body: "Waived the first year", author: "dana@acme.example", createdAt: "2026-11-11T10:00:00+00:00", ...over });
+  const note = (over: Partial<ComparisonNote> = {}): ComparisonNote => ({ id: 1, quoteRequestId: 1, area: "admin_fee", visibility: "internal", body: "Waived the first year", author: "dana@acme.example", createdAt: "2026-11-11T10:00:00+00:00", ...over });
 
   // Catches: a note that does not say whom it is about or who may read it: an internal remark that could be taken for one for the client.
   it("lists each note with its words, who wrote it, what it is about and whether it is internal or for the client", () => {

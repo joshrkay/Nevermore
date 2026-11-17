@@ -44,6 +44,7 @@ export interface ComparisonNote {
 
 export interface QuoteComparison { canAdd: boolean; columns: ComparisonColumn[]; notes: ComparisonNote[] }
 
+// The app is not compiled with strict null checks, so zod infers each key of an object as optional; the shapes below require each one, and the casts say so.
 const text = z.string().nullable();
 const quoteShape = z.object({
   id: z.number().int(), kind: z.enum(["estimate", "firm_offer"]), received_on: text, expires_on: text, proposed_start_on: text,
@@ -95,9 +96,9 @@ export async function getQuoteComparison(firmId: string, opportunityId: string):
       quoteRequestId: c.quote_request_id, peoName: c.peo_name, status: c.status,
       quote: c.quote && {
         id: c.quote.id, kind: c.quote.kind, receivedOn: c.quote.received_on, expiresOn: c.quote.expires_on, proposedStartOn: c.quote.proposed_start_on,
-        adminFee: c.quote.admin_fee, adminFeeBasis: c.quote.admin_fee_basis, oneOffFees: c.quote.one_off_fees,
-        workersComp: c.quote.workers_comp && c.quote.workers_comp.map((w) => ({ state: w.state, classCode: w.class_code, rate: w.rate })),
-        unemployment: c.quote.unemployment, medical: c.quote.medical, note: c.quote.note,
+        adminFee: c.quote.admin_fee, adminFeeBasis: c.quote.admin_fee_basis, oneOffFees: c.quote.one_off_fees as OneOffFee[] | null,
+        workersComp: c.quote.workers_comp && c.quote.workers_comp.map((w) => ({ state: w.state as string, classCode: w.class_code as string, rate: w.rate as number })),
+        unemployment: c.quote.unemployment as UnemploymentLine[] | null, medical: c.quote.medical as MedicalRate[] | null, note: c.quote.note,
       },
     })),
     notes: a.notes.map((n) => ({ id: n.id, quoteRequestId: n.quote_request_id, area: n.area, visibility: n.visibility, body: n.body, author: n.author, createdAt: n.created_at })),

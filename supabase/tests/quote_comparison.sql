@@ -595,3 +595,31 @@ BEGIN
   UPDATE public.accounts SET archived_at = NULL WHERE id = (SELECT account_id FROM public.opportunities WHERE id = opp);
   PERFORM pg_temp.is(pg_temp.nnotes(), n, 'and nothing was stored');
 END $$;
+
+-- ---------- 14. The newest note is listed first ----------
+-- Catches: notes listed oldest first, so the note the broker just added sits at the bottom of a long list.
+DO $$
+DECLARE r jsonb; opp uuid := pg_temp.opp('bella');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.add_comparison_note(pg_temp.id('acme'), opp, NULL, NULL, 'internal', 'First');
+  PERFORM public.add_comparison_note(pg_temp.id('acme'), opp, NULL, NULL, 'client', 'Second');
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), opp);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT jsonb_agg(n ->> 'body') FROM jsonb_array_elements(r -> 'notes') n), '["Second", "First"]'::jsonb, 'newest first');
+  PERFORM pg_temp.is((SELECT jsonb_agg(n ->> 'visibility') FROM jsonb_array_elements(r -> 'notes') n), '["client", "internal"]'::jsonb, 'each with its own mark');
+END $$;
+
+-- ---------- 15. A colleague who may not see the account is refused as a stranger is, to read and to write ----------
+-- Catches: the comparison or the writer taking "a member of the firm" for "may see the account": an agent sees only what they own (or what the firm's visibility shows them).
+DO $$
+DECLARE opp uuid := pg_temp.opp('reyes'); n bigint := pg_temp.nnotes();
+BEGIN
+  PERFORM pg_temp.new_user('acme_agent2');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('acme_agent2'), 'agent');
+  PERFORM pg_temp.as_user('acme_agent2', 'acme-brokers');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.opportunity_quote_comparison(%L, %L)', pg_temp.id('acme'), opp)), 6), 'PT404:', 'the read');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %L, %L)', pg_temp.id('acme'), opp, 'internal', 'Hi')), 6), 'PT404:', 'the writer');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.nnotes(), n, 'and nothing was stored');
+END $$;
