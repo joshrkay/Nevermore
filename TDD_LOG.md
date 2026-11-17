@@ -739,3 +739,4 @@ One line per cycle: the test, the failing line seen, then green.
 7. SQL 7: an agent starts an upload: a hand-made message and one pending attachment on the quote request's thread | red: ERROR: function public.start_quote_document_upload(bigint, unknown, unknown, integer) does not exist | green
 8. SQL 8: only an advisor of the quote's firm starts an upload; a refusal leaves no message | red: FAIL: another firm's agent gave ok, expected PT404: Quote not found | green
 9. SQL 9: a support session and a closing firm start no upload (PT423) | red: FAIL: a support session gave ok, expected PT423: Nevermore support can look, not change | green
+10. quoteRevisions.test: the newest recorded quote is current, earlier ones superseded newest first | red: Failed to resolve import ./quoteRevisions (module not there); then green with quoteRevisions() | green
