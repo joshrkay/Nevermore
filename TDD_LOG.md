@@ -878,3 +878,7 @@ No migration: a proposal is returned, never stored (D-760). Tests run under vite
 17. handler.test: one call of the shared AI budget (user, address, day) is spent before the model is asked | red: expected [ 'model' ] to deeply equal [ 'anon-key:consume_ai_quota', ... ] | green
 18. handler.test: a refused budget never reaches the model (rate limit 429 rate_limited, day ceiling 503 daily_cap) | red: expected 200 to be 429 | green
 19. handler.test: a failing model is 502 provider_error, nothing proposed, log has the failure kind and none of the document | red: expected 200 to be 502 | green
+20. handler.test: the document is data: system prompt says untrusted, one fence the document cannot close (its tag removed), one forced tool | red: expected [ '<quote_document', ... ] to have a length of 2 but got 5 | green
+21. handler.test: no figure the model may propose, or no text to read, is status nothing_found with an empty proposal, no model call when there is no text | red: expected { status: 'proposed', ... } to match object { status: 'nothing_found' } | green
+22. handler.test: encrypted/unreadable/unsupported answer the reader's status and words, too_large is answered without downloading | red: expected undefined to be 'This PDF couldn't be opened...' then expected { status: 'proposed' } to match { status: 'too_large' } | green
+23. handler.test: an unexpected error is 500 internal and logs the error class only | red: the reader error escaped, its message quoting the document | green

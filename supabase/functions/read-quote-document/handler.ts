@@ -6,12 +6,12 @@
 // decides whether they may see the quote and the stored file.
 
 import { refusalError, retryLater } from "../document-extract/ask.ts";
-import { buildPromptText, type TextSection } from "../document-extract/parse.ts";
+import { buildPromptText, MAX_EXTRACT_BYTES, type TextSection } from "../document-extract/parse.ts";
 import type { AskModel, Outcome } from "../document-extract/read.ts";
 import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { readJsonCapped } from "../_shared/body.ts";
 import { aiError, type AiErrorReply } from "../_shared/ai/errors.ts";
-import { callModel, failureLogLine, failureResponse, type ModelDeps, type ModelFailureKind } from "../_shared/ai/model.ts";
+import { callModel, failureLogLine, failureResponse, unexpectedErrorLine, type ModelDeps, type ModelFailureKind } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { PROPOSE_TOOL, SYSTEM_PROMPT } from "./prompt.ts";
 import { shapeQuoteProposal, type QuoteProposal } from "./proposal.ts";
@@ -47,16 +47,32 @@ export interface QuoteReadDeps extends Pick<ModelDeps, "fetch" | "sleep" | "now"
   newRequestId: () => string;
 }
 
+/** The fence's own tag, in any spacing or case, with or without its closing bracket: removed from the document so it can never close the fence and speak. */
+const FENCE_TAG = /<\s*\/?\s*quote_document[^>]*>?/gi;
+
 const isObject = (v: unknown): v is Row => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const replyWith = (requestId: string) => (body: Record<string, unknown>, status: number) =>
+  new Response(JSON.stringify({ ...body, request_id: requestId }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json", "X-Request-Id": requestId },
+  });
 
 export async function handleReadQuoteDocument(req: Request, deps: QuoteReadDeps): Promise<Response> {
   const requestId = deps.newRequestId();
+  try {
+    return await handle(req, deps, requestId);
+  } catch (e) {
+    // The class only: an error's message can quote the document.
+    deps.logError(unexpectedErrorLine(requestId, e));
+    const internal = aiError("internal");
+    return replyWith(requestId)({ error: internal.message, code: internal.code }, internal.status);
+  }
+}
+
+async function handle(req: Request, deps: QuoteReadDeps, requestId: string): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const reply = (body: Record<string, unknown>, status: number) =>
-    new Response(JSON.stringify({ ...body, request_id: requestId }), {
-      status,
-      headers: { ...corsHeaders, "Content-Type": "application/json", "X-Request-Id": requestId },
-    });
+  const reply = replyWith(requestId);
 
   const refuse = (e: AiErrorReply) => reply({ error: e.message, code: e.code }, e.status);
 
@@ -84,6 +100,7 @@ export async function handleReadQuoteDocument(req: Request, deps: QuoteReadDeps)
   if (!file || file.status !== "stored" || typeof file.storage_bucket !== "string" || typeof file.storage_path !== "string") {
     return reply({ error: "The quote's document can't be read: it was not kept, or is still being checked.", code: "not_readable" }, 409);
   }
+  if (Number(file.size_bytes ?? 0) > MAX_EXTRACT_BYTES) return reply({ status: "too_large", proposal: { draft: {}, sources: {} } }, 200);
   // With no model set up nothing is proposed, and nothing else changes: the file is not even fetched.
   const chosen = selectAdapter(deps.env, PROPOSE_TOOL, { maxTokens: 4096 });
   let proposal: QuoteProposal = { draft: {}, sources: {} };
@@ -98,7 +115,7 @@ export async function handleReadQuoteDocument(req: Request, deps: QuoteReadDeps)
     // The one budget every AI call shares: the caller's quota, their address's, and the daily ceiling for everyone.
     const budget = await checkAiBudget({ headers: req.headers, env: deps.env, user: supabase, createAdmin: (key) => deps.createClient(supabaseUrl, key), log: deps.logError });
     if (!budget.allowed) throw refusalError(budget);
-    const result = await callModel(chosen.adapter, { system: SYSTEM_PROMPT, user: `<quote_document>\n${buildPromptText(sections)}\n</quote_document>` }, { fetch: deps.fetch, sleep: deps.sleep, now: deps.now, timeoutMs: 30_000 });
+    const result = await callModel(chosen.adapter, { system: SYSTEM_PROMPT, user: `<quote_document>\n${buildPromptText(sections.map((x) => ({ ...x, text: x.text.replace(FENCE_TAG, "[tag removed]") })))}\n</quote_document>` }, { fetch: deps.fetch, sleep: deps.sleep, now: deps.now, timeoutMs: 30_000 });
     if (result.ok) {
       proposal = shapeQuoteProposal(result.args, sections.map((s) => s.label));
     } else {
@@ -121,5 +138,6 @@ export async function handleReadQuoteDocument(req: Request, deps: QuoteReadDeps)
     const f = failureResponse(failed);
     return refuse(aiError(f.code, { status: f.status, message: f.message }));
   }
-  return reply({ status: outcome.status === "extracted" ? "proposed" : outcome.status, proposal }, 200);
+  if (outcome.status === "extracted") return reply({ status: Object.keys(proposal.draft).length > 0 ? "proposed" : "nothing_found", proposal }, 200);
+  return reply({ status: outcome.status, ...(outcome.message ? { message: outcome.message } : {}), proposal }, 200);
 }
