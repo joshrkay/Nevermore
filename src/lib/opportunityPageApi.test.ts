@@ -99,9 +99,20 @@ describe("getOpportunityPage", () => {
     expect(got.quotes[1]).toEqual({ id: 13, peoName: "PEO B", status: "sent", sentOn: "2026-11-06", quoteReceivedOn: null, quoteExpiresOn: null, adminFeePepm: null });
     expect(got.intake).toEqual({
       submissionId: "i1", fileId: "EAA-2026-0117", pipelineStatus: "sent_to_carrier", certifiedBy: "Elena Marsh", certifiedAt: "2026-10-28T10:00:00+00:00", version: 2,
-      censusSize: 45, answered: null, prospectName: null, openItems: { count: 1, firstLabel: "Loss run for 2024", firstField: "loss_run" },
+      censusSize: 45, answered: null, prospectName: null, openItems: { count: 1, firstLabel: "Loss run for 2024", firstField: "loss_run" }, startedByFirm: false,
     });
     expect(got.contacts[0]).toEqual({ id: "c1", name: "Elena Marsh", title: "Practice Manager", email: "elena@x.example", phone: "(503) 555-0142", main: true, fillsInIntake: true });
+  });
+
+  // Catches: the page unable to tell an intake the firm started from the employer's own, so "Continue the intake" is offered on both (D-1908); or an answer from a database that does not say yet
+  // (the migration applied after the screen) failing the whole page, or being read as the firm's.
+  it("reads whether the firm started the intake, and an answer that does not say as not the firm's", async () => {
+    rpc.mockResolvedValue({ data: { ...page, intake: { ...page.intake, started_by_firm: true } }, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.intake!.startedByFirm).toBe(true);
+    rpc.mockResolvedValue({ data: { ...page, intake: { ...page.intake, started_by_firm: false } }, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.intake!.startedByFirm).toBe(false);
+    rpc.mockResolvedValue({ data: page, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.intake!.startedByFirm).toBe(false);
   });
 
   // Catches: an opportunity with no intake, no owner or no main contact breaking the page, or being drawn as if it had them.

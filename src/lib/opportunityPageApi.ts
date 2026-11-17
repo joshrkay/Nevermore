@@ -68,6 +68,8 @@ export interface IntakeSummary {
   answered: number | null;
   prospectName: string | null;
   openItems: { count: number; firstLabel: string | null; firstField: string | null };
+  /** Whether a member of the firm started this intake (D-1908): the one the opportunity offers "Continue the intake" on. False for an employer's own, and for an answer from before the database said. */
+  startedByFirm: boolean;
 }
 
 /** A contact on this search (D-429): the main contact and/or the contact made from the intake's prospect. */
@@ -236,6 +238,8 @@ const quoteSchema = z.object({
 const intakeSchema = z.object({
   submission_id: z.string().min(1), file_id: nullableText, pipeline_status: nullableText, certified_by: nullableText, certified_at: nullableText,
   version: z.number().int().nullable(), census_size: z.number().int().nullable(), answered: z.number().int().nullable(), prospect_name: nullableText,
+  // Optional: a database that has not had 20261125140000 yet answers without it, and the page still draws (nothing offers "Continue the intake" until it does).
+  started_by_firm: z.boolean().optional(),
   open_items: z.object({ count: z.number().int().min(0), first_label: nullableText, first_field: nullableText }),
 });
 const contactSchema = z.object({
@@ -345,6 +349,7 @@ export async function getOpportunityPage(firmId: string, opportunityId: string):
       submissionId: p.intake.submission_id, fileId: p.intake.file_id, pipelineStatus: p.intake.pipeline_status, certifiedBy: p.intake.certified_by,
       certifiedAt: p.intake.certified_at, version: p.intake.version, censusSize: p.intake.census_size, answered: p.intake.answered, prospectName: p.intake.prospect_name,
       openItems: { count: p.intake.open_items.count, firstLabel: p.intake.open_items.first_label, firstField: p.intake.open_items.first_field },
+      startedByFirm: p.intake.started_by_firm === true,
     },
     contacts: p.contacts.map((c) => ({ id: c.id, name: c.name, title: c.title, email: c.email, phone: c.phone, main: c.main, fillsInIntake: c.fills_in_intake })),
   };

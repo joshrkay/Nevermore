@@ -26,8 +26,11 @@ const firstOpenItem = (i: IntakeSummary["openItems"]): string | null =>
 
 const answersWords = (n: number) => `${n} ${n === 1 ? "answer" : "answers"}`;
 
-/** `startQuote` is the way to start the intake, given only where the page may offer it (the database refuses it on an archived account, in a support session and on a closed opportunity). */
-export function IntakePanel({ page, startQuote }: { page: OpportunityPage; startQuote?: React.ReactNode }) {
+/**
+ * `startQuote` is the way to start the intake, given only where the page may offer it (the database refuses it on an archived account, in a support session and on a closed opportunity).
+ * `continueIntake` is the way back into an unsigned intake the firm started, given only where the page may offer it (D-1908).
+ */
+export function IntakePanel({ page, startQuote, continueIntake }: { page: OpportunityPage; startQuote?: React.ReactNode; continueIntake?: React.ReactNode }) {
   const { intake, opportunity, mainContact } = page;
   if (!intake) {
     const next = nextStepWords(opportunity.stage, null, null, mainContact?.name ?? null);
@@ -65,9 +68,12 @@ export function IntakePanel({ page, startQuote }: { page: OpportunityPage; start
           </dl>
         </>
       ) : (
-        <p className="text-sm">
-          {`${intake.prospectName ?? "The prospect"} is filling it in${intake.answered !== null ? ` · ${answersWords(intake.answered)}` : ""}`}
-        </p>
+        <>
+          <p className="text-sm">
+            {`${intake.prospectName ?? "The prospect"} is filling it in${intake.answered !== null ? ` · ${answersWords(intake.answered)}` : ""}`}
+          </p>
+          {continueIntake && <div className="mt-3">{continueIntake}</div>}
+        </>
       )}
     </ListPanel>
   );

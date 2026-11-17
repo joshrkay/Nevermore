@@ -214,6 +214,7 @@
 \i supabase/migrations/20261125110000_quote_comparison.sql
 \i supabase/migrations/20261125120000_question_requests.sql
 \i supabase/migrations/20261125130000_broker_save_whole_form.sql
+\i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -918,3 +919,19 @@ SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"fei
 SELECT pg_temp.is((SELECT chamber_data ->> 'industry' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'Bakery', 'nothing of either save is kept');
 -- 68. Whoever is not a member still cannot give an answer a broker's mark, whole form or not (test 55 above says it for the employer; this is the same save from a stranger's account).
 SELECT pg_temp.is(pg_temp.form_save('client', pg_temp.id('form_intake'), '{"industry": "Forged"}'), 'rows:0', '68: a stranger''s whole-form save changes nothing (row security shows them no such row)');
+
+-- 69. The opportunity's page says whether the firm started the intake it holds (D-1908). The screen offers "Continue the intake" only for one the firm started: that is the intake a member can enter
+-- answers in and invite the client from, and the dialog that does it opens only for it. An employer's own intake, certified or not, is not the firm's to continue.
+-- Break caught: the link offered on an employer's intake (a dialog that has nothing to show), or never offered on the firm's (a broker who closed the dialog has no way back to the invitation).
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE(public.opportunity_page(pg_temp.id('alpha'), pg_temp.id('opp_form')) -> 'intake' ->> 'started_by_firm', 'missing') AS firm_started \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'firm_started'::text, 'true', '69: an intake the firm started is marked as the firm''s on the opportunity''s page');
+SELECT pg_temp.new_user('emp69');
+SELECT pg_temp.opp('opp_employer', 'alpha', 'a_agent');
+INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES (pg_temp.id('emp69'), pg_temp.id('alpha'), '{}') RETURNING id AS employer_session \gset
+UPDATE public.opportunities SET intake_id = :'employer_session' WHERE id = pg_temp.id('opp_employer');
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE(public.opportunity_page(pg_temp.id('alpha'), pg_temp.id('opp_employer')) -> 'intake' ->> 'started_by_firm', 'missing') AS employer_started \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'employer_started'::text, 'false', 'and an intake the employer started is not');
