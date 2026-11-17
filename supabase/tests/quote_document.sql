@@ -415,3 +415,18 @@ BEGIN
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'the quote kept its own document');
 END $$;
+
+-- ---------- 3. Someone who is not an advisor, signed in or not, can't ----------
+-- Catches: the employer who made the intake, or a visitor, naming a file as a quote's document.
+DO $$
+DECLARE f bigint; q bigint := pg_temp.qid('Insperity'); stmt text;
+BEGIN
+  f := pg_temp.mail_file('Insperity', 'stored', 'third.pdf');
+  stmt := format('SELECT public.attach_quote_document(%s, %s)', q, f);
+  PERFORM pg_temp.as_user('p_reyes');
+  PERFORM pg_temp.is(left(pg_temp.refusal(stmt), 5), '42501', 'the employer');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(left(pg_temp.refusal(stmt), 5), '42501', 'a visitor');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'the quote kept its own document');
+END $$;

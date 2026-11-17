@@ -12,8 +12,8 @@ AS $$
 DECLARE
   q public.quotes;
 BEGIN
-  -- Only an advisor of the quote's own firm; another firm's quote and one that is not there are the same answer.
   PERFORM public.require_advisor();
+  -- Only an advisor of the quote's own firm; another firm's quote and one that is not there are the same answer.
   IF NOT EXISTS (SELECT 1 FROM public.quotes x WHERE x.id = p_quote_id AND public.quote_request_in_my_firm(x.quote_request_id)) THEN
     RAISE EXCEPTION 'Quote not found' USING ERRCODE = 'PT404';
   END IF;
