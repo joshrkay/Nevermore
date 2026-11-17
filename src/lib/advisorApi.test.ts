@@ -100,6 +100,7 @@ const {
   reissueQuoteRequestAddress,
   openQuoteRequestThread,
   mailAttachmentUrl,
+  attachQuoteDocument,
   recordActivity,
   fetchOwnedFirms,
   listMyFirms,
@@ -618,6 +619,15 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("record_quote", expect.objectContaining({
       p_one_off_fees: null, p_workers_comp: null, p_unemployment: null, p_medical: [{ plan: "Gold PPO", tier: "family", monthly: 1840 }],
     }));
+  });
+
+  // N-2.2. Break caught: the document named with the wrong parameter names, or the database's refusal (a file that isn't this quote request's, or isn't scanned clean) swallowed as a success.
+  it("names a stored mail file as a quote's document through attach_quote_document, and says why the database refused one", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 3, document_attachment_id: 51 }, error: null });
+    await attachQuoteDocument(3, 51);
+    expect(rpc).toHaveBeenLastCalledWith("attach_quote_document", { p_quote_id: 3, p_attachment_id: 51 });
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "22023", message: "That file isn't stored: it was blocked, not kept, or is still being checked" } });
+    await expect(attachQuoteDocument(3, 52)).rejects.toThrow(/blocked, not kept, or is still being checked/);
   });
 
   // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.

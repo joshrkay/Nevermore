@@ -620,6 +620,16 @@ export async function recordQuote(quoteRequestId: number, offer: QuoteOffer): Pr
   return data;
 }
 
+/**
+ * Names a mail file already stored and scanned on the quote request's thread as the quote's document (N-2.2, D-730): no second upload. The database refuses a file that isn't
+ * on this quote request's mail or isn't scanned clean, and says so.
+ */
+export async function attachQuoteDocument(quoteId: number, attachmentId: number): Promise<Json> {
+  const { data, error } = await supabase.rpc("attach_quote_document", { p_quote_id: quoteId, p_attachment_id: attachmentId });
+  if (error) fail(error, "Couldn't keep that file with the quote.");
+  return data;
+}
+
 /** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */
 export type OpenQuoteStatus = "sent" | "acknowledged" | "question_open";
 
