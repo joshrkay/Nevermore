@@ -630,6 +630,15 @@ export async function setQuoteRequestStatus(id: number, status: OpenQuoteStatus)
 }
 
 /**
+ * Accepts or dismisses what a PEO's reply was suggested to mean (N-1.1). Accepting records the status through the status function, in the database;
+ * a quote or a decline is accepted once its own form has recorded it, and the database says so in words when it has not.
+ */
+export async function decideReplySuggestion(messageId: number, decision: "accept" | "dismiss"): Promise<void> {
+  const { error } = await supabase.rpc("advisor_decide_reply_suggestion", { p_message_id: messageId, p_decision: decision });
+  if (error) fail(error, "Couldn't settle the suggestion.");
+}
+
+/**
  * Revokes a quote request's reply address and issues a new one. Mail sent to the old address no longer reaches
  * the quote request, so the PEO has to be given the new one.
  */

@@ -29,6 +29,9 @@ export interface ThreadMessage {
   /** A message the product sends (M-2.1): queued, sent or failed, and why it failed; absent on mail received or recorded by hand. */
   status?: string;
   failure_reason?: string | null;
+  /** N-1.1: what the AI suggested a reply means, and what the agent did with it. Never the reply's words. */
+  suggested_status?: string | null;
+  suggestion_outcome?: string | null;
 }
 
 export interface ThreadAttachment {

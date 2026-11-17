@@ -84,6 +84,7 @@ const {
   setStatus,
   recordQuoteSend,
   setQuoteRequestStatus,
+  decideReplySuggestion,
   updateQuoteRequest,
   recordQuote,
   fetchIsAdmin,
@@ -640,6 +641,13 @@ describe("quote requests", () => {
   it("says why the database refused an open status, in its words", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: { code: "22023", message: "TriNet is already Acknowledged." } });
     await expect(setQuoteRequestStatus(7, "acknowledged")).rejects.toThrow("TriNet is already Acknowledged.");
+  });
+
+  // N-1.1. Break caught: Accept or Dismiss sent to the status function (which would write around the suggestion's record), or under the wrong parameter names.
+  it("settles a reply's suggestion through advisor_decide_reply_suggestion", async () => {
+    rpc.mockResolvedValueOnce({ data: { message_id: 41, suggestion_outcome: "accepted" }, error: null });
+    await decideReplySuggestion(41, "accept");
+    expect(rpc).toHaveBeenLastCalledWith("advisor_decide_reply_suggestion", { p_message_id: 41, p_decision: "accept" });
   });
 
   it("opens a PEO mail attachment through a signed link from the peo-mail bucket, as a download under its own name", async () => {
