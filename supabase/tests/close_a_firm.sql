@@ -201,6 +201,7 @@
 \i supabase/migrations/20261123120000_broker_intake.sql
 \i supabase/migrations/20261123120100_broker_intake_columns.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
@@ -606,6 +607,7 @@ BEGIN
     ('preview a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('undo a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
     ('change leads in bulk', 'agent_a', format($q$SELECT public.bulk_leads_change(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), closing_msg),
+    ('change quotes in bulk', 'agent_a', format($q$SELECT public.bulk_quotes_change(%L, 'close', '{"reason":"other"}', NULL, '["q1"]')$q$, fa), closing_msg),
     ('preview a bulk change of leads', 'agent_a', format($q$SELECT public.bulk_leads_preview(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), closing_msg),
     ('undo a bulk change of leads', 'agent_a', format($q$SELECT public.bulk_leads_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
     ('log a call', 'agent_a', format($q$SELECT public.log_activity('call', %L, NULL, NULL, NULL, 'spoke', 'Hello', NULL, NULL, NULL, NULL, NULL, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
@@ -1408,7 +1410,7 @@ DECLARE
     'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission',
     'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads',
     -- Slice 5.3 (a broker-started intake, P-2.2, P-2.4): a member's writes, each asking assert_firm_writable
-    'start_broker_intake', 'invite_intake_client', 'remind_intake_invite'];
+    'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'bulk_quotes_change'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s: the PEO list is the same for every firm',

@@ -10,7 +10,7 @@ import { classifyApiError } from "@/lib/advisorApi";
 // and its refusals into the page's shape and words. The CSV and the button are CRM-S3.8a's.
 
 /** The tables that can be exported today, in the order of the database's list (`export_table_registry`; src/lib/exportApi.test.ts compares them): a later table is added to both. */
-export const EXPORT_TABLES = ["referral_partners", "firm_activity", "accounts", "leads"] as const;
+export const EXPORT_TABLES = ["referral_partners", "firm_activity", "accounts", "leads", "quotes"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** A value in a row: text, a number, a yes or no, or nothing. A column never holds anything else. */

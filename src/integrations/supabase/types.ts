@@ -892,6 +892,24 @@ export type Database = {
         Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
       }
+      // The quotes table's query (20261123180000, CRM-Q4.1): {rows, total, page, page_size}, one row for each PEO of each opportunity and one for each New quote
+      // left half done; src/lib/quotesApi.ts reads it.
+      quotes_list: {
+        Args: {
+          p_firm_id: string | null
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      quotes_view_counts: {
+        Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
       // The inbox (20261122150000, CRM-E1.4): {rows, total, page, page_size}, every message on the threads the caller may see, newest first;
       // src/lib/inboxApi.ts reads it.
       inbox_list: {
@@ -1352,6 +1370,11 @@ export type Database = {
         Returns: Json
       }
       bulk_leads_change: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
+      // Change the owner of the opportunities of quotes, or close their quote requests (20261123180000, CRM-Q4.1): {action, selected, requested, unavailable, changed, unchanged, skipped}.
+      bulk_quotes_change: {
         Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
         Returns: Json
       }

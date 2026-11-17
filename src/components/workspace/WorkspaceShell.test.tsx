@@ -117,7 +117,7 @@ describe("the workspace menu", () => {
   it("makes each item a real link to where it opens until its own epic", async () => {
     await renderAt("/advisor");
     const href = (name: string) => within(menu()).getByRole("link", { name }).getAttribute("href");
-    expect(href("Quotes")).toBe("/advisor");
+    expect(href("Quotes")).toBe("/quotes");
     // The inbox has its own page (CRM-E1.4); the queue's own new-mail filter stays the queue's (D-8).
     expect(href("Inbox")).toBe("/inbox");
     expect(href("Leads")).toBe("/leads");
@@ -128,6 +128,8 @@ describe("the workspace menu", () => {
 
   it.each([
     ["/advisor", "Quotes"],
+    ["/quotes", "Quotes"],
+    ["/quotes/5", "Quotes"],
     ["/advisor?status=under_review", "Quotes"],
     ["/advisor/submissions/abc", "Quotes"],
     ["/quotes/7", "Quotes"],

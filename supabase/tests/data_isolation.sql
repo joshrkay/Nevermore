@@ -252,6 +252,7 @@
 \i supabase/migrations/20261123120000_broker_intake.sql
 \i supabase/migrations/20261123120100_broker_intake_columns.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
@@ -1566,6 +1567,12 @@ INSERT INTO callable VALUES
    'a current member of the firm (or a support session at its address) reads one page of the leads they may see, by their level, in that firm only, never the bin''s (CRM-L1.1a); 42501 for every caller who is not a member of that firm at this address'),
   ('leads_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
    'the count behind each view tab of the leads table, for the leads the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
+  ('quotes_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) reads one page of the quotes they may see, by their level, in that firm only (CRM-Q4.1); 42501 for every caller who is not a member of that firm at this address'),
+  ('quotes_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
+   'the count behind each view tab of the quotes table, for the quotes the caller may see in that firm only; 42501 for every caller who is not a member of that firm at this address'),
+  ('bulk_quotes_change(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
+   'a current member of the firm the call acts for changes the owner of the opportunities of up to 1,000 quotes, or closes their quote requests with one reason, those the level rule gives them; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT413 for more than 1,000; another firm''s quote is just not available'),
   ('accounts_list(p_firm_id uuid, p_filters jsonb, p_sort text, p_direction text, p_page integer, p_search text, p_time_zone text)', 'own', NULL,
    'a current member of the firm (or a support session at its address) reads one page of the accounts they may see, by their level, in that firm only; 42501 for every caller who is not a member of that firm at this address; archived accounts only when a filter asks'),
   ('accounts_view_counts(p_firm_id uuid, p_views jsonb, p_search text, p_time_zone text)', 'own', NULL,
@@ -2342,6 +2349,8 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('inbox_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.inbox_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('leads_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.leads_list({firm}) -> 'rows')::text$$),
   ('leads_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.leads_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
+  ('quotes_list', 'advisor', 'by_id', $$SELECT jsonb_array_length(public.quotes_list({firm}) -> 'rows')::text$$),
+  ('quotes_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.quotes_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('accounts_view_counts', 'advisor', 'by_id', $$SELECT string_agg(total::text, ',') FROM public.accounts_view_counts({firm}, '[{"name":"All","filters":[]}]')$$),
   ('firm_member_choices', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.firm_member_choices({firm})$$);
 -- CRM-S5.2: the history of a referral partner ({partner} is the firm's own). Another firm's member, a platform admin, a former member and a
@@ -2612,6 +2621,10 @@ INSERT INTO fprobe (fn, who, shape, call, refused, positive) VALUES
    ARRAY['42501', 'PT404', 'P0002'], ARRAY['advisor', 'agent_b']),
   ('leads_bin', 'admin', 'by_id', $$SELECT public.leads_bin({firm}) ->> 'total'$$, ARRAY['42501', 'PT404', 'P0002'], ARRAY['admin', 'owner_b']),
   ('restore_leads', 'admin', 'by_id', $$SELECT public.restore_leads({firm}, jsonb_build_array({lead}::text)) ->> 'unavailable'$$, ARRAY['42501', 'PT404', 'P0002'], ARRAY['admin', 'owner_b']);
+-- CRM-Q4.1: closing quotes in bulk, asked for a key no quote has: a member of the firm is served (it is just not available), anyone else is refused first.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('bulk_quotes_change', 'advisor', 'by_id', $$SELECT public.bulk_quotes_change({firm}, 'close', '{"reason":"other"}', NULL, '["q0"]') ->> 'unavailable'$$,
+   ARRAY['42501', 'PT404', 'P0002'], '^ok:1$');
 
 DO $$
 DECLARE
@@ -4573,6 +4586,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('lead_set_field', 'service_only', 'writes one optional standard field of a lead for a bulk change or its undo, after the checks; no API role can call it'),
   ('lead_labels_history', 'trigger', 'writes one history entry for a lead when a label is put on or taken off, inside the write that did it; not executable through the API'),
   ('export_source_leads', 'service_only', 'the leads'' reader, run by export_rows after its checks: the leads the caller may see, the bin left out; no API role can call it'),
+  ('export_source_quotes', 'service_only', 'the quotes'' reader, run by export_rows after its checks: the quotes the caller may see, by level; no API role can call it'),
+  ('quotes_bulk_blocked', 'service_only', 'why a bulk change of an opportunity''s quotes is not made (the level rule, an archived account, a won or lost opportunity); bulk_quotes_change asks it; no API role can call it'),
   ('remove_binned_leads', 'service_only', 'the nightly removal of every firm''s leads 30 days in the bin, a step of the firm record''s daily job; only the service role can call it');
 
 -- CRM-S1.2b (20261119230000_search_everywhere.sql; supabase/tests/search_everywhere.sql): search, and each person's recent records.
@@ -4746,6 +4761,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('inbox_view_counts', 'firm_scoped', 'the inbox''s view counts, for the firm named only (4e)'),
   ('leads_list', 'firm_scoped', 'one page of the leads table: the firm named (a current member of it at this address), the leads they may see by level, never another firm''s (4e; supabase/tests/leads_query.sql)'),
   ('leads_view_counts', 'firm_scoped', 'the leads table''s view counts, for the firm named only (4e)'),
+  ('quotes_list', 'firm_scoped', 'one page of the quotes table: the firm named (a current member of it at this address), the quotes they may see by level, never another firm''s (4e; supabase/tests/quotes_query.sql)'),
+  ('quotes_view_counts', 'firm_scoped', 'the quotes table''s view counts, for the firm named only (4e)'),
+  ('bulk_quotes_change', 'firm_scoped', 'a current member of the firm the call acts for changes the owner of the opportunities of the quotes the level rule gives them, or closes their quote requests; another firm''s quote is just not available (4e; supabase/tests/quotes_bulk.sql)'),
   ('accounts_list', 'firm_scoped', 'one page of the accounts table: the firm named (a current member of it at this address), the accounts they may see by level, never another firm''s (4e; supabase/tests/accounts_query.sql)'),
   ('accounts_view_counts', 'firm_scoped', 'the count of each view of the accounts table: the same firm and the same accounts as the list (4e; supabase/tests/accounts_query.sql)'),
   ('firm_member_choices', 'firm_scoped', 'the firm''s current members by id and name, to a member of that firm at this address (4e; supabase/tests/accounts_query.sql)');

@@ -219,6 +219,7 @@
 \i supabase/migrations/20261123120000_broker_intake.sql
 \i supabase/migrations/20261123120100_broker_intake_columns.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql

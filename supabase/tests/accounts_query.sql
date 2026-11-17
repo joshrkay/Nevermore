@@ -204,6 +204,7 @@
 \i supabase/migrations/20261123120000_broker_intake.sql
 \i supabase/migrations/20261123120100_broker_intake_columns.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
@@ -928,7 +929,7 @@ BEGIN
   PERFORM public.set_my_table_columns(acme, 'accounts', NULL, '["name", "owner", "last_activity_at"]');
   PERFORM pg_temp.is((SELECT m.columns FROM public.my_table_columns(acme, 'accounts', NULL) m), '["name", "owner", "last_activity_at"]'::jsonb, 'the person''s column choice for the table is kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.my_table_columns(acme, 'submissions', NULL) m WHERE m.source = 'mine'), 0::bigint, 'and is not the queue''s');
-  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'quotes', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023: There is no table called%', true, 'a table that is not on the list is still refused');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'invoices', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023: There is no table called%', true, 'a table that is not on the list is still refused');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.save_view(%L, 'Accounts', 'x', NULL, NULL, NULL)$q$, acme)) LIKE '22023:%', true, 'a name is exact');
   PERFORM pg_temp.as_user('zenith_owner', 'zenith-benefits');
   PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT * FROM public.list_saved_views(%L, 'accounts')$q$, acme)) LIKE '42501:%', true, 'another firm''s member reads none of Acme''s views');

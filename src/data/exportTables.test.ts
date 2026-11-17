@@ -15,7 +15,14 @@ describe("what an export of each table is called", () => {
     expect(exportedWords("leads", 2)).toBe("Exported 2 leads");
   });
 
+  // Catches: the quotes export read as "rows of quotes", or its file named for no table.
+  it("calls an export of quotes by their own words and names its file for them", () => {
+    expect(exportedWords("quotes", 1)).toBe("Exported 1 quote");
+    expect(exportedWords("quotes", 3)).toBe("Exported 3 quotes");
+    expect(exportFileName("quotes", "2026-11-19")).toBe("quotes-2026-11-19.csv");
+  });
+
   it("names a table this version does not know as the database wrote it", () => {
-    expect(exportedWords("quotes", 3)).toBe("Exported 3 rows of quotes");
+    expect(exportedWords("invoices", 3)).toBe("Exported 3 rows of invoices");
   });
 });
