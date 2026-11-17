@@ -12,8 +12,11 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   UPDATE public.quote_request_messages SET suggested_status = p_status
-  WHERE id = p_message_id AND direction = 'received' AND quote_request_id IS NOT NULL;
+  WHERE id = p_message_id AND direction = 'received' AND quote_request_id IS NOT NULL AND suggested_status IS NULL;
   IF NOT FOUND THEN
+    IF EXISTS (SELECT 1 FROM public.quote_request_messages WHERE id = p_message_id AND suggested_status IS NOT NULL) THEN
+      RAISE EXCEPTION 'This reply already has its suggestion' USING ERRCODE = '22023';
+    END IF;
     RAISE EXCEPTION 'Only a reply from a PEO is read' USING ERRCODE = '22023';
   END IF;
 END;

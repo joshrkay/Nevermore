@@ -521,4 +521,17 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.qstatus('Justworks'), 'sent', 'nor any status changed');
 END $$;
 
+-- ---------- 9. A settled suggestion is not made again ----------
+-- Catches: a replayed webhook (or a second reading) rewriting a suggestion the agent already settled, so a dismissed one comes back or the record changes.
+DO $$
+DECLARE m bigint := pg_temp.suggested('Insperity', 'quoted');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.advisor_decide_reply_suggestion(m, 'dismiss');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'declined')$q$, m)), '22023: This reply already has its suggestion', 'a settled suggestion is left alone');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggested_status FROM public.quote_request_messages WHERE id = m), 'quoted', 'it is still the suggestion that was settled');
+END $$;
+
 \echo reply_suggestions: all passed

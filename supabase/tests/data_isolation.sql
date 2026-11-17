@@ -260,6 +260,7 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124160000_reply_suggestions.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1477,6 +1478,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO returned, with its whole offer'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
+  ('advisor_decide_reply_suggestion(p_message_id bigint, p_decision text)', 'advisor',
+                                                                     'SELECT public.advisor_decide_reply_suggestion(0, ''dismiss'')', 'accepting or dismissing what a PEO''s reply was suggested to mean (N-1.1)'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
   ('advisor_open_quote_request_thread(p_quote_request_id bigint, p_seen_through timestamp with time zone)', 'advisor',
@@ -1831,6 +1834,7 @@ BEGIN
     'SELECT public.queue_draft_expiry_reminders(1)',
     format('SELECT public.record_document_uploaded(%L)', nobody),
     'SELECT public.record_inbound_mail(''probe'', ARRAY[''x''], ''a@b.example'', NULL, NULL, NULL, NULL, NULL, false, NULL, false, NULL)',
+    'SELECT public.record_reply_suggestion(0, ''acknowledged'')',
     'SELECT public.record_inbound_attachment(0, ''probe'', ''x.pdf'', NULL, 1, NULL)',
     'SELECT public.finish_inbound_attachment(0, ''clean'', NULL, ''peo-mail'', ''x'')',
     format('SELECT public.plan_mail_move(0, NULL, %L)', nobody),
@@ -2234,6 +2238,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
   ('record_quote', 'advisor', 'by_id', $$SELECT public.record_quote(p_quote_request_id => {qr}, p_kind => 'estimate')::text$$),
   ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
+  ('advisor_decide_reply_suggestion', 'advisor', 'by_id', $$SELECT public.advisor_decide_reply_suggestion({rmsg}, 'dismiss')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
@@ -2612,6 +2617,12 @@ BEGIN
     FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)
     RETURNING id::text INTO qr;
     INSERT INTO fprobe_ids VALUES (f, 'peomsg', qr);
+    -- A PEO's reply with a suggestion on it (N-1.1), written the same way.
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, subject, body_text, suggested_status)
+    SELECT '<probe-reply-' || f || '@peo.example>', q.id, q.session_id, 'received', 'dana@peo.example', 'Probe', 'Probe', 'acknowledged'
+    FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'rmsg', qr);
   END LOOP;
 END $$;
 
@@ -4368,7 +4379,7 @@ SELECT unnest(ARRAY[
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
   'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
-  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request', 'record_quote', 'record_manuscript_version',
+  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'record_quote', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
@@ -4756,7 +4767,7 @@ SELECT unnest(ARRAY[
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',
   'queue_draft_expiry_reminders', 'queue_retention_deletions', 'reap_outbox_events', 'reconcile_outbox_events', 'record_census_template_scan',
-  'record_document_scan', 'record_document_uploaded', 'record_invitation_delivery', 'record_email_delivery_event', 'record_inbound_attachment', 'record_inbound_mail',
+  'record_document_scan', 'record_document_uploaded', 'record_invitation_delivery', 'record_email_delivery_event', 'record_inbound_attachment', 'record_inbound_mail', 'record_reply_suggestion',
   'record_ops_event', 'requeue_document_scan', 'requeue_outbox_event', 'run_retention'
 ]), 'service_only', 'not executable through the API: the service role''s work (the scheduled jobs and edge functions), or a helper the firm-scoped functions call after their own check';
 

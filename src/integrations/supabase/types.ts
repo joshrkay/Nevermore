@@ -412,6 +412,11 @@ export type Database = {
           bundle_link_id?: number | null
           // M-2.3: the version the PEO held when this message is an update; null on every other message.
           update_from_version?: number | null
+          // N-1.1 (20261124160000): what the AI suggested the reply means, and what the agent did with it. Never the reply's words.
+          suggested_status?: "acknowledged" | "question_open" | "quoted" | "declined" | null
+          suggestion_outcome?: "accepted" | "dismissed" | null
+          suggestion_decided_by?: string | null
+          suggestion_decided_at?: string | null
         }
         Insert: never
         Update: never
@@ -1551,6 +1556,11 @@ export type Database = {
       }
       advisor_record_quote_send: {
         Args: { p_peo: string; p_sent_on?: string | null; p_session_id: string }
+        Returns: Json
+      }
+      // Accepts (records the status through the status function) or dismisses what a PEO's reply was suggested to mean (20261124160000).
+      advisor_decide_reply_suggestion: {
+        Args: { p_message_id: number; p_decision: "accept" | "dismiss" }
         Returns: Json
       }
       advisor_set_quote_request_status: {
