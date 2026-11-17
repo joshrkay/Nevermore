@@ -854,3 +854,9 @@ SQL, 14 of 14 killed (mutsql.py: each of the three checks off in attach_quote_do
 
 ### Gate (7.3)
 lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 348 files, 7070 tests passed; build green; every SQL test on port 5730: 125 passed.
+
+## 7.8 (CRM-Q3.3 Record a quote, N-1.4 Record a decline on the quote page, CRM-Q4.2 Compare quotes mounted)
+1. QuotePage.test: Record the quote is offered on every status but closed | red: Unable to find an accessible element with the role "button" and name "Record the quote" | green
+2. QuotePage.test: a quote cannot be saved until marked estimate or firm offer | red: Unable to find an accessible element with the role "form" and name "Record the quote from TriNet" | green
+3. QuotePage.test: recordQuote only, empty areas left out as null, page read again, form closes | red: Unable to find a label with the text of: Admin fee | green
+4. QuotePage.test: a one-off fee is recorded as a name and a number | red: Unable to find an accessible element with the role "button" and name "Add a one-off fee" | green
