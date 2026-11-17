@@ -69,6 +69,7 @@ const QuotePage = () => {
         prospectUserId={detail.userId}
         requests={[request]}
         ofRequest={request.id}
+        onOpened={() => void query.refetch()}
         messages={detail.quoteRequestMessages}
         attachments={detail.quoteRequestMailAttachments}
         notes={detail.quoteRequestNotes}

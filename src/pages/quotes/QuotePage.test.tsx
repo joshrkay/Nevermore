@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), fetchMyMailbox: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -328,6 +328,25 @@ describe("QuotePage: the PEO's status", () => {
     expect(advisor.setQuoteRequestStatus).toHaveBeenCalledWith(7, "question_open");
     await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: "Mark TriNet back to Sent" })).toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: a suggestion on a reply", () => {
+  // N-1.1. Break caught: Accept on the quote's own page that records the status and leaves the page showing the old one (and the suggestion still open).
+  it("is accepted on the PEO's thread with the submission page's own Accept, then the page is read again", async () => {
+    const user = userEvent.setup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      detail: threadOf({
+        quoteRequestMessages: [message({ id: 1, body_text: "We have your packet.", suggested_status: "acknowledged", suggestion_outcome: null })],
+        quoteRequestThreadReads: [{ quote_request_id: 7, last_opened_at: "2030-01-01T00:00:00Z", last_opened_by: "a1", last_opened_by_email: "adv@example.com" }],
+      }),
+    }));
+    advisor.decideReplySuggestion.mockResolvedValue(undefined);
+    renderPage();
+    expect(await screen.findByText(/Suggested: Acknowledged/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    expect(advisor.decideReplySuggestion).toHaveBeenCalledWith(1, "accept");
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
   });
 });
 

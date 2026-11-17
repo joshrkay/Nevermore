@@ -6,7 +6,7 @@ import type {
 
 const toast = { success: vi.fn(), error: vi.fn() };
 vi.mock("sonner", () => ({ toast }));
-const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn() };
+const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), decideReplySuggestion: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
 
 const { default: PeoThreadPanel } = await import("./PeoThreadPanel");
@@ -364,5 +364,70 @@ describe("PeoThreadPanel", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toContain("Downloaded The packet (EAA-2026-0042-packet-v3.pdf), by the bundle link");
     expect(screen.queryByText(/Change log/)).not.toBeInTheDocument();
+  });
+
+  // N-1.1. Break caught: a suggestion the agent never sees (the model read the reply for nothing), or one that looks like it already changed the status.
+  describe("a suggestion on a reply", () => {
+    const open = (m: Partial<QuoteRequestMessageRow>) => {
+      // Already opened by the team, so the only reload asked for is the one a settled suggestion asks for.
+      const onOpened = panel({ messages: [message(m)], reads: [read("2030-01-01T00:00:00Z")] });
+      fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));
+      return Object.assign(within(screen.getByRole("list", { name: "TriNet thread, newest first" })), { onOpened });
+    };
+
+    it("is offered under the reply as a suggestion only, with Accept and Dismiss", () => {
+      const thread = open({ suggested_status: "acknowledged", suggestion_outcome: null });
+      expect(thread.getByText(/Suggested: Acknowledged/)).toBeInTheDocument();
+      expect(thread.getByText(/nothing changes until you accept/i)).toBeInTheDocument();
+      expect(thread.getByRole("button", { name: "Accept" })).toBeInTheDocument();
+      expect(thread.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    });
+
+    // Break caught: an Accept that does nothing, or one that does not ask the page to reload so the status and the suggestion look unchanged.
+    it("is accepted with Accept, which settles it in the database and has the page reload", async () => {
+      api.decideReplySuggestion.mockResolvedValue(undefined);
+      const thread = open({ id: 41, suggested_status: "question_open", suggestion_outcome: null });
+      fireEvent.click(thread.getByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(api.decideReplySuggestion).toHaveBeenCalledWith(41, "accept"));
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      expect(thread.onOpened).toHaveBeenCalled();
+    });
+
+    // Break caught: a Dismiss that does nothing, so the suggestion stays on the reply for ever.
+    it("is dismissed with Dismiss, which settles it as dismissed and has the page reload", async () => {
+      api.decideReplySuggestion.mockResolvedValue(undefined);
+      const thread = open({ id: 41, suggested_status: "declined", suggestion_outcome: null });
+      fireEvent.click(thread.getByRole("button", { name: "Dismiss" }));
+      await waitFor(() => expect(api.decideReplySuggestion).toHaveBeenCalledWith(41, "dismiss"));
+      await waitFor(() => expect(thread.onOpened).toHaveBeenCalled());
+    });
+
+    // Break caught: a refused accept (a decline not recorded yet) that fails silently, or looks recorded and reloads the page as if it were.
+    it("says why the database refused an Accept, in its words, and leaves the suggestion to settle", async () => {
+      api.decideReplySuggestion.mockRejectedValue(new Error("Record the decline first, with its reason, then accept this"));
+      const thread = open({ id: 41, suggested_status: "declined", suggestion_outcome: null });
+      fireEvent.click(thread.getByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Record the decline first, with its reason, then accept this"));
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(thread.onOpened).not.toHaveBeenCalled();
+      expect(thread.getByRole("button", { name: "Accept" })).toBeEnabled();
+    });
+
+    // Break caught: a settled suggestion offered again (it can be settled once), or a settled one that says nothing of what became of it.
+    it.each([["accepted", "Suggested: Acknowledged, accepted."], ["dismissed", "Suggested: Acknowledged, dismissed."]] as const)(
+      "when %s says so and offers no buttons",
+      (outcome, words) => {
+        const thread = open({ suggested_status: "acknowledged", suggestion_outcome: outcome });
+        expect(thread.getByText(words)).toBeInTheDocument();
+        expect(thread.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+        expect(thread.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+      },
+    );
+
+    // Break caught: a reply with no suggestion showing an empty box.
+    it("is not shown on a reply with none", () => {
+      const thread = open({ suggested_status: null });
+      expect(thread.queryByText(/Suggested/)).not.toBeInTheDocument();
+    });
   });
 });
