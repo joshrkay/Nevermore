@@ -135,3 +135,13 @@ describe("shapeQuoteProposal: what the model makes up", () => {
     }
   });
 });
+
+describe("shapeQuoteProposal: the section the model cites", () => {
+  it("turns the section number the model cites ([[Section 2]]) into that section's label, and drops a number the document does not have", () => {
+    const { sources } = shapeQuoteProposal(
+      { received_on: { value: "2026-11-03", source: 1 }, expires_on: { value: "2026-12-03", source: 3 }, start_on: { value: "2027-01-01", source: 4 }, kind: { value: "estimate", source: 0 } },
+      PAGES,
+    );
+    expect(sources).toEqual({ receivedOn: "Page 1", expiresOn: "Page 3" });
+  });
+});

@@ -67,7 +67,11 @@ export function shapeQuoteProposal(args: unknown, sections: readonly string[]): 
   const draft: QuoteDraft = {};
   const sources: QuoteProposal["sources"] = {};
   if (!isObject(args)) return { draft, sources };
-  const sourceOf = (entry: Record<string, unknown>) => (typeof entry.source === "string" && sections.includes(entry.source) ? entry.source : null);
+  // The model cites a section by its number (buildPromptText's [[Section N]]); a label the document has is accepted too. Any other citation names no page.
+  const sourceOf = (entry: Record<string, unknown>) => {
+    if (typeof entry.source === "number") return Number.isInteger(entry.source) ? sections[entry.source - 1] ?? null : null;
+    return typeof entry.source === "string" && sections.includes(entry.source) ? entry.source : null;
+  };
   // One figure: its value is parsed by the rule for its field, and kept (with its page) only when it passes.
   const take = (name: string, key: FigureKey, parse: (v: unknown) => QuoteDraft | null) => {
     const entry = args[name];

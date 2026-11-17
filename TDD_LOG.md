@@ -867,3 +867,7 @@ No migration: a proposal is returned, never stored (D-760). Tests run under vite
 6. proposal.test: unemployment keeps one line per state, employer_rate alone or peo_rate with a 0..100 percent; a peo_rate with no rate, a bad charge, a repeated state are dropped | red: expected { draft: {}, sources: {} } to deeply equal { draft: { unemployment: [...] } } | green
 7. proposal.test: medical keeps lines of a trimmed plan (1..80), one of four tiers and a monthly 0..100000, each plan and tier once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { medical: [...] } } | green
 8. proposal.test: only a page the document has is named; a non-shape answer proposes nothing | NOT red first: green on first run (the page check and shape guard were written in cycle 1); seen red by removing the page check (expected { ... } to deeply equal { ... }), then restored | green
+9. proposal.test: a cited section number becomes that section label, an unknown number names no page | red: expected {} to deeply equal { receivedOn: 'Page 1', ... } | green
+10. handler.test: reads the quote's own document and answers the figures with the page of each | red: Failed to resolve import "./handler" (function not there) | green
+11. handler.test: no Authorization header or no signed-in user is refused 401 before anything is touched | red: expected 200 to be 401 | green
+12. handler.test: preflight, non-POST 405, body not JSON or no positive whole quote_id 400, over 4 KB 413, nothing read | red: expected 401 to be 200 (the preflight reached the sign-in check) | green
