@@ -476,15 +476,16 @@ describe("OpportunityPage: the intake", () => {
     await waitFor(() => expect(fact(intakePanel(), "Open items")).toHaveTextContent("3 · Payroll vendor"));
   });
 
-  // Catches: the no-intake state drawn as an empty table of facts, or offering Start the quote before New quote (Epic 5) exists (D-426).
-  it("says No intake yet, with what would move it on, and no Start the quote", async () => {
+  // Catches: the no-intake state drawn as an empty table of facts, or with no way to act on the words under the stage bar (Start the quote, since New quote's broker intake, D-426).
+  it("says No intake yet, with what would move it on, and Start the quote to do it", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ intake: null }, { stage: "qualifying", submissionId: null }));
     renderPage();
     const panel = await screen.findByRole("region", { name: /^Intake/ });
     expect(within(panel).getByText("No intake yet")).toBeInTheDocument();
     expect(within(panel).getByText("Start the quote to move to Intake under way")).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: "Start the quote" })).toHaveAttribute("href", "/new-quote/o1");
     expect(within(panel).queryByRole("button")).toBeNull();
-    expect(within(panel).queryByRole("link", { name: /Start the quote|Open intake/ })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: "Open intake" })).toBeNull();
   });
 
   // Catches: an intake under way drawn as certified (with a File ID and a version it does not have), or not saying who is filling it in and how far they are (D-426).
@@ -2174,6 +2175,44 @@ describe("OpportunityPage: after Choose PEOs sends (D-1727)", () => {
     await userEvent.click(await within(sending).findByRole("button", { name: "Send to 1 PEO" }));
     await waitFor(() => expect(peoSend.sendToPeo).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(client.getOpportunityPage.mock.calls.length).toBeGreaterThan(before));
+  });
+});
+
+// ---------- Start the quote: the opportunity's way into New quote's intake step (CRM-Q2.1, D-426, D-1709, D-1763) ----------
+describe("OpportunityPage: Start the quote", () => {
+  const noIntake = (o: Partial<typeof opportunity> = {}, over: Partial<Page> = {}) => page({ intake: null, ...over }, { stage: "qualifying", submissionId: null, ...o });
+
+  // Catches: a link that replaces the opportunity's page instead of opening New quote over it, so "Save and close" would have nowhere to return to (D-1709).
+  it("opens New quote over the opportunity's page, which it was opened from", async () => {
+    client.getOpportunityPage.mockResolvedValue(noIntake());
+    renderPage();
+    await userEvent.click(within(await screen.findByRole("region", { name: /^Intake/ })).getByRole("link", { name: "Start the quote" }));
+    expect(await screen.findByTestId("where")).toHaveTextContent("/new-quote/o1");
+    expect(screen.getByTestId("where")).toHaveAttribute("data-from", "/opportunities/o1");
+  });
+
+  // Catches: Start the quote offered where the database refuses to start an intake (an archived account, a Nevermore support session) or where the opportunity is closed.
+  it.each([
+    ["an archived account", noIntake({}, { account: { id: "a1", name: "Harborview Dental Group", archived: true }, canAdd: false, canChange: false }), workspace()],
+    ["a support session", noIntake(), workspace({ isSupport: true })],
+    ["a won opportunity", noIntake({ stage: "won" }), workspace()],
+    ["a lost opportunity", noIntake({ stage: "lost" }), workspace()],
+  ])("offers no Start the quote for %s", async (_who, pageOf, ws) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf);
+    renderPage("/opportunities/o1", ws);
+    await within(await screen.findByRole("region", { name: /^Intake/ })).findByText("No intake yet");
+    expect(screen.queryByRole("link", { name: "Start the quote" })).toBeNull();
+  });
+
+  // Catches: Start the quote offered again once the opportunity holds an intake, where the database refuses a second one ("This opportunity already has an intake").
+  it.each([
+    ["an intake under way", page({ intake: { ...intake, certifiedAt: null, certifiedBy: null, version: null, fileId: null, answered: 12, prospectName: "Elena Marsh", pipelineStatus: "draft" } }, { stage: "intake_under_way" })],
+    ["a certified intake", page()],
+  ])("offers no Start the quote with %s", async (_what, pageOf) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf);
+    renderPage();
+    await screen.findByRole("region", { name: /^Intake/ });
+    expect(screen.queryByRole("link", { name: "Start the quote" })).toBeNull();
   });
 });
 

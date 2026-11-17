@@ -18,6 +18,7 @@ import EmailAContact from "@/components/conversations/EmailAContact";
 import { emailChoices } from "@/components/conversations/emailChoices";
 import { ChoosePeos } from "@/components/opportunities/ChoosePeos";
 import { SendToAnotherPeo } from "@/components/opportunities/SendToAnotherPeo";
+import { StartTheQuote } from "@/components/opportunities/StartTheQuote";
 import { OpportunityHeader, OpportunityHeaderLoading } from "@/components/opportunities/OpportunityHeader";
 import { opportunityKey, useOpportunityOutcomeQuery, useOpportunityPageQuery } from "@/components/opportunities/useOpportunityQueries";
 import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
@@ -161,7 +162,7 @@ const OpportunityPage = () => {
                 {!isClosed && page.quotes.some((q) => q.sentOn !== null) && <SendToAnotherPeo opportunityId={opportunity.id} />}
               </div>
             ) : undefined} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
-          <IntakePanel page={page} />
+          <IntakePanel page={page} startQuote={canAct && !isClosed ? <StartTheQuote opportunityId={opportunity.id} /> : undefined} />
           {firmId && <AccountEmails key={`emails-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} contactName={(cid) => page.contacts.find((c) => c.id === cid)?.name ?? null} />}
           {firmId && <OpportunityActivity key={opportunity.id} firmId={firmId} opportunityId={opportunity.id} />}
         </div>
