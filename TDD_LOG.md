@@ -725,3 +725,9 @@ One failing test per cycle, seen red for the right reason, then the least code. 
 
 Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; build green; vitest 343 files, 7001 tests: the final run failed 2 in AdvisorSubmissionPage.test.tsx on 5 s timeouts on the shared machine (161/161 pass alone); SQL 121/121 on port 5480 after cycles 22-24.
 Mutation: SQL 11 (reason required, only-a-decline rule, list check in the function, 500 bound, trim, blank words, keep reason and words on leaving, CHECK, both activity time bounds): 9 red at first, 2 survived (CHECK, words time bound), cycles 25-26 closed them, all 11 red. App 15 (DeclineReason x4, AnswerForm x6, opportunityPage x2, advisorApi x2, QuotePage x1): all red.
+
+# TDD log, slice 7.7 (N-3.1, N-3.2: the comparison of quotes and its notes)
+
+Skill mattpocock-skills:tdd invoked first. SQL cycles run `supabase/tests/run.sh quote_comparison`; component cycles run vitest on the named file.
+
+1. quote_comparison.sql s1: one column per PEO, alphabetical, no-quote PEO shows status and a null quote. Red: `function public.opportunity_quote_comparison(uuid, uuid) does not exist`. Green: the function with `columns` only (the fixture also makes Acme's agent the account owner, a setup line, since an agent sees an unowned account only at an everyone-sees firm).
