@@ -17,8 +17,8 @@ import { dayInZone } from "@/components/accounts/accountsTable";
 // The leads table (story CRM-L1.1a, slice 8.3, screen 14) as a workspace table: its columns, views, filters and the two calls to the database. The frame
 // (src/components/workspace/table/) does the rest, as it does for the accounts table (src/components/accounts/accountsTable.tsx).
 //
-// Selecting rows, bulk changes, the bin and export are slice 8.4's (D-811, src/pages/leads/LeadsPage.tsx). Not here, and where it goes: the Convert row
-// action (slice 8.6), the Label column and filter (D-1648), and custom fields (Epic 9). The name links to the lead's page (slice 8.5).
+// Selecting rows, bulk changes, the bin and export are slice 8.4's (D-811, src/pages/leads/LeadsPage.tsx), and so is the Convert row action (#190: the page draws it,
+// leads_can_convert decides it). Not here, and where it goes: the Label column and filter (D-1648), and custom fields (Epic 9). The name links to the lead's page (slice 8.5).
 
 type Fields = typeof LEAD_FIELDS;
 

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 
-const { convertLead, getConvertMatches } = await import("./leadConvertApi");
+const { convertLead, getConvertMatches, leadsCanConvert } = await import("./leadConvertApi");
 
 beforeEach(() => {
   rpc.mockReset();
@@ -81,5 +81,26 @@ describe("convertLead", () => {
   it("treats an answer that is not the agreed shape as a failure", async () => {
     rpc.mockResolvedValue({ data: { account: { name: "No id" } }, error: null });
     await expect(convertLead("f1", "l1", input)).rejects.toThrow("Couldn't convert the lead. Check your connection and try again.");
+  });
+});
+
+describe("leadsCanConvert", () => {
+  // Catches: a page of leads asked about under the wrong firm, an empty page still costing a call, or the answer not read as the ids the table offers Convert on.
+  it("asks which of the given leads may be converted, and not at all for none", async () => {
+    rpc.mockResolvedValue({ data: ["l1"], error: null });
+    expect(await leadsCanConvert("f1", ["l1", "l2"])).toEqual(["l1"]);
+    expect(rpc).toHaveBeenCalledWith("leads_can_convert", { p_firm_id: "f1", p_ids: ["l1", "l2"] });
+    rpc.mockClear();
+    expect(await leadsCanConvert("f1", [])).toEqual([]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  // Catches: a failure, or an answer of another shape, read as "may convert every lead on the page" (a row action offered that the database would refuse), or an
+  // unexpected failure leaking the server's own words.
+  it("fails, in a plain sentence, on an unexpected failure or an answer that is not a list of ids", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "XX000", message: "boom: internal detail" } });
+    await expect(leadsCanConvert("f1", ["l1"])).rejects.toThrow("Couldn't check which leads you can convert.");
+    rpc.mockResolvedValueOnce({ data: { no: 1 }, error: null });
+    await expect(leadsCanConvert("f1", ["l1"])).rejects.toThrow("Couldn't check which leads you can convert.");
   });
 });

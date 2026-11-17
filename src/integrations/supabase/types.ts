@@ -1347,6 +1347,7 @@ export type Database = {
       account_keep_separate: { Args: { p_account_id: string; p_firm_id?: string | null }; Returns: Json }
       resolve_merged_record: { Args: { p_firm_id: string | null; p_kind: string; p_id: string }; Returns: Json | null }
       accounts_can_change: { Args: { p_firm_id?: string | null; p_ids: string[] }; Returns: string[] }
+      leads_can_convert: { Args: { p_firm_id: string; p_ids: string[] }; Returns: string[] }
       change_account_owner: {
         Args: { p_account_id: string; p_owner_id: string; p_change_open_opportunities?: boolean; p_firm_id?: string | null }
         Returns: Json

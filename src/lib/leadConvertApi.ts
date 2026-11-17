@@ -84,3 +84,20 @@ export async function getConvertMatches(firmId: string, leadId: string): Promise
   if (!parsed.success) throw new ContactError("failed", CONTEXT_FALLBACK);
   return parsed.data.matches;
 }
+
+const CAN_CONVERT_FALLBACK = "Couldn't check which leads you can convert.";
+const idsSchema = z.array(z.string().min(1));
+
+/**
+ * Which of the given leads (at most 100, the table's page) the person may convert: the leads table offers its Convert row action on these only, so none is
+ * offered that the database would refuse (leads_can_convert: the level rule, New or Working, not in the bin, a firm that is not closing, no support
+ * session). A failure throws; the table then offers no Convert rather than ones that may be refused.
+ */
+export async function leadsCanConvert(firmId: string, leadIds: string[]): Promise<string[]> {
+  if (leadIds.length === 0) return [];
+  const { data, error } = await supabase.rpc("leads_can_convert", { p_firm_id: firmId, p_ids: leadIds });
+  if (error) throw refusal(error, CAN_CONVERT_FALLBACK);
+  const parsed = idsSchema.safeParse(data);
+  if (!parsed.success) throw new ContactError("failed", CAN_CONVERT_FALLBACK);
+  return parsed.data;
+}
