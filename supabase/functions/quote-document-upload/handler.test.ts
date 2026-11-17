@@ -170,4 +170,16 @@ describe("quote-document-upload: a quote document recorded by hand, an upload li
     expect(t.rpcs.map((r) => r.fn)).toEqual(["start_quote_document_upload"]);
     expect(t.logs.join("\n")).toContain("QUOTE_DOCUMENT_SCAN_UNAVAILABLE attachment=51");
   });
+
+  // Catches: a refusal of the database (not your firm's quote, not an advisor, a closing firm or a support session) shown as a server error, or a file stored and scanned for someone who may not upload.
+  it("answers the database's refusal to start the upload as 404, 403 or 423, and stores nothing", async () => {
+    for (const [error, want] of [[{ code: "PT404", message: "Quote not found" }, 404], [{ code: "42501", message: "Advisor access required" }, 403], [{ code: "PT423", message: "Nevermore support can look, not change" }, 423]] as const) {
+      const t = setup({ startError: error });
+      const { status, body } = await read(await handleQuoteDocumentUpload(post({ quote_id: "3", file: file(PDF, "quote.pdf") }), t.deps));
+      expect(status).toBe(want);
+      expect(body.error).toBe(error.message);
+      expect(t.stored).toEqual([]);
+      expect(t.rpcs.map((r) => r.fn)).toEqual(["start_quote_document_upload"]);
+    }
+  });
 });

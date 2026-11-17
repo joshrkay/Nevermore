@@ -83,9 +83,16 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
     return reply({ error: code === "unsupported" ? "That file type can't be kept as a quote document." : "This file isn't what its name says.", code }, 415);
   }
 
-  const { data: started } = await agent.rpc("start_quote_document_upload", {
+  const { data: started, error: startError } = await agent.rpc("start_quote_document_upload", {
     p_quote_id: Number(quoteId), p_file_name: fileName, p_content_type: upload.type, p_size_bytes: bytes.length,
   });
+  if (startError || !started) {
+    // The database decides who may: not an advisor of the quote's firm (another firm's quote is "not found"), a closing firm, a support session.
+    const refusal = ({ PT404: [404, "not_found"], "42501": [403, "forbidden"], PT423: [423, "read_only"] } as Record<string, [number, string]>)[startError?.code ?? ""];
+    if (refusal) return reply({ error: startError?.message ?? "Refused", code: refusal[1] }, refusal[0]);
+    deps.log(`QUOTE_DOCUMENT_START_FAILED request=${requestId} quote=${quoteId} code=${startError?.code ?? "unknown"}`);
+    return reply({ error: "The quote document couldn't be saved. Try again.", code: "internal" }, 500);
+  }
   const { attachment_id: attachmentId, folder } = started as { attachment_id: number; folder: string };
 
   const service = deps.createClient(supabaseUrl, serviceRoleKey);

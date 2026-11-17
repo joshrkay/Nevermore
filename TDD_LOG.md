@@ -747,3 +747,4 @@ One line per cycle: the test, the failing line seen, then green.
 15. handler.test: no scanner set up refuses everything (503) with nothing recorded or stored | red: AssertionError: expected [ { fn: 'start_quote_document_upload', ... } ] to deeply equal [] | green
 16. handler.test: a file with malware is settled blocked with its signature, never stored or named, and alerted | red: AssertionError: expected { attachment_id: 51, ... status: 'stored' } to deeply equal { ... status: 'blocked' } | green
 17. handler.test: a scanner that can't answer keeps nothing, leaves the attachment pending and says to upload again (502) | red: AssertionError: expected 200 to be 502 | green
+18. handler.test: the database's refusal to start an upload is answered 404, 403 or 423 in its words, nothing stored | red: TypeError: Cannot destructure property 'attachment_id' of 'started' as it is null | green
