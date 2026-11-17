@@ -60,9 +60,15 @@ const ANSWERS: { value: QuoteAnswer["status"]; label: string }[] = [
 ];
 
 /** Records what one PEO answered. A quote has dates and a fee; a decline or a closure has only a note. */
-const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; onSaved: (status: QuoteAnswer["status"]) => void; onCancel: () => void }) => {
+export const AnswerForm = ({ request, only, onSaved, onCancel }: {
+  request: QuoteRequestRow;
+  /** Offers this one answer and no choice (the quote's page records a decline with it; a quote has its own form, 7.8). */
+  only?: QuoteAnswer["status"];
+  onSaved: (status: QuoteAnswer["status"]) => void;
+  onCancel: () => void;
+}) => {
   const id = `answer-${request.id}`;
-  const [status, setStatusValue] = useState<QuoteAnswer["status"]>(request.status === "declined" ? "declined" : "quoted");
+  const [status, setStatusValue] = useState<QuoteAnswer["status"]>(only ?? (request.status === "declined" ? "declined" : "quoted"));
   const [fee, setFee] = useState(request.admin_fee_pepm === null ? "" : String(request.admin_fee_pepm));
   const [receivedOn, setReceivedOn] = useState(request.quote_received_on ?? "");
   const [expiresOn, setExpiresOn] = useState(request.quote_expires_on ?? "");
@@ -107,12 +113,16 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
 
   return (
     <div className="space-y-2 pt-2">
-      <label htmlFor={`${id}-status`} className="block text-xs text-muted-foreground">Answer</label>
-      <select id={`${id}-status`} value={status} onChange={(e) => setStatusValue(e.target.value as QuoteAnswer["status"])} className={inputClass}>
-        {ANSWERS.map((a) => (
-          <option key={a.value} value={a.value}>{a.label}</option>
-        ))}
-      </select>
+      {only === undefined && (
+        <>
+          <label htmlFor={`${id}-status`} className="block text-xs text-muted-foreground">Answer</label>
+          <select id={`${id}-status`} value={status} onChange={(e) => setStatusValue(e.target.value as QuoteAnswer["status"])} className={inputClass}>
+            {ANSWERS.map((a) => (
+              <option key={a.value} value={a.value}>{a.label}</option>
+            ))}
+          </select>
+        </>
+      )}
       {quoted && (
         <>
           <label htmlFor={`${id}-fee`} className="block text-xs text-muted-foreground">Admin fee per employee per month ($)</label>

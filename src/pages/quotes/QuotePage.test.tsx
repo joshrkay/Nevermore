@@ -441,6 +441,44 @@ describe("QuotePage: who sees Record the quote and Record a decline", () => {
   });
 });
 
+describe("QuotePage: Record a decline", () => {
+  // Catches: no way to record a decline from the quote's page, a button on a quote that has already quoted, declined or closed (nothing for it to do), or a form that offers the other answers (a quote has its own form, which keeps its figures).
+  it("offers Record a decline while the PEO has not answered, and opens the submission page's reason picker, with no other answer to choose", async () => {
+    for (const status of ["sent", "acknowledged", "question_open"]) {
+      quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: "Record a decline" }));
+      expect(screen.getByLabelText("Why they declined")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Answer")).not.toBeInTheDocument();
+      cleanup();
+    }
+    for (const status of ["quoted", "declined", "closed"]) {
+      quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
+      renderPage();
+      await screen.findByRole("heading", { level: 1, name: "TriNet" });
+      expect(screen.queryByRole("button", { name: "Record a decline" }), status).not.toBeInTheDocument();
+      cleanup();
+    }
+  });
+  // Catches: a decline recorded with no reason (N-1.4), through some other writer than the existing decline call (which keeps the reason and the log), or a page that still shows the PEO as waiting afterwards.
+  it("records the decline through the existing update with its reason and the PEO's words, and reads the page again", async () => {
+    quotes.getQuotePage.mockResolvedValueOnce(quotePage()).mockResolvedValue(quotePage({ request: { status: "declined", decline_reason: "too_small", decline_words: "Under 10 employees" } }));
+    advisor.updateQuoteRequest.mockResolvedValue(undefined);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record a decline" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose why the PEO declined.");
+    expect(advisor.updateQuoteRequest).not.toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByLabelText("Why they declined"), "too_small");
+    await userEvent.type(screen.getByLabelText("What the PEO said"), "Under 10 employees");
+    await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
+    await waitFor(() => expect(advisor.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ status: "declined", declineReason: "too_small", declineWords: "Under 10 employees" })));
+    expect(await screen.findByText("Declined: Too small")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record a decline" })).not.toBeInTheDocument();
+  });
+  // END decline
+});
+
 describe("QuotePage: Send again", () => {
   beforeEach(() => {
     peoCatalogRows = [profileRow(1, "TriNet")];

@@ -6,6 +6,7 @@ import { OpenStatusButtons, ReplyAddress } from "@/components/advisor/QuoteReque
 import { ClosedBanner } from "@/components/quotes/ClosedBanner";
 import { DeclineReason } from "@/components/quotes/DeclineReason";
 import { RecordQuote } from "@/components/quotes/RecordQuote";
+import { RecordDecline } from "@/components/quotes/RecordDecline";
 import { CloseQuote } from "@/components/quotes/CloseQuote";
 import { WhatWasSent } from "@/components/quotes/WhatWasSent";
 import { QuoteFigures } from "@/components/quotes/QuoteFigures";
@@ -73,6 +74,7 @@ const QuotePage = () => {
       <QuoteHeader request={request} actions={canRecordQuote || canClose ? (
         <>
           {canRecordQuote && <RecordQuote request={request} mailFiles={mailFiles} onRecorded={() => { void query.refetch(); void quoted.refetch(); }} />}
+          {canClose && <RecordDecline request={request} onRecorded={() => void query.refetch()} />}
           {canClose && <OpenStatusButtons request={request} onChanged={() => void query.refetch()} />}
           {canClose && <CloseQuote request={request} onClosed={() => void query.refetch()} />}
         </>
