@@ -202,7 +202,7 @@ describe("supabase-setup", () => {
       ["link", "--project-ref", REF],
       ["db", "push", "--remote", "--yes"],
       ["secrets", "set", "--env-file", secretsFile, `--remote=${REF}`, "--yes"],
-      ...["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "invite-member", "send-mail", "bundle-link", "message-file", "purge-intakes", "ops-monitor", "contact-request"]
+      ...["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "invite-member", "send-mail", "bundle-link", "message-file", "purge-intakes", "ops-monitor", "contact-request", "quote-document-upload"]
         .map((fn) => ["functions", "deploy", fn, `--remote=${REF}`, "--yes"]),
     ]);
 
@@ -215,7 +215,7 @@ describe("supabase-setup", () => {
     // The summary: every migration (a new project), the secret names (no values) and the functions.
     expect(out).toContain(`Migrations applied: ${MIGRATIONS} (${MIGRATION_FILES[0]} … ${MIGRATION_FILES[MIGRATIONS - 1]})`);
     expect(out).toContain("Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, ANTHROPIC_API_KEY, APP_BASE_URL, EMAIL_FROM, IP_HASH_SECRET, PROSPECT_RESPONSE_TIME, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SUPPORT_EMAIL)");
-    expect(out).toContain("Functions deployed: 17 (chamber-extract, document-upload, census-template-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, receive-mail, held-mail, mailbox, invite-member, send-mail, bundle-link, message-file, purge-intakes, ops-monitor, contact-request)");
+    expect(out).toContain("Functions deployed: 18 (chamber-extract, document-upload, census-template-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, receive-mail, held-mail, mailbox, invite-member, send-mail, bundle-link, message-file, purge-intakes, ops-monitor, contact-request, quote-document-upload)");
 
     const secretsCall = cliCalls().find((c) => c.secrets);
     expect(secretsCall.mode).toBe(0o600);

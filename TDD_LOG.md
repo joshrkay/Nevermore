@@ -749,3 +749,4 @@ One line per cycle: the test, the failing line seen, then green.
 17. handler.test: a scanner that can't answer keeps nothing, leaves the attachment pending and says to upload again (502) | red: AssertionError: expected 200 to be 502 | green
 18. handler.test: the database's refusal to start an upload is answered 404, 403 or 423 in its words, nothing stored | red: TypeError: Cannot destructure property 'attachment_id' of 'started' as it is null | green
 19. handler.test: a request that isn't a signed-in POST of a quote number and a non-empty file is refused (405, 401, 400, 422) and nothing is recorded | red: Content-Type was not one of "multipart/form-data" or "application/x-www-form-urlencoded" (a GET reached the form parser) | green
+20. supabase-setup.test: the setup deploys quote-document-upload (18 functions); index.ts wires the handler | red: expected [ [ '--version' ], …(20) ] to deeply equal [ [ '--version' ], …(21) ] | green
