@@ -737,3 +737,4 @@ One line per cycle: the test, the failing line seen, then green.
 5. SQL 5: another PEO's file, or an id that is not there, can't be a quote's document | red: FAIL: another PEO's file gave ok (expected 22023: That file isn't on this quote request's mail) | green
 6. SQL 6: a support session and a closing firm name no document (PT423) | red: FAIL: a support session gave ok, expected PT423: Nevermore support can look, not change | green
 7. SQL 7: an agent starts an upload: a hand-made message and one pending attachment on the quote request's thread | red: ERROR: function public.start_quote_document_upload(bigint, unknown, unknown, integer) does not exist | green
+8. SQL 8: only an advisor of the quote's firm starts an upload; a refusal leaves no message | red: FAIL: another firm's agent gave ok, expected PT404: Quote not found | green

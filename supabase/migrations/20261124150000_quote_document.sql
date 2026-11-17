@@ -55,6 +55,12 @@ DECLARE
   att public.quote_request_message_attachments;
   who text := (SELECT lower(u.email) FROM auth.users u WHERE u.id = auth.uid());
 BEGIN
+  -- As attach_quote_document: the firm writable, an advisor, the quote in the caller's firm (another firm's and not found are one answer).
+  PERFORM public.assert_firm_writable((SELECT zs.firm_id FROM public.quotes zq JOIN public.chamber_sessions zs ON zs.id = zq.session_id WHERE zq.id = p_quote_id));
+  PERFORM public.require_advisor();
+  IF NOT EXISTS (SELECT 1 FROM public.quotes x WHERE x.id = p_quote_id AND public.quote_request_in_my_firm(x.quote_request_id)) THEN
+    RAISE EXCEPTION 'Quote not found' USING ERRCODE = 'PT404';
+  END IF;
   SELECT * INTO req FROM public.quote_requests r WHERE r.id = (SELECT x.quote_request_id FROM public.quotes x WHERE x.id = p_quote_id);
   INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, subject, sent_at)
   VALUES ('upload:' || gen_random_uuid(), req.id, req.session_id, 'sent_by_hand', who, 'Quote document uploaded by hand', now())

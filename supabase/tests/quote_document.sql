@@ -501,3 +501,21 @@ BEGIN
   PERFORM pg_temp.is(r ->> 'folder', m.session_id || '/' || m.id, 'stored under the intake and message, as mail files are');
   PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM a.id, true, 'not yet the quote''s document');
 END $$;
+
+-- ---------- 8. Only an advisor of the quote's firm starts an upload, and nothing is left behind otherwise ----------
+-- Catches: another firm's agent, the employer or a visitor putting a file on a thread that is not theirs, or a refused upload leaving a message behind.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); stmt text; n bigint; got bigint;
+BEGIN
+  stmt := format('SELECT public.start_quote_document_upload(%s, ''x.pdf'', ''application/pdf'', 10)', q);
+  n := (SELECT count(*) FROM public.quote_request_messages);
+  PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(stmt), 'PT404: Quote not found', 'another firm''s agent');
+  PERFORM pg_temp.is(pg_temp.refusal('SELECT public.start_quote_document_upload(999999, ''x.pdf'', ''application/pdf'', 10)'), 'PT404: Quote not found', 'a quote that is not there');
+  PERFORM pg_temp.as_user('p_reyes');
+  PERFORM pg_temp.is(left(pg_temp.refusal(stmt), 5), '42501', 'the employer');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(left(pg_temp.refusal(stmt), 5), '42501', 'a visitor');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_messages), n, 'no message was left behind');
+END $$;
