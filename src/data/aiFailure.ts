@@ -54,6 +54,15 @@ export async function describeInvokeError(error: unknown): Promise<AiFailureInfo
     const requestId = (isObject(body) && typeof body.request_id === "string" ? body.request_id : null) ?? response?.headers?.get("X-Request-Id") ?? undefined;
     // A function too old to send a code still says 429 for a rate limit.
     const code = isObject(body) && typeof body.code === "string" ? body.code : response?.status === 429 ? "rate_limited" : null;
+    // The prospect is only told Lenore couldn't respond, and nothing else keeps why the function refused. Its own
+    // wording, code and request id say which rule did (a refused request is the browser and the function disagreeing).
+    // That is all the body holds: never anything the prospect sent.
+    console.warn("Lenore's function answered with an error:", {
+      status: response?.status,
+      code,
+      reason: isObject(body) && typeof body.error === "string" ? body.error : undefined,
+      requestId,
+    });
     return { kind: failureKindFromCode(code), requestId };
   }
   if (error instanceof FunctionsFetchError) return { kind: "unreachable" };

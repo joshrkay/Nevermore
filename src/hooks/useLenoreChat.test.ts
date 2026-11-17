@@ -177,6 +177,26 @@ describe("useLenoreChat", () => {
     expect(result.current.failure?.requestId).toBe("req-from-header");
   });
 
+  // Catches: the prospect seeing only "Lenore couldn't respond" for a refused request, with nothing anywhere saying which rule the
+  // function refused it by, so a front end and a function that disagree (one deployed ahead of the other) can't be diagnosed.
+  it("writes the function's own account of an error to the console: status, code, reason and request id, never the message", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    invoke.mockResolvedValue({
+      data: null,
+      error: httpError(400, { error: "statuses must map intake fields to field statuses", code: "bad_request", request_id: "req-9" }),
+    });
+    const { result } = setup();
+    await act(async () => { await result.current.send("We have 12 staff"); });
+    expect(warn).toHaveBeenCalledWith("Lenore's function answered with an error:", {
+      status: 400,
+      code: "bad_request",
+      reason: "statuses must map intake fields to field statuses",
+      requestId: "req-9",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("We have 12 staff");
+    warn.mockRestore();
+  });
+
   it("calls a request that couldn't reach Lenore at all unreachable, which trying again can clear", async () => {
     invoke.mockResolvedValue({ data: null, error: new FunctionsFetchError(new TypeError("Failed to fetch")) });
     const { result } = setup();
