@@ -357,3 +357,35 @@ SELECT firm_name, invited_by_name FROM public.peek_intake_invite(repeat('d', 64)
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is(:'peek3_firm_name'::text, 'Alpha Advisory', 'the page still names the firm');
 SELECT pg_temp.is(:'peek3_invited_by_name'::text, 'Ana Agent', 'and the person who sent the link');
+
+-- 6. The page behind a reminder's link names the member who first invited them, and only of this intake (mutation gap closed after the first run).
+-- Break caught: the page names whoever sent the newest link (the colleague who only reminded), or the earliest inviter anywhere in the firm instead of this intake's.
+SELECT pg_temp.opp('opp4', 'alpha', 'a_agent2');
+SELECT pg_temp.as_user('a_agent2', 'alpha-advisory');
+SELECT public.start_broker_intake(pg_temp.id('opp4')) ->> 'intake_id' AS made4 \gset
+SELECT * FROM public.invite_intake_client(:'made4'::uuid, 'client4@example.test', 'Pia Soto', repeat('e', 64)) \gset inv4_
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT * FROM public.remind_intake_invite(:'made4'::uuid, repeat('f', 64)) \gset rem4_
+SELECT pg_temp.as_anon('alpha-advisory');
+SELECT invited_by_name FROM public.peek_intake_invite(repeat('f', 64), 'alpha-advisory') \gset peek4_
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'peek4_invited_by_name'::text, 'Bea Agent', 'the page names who first invited them for this intake, not who reminded nor the firm''s first inviter');
+
+-- 7. An intake in the default firm (nobody's outside firm, D-1742) is not listed: the employer is not told a firm sees an intake no firm sees.
+-- Break caught: the employer's own intake is shown with the default firm's name as if a firm could see it.
+INSERT INTO auth.users (id, aud, role, email, email_confirmed_at, is_anonymous, created_at, updated_at)
+  VALUES (gen_random_uuid(), 'authenticated', 'authenticated', 'plain@example.test', now(), false, now(), now());
+INSERT INTO fx SELECT 'plain', id FROM auth.users WHERE email = 'plain@example.test';
+INSERT INTO public.chamber_sessions (user_id, firm_id) VALUES (pg_temp.id('plain'), public.default_firm_id());
+SELECT pg_temp.as_user('plain');
+SELECT count(*) AS plain_rows FROM public.my_intake_firms() \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'plain_rows'::bigint, 0::bigint, 'an intake in the default firm is listed for no one');
+
+-- 8. The time they were invited is the invitation's own.
+-- Break caught: the time is dropped (always empty) or is the time of asking.
+SELECT invited_at AS want_at FROM public.intake_invitations WHERE intake_id = pg_temp.id('intake1') ORDER BY created_at, id LIMIT 1 \gset
+SELECT pg_temp.as_user('client', 'alpha-advisory');
+SELECT (invited_at IS NOT DISTINCT FROM :'want_at'::timestamptz) AS same_time FROM public.my_intake_firms() \gset t8_
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'t8_same_time'::boolean, true, 'the time they were first invited');
