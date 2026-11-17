@@ -1,14 +1,15 @@
 import { toast } from "sonner";
 import { isQuoteRequestStatus, QUOTE_REQUEST_LABELS } from "@/data/quoteRequests";
 import { DID_NOT_GO_THROUGH, failureWords } from "@/components/workspace/form";
-import { decideReplySuggestion, type QuoteRequestMessageRow } from "@/lib/advisorApi";
+import type { ThreadMessage } from "@/data/mailThread";
+import { decideReplySuggestion } from "@/lib/advisorApi";
 
 /**
  * What the AI suggested a PEO's reply means (story N-1.1), under the reply it read. A suggestion only: the agent accepts it (the status is
  * recorded through the same function a hand-set status is) or dismisses it. The record keeps which suggestion it was and what became of it,
  * never the reply's words.
  */
-export const ReplySuggestion = ({ message, onSettled }: { message: QuoteRequestMessageRow; onSettled?: () => void }) => {
+export const ReplySuggestion = ({ message, onSettled }: { message: ThreadMessage; onSettled?: () => void }) => {
   const status = message.suggested_status;
   if (!status || message.direction !== "received") return null;
   const label = isQuoteRequestStatus(status) ? QUOTE_REQUEST_LABELS[status] : status;
