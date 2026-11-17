@@ -854,3 +854,16 @@ SQL, 14 of 14 killed (mutsql.py: each of the three checks off in attach_quote_do
 
 ### Gate (7.3)
 lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 348 files, 7070 tests passed; build green; every SQL test on port 5730: 125 passed.
+
+## 7.6 N-2.3 read the quote document (read-quote-document function, readQuoteDocument), one test per cycle
+
+No migration: a proposal is returned, never stored (D-760). Tests run under vitest with the model and the file reader faked (seam 4).
+
+1. proposal.test: a real date keeps its page, an impossible date (2026-02-30) is dropped | red: Failed to resolve import "./proposal" (module not there) | green
+2. proposal.test: kind is estimate or firm_offer only when the document says so, never filled in, anything else dropped | red: expected {} to deeply equal { kind: 'estimate' } | green
+3. proposal.test: the fee comes only with its basis, inside 0..100000 (0..100 percent), 0 is real, no basis or out of bounds left out | red: expected { draft: {}, sources: {} } to deeply equal { draft: { adminFee: 40, ... } } | green
+4. proposal.test: one-off fees keep only valid lines (trimmed name 1..80, amount 0..10000000, each name once), none left means the area is left out, never [] | red: expected { draft: {}, sources: {} } to deeply equal { draft: { oneOffFees: [...] } } | green
+5. proposal.test: workers comp keeps lines with a real state, a class code of letters digits hyphens (1..10) and a rate 0..1000, each state and class once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { workersComp: [...] } } | green
+6. proposal.test: unemployment keeps one line per state, employer_rate alone or peo_rate with a 0..100 percent; a peo_rate with no rate, a bad charge, a repeated state are dropped | red: expected { draft: {}, sources: {} } to deeply equal { draft: { unemployment: [...] } } | green
+7. proposal.test: medical keeps lines of a trimmed plan (1..80), one of four tiers and a monthly 0..100000, each plan and tier once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { medical: [...] } } | green
+8. proposal.test: only a page the document has is named; a non-shape answer proposes nothing | NOT red first: green on first run (the page check and shape guard were written in cycle 1); seen red by removing the page check (expected { ... } to deeply equal { ... }), then restored | green
