@@ -256,6 +256,7 @@
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
+\i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 SET client_min_messages = notice;
 
@@ -4951,6 +4952,8 @@ INSERT INTO secret_readers VALUES
   ('peek_intake_invite(p_token_hash text, p_firm_address text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.peek_intake_invite(repeat('a', 64), 'acme-advisory') f$$),
   ('accept_intake_invite(p_token_hash text, p_firm_address text)', $$SELECT public.accept_intake_invite(repeat('a', 64), 'acme-advisory')::text$$),
+  -- 5.6 (D-1881): the employer's view reads the invitation for who sent it; never the link's hash.
+  ('my_intake_firms()', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.my_intake_firms() f$$),
   ('intake_invite_status(p_intake_id uuid)',
    $$SELECT public.intake_invite_status((SELECT s.id FROM public.chamber_sessions s WHERE s.firm_id = {firm_a} ORDER BY s.created_at, s.id LIMIT 1))::text$$),
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)',

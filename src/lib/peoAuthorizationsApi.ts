@@ -81,13 +81,27 @@ export interface MyIntakeFirm {
   id: string;
   firm: string;
   company: string;
+  /** The member of the firm who invited the employer, by name; null when the intake was started at the firm's link and nobody invited them (CRM-Q2.3, D-1881). */
+  invitedBy: string | null;
+  invitedAt: Date | null;
 }
 
-const intakeFirmsSchema = z.array(z.object({ session_id: z.string().min(1), firm_name: z.string().min(1), company: z.string().nullable() }));
+const intakeFirmsSchema = z.array(
+  z.object({
+    session_id: z.string().min(1),
+    firm_name: z.string().min(1),
+    company: z.string().nullable(),
+    invited_by_name: z.string().nullable().optional(),
+    invited_at: z.string().nullable().optional(),
+  }),
+);
 
 /** The firm that sees each of the employer's own intakes (an employer can't read a firm's name, so the database says it), for "End <Firm>'s access". */
 export async function listMyIntakeFirms(): Promise<MyIntakeFirm[]> {
   const { data, error } = await supabase.rpc("my_intake_firms");
   if (error) throw refused(error);
-  return intakeFirmsSchema.parse(data).map((r) => ({ id: r.session_id, firm: r.firm_name, company: r.company ?? "Your company" }));
+  return intakeFirmsSchema.parse(data).map((r) => ({ id: r.session_id, firm: r.firm_name, company: r.company ?? "Your company",
+    invitedBy: r.invited_by_name ?? null,
+    invitedAt: r.invited_at ? new Date(r.invited_at) : null,
+  }));
 }

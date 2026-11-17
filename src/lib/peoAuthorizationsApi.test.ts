@@ -100,13 +100,22 @@ describe("listMyIntakeFirms", () => {
       error: null,
     });
     expect(await listMyIntakeFirms()).toEqual([
-      { id: "s1", firm: "Acme Brokers", company: "Acme Co" },
-      { id: "s2", firm: "Zenith Benefits", company: "Your company" },
+      { id: "s1", firm: "Acme Brokers", company: "Acme Co", invitedBy: null, invitedAt: null },
+      { id: "s2", firm: "Zenith Benefits", company: "Your company", invitedBy: null, invitedAt: null },
     ]);
     expect(rpc).toHaveBeenLastCalledWith("my_intake_firms");
     rpc.mockResolvedValue({ data: [{ session_id: "s1" }], error: null });
     await expect(listMyIntakeFirms()).rejects.toThrow();
     rpc.mockResolvedValue({ data: null, error: { code: "57014", message: "canceled" } });
     await expect(listMyIntakeFirms()).rejects.toMatchObject({ code: "57014" });
+  });
+
+  // Break caught: the employer is told which firm sees the intake but not which person in it invited them, so "who invited you" can't be said (CRM-Q2.3, D-1881).
+  it("reads the member who invited the employer, and when", async () => {
+    rpc.mockResolvedValue({
+      data: [{ session_id: "s1", firm_name: "Acme Brokers", company: "Acme Co", invited_by_name: "Ana Agent", invited_at: "2026-11-20T10:00:00Z" }],
+      error: null,
+    });
+    expect(await listMyIntakeFirms()).toMatchObject([{ id: "s1", firm: "Acme Brokers", invitedBy: "Ana Agent", invitedAt: new Date("2026-11-20T10:00:00Z") }]);
   });
 });

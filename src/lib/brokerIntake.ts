@@ -80,13 +80,13 @@ function inviteRefusal(error: { code?: string; message?: string }): string {
   }
 }
 
-/** What the page behind an invitation link shows before the person signs in: the firm that invited them and who it is for. */
-export async function peekIntakeInvite(token: string, firmAddress: string): Promise<{ firmName: string; contactName: string | null }> {
+/** What the page behind an invitation link shows before the person signs in: the firm that invited them, the member who sent it and who it is for. */
+export async function peekIntakeInvite(token: string, firmAddress: string): Promise<{ firmName: string; contactName: string | null; invitedBy: string | null }> {
   const { data, error } = await supabase.rpc("peek_intake_invite", { p_token_hash: await hashInvitationToken(token), p_firm_address: firmAddress });
   if (error) throw new Error(inviteRefusal(error));
-  const row = (Array.isArray(data) ? data[0] : data) as { firm_name: string; contact_name?: string | null } | undefined;
+  const row = (Array.isArray(data) ? data[0] : data) as { firm_name: string; contact_name?: string | null; invited_by_name?: string | null } | undefined;
   if (!row) throw new Error(inviteRefusal({}));
-  return { firmName: row.firm_name, contactName: row.contact_name ?? null };
+  return { firmName: row.firm_name, contactName: row.contact_name ?? null, invitedBy: row.invited_by_name ?? null };
 }
 
 const asDate = (v: unknown): Date | null => (typeof v === "string" ? new Date(v) : null);

@@ -110,6 +110,7 @@ vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
     return null;
   },
 }));
+vi.mock("@/components/chamber/FirmSeesBanner", () => ({ default: ({ sessionId }: { sessionId: string }) => <p>What the firm sees, for {sessionId}</p> }));
 const extractSpoken = vi.fn();
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
@@ -734,5 +735,27 @@ describe("ChamberPage for a member of the firm working the firm's intake (D-1751
     expect(screen.getByText("Your client's intake")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start over" })).not.toBeInTheDocument();
     expect((hooks.workspace as unknown as { brokerEntry?: boolean }).brokerEntry).toBe(true);
+  });
+});
+
+describe("ChamberPage for the employer a firm invited (CRM-Q2.3, D-1880)", () => {
+  afterEach(() => {
+    session.brokerEntry = false;
+    session.sessionId = null;
+  });
+
+  // Break caught: the employer works an intake a firm can see without being told which firm and who invited them, or that it sees their answers.
+  it("tells the employer which firm sees their intake, above the chamber", () => {
+    session.sessionId = "s1";
+    renderPage();
+    expect(screen.getByText("What the firm sees, for s1")).toBeInTheDocument();
+  });
+
+  // Break caught: the broker, working the client's intake, is shown the employer's notice ("you were invited by ...") about their own firm.
+  it("shows the firm's own member no such notice", () => {
+    session.sessionId = "firm-intake";
+    session.brokerEntry = true;
+    render(<MemoryRouter initialEntries={["/client-intake/firm-intake"]}><ChamberPage intakeId="firm-intake" /></MemoryRouter>);
+    expect(screen.queryByText(/What the firm sees/)).not.toBeInTheDocument();
   });
 });

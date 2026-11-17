@@ -463,6 +463,7 @@ END $$;
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
+\i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
