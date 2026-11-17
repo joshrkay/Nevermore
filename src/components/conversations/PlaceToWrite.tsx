@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { AddSenderAsContact } from "@/components/conversations/AddSenderAsContact";
 import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
@@ -126,6 +128,18 @@ const PlaceToWrite = ({ firmId, recipient, returnTo, anchorId }: PlaceToWritePro
               <p className="text-xs text-muted-foreground">
                 <span className="font-semibold">{statusWords(m)}</span> · {m.from} · {formatDay(m.at)}
               </p>
+              {m.offerContact && (
+                <p className="text-xs">
+                  <AddSenderAsContact
+                    firmId={firmId}
+                    message={{ id: m.id, from: m.from, fromName: m.fromName ?? null }}
+                    onAdded={() => {
+                      toast.success("Contact added");
+                      void queryClient.invalidateQueries({ queryKey: conversationKey(firmId, record) });
+                    }}
+                  />
+                </p>
+              )}
               <p className="font-medium">{m.subject}</p>
               <p className="whitespace-pre-wrap">{m.body}</p>
               {m.status === "failed" && m.failureReason && <p role="alert" className="text-destructive">{m.failureReason}</p>}

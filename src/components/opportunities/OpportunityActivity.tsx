@@ -4,12 +4,12 @@ import { ActivityActions, ActivityWhat } from "@/components/accounts/ActivityEnt
 import { useAccountActions } from "@/components/accounts/useAccountActions";
 import { PanelFailed, RefreshFailed } from "@/components/workspace/states";
 import { ACTIVITY_FILTERS_SHOWN, formatDay, formatWhen, KIND_LABELS } from "@/data/accountPage";
-import { historyWords, quoteEventWords } from "@/data/opportunityPage";
-import type { OpportunityActivityFilter, OpportunityActivityRow } from "@/lib/opportunityPageApi";
+import { historyWords, intakeEventWords, quoteEventWords } from "@/data/opportunityPage";
+import type { OpportunityActivityFilter, OpportunityActivityRow, OpportunityChangeRow, OpportunityIntakeEvent, OpportunityQuoteEvent } from "@/lib/opportunityPageApi";
 import { useOpportunityActivityQuery } from "./useOpportunityQueries";
 
 // The opportunity's activity (screen 19, D-427, D-212): its calls, notes and tasks (the account's own rows, columns and actions, narrowed to this opportunity by the
-// database: there is no second set), its history with its stage changes (D-413) and its quote requests' events, newest first, filtered as the account's is.
+// database: there is no second set), its history with its stage changes (D-413), its quote requests' events and its intake's (#237), newest first, filtered as the account's is.
 // Add a note and Add a task open the account's form about this opportunity. The emails with the contact are Epic 6's.
 
 const EMPTY_WORDS: Record<OpportunityActivityFilter, string> = {
@@ -18,15 +18,19 @@ const EMPTY_WORDS: Record<OpportunityActivityFilter, string> = {
 
 const GONE = "Someone who has left";
 
+// A change, a quote request's event and an intake's event are the system's record: dated by the day, with nothing to edit. A call, a note and a task are a person's.
+const isRecord = (a: OpportunityActivityRow): a is OpportunityChangeRow | OpportunityQuoteEvent | OpportunityIntakeEvent =>
+  a.type === "change" || a.type === "quote" || a.type === "intake";
+
 const columns: Column<OpportunityActivityRow>[] = [
-  { header: "When", cell: (a) => (a.type === "change" || a.type === "quote" ? formatDay(a.at) : formatWhen(a.at)), className: "whitespace-nowrap text-muted-foreground" },
-  { header: "Kind", cell: (a) => <span className="font-medium">{a.type === "quote" ? "Quote" : KIND_LABELS[a.type]}</span> },
+  { header: "When", cell: (a) => (isRecord(a) ? formatDay(a.at) : formatWhen(a.at)), className: "whitespace-nowrap text-muted-foreground" },
+  { header: "Kind", cell: (a) => <span className="font-medium">{a.type === "quote" ? "Quote" : a.type === "intake" ? "Intake" : KIND_LABELS[a.type]}</span> },
   {
     header: "What happened",
-    cell: (a) => (a.type === "change" ? historyWords(a) : a.type === "quote" ? quoteEventWords(a) : <ActivityWhat row={a} />),
+    cell: (a) => (a.type === "change" ? historyWords(a) : a.type === "quote" ? quoteEventWords(a) : a.type === "intake" ? intakeEventWords(a) : <ActivityWhat row={a} />),
   },
   { header: "By", cell: (a) => <span className="break-all">{a.who ?? GONE}</span> },
-  { header: "Actions", cell: (a) => (a.type === "change" || a.type === "quote" ? null : <ActivityActions row={a} />) },
+  { header: "Actions", cell: (a) => (isRecord(a) ? null : <ActivityActions row={a} />) },
 ];
 
 const button = "min-h-9 text-sm text-primary underline underline-offset-2 hover:text-primary/90";

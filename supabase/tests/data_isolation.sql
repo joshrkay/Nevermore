@@ -260,6 +260,9 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124170000_leads_can_convert.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1659,6 +1662,8 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for gives an account to another current member, and when asked its open opportunities the caller may change, by the level rule (an agent their own, a lead their team''s, an owner the firm''s); 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there'),
   ('accounts_can_change(p_firm_id uuid, p_ids uuid[])', 'own', NULL,
    'a current member of the firm the call acts for is told which of up to 100 account ids they may see and change by the level rule, for the table''s row actions; nothing for a closing firm and a support session; 42501 for anyone who is no member of that firm'),
+  ('leads_can_convert(p_firm_id uuid, p_ids uuid[])', 'own', NULL,
+   'a current member of the firm the call acts for is told which of up to 100 lead ids they may convert (see and change by the level rule, New or Working, not in the bin), for the leads table''s Convert row action; nothing for a closing firm and a support session; 42501 for anyone who is no member of that firm'),
   -- CRM-S3.7b (20261119210000_bulk_changes.sql; supabase/tests/bulk_changes.sql): bulk changes to accounts, their undo and the firm's labels.
   ('bulk_accounts_preview(p_firm_id uuid, p_action text, p_params jsonb, p_filters jsonb, p_ids jsonb)', 'own', NULL,
    'a current member of the firm the call acts for is told what a bulk change would do to the accounts they name or the table''s filters select: how many change, how many already are as asked, and the accounts that are skipped, named, with the reason; it changes nothing; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session; another firm''s account is just not available'),
@@ -2415,6 +2420,7 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('delete_account', 'advisor', 'by_id', $$SELECT public.delete_account({acct}, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '"deleted": true|PT409'),
   ('change_account_owner', 'advisor', 'by_id', $$SELECT public.change_account_owner({acct}, auth.uid(), true, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:.*"opportunities_changed"'),
   ('accounts_can_change', 'advisor', 'by_id', $$SELECT public.accounts_can_change({firm}, ARRAY[{acct}]::uuid[])::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:'),
+  ('leads_can_convert', 'advisor', 'by_id', $$SELECT public.leads_can_convert({firm}, ARRAY[{lead}]::uuid[])::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:'),
   ('bulk_accounts_preview', 'advisor', 'by_id',
    $$SELECT NULLIF(public.bulk_accounts_preview({firm}, 'archive', '{}', NULL, jsonb_build_array({acct}::text)) ->> 'will_change', '0')$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:1$'),
   ('bulk_accounts_change', 'advisor', 'by_id',
@@ -4551,6 +4557,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('delete_account', 'firm_scoped', 'the same for deleting an account that has no opportunity, with its contacts, calls, notes, tasks, placements and renewals (4e)'),
   ('change_account_owner', 'firm_scoped', 'the same for giving an account, and when asked its open opportunities the caller may change, to another current member (4e)'),
   ('accounts_can_change', 'firm_scoped', 'a current member of the firm the call acts for is told which of the given accounts they may change, by the level rule; another firm''s account is never named (4e)'),
+  ('leads_can_convert', 'firm_scoped', 'a current member of the firm the call acts for is told which of the given leads they may convert, by the level rule; another firm''s lead is never named (4e; supabase/tests/leads_can_convert.sql)'),
   ('account_renewals', 'firm_scoped', 'a current member of the firm who may see the account reads its renewals, with days away and whether each is done; nothing for anyone else, as for an account that is not there (4e)'),
   ('add_renewal', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, adds a renewal to it (a PEO placement makes its placement); refused for another firm''s account as for one that is not there (4e)'),
   ('update_renewal', 'firm_scoped', 'a current member of the firm the call acts for saves a renewal from a version, when the level rule gives them its account; as not there for another firm''s (4e)'),
@@ -4714,6 +4721,7 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('refuse_member_certification', 'trigger', 'refuses a certification from a member of the intake''s firm: only the employer certifies (D-1703)'),
   ('firm_for_intake_link', 'service_only', 'the firm whose link an address is, when it takes intakes now: the intake trigger and firm_takes_intakes ask it; not callable through the API'),
   ('keep_intake_firm', 'trigger', 'places a new intake in the firm of the address it was started at (the default firm with none), refuses a link that takes none, and freezes the firm afterwards (P-2.1, D-1704)'),
+  ('guard_firm_approved_to_send', 'trigger', 'refuses the message of a send to a PEO (direction sent) for a firm that no platform admin has approved, a refused firm included; a send by hand and mail received are not stopped (P-1.3, Q-1.2, D-1900)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
   ('can_read_peo_mail', 'own', 'row security helper: whether a message is a firm''s the caller belongs to; held mail is its firm''s, and a held message that matches no firm is read by nobody'),
   ('admin_held_mail', 'platform_wide', 'the holding list as a platform admin sees it (D-16): which messages wait, why, since when, and the File ID and PEO an address belonged to; never a sender, subject, text or file name'),
@@ -4936,6 +4944,9 @@ INSERT INTO secret_columns VALUES
 CREATE TEMP TABLE secret_readers (fn text PRIMARY KEY, call text NOT NULL);
 INSERT INTO secret_readers VALUES
   ('my_mailbox()', $$SELECT public.my_mailbox()::text$$),
+  -- #237: an opportunity's Activity names its intake's invitations (who was invited and reminded, by name); it answers the invitee and never the link's token.
+  ('opportunity_activity(p_firm_id uuid, p_opportunity_id uuid, p_filter text, p_limit integer, p_offset integer)',
+   $$SELECT public.opportunity_activity({firm_a}, (SELECT o.id FROM public.opportunities o WHERE o.firm_id = {firm_a} AND o.intake_id IS NOT NULL ORDER BY o.id LIMIT 1), 'all', 100, 0)::text$$),
   -- CRM-E1.2a: the send reads the caller's own mailbox address, the read whether it is connected; neither returns the token.
   ('send_conversation_message(p_contact_id uuid, p_lead_id uuid, p_subject text, p_body text, p_cc text[], p_in_reply_to uuid, p_firm_id uuid, p_document_ids uuid[])',
    $$SELECT public.send_conversation_message(p_contact_id => (SELECT c.id FROM public.contacts c WHERE c.firm_id = {firm_a} AND c.email IS NOT NULL ORDER BY c.created_at, c.id LIMIT 1), p_subject => 'Probe', p_body => 'Probe', p_firm_id => {firm_a})::text$$),
@@ -5046,6 +5057,13 @@ BEGIN
   -- (g) Each swept function, as every caller, with a value planted in every secret column: nothing planted comes back. The plant is rolled back.
   BEGIN
     inv_a := (SELECT i.id FROM public.firm_invitations i WHERE i.firm_id = pg_temp.id('firm_a') ORDER BY i.created_at LIMIT 1);
+    -- An invitation of an intake that sits on an opportunity of firm_a, for the plant to reach, if no test made one: an opportunity's Activity names the intake's
+    -- invitations (#237), and the sweep proves it answers the invitee and never the link's token only if there is one to answer.
+    IF NOT EXISTS (SELECT 1 FROM public.intake_invitations v JOIN public.opportunities o ON o.intake_id = v.intake_id WHERE o.firm_id = pg_temp.id('firm_a')) THEN
+      INSERT INTO public.intake_invitations (firm_id, intake_id, email, contact_name, token_hash, expires_at)
+      SELECT o.firm_id, o.intake_id, 'sweep@example.test', 'Sweep Probe', repeat('a', 64), now() + interval '7 days'
+      FROM public.opportunities o WHERE o.firm_id = pg_temp.id('firm_a') AND o.intake_id IS NOT NULL ORDER BY o.id LIMIT 1;
+    END IF;
     FOR r IN SELECT * FROM secret_columns s WHERE EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = to_regclass(s.tbl) AND a.attname = s.col AND NOT a.attisdropped) ORDER BY tbl, col LOOP
       -- Each row gets its own value (a hash column is unique, and exactly 64 hex characters), every one of them starting with the marker.
       EXECUTE format('UPDATE %s SET %I = %L || substr(md5(ctid::text) || md5(ctid::text || ''x'') || md5(ctid::text || ''y''), 1, %s)',
