@@ -519,3 +519,23 @@ BEGIN
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_messages), n, 'no message was left behind');
 END $$;
+
+-- ---------- 9. A closing firm and a support session start no upload (ADR 0023, ADR 0024) ----------
+-- Catches: a file added to a thread in a firm's read-only 30 days, or by Nevermore support while it is only looking.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); stmt text; n bigint := (SELECT count(*) FROM public.quote_request_messages);
+BEGIN
+  stmt := format('SELECT public.start_quote_document_upload(%s, ''x.pdf'', ''application/pdf'', 10)', q);
+  INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at)
+  VALUES (pg_temp.id('acme'), pg_temp.id('platform_admin'), 'platform_admin@example.test', 'Looking at a stuck email', now(), now() + interval '1 hour');
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(stmt), 'PT423: Nevermore support can look, not change', 'a support session');
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.support_sessions WHERE firm_id = pg_temp.id('acme');
+  INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('acme'), pg_temp.id('acme_agent'), now() + interval '30 days');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(stmt), ':', 1), 'PT423', 'a closing firm');
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_messages), n, 'no message was left behind');
+END $$;
