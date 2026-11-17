@@ -146,4 +146,17 @@ describe("quote-document-upload: a quote document recorded by hand, an upload li
     expect(t.stored).toEqual([]);
     expect(t.logs.join("\n")).toContain("SCAN_CONFIG_MISSING");
   });
+
+  // Catches: a file the scanner flagged kept readable, named as a quote's document, or left unalerted.
+  it("settles a file with malware as blocked with its signature, drops its bytes, alerts, and names no document", async () => {
+    const t = setup({ scan: () => new Response(JSON.stringify({ verdict: "infected", signature: "Eicar-Test-Signature" }), { status: 200 }) });
+    const { status, body } = await read(await handleQuoteDocumentUpload(post({ quote_id: "3", file: file(PDF, "quote.pdf") }), t.deps));
+    expect(status).toBe(200);
+    expect(body.document).toEqual({ attachment_id: 51, file_name: "quote.pdf", status: "blocked" });
+    expect(t.stored).toEqual([]);
+    expect(t.rpcs.find((r) => r.fn === "finish_inbound_attachment")?.args).toEqual({ p_attachment_id: 51, p_verdict: "infected", p_signature: "Eicar-Test-Signature" });
+    expect(t.rpcs.some((r) => r.fn === "attach_quote_document")).toBe(false);
+    expect(t.logs.join("\n")).toContain("MALWARE_DETECTED source=quote-document-upload attachment=51");
+    expect(t.alerts).toHaveLength(1);
+  });
 });

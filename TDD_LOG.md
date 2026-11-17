@@ -745,3 +745,4 @@ One line per cycle: the test, the failing line seen, then green.
 13. quote-document-upload handler.test: starts as the agent, scans, keeps a clean file in peo-mail under its message, settles it stored and names it as the quote's document | red: Failed to resolve import ./handler (the function was not there) | green
 14. handler.test: a file that isn't what its name says, or an executable, is refused 415 before anything is recorded | red: AssertionError: expected 200 to be 415 | green
 15. handler.test: no scanner set up refuses everything (503) with nothing recorded or stored | red: AssertionError: expected [ { fn: 'start_quote_document_upload', ... } ] to deeply equal [] | green
+16. handler.test: a file with malware is settled blocked with its signature, never stored or named, and alerted | red: AssertionError: expected { attachment_id: 51, ... status: 'stored' } to deeply equal { ... status: 'blocked' } | green

@@ -15,7 +15,7 @@
 
 import { readBodyCapped } from "../_shared/body.ts";
 import { cleanFileName, MAX_UPLOAD_BYTES, sha256Hex, SNIFF_BYTES, sniffUpload, storageKeyName, STORED_CONTENT_TYPE } from "../_shared/fileSignature.ts";
-import { selectScanner, type ScannerDeps } from "../_shared/malwareScan.ts";
+import { malwareAlert, postScanAlert, selectScanner, type ScannerDeps } from "../_shared/malwareScan.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -89,10 +89,17 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
   const { attachment_id: attachmentId, folder } = started as { attachment_id: number; folder: string };
 
   const service = deps.createClient(supabaseUrl, serviceRoleKey);
-  await choice.scanner.scan(bytes);
+  const scan = await choice.scanner.scan(bytes);
+  if (scan.verdict === "infected") {
+    // Blocked, its bytes dropped (never stored), alerted at once; nothing is named as the quote's document.
+    await service.rpc("finish_inbound_attachment", { p_attachment_id: attachmentId, p_verdict: "infected", p_signature: scan.signature });
+    deps.log(`MALWARE_DETECTED source=quote-document-upload attachment=${attachmentId} engine=${scan.engine} signature=${scan.signature}`);
+    await postScanAlert(deps, malwareAlert({ document: `mail-attachment-${attachmentId}`, intake: folder.split("/")[0], signature: scan.signature, engine: scan.engine, source: "quote-document-upload" }));
+    return reply({ document: { attachment_id: attachmentId, file_name: fileName, status: "blocked" } }, 200);
+  }
   const path = `${folder}/${attachmentId}-${storageKeyName(fileName)}`;
   await service.storage.from("peo-mail").upload(path, bytes, { contentType: STORED_CONTENT_TYPE, upsert: true });
-  await service.rpc("finish_inbound_attachment", { p_attachment_id: attachmentId, p_verdict: "clean", p_bucket: "peo-mail", p_path: path, p_sha256: await sha256Hex(bytes) });
+  await service.rpc("finish_inbound_attachment", { p_attachment_id: attachmentId, p_verdict: scan.verdict, p_bucket: "peo-mail", p_path: path, p_sha256: await sha256Hex(bytes) });
   await agent.rpc("attach_quote_document", { p_quote_id: Number(quoteId), p_attachment_id: attachmentId });
   return reply({ document: { attachment_id: attachmentId, file_name: fileName, status: "stored" } }, 200);
 }
