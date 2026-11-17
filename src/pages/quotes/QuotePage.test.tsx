@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn(), askAboutQuestion: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -58,7 +58,7 @@ const request = (over: Record<string, unknown> = {}) => ({
 /** What the page's read gives: the quote request, its submission (only what a piece under test reads) and its opportunity's page. */
 const quotePage = (over: { request?: Record<string, unknown>; detail?: Record<string, unknown>; opportunity?: Record<string, unknown> } = {}) => ({
   request: request(over.request),
-  detail: { id: "s1", userId: "p1", data: { ...EMPTY_CHAMBER_DATA, company_name: "Harborview" }, quoteRequests: [request(over.request)], ...threadOf(), ...over.detail },
+  detail: { id: "s1", userId: "p1", data: { ...EMPTY_CHAMBER_DATA, company_name: "Harborview" }, quoteRequests: [request(over.request)], pipelineStatus: "sent_to_carrier", intakeStatus: "submitted", submission: { signer_name: "Lucia Reyes" }, reviews: {}, informationRequests: [], ...threadOf(), ...over.detail },
   opportunity: {
     opportunity: { id: "o1", name: "January 2027 PEO search", accountId: "a1", submissionId: "s1", stage: "in_market" },
     account: { id: "a1", name: "Harborview Dental Group", archived: false },
@@ -348,6 +348,64 @@ describe("QuotePage: a suggestion on a reply", () => {
     await user.click(screen.getByRole("button", { name: "Accept" }));
     expect(advisor.decideReplySuggestion).toHaveBeenCalledWith(1, "accept");
     await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("QuotePage: an underwriter's open question", () => {
+  const asking = (status = "question_open") => quotePage({
+    request: { status },
+    detail: {
+      pipelineStatus: "sent_to_carrier", intakeStatus: "submitted", submission: { signer_name: "Lucia Reyes" }, reviews: {}, informationRequests: [],
+      ...threadOf({ quoteRequestMessages: [message({ id: 1, body_text: "How many of the 12 employees are part time?" })] }),
+    },
+  });
+
+  // N-1.3. Break caught: no way from the quote's own page to the employer (the agent has to go to the submission), or a draft that holds the PEO's words for the employer to read.
+  it("asks the employer from the quote's page, in the agent's own words, tied to this quote request", async () => {
+    const user = userEvent.setup();
+    quotes.getQuotePage.mockResolvedValue(asking());
+    advisor.askAboutQuestion.mockResolvedValue(undefined);
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const words = within(panel).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    expect(words.value).toBe("");
+    await user.type(words, "How many of your 12 employees work part time?");
+    await waitFor(() => expect(advisor.openQuoteRequestThread).toHaveBeenCalled());
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
+    await user.click(within(panel).getByRole("button", { name: "Send request" }));
+    expect(advisor.askAboutQuestion).toHaveBeenCalledWith(7, "How many of your 12 employees work part time?", [], []);
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(3));
+  });
+
+  // Break caught: the request sent and then not seen on the quote's own thread, so the agent can't tell whether the employer was asked or has answered.
+  it("shows on the PEO's thread what the employer was asked, and that it waits", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      request: { status: "question_open" },
+      detail: {
+        pipelineStatus: "information_requested",
+        informationRequests: [{ id: 5, session_id: "s1", message: "How many of your employees work part time?", fields: [], extra_questions: [], requested_by: "a1", requested_by_email: "dana@example.com", requested_at: "2026-11-12T16:00:00Z" }],
+        ...threadOf({ quoteRequestEvents: [{ id: 9, quote_request_id: 7, session_id: "s1", note_id: null, field: "asked_employer", old_value: null, new_value: "5", changed_by: "a1", changed_by_email: "dana@example.com", changed_at: "2026-11-12T16:00:01Z" }] }),
+      },
+    }));
+    renderPage();
+    const line = await screen.findByText(/You asked the employer/);
+    expect(line).toHaveTextContent("You asked the employer: “How many of your employees work part time?” Waiting for their answer.");
+  });
+
+  // Break caught: a panel offered to someone who cannot send it (a Nevermore support session reads only, ADR 0024): a dead button the database would refuse.
+  it("offers no way to ask the employer during a support session", async () => {
+    quotes.getQuotePage.mockResolvedValue(asking());
+    renderPage("/quotes/7", workspace({ isSupport: true }));
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("heading", { name: "Ask the prospect" })).not.toBeInTheDocument();
+  });
+
+  // Break caught: a dead panel on a quote that has no question (Ask the prospect offered about nothing; the database would refuse it).
+  it("offers nothing on a quote request with no open question", async () => {
+    quotes.getQuotePage.mockResolvedValue(asking("sent"));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("heading", { name: "Ask the prospect" })).not.toBeInTheDocument();
   });
 });
 

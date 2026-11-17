@@ -33,6 +33,11 @@ describe("a quote request's change log", () => {
     expect(describeQuoteRequestEvent({ field: "note_body", old_value: "A", new_value: "B" })).toBe("Note text: A → B");
   });
 
+  // N-1.3. Catches: the employer being asked about a PEO's question shown as a column name and a bare number ("asked_employer: — → 5").
+  it("describes asking the employer in words, naming the request", () => {
+    expect(describeQuoteRequestEvent({ field: "asked_employer", old_value: null, new_value: "5" })).toBe("The employer was asked about the PEO's question (request 5)");
+  });
+
   // Catches: a bundle link issued or revoked (slice 6.6b) shown by its column name, or with an empty "before" arrow that reads as a change.
   it("describes a bundle link being issued and revoked in words", () => {
     expect(describeQuoteRequestEvent({ field: "bundle_link", old_value: null, new_value: "Issued for version 3" })).toBe("Bundle link issued for version 3");

@@ -533,6 +533,20 @@ export async function requestInformation(sessionId: string, message: string, fie
   if (error) fail(error, "Couldn't send the request.");
 }
 
+/**
+ * Asks the employer about a PEO's open question (N-1.3, 20261125120000): the same request `requestInformation` makes, in the agent's own words, tied to the
+ * quote request so its thread can say the employer was asked. Refused unless the quote request is at Question open.
+ */
+export async function askAboutQuestion(quoteRequestId: number, message: string, fields: readonly FieldKey[], questions: readonly ExtraQuestionRef[] = []): Promise<void> {
+  const { error } = await supabase.rpc("advisor_ask_about_question", {
+    p_quote_request_id: quoteRequestId,
+    p_message: message.trim(),
+    p_fields: [...fields],
+    p_extra_questions: questions.map((q) => ({ peo_id: q.peo_id, key: q.key, question: q.question })) as unknown as Json,
+  });
+  if (error) fail(error, "Couldn't send the request.");
+}
+
 // ---------- Quote requests (joshrkay/Nevermore#82) ----------
 
 /**

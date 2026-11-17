@@ -13,7 +13,7 @@ import {
 import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
 import { parseExtraQuestionRefs, type ExtraQuestionRef } from "@/data/extraAnswers";
 import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
-import { requestInformation, type InformationRequestRow } from "@/lib/advisorApi";
+import { askAboutQuestion, requestInformation, type InformationRequestRow } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
 interface InformationRequestPanelProps {
@@ -34,6 +34,8 @@ interface InformationRequestPanelProps {
   initialFields?: readonly FieldKey[];
   /** A PEO's own extra questions to start with (PeoNeedsPanel's draft). The advisor can take any out. */
   initialQuestions?: readonly ExtraQuestionRef[];
+  /** The quote request whose open question this asks the employer about (N-1.3): the request is tied to it. */
+  aboutQuestionOf?: number;
   onChanged: () => void;
 }
 
@@ -56,6 +58,7 @@ const InformationRequestPanel = ({
   initialMessage,
   initialFields,
   initialQuestions,
+  aboutQuestionOf,
   onChanged,
 }: InformationRequestPanelProps) => {
   const [questions, setQuestions] = useState<ExtraQuestionRef[]>(() => [...(initialQuestions ?? [])]);
@@ -93,7 +96,7 @@ const InformationRequestPanel = ({
     setSaving(true);
     failure.clear();
     try {
-      await requestInformation(sessionId, message, fields, questions);
+      await (aboutQuestionOf === undefined ? requestInformation(sessionId, message, fields, questions) : askAboutQuestion(aboutQuestionOf, message, fields, questions));
       setMessage("");
       toast.success("Request sent. The prospect will get an email and see it in their intake.");
       onChanged();
