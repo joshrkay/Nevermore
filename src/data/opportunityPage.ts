@@ -2,7 +2,7 @@ import { z } from "zod";
 import { dateRule, nameRule, wholeNumberRule } from "@/components/workspace/form/fieldRules";
 import type { Json } from "@/integrations/supabase/types";
 import type { OpportunityStage } from "@/lib/accountPageApi";
-import type { OpportunityChangeRow, OpportunityEdit, OpportunityEditable, OpportunityFields, OpportunityQuoteEvent } from "@/lib/opportunityPageApi";
+import type { OpportunityChangeRow, OpportunityEdit, OpportunityEditable, OpportunityFields, OpportunityIntakeEvent, OpportunityQuoteEvent } from "@/lib/opportunityPageApi";
 import { formatDay, STAGE_LABELS, valueWords } from "./accountPage";
 import { DECLINE_REASON_LABELS, isOpenQuoteRequest, type DeclineReason } from "./quoteRequests";
 
@@ -175,6 +175,19 @@ export function quoteEventWords(row: OpportunityQuoteEvent): string {
     case "quoted": return `${row.peoName} quoted`;
     case "declined": return declineWords(row);
     default: return `${row.peoName}'s quote closed`;
+  }
+}
+
+/**
+ * An event of the opportunity's intake as a sentence (#237): "Intake started", "Invited Elena Marsh to fill in and certify", "Reminded Elena Marsh", "Intake certified
+ * (EAA-2026-0117)", and for a later version "Intake certified again, version 2 (EAA-2026-0117)". A name or a File ID the database did not give is not made up.
+ */
+export function intakeEventWords(row: OpportunityIntakeEvent): string {
+  switch (row.event) {
+    case "started": return "Intake started";
+    case "invited": return `Invited ${row.invitee ?? "the client"} to fill in and certify`;
+    case "reminded": return `Reminded ${row.invitee ?? "the client"}`;
+    default: return `Intake certified${row.version !== null && row.version > 1 ? ` again, version ${row.version}` : ""}${row.reference ? ` (${row.reference})` : ""}`;
   }
 }
 

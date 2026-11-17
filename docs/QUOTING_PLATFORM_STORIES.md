@@ -521,7 +521,7 @@ As a broker, I want proof of when I submitted an employer to a PEO.
 - AC: nobody can change or delete a registration, including admins.
 
 **Q-2.2 Warn about a second submission.** S · BE · needs Q-2.1, QP-D4
-- AC: before a send, if another firm has registered the same employer with the same PEO, the broker is told that one exists and when, and nothing about who; whether to block is a decision this story records, not assumes.
+- AC: before a send, if another firm has registered the same employer with the same PEO, the broker is told that one exists and when, and nothing about who; whether to block is a decision this story records, not assumes. Decided (D-604 in `docs/BROKER_CRM_BUILD.md`): it warns, and never blocks.
 
 **Q-3.1 An activity record per firm.** M · BE · needs P-1.1
 - AC: views of a submission, downloads, sends, shares and membership changes are recorded with who and when, without content; owners can read their firm's; kept for the period D4 sets for operational events unless counsel says longer.

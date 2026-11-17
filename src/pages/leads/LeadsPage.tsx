@@ -1,22 +1,27 @@
 import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { RefreshCw, SearchX, Trash2, UserPlus } from "lucide-react";
 import { leadsTableWords } from "@/data/leads";
 import { countLeadsViews, fetchLeadsPage, leadExportColumnsFor, useLeadsTable } from "@/components/leads/leadsTable";
+import { ConvertLeadDialog } from "@/components/leads/ConvertLeadDialog";
 import { NewLeadDialog } from "@/components/leads/NewLeadDialog";
 import { LEAD_BULK_KINDS, LEAD_BULK_TITLES, type LeadBulkKind } from "@/components/leads/leadBulkWords";
 import { LeadBulkDialog, type LeadBulkMade } from "@/components/leads/LeadBulkDialog";
 import { LeadBulkResultBar } from "@/components/leads/LeadBulkResultBar";
 import { LeadBinDialog } from "@/components/leads/LeadBinDialog";
+import { Button } from "@/components/ui/button";
 import { ExportControl } from "@/components/workspace/ExportControl";
 import { NothingMatches, NothingYet, LoadFailed } from "@/components/workspace/states";
 import {
   ColumnsMenu, FilterRow, SelectionBar, hasHeld, inForceInWords, isNarrowed, queryFor, refusedQueryReason, SearchBox, shownColumns, TableFrame, useFirmReady, useMyColumns,
-  useRefreshTable, useRowSelection, useSavedViewsControl, useTableAddress, useTableRows, useTableViewCounts, ViewTabs,
+  useRefreshTable, useRowSelection, useSavedViewsControl, useTableAddress, useTableContextKey, useTableRows, useTableViewCounts, ViewTabs,
 } from "@/components/workspace/table";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import type { Json } from "@/integrations/supabase/types";
 import { browserTimeZone } from "@/lib/accountsApi";
+import { leadsCanConvert } from "@/lib/leadConvertApi";
+import type { LeadRow } from "@/lib/leadsApi";
 import type { BulkSelection } from "@/lib/bulkChangeApi";
 
 // The Leads page (story CRM-L1.1a, slice 8.3, screen 14): the people a firm isn't quoting yet, on the workspace's table frame as the Accounts page is
@@ -24,7 +29,8 @@ import type { BulkSelection } from "@/lib/bulkChangeApi";
 // the person may see (D-809). New lead (CRM-L1.2a) opens over the page.
 //
 // Selecting rows, the bulk bar (D-811), Undo, the bin with Restore (an owner's, D-806) and export are CRM-L1.1b's (slice 8.4, D-1641 to D-1649).
-// Not here, and where it goes: a lead's page (8.5) and Convert (8.6), the Label column and filter (D-1648), Import (Epic 9).
+// Convert is the story's row action (#190): offered on the leads the database says can be converted, and it opens the Convert dialog (slice 8.6) over the table.
+// Not here, and where it goes: the Label column and filter (D-1648), Import (Epic 9).
 
 const NEW_LEAD_BUTTON = "inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
@@ -55,6 +61,20 @@ const LeadsPage = () => {
   const timeZone = browserTimeZone();
   const exportFilters: Record<string, Json> = { filters: asked.filters as unknown as Json, ...(address.search ? { search: address.search } : {}), time_zone: timeZone };
   const hasRows = rowsSettled && !data.error && !!data.page && data.page.total > 0;
+
+  // The row action, Convert (CRM-L1.1, #190): only on the leads the person may convert (the level rule, New or Working, not in the bin: leads_can_convert), so none is
+  // offered that can only be refused (D-24, D-402). Until the database has answered, and if it fails, none is offered; Refresh and a conversion ask again. Nevermore
+  // support is offered none, and is not asked (ADR 0024).
+  const rowIds = useMemo(() => (data.page?.rows ?? []).map((r) => r.id), [data.page]);
+  const convertKey = useTableContextKey(table, "can-convert");
+  const canConvert = useQuery({
+    queryKey: [...convertKey, rowIds],
+    queryFn: () => leadsCanConvert(firmId as string, rowIds),
+    enabled: !!firmId && !workspace?.isSupport && rowIds.length > 0,
+    retry: false,
+  });
+  const convertible = useMemo(() => new Set(canConvert.data ?? []), [canConvert.data]);
+  const [converting, setConverting] = useState<LeadRow | null>(null);
 
   // Selecting rows (CRM-S3.6) and the leads' bulk actions (D-811), as the Accounts page has them. Nevermore support is offered none of the changes (ADR 0024).
   const selection = useRowSelection(table, address, data.page, (row) => row.name);
@@ -181,7 +201,24 @@ const LeadsPage = () => {
           empty={empty}
           error={error}
           selection={selection}
+          rowActions={convertible.size > 0 ? (r) => (convertible.has(r.id) ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setConverting(r)}>Convert<span className="sr-only"> {r.name}</span></Button>
+          ) : null) : undefined}
         />
+        {converting && firmId && (
+          <ConvertLeadDialog
+            firmId={firmId}
+            lead={converting}
+            onClose={() => setConverting(null)}
+            onConverted={(made) => {
+              setConverting(null);
+              toast.success(`Converted into ${made.account.name}`);
+              // The lead is Converted now, and the menu counts open leads: the table is read again, with what it asked about the rows.
+              refresh();
+              void queryClient.invalidateQueries({ queryKey: ["menu-counts"] });
+            }}
+          />
+        )}
         {asking && firmId && (
           <LeadBulkDialog
             firmId={firmId}

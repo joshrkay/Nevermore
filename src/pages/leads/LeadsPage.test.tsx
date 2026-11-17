@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { LeadRow } from "@/lib/leadsApi";
@@ -33,6 +33,17 @@ vi.mock("@/lib/tableSettingsApi", () => ({
 const listAccountOwners = vi.fn();
 vi.mock("@/lib/accountCreateApi", () => ({ listAccountOwners: (...a: unknown[]) => listAccountOwners(...a) }));
 vi.mock("@/lib/leadCreateApi", () => ({ createLead: vi.fn() }));
+const leadsCanConvert = vi.fn();
+const getConvertMatches = vi.fn();
+const convertLead = vi.fn();
+vi.mock("@/lib/leadConvertApi", async (original) => ({
+  ...(await original<typeof import("@/lib/leadConvertApi")>()),
+  leadsCanConvert: (...a: unknown[]) => leadsCanConvert(...a),
+  getConvertMatches: (...a: unknown[]) => getConvertMatches(...a),
+  convertLead: (...a: unknown[]) => convertLead(...a),
+}));
+const toastSuccess = vi.fn();
+vi.mock("sonner", () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn() } }));
 
 const { default: LeadsPage } = await import("./LeadsPage");
 
@@ -62,7 +73,9 @@ const renderAt = (url = "/leads", ws: Workspace = workspace()) =>
 const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent?.trim()).filter((h) => h && h !== "Actions");
 
 beforeEach(() => {
-  for (const fn of [listLeads, countLeadViews, listFirmMembers, listAccountOwners]) fn.mockReset();
+  for (const fn of [listLeads, countLeadViews, listFirmMembers, listAccountOwners, leadsCanConvert, getConvertMatches, convertLead, toastSuccess]) fn.mockReset();
+  leadsCanConvert.mockResolvedValue([]);
+  getConvertMatches.mockResolvedValue([]);
   listLeads.mockResolvedValue({ rows: [row()], total: 1 });
   countLeadViews.mockImplementation(async (_f: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [12, 1, 4, 5, 3, 2][i] ?? 0 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
@@ -120,5 +133,81 @@ describe("the Leads page (CRM-L1.1a)", () => {
   it("links each lead's name to its page", async () => {
     renderAt();
     expect(await screen.findByRole("link", { name: "Lucia Reyes" })).toHaveAttribute("href", "/leads/l1");
+  });
+});
+
+describe("Convert on a row (CRM-L1.1's row action, #190)", () => {
+  const lucia = row({ id: "l1", name: "Lucia Reyes" });
+  const hal = row({ id: "l2", name: "Hal Brenner", business: "Brenner Mechanical", email: "hal@brenner.example", status: "not_fit", not_fit_reason: "too_small" });
+  const rowOf = async (name: string) => (await screen.findByText(name)).closest("tr") as HTMLElement;
+
+  // Catches: Convert offered on a lead the database would refuse (Not a fit, Converted, in the bin, another agent's), so the dialog opens and only then is the agent told no,
+  // or left off a lead that can be converted.
+  it("offers Convert on the rows the database says can be converted, and on no other", async () => {
+    listLeads.mockResolvedValue({ rows: [lucia, hal], total: 2 });
+    leadsCanConvert.mockResolvedValue(["l1"]);
+    renderAt();
+    expect(await within(await rowOf("Lucia Reyes")).findByRole("button", { name: "Convert Lucia Reyes" })).toBeInTheDocument();
+    expect(within(await rowOf("Hal Brenner")).queryByRole("button", { name: /Convert/ })).toBeNull();
+    expect(leadsCanConvert).toHaveBeenCalledWith("f1", ["l1", "l2"]);
+  });
+
+  // Catches: Convert offered before the database has answered (every row would show it, and some would be refused), or a failed check taking the whole table down
+  // with it instead of leaving the rows and no Convert.
+  it("offers no Convert until the database has answered, or when it cannot answer, and the rows still show", async () => {
+    let answer: (ids: string[]) => void = () => {};
+    leadsCanConvert.mockReturnValue(new Promise<string[]>((resolve) => { answer = resolve; }));
+    renderAt();
+    await rowOf("Lucia Reyes");
+    expect(screen.queryByRole("button", { name: /Convert/ })).toBeNull();
+    answer(["l1"]);
+    expect(await screen.findByRole("button", { name: "Convert Lucia Reyes" })).toBeInTheDocument();
+    cleanup();
+    leadsCanConvert.mockReset();
+    leadsCanConvert.mockRejectedValue(new Error("down"));
+    renderAt();
+    await rowOf("Lucia Reyes");
+    await waitFor(() => expect(leadsCanConvert).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /Convert/ })).toBeNull();
+    expect(screen.getByText("Lucia Reyes")).toBeInTheDocument();
+  });
+
+  // Catches: Convert offered to Nevermore support, who can only look (ADR 0024); or asked about for them all the same.
+  it("offers Convert to no one in a support session, and does not ask", async () => {
+    leadsCanConvert.mockResolvedValue(["l1"]);
+    renderAt("/leads", workspace({ isSupport: true }));
+    await rowOf("Lucia Reyes");
+    expect(screen.queryByRole("button", { name: /Convert/ })).toBeNull();
+    expect(leadsCanConvert).not.toHaveBeenCalled();
+  });
+
+  // Catches: the row's Convert opening the lead's page instead of the dialog (a click on the row), or opening it for another lead than the row's.
+  it("opens the Convert dialog for that row's lead, over the table", async () => {
+    listLeads.mockResolvedValue({ rows: [lucia, hal], total: 2 });
+    leadsCanConvert.mockResolvedValue(["l1", "l2"]);
+    renderAt();
+    const user = userEvent.setup();
+    await user.click(await within(await rowOf("Hal Brenner")).findByRole("button", { name: "Convert Hal Brenner" }));
+    expect(await screen.findByRole("dialog", { name: "Convert Hal Brenner" })).toBeInTheDocument();
+    expect(getConvertMatches).toHaveBeenCalledWith("f1", "l2");
+    // Still on the Leads page (a modal hides the page from the accessibility tree, so it is asked for as hidden): the row was not opened.
+    expect(screen.getByRole("heading", { level: 1, name: "Leads", hidden: true })).toBeInTheDocument();
+  });
+
+  // Catches: a conversion that leaves the table showing the lead as it was (a Convert still offered on a Converted lead), or says nothing of where the lead went.
+  it("after converting, says where the lead went and reads the table again", async () => {
+    convertLead.mockResolvedValue({ account: { id: "a9", name: "Reyes Bakery", created: true }, contact: null, opportunity: null });
+    leadsCanConvert.mockResolvedValue(["l1"]);
+    renderAt();
+    const user = userEvent.setup();
+    await user.click(await within(await rowOf("Lucia Reyes")).findByRole("button", { name: "Convert Lucia Reyes" }));
+    const dialog = await screen.findByRole("dialog", { name: "Convert Lucia Reyes" });
+    const before = listLeads.mock.calls.length;
+    listLeads.mockResolvedValue({ rows: [row({ id: "l1", name: "Lucia Reyes", status: "converted" })], total: 1 });
+    await user.click(within(dialog).getByRole("button", { name: "Convert" }));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Converted into Reyes Bakery"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(listLeads.mock.calls.length).toBeGreaterThan(before));
+    expect(convertLead.mock.calls[0].slice(0, 2)).toEqual(["f1", "l1"]);
   });
 });

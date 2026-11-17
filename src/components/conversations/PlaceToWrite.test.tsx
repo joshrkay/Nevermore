@@ -14,7 +14,7 @@ const fetchMyMailbox = vi.fn();
 vi.mock("@/lib/advisorApi", () => ({ fetchMyMailbox: () => fetchMyMailbox() }));
 const startBrokerSignIn = vi.fn();
 vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: (...a: unknown[]) => startBrokerSignIn(...a) }));
-const api = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), openConversation: vi.fn() };
+const api = { getConversation: vi.fn(), sendConversationMessage: vi.fn(), workTheQueue: vi.fn(), listAttachableFiles: vi.fn(), openConversation: vi.fn(), addSenderAsContact: vi.fn() };
 vi.mock("@/lib/conversationApi", async () => ({ ...(await vi.importActual<object>("@/lib/conversationApi")), ...api }));
 
 const { default: PlaceToWrite } = await import("./PlaceToWrite");
@@ -138,6 +138,39 @@ const write = async (subject: string, body: string) => {
   await user.type(screen.getByLabelText("Message"), body);
   return user;
 };
+
+describe("PlaceToWrite: a new sender", () => {
+  const stranger = message({
+    id: "m3", direction: "inbound", status: "received", from: "aisha.khan@harborview.example", fromName: "Aisha Khan", newSender: true, offerContact: true,
+    subject: "Re: Your renewal", body: "Elena is out this week; I handle it now.", at: "2026-11-12T09:00:00+00:00",
+  });
+
+  // Catches: a new sender marked by the database but never offered on the page (CRM-E1.3: "offered as a contact on that account"), or the offer drawn on every
+  // received message, the contact's own replies included.
+  it("offers a new sender as a contact on their message only", async () => {
+    api.getConversation.mockResolvedValue(conversation([stranger, reply, message()]));
+    renderPlace();
+    const items = within(await screen.findByRole("list", { name: "Emails with Elena Marsh" })).getAllByRole("listitem");
+    expect(within(items[0]).getByText("New sender")).toBeInTheDocument();
+    expect(within(items[0]).getByRole("button", { name: "Add as contact" })).toBeInTheDocument();
+    expect(within(items[1]).queryByRole("button", { name: "Add as contact" })).toBeNull();
+    expect(within(items[2]).queryByRole("button", { name: "Add as contact" })).toBeNull();
+  });
+
+  // Catches: a sender added and the offer left on the page (the conversation not asked again), so they could be added twice; the database offers nothing
+  // once they are a contact, so asking again is what removes it.
+  it("after the sender is added, asks the conversation again and the offer is gone", async () => {
+    api.getConversation.mockResolvedValue(conversation([stranger, reply, message()]));
+    api.addSenderAsContact.mockResolvedValue({ id: "k9" });
+    renderPlace();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Add as contact" }));
+    api.getConversation.mockResolvedValue(conversation([{ ...stranger, offerContact: false }, reply, message()]));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Add contact" }));
+    await waitFor(() => expect(api.addSenderAsContact).toHaveBeenCalledWith("f1", "m3", { firstName: "Aisha", lastName: "Khan", title: "", phone: "" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Add as contact" })).toBeNull());
+  });
+});
 
 describe("PlaceToWrite: sending", () => {
   // Catches: a send that goes around send_conversation_message (or the first-send check), or a Send that can be pressed twice while one is on its way.
