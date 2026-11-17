@@ -16,6 +16,7 @@ import { noReplyWords, peoContactWords } from "@/data/quotePage";
 import { isOpenQuoteRequest, quoteReplyDomain, replyAddress } from "@/data/quoteRequests";
 import { useQuotePageQuery, useQuotesQuery } from "@/components/quotes/useQuoteQueries";
 import { QuoteDocument } from "@/components/quotes/QuoteDocument";
+import { EarlierQuotes } from "@/components/quotes/EarlierQuotes";
 import { quoteRevisions } from "@/data/quoteRevisions";
 import { LoadFailed, NotAvailable, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
@@ -35,7 +36,7 @@ const QuotePage = () => {
   const needs = useStillNeeds(firmId, query.data?.detail.id ?? null, query.data != null);
   // The quotes recorded on it (N-2.1): the newest is the current one (N-2.4). Read beside the page, so a failure of it never hides the page.
   const quoted = useQuotesQuery(firmId, query.data?.request.id ?? 0, query.data != null);
-  const { current } = quoteRevisions(quoted.data ?? []);
+  const { current, superseded } = quoteRevisions(quoted.data ?? []);
   if (query.isError && query.data === undefined) return <Frame><LoadFailed error={query.error as Error} what="this quote" onRetry={() => void query.refetch()} /></Frame>;
   if (query.data === null) return <Frame><NotAvailable noun="quote" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
   if (query.data === undefined) return <Frame><QuoteLoading /></Frame>;
@@ -109,6 +110,7 @@ const QuotePage = () => {
       />
       <QuoteFigures request={request} />
       {current && <QuoteDocument quoteRequestId={request.id} quote={current} />}
+      <EarlierQuotes superseded={superseded} />
       <WhatWasSent request={request} currentVersion={detail.currentVersion} messages={detail.quoteRequestMessages} />
     </Frame>
   );

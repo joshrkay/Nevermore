@@ -752,3 +752,4 @@ One line per cycle: the test, the failing line seen, then green.
 20. supabase-setup.test: the setup deploys quote-document-upload (18 functions); index.ts wires the handler | red: expected [ [ '--version' ], …(20) ] to deeply equal [ [ '--version' ], …(21) ] | green
 21. advisorApi.test: uploadQuoteDocument sends the file with its quote to quote-document-upload and returns what became of it, or the refusal's words | red: uploadQuoteDocument is not a function | green
 22. QuotePage.test: the quote's document is named on the page and opens through a signed link (QuoteDocument, useQuotesQuery) | red: Unable to find role="region" and name "Quote document" | green
+23. QuotePage.test: earlier quotes are listed as superseded with their received date, newest first, and the current one is not (EarlierQuotes) | red: Unable to find role="region" and name "Earlier quotes" | green

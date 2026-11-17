@@ -584,4 +584,21 @@ describe("QuotePage: the quote document (N-2.2)", () => {
     expect(advisor.mailAttachmentUrl).toHaveBeenCalledWith(expect.objectContaining({ storage_path: "s1/41/51-proposal.pdf", file_name: "proposal.pdf" }));
     expect(advisor.loadQuotes).toHaveBeenCalledWith(7);
   });
+
+  // Catches: a revised quote that hides the earlier one (the history lost), one that lists the current quote as superseded, or an earlier quote with no date to tell it by.
+  it("lists each earlier quote as superseded with its received date, newest first, and not the current one", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([
+      storedQuote({ id: 1, kind: "estimate", received_on: null }),
+      storedQuote({ id: 3, kind: "firm_offer", received_on: "2026-11-14" }),
+      storedQuote({ id: 2, kind: "estimate", received_on: "2026-11-03", document: document({ file_name: "first-proposal.pdf" }) }),
+    ]);
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Earlier quotes" });
+    const items = within(panel).getAllByRole("listitem");
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Estimate · received Nov 3, 2026 · Superseded · first-proposal.pdf",
+      "Estimate · no received date · Superseded",
+    ]);
+  });
 });
