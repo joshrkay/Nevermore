@@ -82,6 +82,9 @@ test("what a broker types and tells Lenore in an intake the firm started is save
     await page.getByRole("region", { name: /^Intake/ }).getByRole("link", { name: "Start the quote" }).click();
     await dialog.getByRole("button", { name: "Start the intake" }).click();
     await expect(answersLine).toContainText("3 answers in");
+    // Files are the client's to add (D-1912): the broker is told so on the first tab, not given a drop box the database would refuse.
+    await expect(dialog.getByRole("region", { name: "Files come from the client" })).toBeVisible();
+    await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
   });
 
   await test.step("an answer typed on the Company tab is saved: Saved, never Not saved, and it is there after a reload", async () => {

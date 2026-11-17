@@ -319,4 +319,28 @@ describe("the workspace a broker works in (D-1751)", () => {
       expect(screen.getByRole("button", { name: tab })).toBeInTheDocument();
     }
   });
+
+  // Break caught (D-1912): the broker is offered a drop box on the first tab that cannot work for them, because a file belongs to the client's own intake and the database refuses the broker's:
+  // they drop their census, wait, and get "Failed to upload" with nothing said about why or what to do instead.
+  it("does not offer the broker a drop box for files, and says where files come from", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <LiveWorkspace data={EMPTY_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} brokerEntry />
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    const note = screen.getByRole("region", { name: "Files come from the client" });
+    expect(note).toHaveTextContent("Once they accept the invitation they can add files here");
+    expect(note).toHaveTextContent("Company, Payroll and Your Team");
+  });
+
+  it("still offers the employer's own intake its drop box", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <LiveWorkspace data={EMPTY_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('input[type="file"]')).not.toBeNull();
+    expect(screen.queryByRole("region", { name: "Files come from the client" })).not.toBeInTheDocument();
+  });
 });
