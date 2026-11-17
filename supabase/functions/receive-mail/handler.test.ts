@@ -50,6 +50,8 @@ interface Options {
   uploadError?: boolean;
   /** What the faked model answers: the meaning it picks (or any other input), or an HTTP status for a failure. */
   model?: { meaning?: unknown; status?: number };
+  /** The day's shared AI call count: false once it is used up. */
+  budget?: boolean;
 }
 
 function setup(o: Options = {}) {
@@ -67,6 +69,7 @@ function setup(o: Options = {}) {
       // A quote request's attachment has a number for its id; a conversation's, a uuid.
       return { data: { id: fn === "record_inbound_attachment" ? n : attUuid(n), status }, error: null };
     }
+    if (fn === "consume_global_ai_budget") return { data: o.budget ?? true, error: null };
     return { data: {}, error: null };
   });
   const uploads: { bucket: string; path: string; type: string; size: number }[] = [];
@@ -553,5 +556,22 @@ describe("a reply from a PEO", () => {
     expect(t.logs).toContain("MAIL_SUGGESTION_FAILED: message=17 kind=provider_error");
     expect(logLevel("MAIL_SUGGESTION_FAILED: message=17 kind=provider_error")).toBe("warn");
     expect(t.logs.join("\n")).not.toContain("Proposal attached");
+  });
+
+  it("is not read once the day's shared AI budget is used up, and is recorded as before", async () => {
+    const t = setup({ env: KEYED, model: { meaning: "acknowledged" }, budget: false });
+    const res = await handleReceiveRequest(await signed(eventBody()), t.deps);
+    expect(res.status).toBe(200);
+    expect(t.modelRequests).toEqual([]);
+    expect(t.calls("consume_global_ai_budget")).toEqual([{ max_calls: 2000 }]);
+    expect(t.logs).toContain("MAIL_SUGGESTION_SKIPPED: message=17 reason=budget");
+  });
+
+  it("is cut to its first 8000 characters before the model sees it, so a very long mail costs no more than a short one", async () => {
+    const t = setup({ env: KEYED, model: { meaning: "acknowledged" }, message: { text: `${"a".repeat(8000)}TAIL-NOT-SENT`, headers: {} } });
+    await handleReceiveRequest(await signed(eventBody()), t.deps);
+    const content = (t.modelRequests[0] as { messages: { content: string }[] }).messages[0].content;
+    expect(content).toContain("a".repeat(8000));
+    expect(content).not.toContain("TAIL-NOT-SENT");
   });
 });

@@ -30,6 +30,7 @@ import { readBodyCapped } from "../_shared/body.ts";
 import { cleanFileName, MAX_UPLOAD_BYTES, sha256Hex, SNIFF_BYTES, sniffUpload, storageKeyName, STORED_CONTENT_TYPE } from "../_shared/fileSignature.ts";
 import { malwareAlert, postScanAlert, selectScanner, type ScannerDeps } from "../_shared/malwareScan.ts";
 import { verifySignature } from "../resend-webhook/verify.ts";
+import { readBudgetLimits } from "../_shared/ai/budget.ts";
 import { suggestMeaning } from "./suggest.ts";
 import {
   addressesOf, attachmentDecision, bodyText, isAutomatic, keptHeaders, MAX_ATTACHMENTS, parseAddress, parseReceivedEmail, parseReceivedEvent,
@@ -78,7 +79,7 @@ const errorCode = (error: unknown): string => {
 /** Which console a log line belongs on: a recorded message is info, noise from outside is a warning, the rest is for the error log operators alert on. */
 export function logLevel(line: string): "log" | "warn" | "error" {
   if (line.startsWith("MAIL_RECORDED:")) return "log";
-  if (line.startsWith("MAIL_REJECTED:") || line.startsWith("MAIL_IGNORED:") || line.startsWith("MAIL_RECEIVING_OFF:") || line.startsWith("MAIL_SUGGESTION_FAILED:")) return "warn";
+  if (line.startsWith("MAIL_REJECTED:") || line.startsWith("MAIL_IGNORED:") || line.startsWith("MAIL_RECEIVING_OFF:") || line.startsWith("MAIL_SUGGESTION_FAILED:") || line.startsWith("MAIL_SUGGESTION_SKIPPED:")) return "warn";
   return "error";
 }
 
@@ -283,9 +284,13 @@ export async function handleReceiveRequest(req: Request, deps: ReceiveDeps): Pro
     // Only a message just recorded on a quote request is read: not a replay (read once), not mail held for nobody.
     const fresh = result?.duplicate !== true && result?.held !== true;
     const read = fresh
-      ? await suggestMeaning({ env: deps.env, fetch: deps.fetch, now: deps.now, sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))) }, body.text)
+      ? await suggestMeaning({
+        env: deps.env, fetch: deps.fetch, now: deps.now, sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+        spend: async () => (await client.rpc("consume_global_ai_budget", { max_calls: readBudgetLimits(deps.env).globalPerDay })).data === true,
+      }, body.text)
       : { meaning: null };
     // Logs carry the kind of failure only, never the message or the model's words. A reply without a suggestion is a reply as before.
+    if (read.skipped) log(`MAIL_SUGGESTION_SKIPPED: message=${messageId} reason=${read.skipped}`);
     if (read.failure) log(`MAIL_SUGGESTION_FAILED: message=${messageId} kind=${read.failure}`);
     if (read.meaning) await client.rpc("record_reply_suggestion", { p_message_id: messageId, p_status: read.meaning });
     const summary = await processAttachments({
