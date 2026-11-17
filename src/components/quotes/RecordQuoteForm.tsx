@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { QuoteLinesField, type LineColumn } from "@/components/quotes/QuoteLinesField";
 import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
-import { QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_KIND_LABELS, QUOTE_NOTE_MAX, type QuoteAdminFeeBasis, type QuoteKind } from "@/data/quoteRequests";
+import { QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_KIND_LABELS, QUOTE_NOTE_MAX, QUOTE_TIERS, type QuoteTier, type QuoteAdminFeeBasis, type QuoteKind } from "@/data/quoteRequests";
 import { recordQuote, type QuoteRequestRow } from "@/lib/advisorApi";
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
@@ -11,6 +11,21 @@ const FEE_BASIS_LABELS: Record<QuoteAdminFeeBasis, string> = { per_employee_per_
 
 type Lines = Record<string, string>[];
 const ONE_OFF_COLUMNS: LineColumn[] = [{ key: "name", label: "Name" }, { key: "amount", label: "Amount", type: "number" }];
+
+const WORKERS_COMP_COLUMNS: LineColumn[] = [{ key: "state", label: "State" }, { key: "class_code", label: "Class code" }, { key: "rate", label: "Rate per $100 of payroll", type: "number" }];
+
+const UNEMPLOYMENT_COLUMNS: LineColumn[] = [
+  { key: "state", label: "State" },
+  { key: "charge", label: "How it is charged", options: [{ value: "employer_rate", label: "The employer's own rate" }, { value: "peo_rate", label: "The PEO's rate" }] },
+  { key: "rate", label: "Percent of taxable wages", type: "number", when: (l) => l.charge === "peo_rate" },
+];
+
+const TIER_LABELS: Record<QuoteTier, string> = { employee_only: "Employee only", employee_spouse: "Employee and spouse", employee_children: "Employee and children", family: "Family" };
+const MEDICAL_COLUMNS: LineColumn[] = [
+  { key: "plan", label: "Plan" },
+  { key: "tier", label: "Tier", options: QUOTE_TIERS.map((t) => ({ value: t, label: TIER_LABELS[t] })) },
+  { key: "monthly", label: "Monthly rate per employee", type: "number" },
+];
 
 /** The form that records what a PEO quoted (CRM-Q3.3, screen 12). Nothing is saved until the agent saves. */
 export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: QuoteRequestRow; onRecorded: () => void; onCancel: () => void }) {
@@ -22,6 +37,9 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
   const [expiresOn, setExpiresOn] = useState("");
   const [startOn, setStartOn] = useState("");
   const [oneOff, setOneOff] = useState<Lines>([]);
+  const [workersComp, setWorkersComp] = useState<Lines>([]);
+  const [unemployment, setUnemployment] = useState<Lines>([]);
+  const [medical, setMedical] = useState<Lines>([]);
   const [note, setNote] = useState("");
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -44,9 +62,9 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
         adminFee: fee.trim() !== "" ? Number(fee) : null,
         adminFeeBasis: basis || null,
         oneOffFees: oneOff.length > 0 ? oneOff.map((l) => ({ name: (l.name ?? "").trim(), amount: Number(l.amount) })) : null,
-        workersComp: null,
-        unemployment: null,
-        medical: null,
+        workersComp: workersComp.length > 0 ? workersComp.map((l) => ({ state: (l.state ?? "").trim().toUpperCase(), class_code: (l.class_code ?? "").trim(), rate: Number(l.rate) })) : null,
+        unemployment: unemployment.length > 0 ? unemployment.map((l) => (l.charge === "peo_rate" ? { state: (l.state ?? "").trim().toUpperCase(), charge: "peo_rate" as const, rate: Number(l.rate) } : { state: (l.state ?? "").trim().toUpperCase(), charge: "employer_rate" as const })) : null,
+        medical: medical.length > 0 ? medical.map((l) => ({ plan: (l.plan ?? "").trim(), tier: l.tier as QuoteTier, monthly: Number(l.monthly) })) : null,
         note: note.trim() || null,
       });
       toast.success(`Recorded ${request.peo_name}'s quote.`);
@@ -80,6 +98,9 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
         {QUOTE_ADMIN_FEE_BASES.map((b) => <option key={b} value={b}>{FEE_BASIS_LABELS[b]}</option>)}
       </select>
       <QuoteLinesField title="One-off fees" noun="one-off fee" columns={ONE_OFF_COLUMNS} lines={oneOff} onChange={setOneOff} />
+      <QuoteLinesField title="Workers' comp rates" noun="workers' comp rate" columns={WORKERS_COMP_COLUMNS} lines={workersComp} onChange={setWorkersComp} />
+      <QuoteLinesField title="Unemployment tax" noun="unemployment line" article="an" columns={UNEMPLOYMENT_COLUMNS} lines={unemployment} onChange={setUnemployment} />
+      <QuoteLinesField title="Medical rates" noun="medical rate" columns={MEDICAL_COLUMNS} lines={medical} onChange={setMedical} />
       <label htmlFor={`${id}-received`} className="block text-xs text-muted-foreground">Received on</label>
       <input id={`${id}-received`} type="date" value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} className={inputClass} />
       <label htmlFor={`${id}-expires`} className="block text-xs text-muted-foreground">Expires on</label>

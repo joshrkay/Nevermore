@@ -860,3 +860,7 @@ lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clea
 2. QuotePage.test: a quote cannot be saved until marked estimate or firm offer | red: Unable to find an accessible element with the role "form" and name "Record the quote from TriNet" | green
 3. QuotePage.test: recordQuote only, empty areas left out as null, page read again, form closes | red: Unable to find a label with the text of: Admin fee | green
 4. QuotePage.test: a one-off fee is recorded as a name and a number | red: Unable to find an accessible element with the role "button" and name "Add a one-off fee" | green
+5. QuotePage.test: a workers' comp rate is recorded as state, class code and number | red: Unable to find an accessible element with the role "button" and name "Add a workers' comp rate" | green
+6. QuotePage.test: unemployment tax per state, employer rate or the PEO rate with its percent | red: Unable to find an accessible element with the role "button" and name "Add an unemployment line" | green
+7. QuotePage.test: a medical rate is recorded as plan, tier code and monthly number | red: Unable to find an accessible element with the role "button" and name "Add a medical rate" | green
+8. QuotePage.test: a refused quote says why, keeps what was typed, does not close | NOT red first (failure handling was written with cycle 3); seen red by removing failure.failed(err): Unable to find an element with the text: /administrative fee comes with its basis/ | green

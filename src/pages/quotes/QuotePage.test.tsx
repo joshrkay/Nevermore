@@ -328,6 +328,49 @@ describe("QuotePage: Record the quote, cost areas", () => {
     await userEvent.type(within(form).getByLabelText("One-off fee 1 amount"), "500");
     expect(await saved(form)).toMatchObject({ oneOffFees: [{ name: "Setup", amount: 500 }], workersComp: null, unemployment: null, medical: null });
   });
+  // Catches: workers' comp rates that cannot be entered, a class code lost, or the rate sent as text.
+  it("records a workers' comp rate as a state, a class code and a number", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add a workers' comp rate" }));
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 state"), "OR");
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 class code"), "8810");
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 rate per $100 of payroll"), "0.45");
+    expect(await saved(form)).toMatchObject({ workersComp: [{ state: "OR", class_code: "8810", rate: 0.45 }], oneOffFees: null });
+  });
+  // Catches: an unemployment line that sends a rate for the employer's own rate (the database refuses extra keys), or one that cannot take the PEO's rate.
+  it("records unemployment tax per state as the employer's own rate or the PEO's rate with its percent", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add an unemployment line" }));
+    await userEvent.type(within(form).getByLabelText("Unemployment line 1 state"), "OR");
+    await userEvent.selectOptions(within(form).getByLabelText("Unemployment line 1 how it is charged"), "peo_rate");
+    await userEvent.type(within(form).getByLabelText("Unemployment line 1 percent of taxable wages"), "2.7");
+    await userEvent.click(within(form).getByRole("button", { name: "Add an unemployment line" }));
+    await userEvent.type(within(form).getByLabelText("Unemployment line 2 state"), "wa");
+    await userEvent.selectOptions(within(form).getByLabelText("Unemployment line 2 how it is charged"), "employer_rate");
+    expect(within(form).queryByLabelText("Unemployment line 2 percent of taxable wages")).not.toBeInTheDocument();
+    expect((await saved(form)).unemployment).toEqual([{ state: "OR", charge: "peo_rate", rate: 2.7 }, { state: "WA", charge: "employer_rate" }]);
+  });
+  // Catches: medical rates that cannot be entered, a tier sent in words instead of its code, or the monthly rate sent as text.
+  it("records a medical rate as a plan, a tier and a monthly number", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add a medical rate" }));
+    await userEvent.type(within(form).getByLabelText("Medical rate 1 plan"), "Gold PPO");
+    await userEvent.selectOptions(within(form).getByLabelText("Medical rate 1 tier"), "employee_spouse");
+    await userEvent.type(within(form).getByLabelText("Medical rate 1 monthly rate per employee"), "812.5");
+    expect((await saved(form)).medical).toEqual([{ plan: "Gold PPO", tier: "employee_spouse", monthly: 812.5 }]);
+  });
+  // Catches: a refused quote (a fee with no basis, a closed request) that closes the form as if saved, or loses what the agent typed.
+  it("says why the database refused the quote, keeps what was typed and does not close the form", async () => {
+    const { AdvisorApiError } = await import("@/lib/advisorApi");
+    const form = await fill("firm_offer");
+    advisor.recordQuote.mockRejectedValue(new AdvisorApiError("An administrative fee comes with its basis: per employee per month, or percent of payroll"));
+    await userEvent.type(within(form).getByLabelText("Admin fee"), "40");
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    expect(await within(form).findByText(/administrative fee comes with its basis/)).toBeInTheDocument();
+    expect(within(form).getByLabelText("Admin fee")).toHaveValue(40);
+    expect(within(form).getByLabelText("Estimate or firm offer")).toHaveValue("firm_offer");
+    expect(quotes.getQuotePage).toHaveBeenCalledTimes(1);
+  });
   // END cost areas
 });
 

@@ -15,10 +15,11 @@ export interface LineColumn {
  * The lines of one cost area of a quote (N-2.1): a line is added with the button and each box is labelled with its line's number. A cost area with no lines is "Not quoted"
  * (D-721), so nothing is drawn but the button until a line is added.
  */
-export function QuoteLinesField({ title, noun, columns, lines, onChange }: {
+export function QuoteLinesField({ title, noun, article = "a", columns, lines, onChange }: {
   title: string;
   /** "one-off fee": the add button reads "Add a one-off fee", each box "One-off fee 1 name". */
   noun: string;
+  article?: "a" | "an";
   columns: readonly LineColumn[];
   lines: readonly Record<string, string>[];
   onChange: (lines: Record<string, string>[]) => void;
@@ -45,7 +46,7 @@ export function QuoteLinesField({ title, noun, columns, lines, onChange }: {
           <button type="button" aria-label={`Remove ${noun} ${at + 1}`} onClick={() => onChange(lines.filter((_, i) => i !== at))} className="min-h-11 px-3 rounded-md border border-border text-xs">Remove</button>
         </div>
       ))}
-      <button type="button" onClick={() => onChange([...lines, {}])} className="min-h-11 px-3 rounded-md border border-border text-xs">{`Add a ${noun}`}</button>
+      <button type="button" onClick={() => onChange([...lines, {}])} className="min-h-11 px-3 rounded-md border border-border text-xs">{`Add ${article} ${noun}`}</button>
     </fieldset>
   );
 }
