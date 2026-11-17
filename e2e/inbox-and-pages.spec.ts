@@ -151,13 +151,22 @@ test("the Inbox badge and the rows Inbox opens agree, and the queue pages 50 a p
     await expect(page.getByRole("link", { name: /^Quotes/ })).not.toHaveAttribute("aria-current", "page");
   });
 
-  await test.step("Quotes shows every submission again, and Back returns to the inbox", async () => {
+  await test.step("Quotes opens the quotes table (CRM-Q4.1, D-1800), and Back returns to the inbox", async () => {
     await page.getByRole("link", { name: /^Quotes/ }).click();
-    await expect(page.getByText("1 to 50 of 52")).toBeVisible();
+    await expect(page).toHaveURL(/\/quotes$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Quotes" })).toBeVisible();
     await expect(page.getByRole("link", { name: /^Quotes/ })).toHaveAttribute("aria-current", "page");
     await page.goBack();
     await expect(page).toHaveURL(/\/inbox$/);
     await expect(page.getByText("rep@trinet.test")).toBeVisible();
+  });
+
+  await test.step("the quotes table's Submissions link shows every submission again", async () => {
+    await page.getByRole("link", { name: /^Quotes/ }).click();
+    await page.getByRole("link", { name: "Submissions", exact: true }).click();
+    await expect(page).toHaveURL(/\/advisor$/);
+    await expect(page.getByText("1 to 50 of 52")).toBeVisible();
+    await expect(page.getByRole("link", { name: /^Quotes/ })).toHaveAttribute("aria-current", "page");
   });
 
   await test.step("the queue's own new-mail link (mail=new) still lands on the one row, and the address is rewritten (D-8)", async () => {
