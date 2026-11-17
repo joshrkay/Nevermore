@@ -77,6 +77,19 @@ describe("New quote step 2 starts the intake (CRM-Q2.2, D-1872)", () => {
   });
 });
 
+describe("A certified intake is past step 2 (CRM-Q2.2, D-1872)", () => {
+  // Break caught: once the employer has certified, the dialog still draws Lenore and the invitation over an intake that is finished, so the agent could invite again or edit what is certified.
+  it("draws no chamber and no invitation once the intake is certified", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: draftIntake({ certifiedAt: new Date("2026-11-17T10:00:00Z"), certifiedBy: "Lucia Torres", pipelineStatus: "certified" }) }));
+    const { dialog } = await open();
+    await within(dialog).findByText("Harborview Dental Group");
+    expect(within(dialog).queryByTestId("chamber")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Invite the contact to finish and certify" })).not.toBeInTheDocument();
+    expect(brokerIntake.fetchIntakeInviteStatus).not.toHaveBeenCalled();
+    expect(dialog).not.toHaveClass("max-w-[95vw]");
+  });
+});
+
 describe("The room the intake gets (CRM-Q2.2, D-1872)", () => {
   // Break caught: Lenore and the ten tabs are squeezed into the account step's narrow dialog (max-w-2xl), so the two sides of the intake cannot sit side by side.
   it("widens the dialog while the chamber is open, and keeps the narrow one for the summary", async () => {

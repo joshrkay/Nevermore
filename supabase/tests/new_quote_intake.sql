@@ -190,9 +190,17 @@
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261122250000_convert_lead.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
+\i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123120000_broker_intake.sql
 \i supabase/migrations/20261123120100_broker_intake_columns.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
+\i supabase/migrations/20261124090000_firm_signup_emails.sql
 \i supabase/migrations/20261124100000_new_quote_intake.sql
 SET client_min_messages = notice;
 
@@ -314,3 +322,12 @@ SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
 SELECT public.start_broker_intake(pg_temp.id('opp2')) ->> 'intake_id' AS made2 \gset
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is((SELECT chamber_data FROM public.chamber_sessions WHERE id = :'made2'::uuid), '{"company_name":"opp2 Co"}'::jsonb, 'only the name is written');
+
+-- 4. A field holding only spaces is no answer: it is left out like a blank.
+-- Break caught: the account's whitespace-only industry, street or provider is written in as an answer, so the chamber counts a blank as given and the agent never sees it is still needed.
+SELECT pg_temp.opp('opp3', 'alpha', 'a_agent');
+UPDATE public.accounts SET industry = '   ', street = '  ', website = ' ', current_provider = '  ' WHERE id = (SELECT account_id FROM public.opportunities WHERE id = pg_temp.id('opp3'));
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT public.start_broker_intake(pg_temp.id('opp3')) ->> 'intake_id' AS made3 \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is((SELECT chamber_data FROM public.chamber_sessions WHERE id = :'made3'::uuid), '{"company_name":"opp3 Co"}'::jsonb, 'spaces are not an answer');

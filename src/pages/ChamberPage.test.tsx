@@ -748,6 +748,16 @@ describe("ChamberPage for a member of the firm working the firm's intake (D-1751
     session.provenance = {};
   });
 
+  // Break caught (CRM-Q2.2, D-1871): the employer's own chamber shows them the firm's "entered by the firm" counts, which are the firm's working view and not theirs.
+  it("shows the employer no firm progress line in their own intake", () => {
+    session.sessionId = "own-intake";
+    session.brokerEntry = false;
+    session.chamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Acme" };
+    render(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+    expect(screen.queryByRole("status", { name: "Intake progress" })).not.toBeInTheDocument();
+    session.chamberData = { ...EMPTY_CHAMBER_DATA };
+  });
+
   // Break caught (CRM-Q2.2): inside New quote the chamber takes the height of the window, not of the dialog's room, so its tabs and chat spill out of the dialog.
   it("fills the room it is given when embedded, instead of the window", () => {
     session.sessionId = "firm-intake";
