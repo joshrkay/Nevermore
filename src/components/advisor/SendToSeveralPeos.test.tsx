@@ -23,10 +23,13 @@ const loadPeoAuthorizations = vi.fn();
 vi.mock("@/lib/peoAuthorizationsApi", () => ({ loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a) }));
 const loadRegisteredElsewhere = vi.fn();
 vi.mock("@/lib/peoRegistrationsApi", () => ({ loadRegisteredElsewhere: (...a: unknown[]) => loadRegisteredElsewhere(...a) }));
+const fetchFirmApprovedToSend = vi.fn();
+vi.mock("@/lib/firmApi", async () => ({ ...(await vi.importActual<object>("@/lib/firmApi")), fetchFirmApprovedToSend: (...a: unknown[]) => fetchFirmApprovedToSend(...a) }));
 const issueBundleLink = vi.fn();
 vi.mock("@/lib/bundleLink", () => ({ issueBundleLink: (...a: unknown[]) => issueBundleLink(...a), supabaseBundleLinkDeps: async () => ({}) }));
 
 const { default: SendToSeveralPeos } = await import("./SendToSeveralPeos");
+const { WorkspaceContext } = await import("@/components/workspace/workspaceContext");
 
 const sourced = { kind: "document", name: "Broker guide", checked_on: "2026-11-02" };
 // Justworks: everything it needs to quote is held, and it fits. TriNet: an answer and a document missing, and a headcount check not met (12 of 20).
@@ -67,6 +70,16 @@ const open = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Send to several PEOs" }));
   return screen.findByRole("region", { name: "Send to several PEOs" });
 };
+/** The panel with the extra props, inside a workspace when a firm is given (the panel reads the firm's approval from it). */
+const openWith = async (extra: Record<string, unknown>, firm: { id: string; name: string; address: string } | null = null) => {
+  render(
+    <WorkspaceContext.Provider value={{ firm, role: "Agent", isOwner: false, isSupport: false, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: false, person: "Sam" }}>
+      <SendToSeveralPeos {...props} {...extra} />
+    </WorkspaceContext.Provider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Send to several PEOs" }));
+  return screen.findByRole("region", { name: "Send to several PEOs" });
+};
 const peoRow = async (region: HTMLElement, peo: string) => (await within(region).findByRole("checkbox", { name: peo })).closest("li")!;
 
 describe("SendToSeveralPeos", () => {
@@ -79,6 +92,7 @@ describe("SendToSeveralPeos", () => {
     }));
     loadPeoAuthorizations.mockReset().mockResolvedValue(authorized("Justworks", "Oasis", "TriNet"));
     loadRegisteredElsewhere.mockReset().mockResolvedValue([]);
+    fetchFirmApprovedToSend.mockReset().mockResolvedValue(true);
     sendToPeo.mockReset().mockImplementation(async (s: { peo: string }) => ({ quoteRequestId: s.peo.length, messageId: 40 + s.peo.length }));
     issueBundleLink.mockReset().mockResolvedValue({ id: 9, token: "t", url: "https://app.example/b/t", expiresAt: "2026-12-16T00:00:00Z", version: 3, notIncluded: [] });
   });
@@ -562,5 +576,83 @@ describe("SendToSeveralPeos: choosing (CRM-Q2.5)", () => {
     fireEvent.click(await within(region).findByRole("button", { name: "Try again with Oasis" }));
     await waitFor(() => expect(sendToPeo).toHaveBeenCalledTimes(3));
     expect((sendToPeo.mock.calls[2][0] as { peo: string }).peo).toBe("Oasis");
+  });
+});
+
+// Say the rule before the click (D-1910). Three of the six things a send needs were learned only by pressing Send: the submission not yet Ready for market, the firm not yet approved, and
+// (after a banner) the mailbox. The first two are known on the page before the choosing step, so they are said there, in the database's own words, and Send waits for them.
+describe("SendToSeveralPeos: what stops a send, said before it is pressed", () => {
+  const firm = { id: "f1", name: "Acme Advisory", address: "acme" };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 16, 12));
+    fetchMyMailbox.mockReset().mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    loadPeoSendContext.mockReset().mockImplementation(async (_s: string, peo: string) => ({
+      mailbox: { connected: true, address: "sam@acme.example" }, contacts: contacts[peo] ?? [], reply_address: null,
+    }));
+    loadPeoAuthorizations.mockReset().mockResolvedValue(authorized("Justworks", "Oasis", "TriNet"));
+    loadRegisteredElsewhere.mockReset().mockResolvedValue([]);
+    fetchFirmApprovedToSend.mockReset().mockResolvedValue(true);
+    sendToPeo.mockReset().mockImplementation(async (s: { peo: string }) => ({ quoteRequestId: s.peo.length, messageId: 40 + s.peo.length }));
+    issueBundleLink.mockReset().mockResolvedValue({ id: 9, token: "t", url: "https://app.example/b/t", expiresAt: "2026-12-16T00:00:00Z", version: 3, notIncluded: [] });
+  });
+  const noticeIn = (region: HTMLElement) => within(region).queryByText("Not ready to send yet");
+
+  // Break caught: a submission still Submitted or Under review shows a note box and a Send that the database refuses, with the reason learned only after the click.
+  it("says a submission that isn't Ready for market must be moved there first, in the choosing step, and does not let it be sent", async () => {
+    const region = await openWith({ stage: "under_review" });
+    expect(await within(region).findByText("Move this submission to Ready for market first. It is Under review.")).toBeInTheDocument();
+    expect(noticeIn(region)).toBeInTheDocument();
+    fireEvent.click(await within(region).findByRole("button", { name: "Review" }));
+    const send = await within(region).findByRole("button", { name: "Send to 3 PEOs" }).catch(() => within(region).findByRole("button", { name: /^Send to \d PEO/ }));
+    expect(send).toBeDisabled();
+    expect(within(region).getByText("Move this submission to Ready for market first. It is Under review.")).toBeInTheDocument();
+    fireEvent.click(send);
+    expect(sendToPeo).not.toHaveBeenCalled();
+  });
+
+  // Break caught: the notice drawn for a submission that can be sent, so every send carries a warning that isn't true, or Send disabled for it.
+  it.each(["ready_for_market", "sent_to_carrier", "quoted"] as const)("says nothing for a submission at %s", async (stage) => {
+    const region = await openWith({ stage });
+    await within(region).findByRole("checkbox", { name: "Justworks" });
+    expect(noticeIn(region)).not.toBeInTheDocument();
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    expect(await within(region).findByRole("button", { name: /^Send to \d PEO/ })).toBeEnabled();
+  });
+
+  // Break caught: a firm Nevermore has not approved sees nothing until Send is refused ("Your firm hasn't been approved...").
+  it("says a firm that isn't approved yet can't send, in the database's words, and does not let it be sent", async () => {
+    fetchFirmApprovedToSend.mockResolvedValue(false);
+    const region = await openWith({ stage: "ready_for_market" }, firm);
+    expect(await within(region).findByText(/Your firm hasn't been approved to send to PEOs yet\./)).toBeInTheDocument();
+    expect(fetchFirmApprovedToSend).toHaveBeenCalledWith("f1");
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    expect(await within(region).findByRole("button", { name: /^Send to \d PEO/ })).toBeDisabled();
+    expect(sendToPeo).not.toHaveBeenCalled();
+  });
+
+  it("says both when both are true, and nothing when the firm is approved", async () => {
+    fetchFirmApprovedToSend.mockResolvedValue(false);
+    const both = await openWith({ stage: "submitted" }, firm);
+    expect(await within(both).findByText(/Your firm hasn't been approved/)).toBeInTheDocument();
+    expect(within(both).getByText("Move this submission to Ready for market first. It is Submitted.")).toBeInTheDocument();
+  });
+
+  it("says nothing of approval for an approved firm", async () => {
+    const region = await openWith({ stage: "ready_for_market" }, firm);
+    await waitFor(() => expect(fetchFirmApprovedToSend).toHaveBeenCalled());
+    await within(region).findByRole("checkbox", { name: "Justworks" });
+    expect(noticeIn(region)).not.toBeInTheDocument();
+  });
+
+  // Break caught: an approval that can't be read (a blip, no firm known) blocks every send, or says the firm isn't approved on no evidence: the database still refuses a send it should.
+  it("says nothing, and blocks nothing, when it can't tell whether the firm is approved", async () => {
+    fetchFirmApprovedToSend.mockResolvedValue(null);
+    const region = await openWith({ stage: "ready_for_market" }, firm);
+    await waitFor(() => expect(fetchFirmApprovedToSend).toHaveBeenCalled());
+    await within(region).findByRole("checkbox", { name: "Justworks" });
+    expect(noticeIn(region)).not.toBeInTheDocument();
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    expect(await within(region).findByRole("button", { name: /^Send to \d PEO/ })).toBeEnabled();
   });
 });

@@ -39,11 +39,13 @@ export function IntakeInvite({ intakeId, contact }: { intakeId: string; contact:
     );
   }
   if (!asking) {
+    // One button (D-1909), named for the person it invites. There were two, "Invite the contact to finish and certify" and "The contact does it all", and both sent the same link: the second only skipped
+    // the form. Either way the contact finishes and signs, whatever the firm has entered, so the button says who and shows where the invitation goes before anything is sent.
+    const first = contact?.name.trim().split(/\s+/)[0];
     return (
       <div className="space-y-1">
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => setAsking(true)}>Invite the contact to finish and certify</Button>
-          <Button type="button" variant="outline" onClick={() => (email.trim() === "" ? setAsking(true) : send())}>The contact does it all</Button>
+          <Button type="button" variant="outline" onClick={() => setAsking(true)}>{first ? `Invite ${first}` : "Invite the contact"}</Button>
         </div>
         {alert}
       </div>

@@ -25,6 +25,20 @@ import ReckoningTab from "../ReckoningTab";
 import ExtraQuestionsSection from "../ExtraQuestionsSection";
 import { askedPeos, NO_EXTRA_ANSWERS, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 
+/**
+ * What the Upload tab says to the broker working an intake the firm started (D-1912). A file belongs to the client's own intake: the database takes one only from the person whose intake it is, so a drop box
+ * here would take a file, spin, and fail. The broker says what they know on the other tabs or to Lenore, and invites the client, who can add files once they have taken the intake over.
+ */
+const BrokerFilesNote = () => (
+  <section aria-labelledby="broker-files-note" className="p-4 space-y-2 text-sm">
+    <h3 id="broker-files-note" className="font-medium">Files come from the client</h3>
+    <p>
+      A census or a policy document is added by the client, to their own intake. Until then, enter what you know on the Company, Payroll and Your Team tabs, or tell Lenore.
+    </p>
+    <p className="text-muted-foreground">Invite the client when you are ready. Once they accept the invitation they can add files here.</p>
+  </section>
+);
+
 const WORKSPACE_TABS = [
   { key: "upload", label: "① Upload" },
   { key: "company", label: "② Company" },
@@ -173,7 +187,8 @@ const LiveWorkspace = ({
       <VerifiedFieldsContext.Provider value={verified}>
         <RequestedFieldsContext.Provider value={requested}>
         <div className="flex-1 overflow-y-auto">
-          {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
+          {activeTab === "upload" && brokerEntry && <BrokerFilesNote />}
+          {activeTab === "upload" && !brokerEntry && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
           {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
           {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
           {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}

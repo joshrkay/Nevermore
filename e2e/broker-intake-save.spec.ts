@@ -4,7 +4,7 @@ import { ANON_KEY, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs
 import { INTAKE_MESSAGE } from "./stack/intake-script.mjs";
 import { totpCode } from "./stack/totp.mjs";
 
-// What a broker enters in an intake the firm started is kept (D-1906). The firm's member opens the intake from New quote, types an answer on a tab and tells Lenore about
+// What a broker enters in an intake the firm started is kept (D-1906), and the intake can be come back to (D-1908). The firm's member opens the intake from New quote, types an answer on a tab and tells Lenore about
 // the company; each is saved, shown as Saved, and is still there after a reload, and the database holds what was entered and nothing the broker did not enter. Before D-1906 every
 // one of these saves was refused by the database ("The FEIN is typed by the employer", "Only the firm's members enter answers as the broker"): the answers were drawn on
 // screen, "Not saved · Retry" came up, Retry was refused the same way and a reload lost them. The existing specs create their records with SQL, so nothing had saved as a broker through the browser.
@@ -82,6 +82,9 @@ test("what a broker types and tells Lenore in an intake the firm started is save
     await page.getByRole("region", { name: /^Intake/ }).getByRole("link", { name: "Start the quote" }).click();
     await dialog.getByRole("button", { name: "Start the intake" }).click();
     await expect(answersLine).toContainText("3 answers in");
+    // Files are the client's to add (D-1912): the broker is told so on the first tab, not given a drop box the database would refuse.
+    await expect(dialog.getByRole("region", { name: "Files come from the client" })).toBeVisible();
+    await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
   });
 
   await test.step("an answer typed on the Company tab is saved: Saved, never Not saved, and it is there after a reload", async () => {
@@ -96,6 +99,16 @@ test("what a broker types and tells Lenore in an intake the firm started is save
     await expect(answersLine).toContainText("4 answers in");
     await dialog.getByRole("button", { name: "② Company", exact: true }).click();
     await expect(dialog.getByText("Bookbinding", { exact: true })).toBeVisible();
+  });
+
+  await test.step("closing the dialog does not lose the way back: the opportunity offers Continue the intake, which reopens the intake as it was, with the invitation", async () => {
+    await dialog.getByRole("button", { name: "Save and close" }).last().click();
+    const panel = page.getByRole("region", { name: /^Intake/ });
+    await expect(panel.getByRole("link", { name: "Continue the intake" })).toBeVisible();
+    await expect(panel.getByRole("link", { name: "Start the quote" })).toHaveCount(0);
+    await panel.getByRole("link", { name: "Continue the intake" }).click();
+    await expect(answersLine).toContainText("4 answers in");
+    await expect(dialog.getByRole("button", { name: /^Invite/ }).first()).toBeVisible();
   });
 
   await test.step("what is told to Lenore is saved too, with the conversation, and is there after a reload", async () => {

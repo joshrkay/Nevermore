@@ -214,6 +214,8 @@
 \i supabase/migrations/20261125110000_quote_comparison.sql
 \i supabase/migrations/20261125120000_question_requests.sql
 \i supabase/migrations/20261125130000_broker_save_whole_form.sql
+\i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
+\i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -918,3 +920,57 @@ SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"fei
 SELECT pg_temp.is((SELECT chamber_data ->> 'industry' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'Bakery', 'nothing of either save is kept');
 -- 68. Whoever is not a member still cannot give an answer a broker's mark, whole form or not (test 55 above says it for the employer; this is the same save from a stranger's account).
 SELECT pg_temp.is(pg_temp.form_save('client', pg_temp.id('form_intake'), '{"industry": "Forged"}'), 'rows:0', '68: a stranger''s whole-form save changes nothing (row security shows them no such row)');
+
+-- 69. The opportunity's page says whether the firm started the intake it holds (D-1908). The screen offers "Continue the intake" only for one the firm started: that is the intake a member can enter
+-- answers in and invite the client from, and the dialog that does it opens only for it. An employer's own intake, certified or not, is not the firm's to continue.
+-- Break caught: the link offered on an employer's intake (a dialog that has nothing to show), or never offered on the firm's (a broker who closed the dialog has no way back to the invitation).
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE(public.opportunity_page(pg_temp.id('alpha'), pg_temp.id('opp_form')) -> 'intake' ->> 'started_by_firm', 'missing') AS firm_started \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'firm_started'::text, 'true', '69: an intake the firm started is marked as the firm''s on the opportunity''s page');
+SELECT pg_temp.new_user('emp69');
+SELECT pg_temp.opp('opp_employer', 'alpha', 'a_agent');
+INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES (pg_temp.id('emp69'), pg_temp.id('alpha'), '{}') RETURNING id AS employer_session \gset
+UPDATE public.opportunities SET intake_id = :'employer_session' WHERE id = pg_temp.id('opp_employer');
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE(public.opportunity_page(pg_temp.id('alpha'), pg_temp.id('opp_employer')) -> 'intake' ->> 'started_by_firm', 'missing') AS employer_started \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'employer_started'::text, 'false', 'and an intake the employer started is not');
+
+-- 70. A draft the firm started does not expire from sitting idle (D-1911). It is the firm's working file, not a prospect's abandoned draft: a broker who leaves one for a month and comes back to it
+-- (through Continue the intake, D-1908) must find it as it was, not "expired" with the invitation, the answers and the way back gone. An employer's own idle draft still expires, as it always did.
+-- Break caught: the 30-day job ending a firm-started intake the day after a long weekend of nobody touching it, a quote started and lost.
+UPDATE public.chamber_sessions SET expires_at = now() - interval '1 day' WHERE id IN (pg_temp.id('form_intake'), :'employer_session'::uuid);
+SELECT public.expire_idle_intakes() AS moved \gset
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = :'employer_session'::uuid), 'expired', '70: an employer''s own draft, idle past its time, still expires');
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'in_progress', 'and the draft the firm started, idle past the same time, does not');
+-- 71. Nor is the reminder that a draft is about to close sent for one the firm started, whoever has it now: the client who accepted the invitation owns the intake, asked for reminders and has a verified
+-- email, and nothing is going to close it. The same client's own draft is still reminded.
+-- Break caught: "your draft closes in a few days" emailed to a client about a file that never closes, and the link in it sending them to a dead end.
+SELECT pg_temp.new_user('rem71');
+UPDATE public.profiles SET draft_reminders_at = now() WHERE user_id = pg_temp.id('rem71');
+UPDATE public.chamber_sessions SET user_id = pg_temp.id('rem71'), expires_at = now() + interval '1 day', chamber_data = chamber_data || '{"company_name": "Form Co"}' WHERE id = pg_temp.id('form_intake');
+INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data, expires_at) VALUES (pg_temp.id('rem71'), pg_temp.id('alpha'), '{"company_name": "Own Co"}', now() + interval '1 day') RETURNING id AS own_session \gset
+SELECT public.queue_draft_expiry_reminders() AS queued \gset
+SELECT pg_temp.is((SELECT count(*)::text FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id = :'own_session'::uuid), '1', '71: the client''s own draft is reminded');
+SELECT pg_temp.is((SELECT count(*)::text FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id = pg_temp.id('form_intake')), '0', 'and the draft the firm started, which the client now owns, is not');
+-- 72. The job does not stop on an intake with no user at all: a firm-started one whose starter's account was deleted (started_by goes null) and which no client has taken over.
+-- Break caught: the whole statement failing, hourly, on the one row it cannot write an event for, and no intake expiring anywhere until someone found it.
+INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data, expires_at) VALUES (NULL, pg_temp.id('alpha'), '{}', now() - interval '1 day') RETURNING id AS orphan_session \gset
+SELECT public.expire_idle_intakes() AS moved \gset
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = :'orphan_session'::uuid), 'in_progress', '72: an idle intake with no user and no starter is left alone, and the job still runs');
+
+-- 73. The send panel reads whether its firm is approved to send (D-1910) with a plain read of the firm's own row as the signed-in member: an agent, not only an owner, sees whether their firm is approved, and
+-- sees nothing of another firm's. Break caught: a panel that cannot read it (the column not granted, or the row hidden from an agent) and so never says the firm isn't approved, or one that reads another firm's.
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE((SELECT (approved_at IS NOT NULL)::text FROM public.firms WHERE id = pg_temp.id('alpha')), 'unreadable') AS own_firm \gset
+SELECT COALESCE((SELECT (approved_at IS NOT NULL)::text FROM public.firms WHERE id = pg_temp.id('bravo')), 'hidden') AS other_firm \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'own_firm'::text, 'true', '73: an agent reads that their own, approved, firm is approved to send');
+SELECT pg_temp.is(:'other_firm'::text, 'hidden', 'and reads nothing of another firm');
+UPDATE public.firms SET approved_at = NULL WHERE id = pg_temp.id('alpha');
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE((SELECT (approved_at IS NOT NULL)::text FROM public.firms WHERE id = pg_temp.id('alpha')), 'unreadable') AS own_firm_waiting \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'own_firm_waiting'::text, 'false', 'and reads that a firm still waiting for approval is not');
+UPDATE public.firms SET approved_at = now() WHERE id = pg_temp.id('alpha');

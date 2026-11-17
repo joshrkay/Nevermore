@@ -72,6 +72,7 @@ const intake = {
   submissionId: "i1", fileId: "EAA-2026-0117", pipelineStatus: "sent_to_carrier" as string | null, certifiedBy: "Elena Marsh" as string | null, certifiedAt: "2026-10-28T10:00:00+00:00" as string | null,
   version: 2 as number | null, censusSize: 45 as number | null, answered: null as number | null, prospectName: null as string | null,
   openItems: { count: 1, firstLabel: "Loss run for 2024" as string | null, firstField: "loss_run" as string | null },
+  startedByFirm: false,
 };
 const page = (over: Partial<Page> = {}, o: Partial<typeof opportunity> = {}): Page => ({
   opportunity: { ...opportunity, ...o },
@@ -2250,6 +2251,40 @@ describe("OpportunityPage: Start the quote", () => {
     renderPage();
     await screen.findByRole("region", { name: /^Intake/ });
     expect(screen.queryByRole("link", { name: "Start the quote" })).toBeNull();
+  });
+});
+
+// ---------- Continue the intake: the way back into an intake the firm started (D-1908) ----------
+describe("OpportunityPage: Continue the intake", () => {
+  const firmsIntake = { ...intake, certifiedAt: null, certifiedBy: null, version: null, fileId: null, answered: 12, prospectName: null, pipelineStatus: "draft" as string | null, startedByFirm: true };
+  const underWay = (over: Partial<Page> = {}, o: Partial<typeof opportunity> = {}) => page({ intake: firmsIntake, ...over }, { stage: "intake_under_way", ...o });
+
+  // Catches: an intake the firm started with no way back once its dialog is closed: Invite, Remind and the chat live only at /new-quote/<id>, and nothing led there.
+  it("offers Continue the intake on an unsigned intake the firm started, opening New quote over the page", async () => {
+    client.getOpportunityPage.mockResolvedValue(underWay());
+    renderPage();
+    const link = within(await screen.findByRole("region", { name: /^Intake/ })).getByRole("link", { name: "Continue the intake" });
+    expect(link).toHaveAttribute("href", "/new-quote/o1");
+    await userEvent.click(link);
+    expect(await screen.findByTestId("where")).toHaveTextContent("/new-quote/o1");
+    expect(screen.getByTestId("where")).toHaveAttribute("data-from", "/opportunities/o1");
+    expect(screen.queryByRole("link", { name: "Start the quote" })).toBeNull();
+  });
+
+  // Catches: the link on an employer's own intake (the dialog has nothing to show for it), on a signed one (the dialog's work is done), or where the database refuses the firm's work
+  // (an archived account, a support session) or the opportunity is closed.
+  it.each([
+    ["an intake the employer started", underWay({ intake: { ...firmsIntake, startedByFirm: false } }), workspace()],
+    ["a signed intake", page({ intake: { ...firmsIntake, certifiedAt: "2026-10-28T10:00:00+00:00", certifiedBy: "Elena Marsh", version: 1, fileId: "EAA-2026-0117" } }, { stage: "ready_to_send" }), workspace()],
+    ["an archived account", underWay({ account: { id: "a1", name: "Harborview Dental Group", archived: true }, canAdd: false, canChange: false }), workspace()],
+    ["a support session", underWay(), workspace({ isSupport: true })],
+    ["a won opportunity", underWay({}, { stage: "won" }), workspace()],
+    ["a lost opportunity", underWay({}, { stage: "lost" }), workspace()],
+  ])("offers no Continue the intake for %s", async (_what, pageOf, ws) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf);
+    renderPage("/opportunities/o1", ws);
+    await screen.findByRole("region", { name: /^Intake/ });
+    expect(screen.queryByRole("link", { name: "Continue the intake" })).toBeNull();
   });
 });
 

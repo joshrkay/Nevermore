@@ -40,6 +40,22 @@ export async function fetchIsMemberOfFirmAddress(address: string): Promise<boole
 }
 
 /**
+ * Whether Nevermore has approved this firm to send to PEOs (D-26, guard_firm_approved_to_send): true or false for a member who can read their firm, null when it can't be read (no row, an error), which the
+ * caller treats as "can't tell". Only chooses what to say before a send; the database refuses a send from an unapproved firm whatever this says.
+ */
+export async function fetchFirmApprovedToSend(firmId: string): Promise<boolean | null> {
+  try {
+    // `firms` isn't in the generated types (src/integrations/supabase/types.ts); a member reads their own firm's row (firms_members_read).
+    const { data, error } = await (supabase as unknown as { from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { maybeSingle: () => Promise<{ data: { approved_at: string | null } | null; error: unknown }> } } } })
+      .from("firms").select("approved_at").eq("id", firmId).maybeSingle();
+    if (error || !data) return null;
+    return data.approved_at !== null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Tells the firm's record of who did what (CRM-P2.3) that the caller signed in to the firm at this address. Only the
  * firm's id is sent, and the database refuses a caller who isn't a current member of it. Resolves true once it is
  * written (or already was, within moments); false when it wasn't, never throws: a sign-in is never held up by it.

@@ -356,6 +356,83 @@ describe("the firm address gate", () => {
     }
   });
 
+  // An employer is never a member of the firm whose address they work at (D-1907). The firm's own "Get a quote" link, an invitation's link and a sign-in
+  // there all make one a signed-in person who is not a member; the gate stopped each at the step that needs them signed in (the email check before signing,
+  // the page that accepts an invitation), so no employer could finish at a firm's address.
+  it("lets a signed-in person who is not a member reach an employer's own pages: their intake, profile, invitation, packet and the pages every visitor may open", async () => {
+    auth.user = { id: "u1" };
+    fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    for (const path of ["/start", "/profile", "/intake-invite", "/login", "/privacy", "/terms", "/f", "/manuscript", "/manuscript/EAA-2026-0001", "/b/some-token"]) {
+      const view = renderAt("acme-brokers.nevermorepeo.com", path);
+      expect(await screen.findByText("The console"), path).toBeInTheDocument();
+      expect(screen.queryByText("You aren't a member of this firm"), path).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  // Break caught: a guest who verifies their email, the step before signing, is a new kind of person to the gate and is checked, and while they were checked their page was
+  // taken down and put back: the intake returned to its first tab and the statements they had ticked were gone.
+  it("keeps an employer's page mounted while a guest who has just verified their email is checked, so the page keeps its tab and what they ticked", async () => {
+    let answer: (v: boolean) => void = () => {};
+    fetchIsMemberOfFirmAddress.mockReturnValue(new Promise<boolean>((resolve) => (answer = resolve)));
+    auth.user = { id: "u1" };
+    auth.isAnonymous = true;
+    const events: string[] = [];
+    const Page = () => {
+      useEffect(() => {
+        events.push("mounted");
+        return () => { events.push("unmounted"); };
+      }, []);
+      return <p>The intake</p>;
+    };
+    const tree = () => (
+      <MemoryRouter initialEntries={["/start"]}>
+        <FirmAddressProvider hostname="acme-brokers.nevermorepeo.com">
+          <FirmAddressGate><Page /></FirmAddressGate>
+        </FirmAddressProvider>
+      </MemoryRouter>
+    );
+    const view = render(tree());
+    expect(await screen.findByText("The intake")).toBeInTheDocument();
+    auth.isAnonymous = false; // the same person, now signed in
+    view.rerender(tree()); // a new element, so the gate renders again and reads who is signed in
+    await waitFor(() => expect(fetchIsMemberOfFirmAddress).toHaveBeenCalled());
+    expect(screen.getByText("The intake")).toBeInTheDocument();
+    await act(async () => answer(false));
+    expect(screen.getByText("The intake")).toBeInTheDocument();
+    expect(events).toEqual(["mounted"]);
+  });
+
+  // Break caught: the employer's pages opened by widening the gate to a prefix or to everything, so a person who is not a member reaches the firm's console.
+  it("still refuses a person who is not a member every page of the firm's console, and any address that only starts like an employer's page", async () => {
+    auth.user = { id: "u1" };
+    fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    const paths = ["/advisor", "/advisor/submissions/x", "/advisor/members", "/leads", "/leads/1", "/accounts", "/accounts/1", "/contacts/1", "/opportunities/1", "/inbox", "/quotes", "/quotes/1", "/settings", "/new-quote", "/new-quote/1", "/client-intake/1", "/firm/invitations", "/startup", "/start/other", "/profile/other", "/profiles", "/intake-invite/x", "/manuscripts", "/bundle", "/"];
+    for (const path of paths) {
+      const view = renderAt("acme-brokers.nevermorepeo.com", path);
+      expect(await screen.findByText("You aren't a member of this firm"), path).toBeInTheDocument();
+      expect(screen.queryByText("The console"), path).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  // Break caught: the exception moved in front of the other answers, so a member of a suspended firm, or a person whose request to join is waiting, got a page they are shut out of.
+  it("changes nothing for a member of a suspended firm or a person whose request to join is waiting: their pages stay shut, the employer's page included", async () => {
+    auth.user = { id: "u1" };
+    fetchIsMemberOfFirmAddress.mockResolvedValue(true);
+    fetchIsMySuspendedFirmAtAddress.mockResolvedValue(true);
+    const suspended = renderAt("acme-brokers.nevermorepeo.com", "/start");
+    expect(await screen.findByRole("heading", { name: /suspended/i })).toBeInTheDocument();
+    expect(screen.queryByText("The console")).not.toBeInTheDocument();
+    suspended.unmount();
+    fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+    fetchIsMySuspendedFirmAtAddress.mockResolvedValue(false);
+    askToJoinFirm.mockResolvedValue("asked");
+    renderAt("acme-brokers.nevermorepeo.com", "/start");
+    expect(await screen.findByText(/You've asked to join/)).toBeInTheDocument();
+    expect(screen.queryByText("The console")).not.toBeInTheDocument();
+  });
+
   // The answer to "is this person a member" was asked while they were not, and kept: after joining, leaving the join page showed
   // "You aren't a member of this firm" until a reload.
   it("asks again after a person has joined, so leaving the join page lets them in without a reload", async () => {

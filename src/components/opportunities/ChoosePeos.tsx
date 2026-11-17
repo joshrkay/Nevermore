@@ -53,6 +53,7 @@ export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = fa
       onSent={onSent}
       startOpen
       alreadySent={alreadySent}
+      stage={detail.pipelineStatus}
       openLabel="Choose PEOs"
     />
   );

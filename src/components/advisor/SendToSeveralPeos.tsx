@@ -1,17 +1,20 @@
-import { useEffect, useId, useState } from "react";
+import { useContext, useEffect, useId, useState } from "react";
 import { Loader2 } from "lucide-react";
 import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { FIT_WORDS, NOT_MET_NOTE, fitOutcome, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 import { groupByCompleteness, type CertifiedVersion, type PeoCompletenessEntry } from "@/data/peoCompleteness";
 import { localToday } from "@/data/peoProfiles";
-import { alreadySentWords, peoGreeting, peoSendSubject } from "@/data/peoSend";
+import { alreadySentWords, peoGreeting, peoSendSubject, sendBlockers } from "@/data/peoSend";
+import type { PipelineStatus } from "@/data/advisor";
 import { formatDay } from "@/data/accountPage";
 import type { ChamberSubmission } from "@/data/manuscript";
 import { bundleSummary, planBundle, type BundleSource } from "@/data/submissionBundle";
 import { peoLinkIssuer } from "@/lib/peoLinkIssuer";
 import { loadPeoSendContext, sendToPeo, type PeoSendContext } from "@/lib/peoSendApi";
+import { fetchFirmApprovedToSend } from "@/lib/firmApi";
 import { loadPeoAuthorizations, type PeoAuthorizationState } from "@/lib/peoAuthorizationsApi";
 import { loadRegisteredElsewhere, type RegisteredElsewhere } from "@/lib/peoRegistrationsApi";
 import { registeredElsewhereWords } from "@/data/peoRegistrations";
@@ -37,6 +40,8 @@ export interface SendToSeveralPeosProps {
   onSent: () => void;
   /** The PEOs the opportunity was already sent to, by name (any case), with the day each was sent (CRM-Q3.4, D-1891). Marked in the choosing step; a second send continues that quote. */
   alreadySent?: Readonly<Record<string, string>>;
+  /** Where the submission stands in the pipeline. Given, the panel says before Send that it must be Ready for market first (D-1910); left out, it says nothing of it and the database still refuses. */
+  stage?: PipelineStatus;
 }
 
 /** A PEO as the choosing step lists it: what it still needs to quote and the eligibility checks it doesn't meet, either of which makes it not ready. */
@@ -78,6 +83,10 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   // Q-2.2 (D-604): the PEOs another firm registered this employer with, and when; never who. It warns and never stops a PEO.
   const [elsewhere, setElsewhere] = useState<RegisteredElsewhere[]>([]);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  // D-1910: whether Nevermore approved the firm to send, read from the firm the page is in; null until read, or when it can't be (which blocks nothing).
+  const firmId = useContext(WorkspaceContext)?.firm?.id ?? null;
+  const [firmApproved, setFirmApproved] = useState<boolean | null>(null);
+  const blockers = sendBlockers(p.stage, firmApproved);
   const [busy, setBusy] = useState(false);
   // The PEOs the employer was asked to add from here (CRM-Q2.5), so the ask isn't made twice.
   const [asked, setAsked] = useState<string[]>([]);
@@ -120,6 +129,8 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
       // A PEO the employer hasn't authorized can't be ticked (CRM-Q2.5): any tick it started with goes.
       setTicked((now) => now.filter((peo) => rows.find((a) => a.peo.toLowerCase() === peo.toLowerCase())?.state === "authorized"));
     }, () => undefined);
+    // Unread, nothing is said and nothing waits on it: the database refuses a send from a firm that isn't approved.
+    if (firmId) fetchFirmApprovedToSend(firmId).then((yes) => !cancelled && setFirmApproved(yes), () => undefined);
     // Unread, there is simply no warning: no send waits on it.
     loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(rows), () => undefined);
     for (const peo of peoNames.split("\n").filter(Boolean)) {
@@ -131,7 +142,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     return () => {
       cancelled = true;
     };
-  }, [open, p.sessionId, peoNames]);
+  }, [open, p.sessionId, peoNames, firmId]);
 
   // Each PEO's advisor bundle, from the last certified version: what its link carries and the open items its message lists.
   const sourceOf = (c: Choice): BundleSource => ({
@@ -203,6 +214,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     setContexts({});
     setAuthorizations(null);
     setElsewhere([]);
+    setFirmApproved(null);
     setOutcomes([]);
   };
 
@@ -217,6 +229,15 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     // basis-full: where this sits in a wrapping row (Choose PEOs, beside a panel's heading) it takes the row under the heading, not a column beside it. Anywhere else the class does nothing.
     <section aria-label="Send to several PEOs" className="basis-full border border-border rounded-md p-3 space-y-3 text-sm">
       {step !== "done" && choices.length > 0 && <MailboxForWriting returnTo={p.returnTo} />}
+      {step !== "done" && choices.length > 0 && blockers.length > 0 && (
+        // What the database would refuse after the click, said before it (D-1910): each is in the database's own words, and Send waits until none is left.
+        <div role="alert" className="rounded-md border border-warning p-2 space-y-1">
+          <p className="font-medium">Not ready to send yet</p>
+          <ul className="list-disc pl-5">
+            {blockers.map((b) => <li key={b}>{b}</li>)}
+          </ul>
+        </div>
+      )}
       {step === "choose" && choices.length === 0 ? (
         // No PEO has a published profile (a PEO starts as an empty draft until Nevermore publishes it, #236, D-1787): say so and who to ask, rather than a note box and a Review with nothing to choose.
         <p role="status" className="text-muted-foreground">No PEO can be chosen yet: none has a published profile. Ask Nevermore to publish the PEOs you quote with.</p>
@@ -299,7 +320,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={busy || going.length === 0}
+              disabled={busy || going.length === 0 || blockers.length > 0}
               onClick={() => {
                 setBusy(true);
                 void beforeSend(send).finally(() => setBusy(false));
