@@ -261,7 +261,7 @@
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 \i supabase/migrations/20261124160000_reply_suggestions.sql
-\i supabase/migrations/20261124180000_question_requests.sql
+\i supabase/migrations/20261125120000_question_requests.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

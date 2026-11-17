@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh question_requests
--- An underwriter's question becomes an information request (N-1.3, slice 7.5; docs/BROKER_CRM_BUILD.md D-750 to D-759; 20261124180000_question_requests.sql).
+-- An underwriter's question becomes an information request (N-1.3, slice 7.5; docs/BROKER_CRM_BUILD.md D-750 to D-759; 20261125120000_question_requests.sql).
 -- Every migration is loaded, in filename order (D-105), this slice's last.
 \set ON_ERROR_STOP 1
 SET client_min_messages = notice;
@@ -208,7 +208,7 @@ SET client_min_messages = notice;
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 \i supabase/migrations/20261124160000_reply_suggestions.sql
-\i supabase/migrations/20261124180000_question_requests.sql
+\i supabase/migrations/20261125120000_question_requests.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

@@ -1525,7 +1525,7 @@ Slice 7.4 (N-1.1, suggest what a PEO's reply means: the message is data, outcome
 
 ### 7.5 N-1.3 decisions
 
-Slice 7.5 (N-1.3, an underwriter's question becomes an information request), migration `20261124180000_question_requests.sql`, test `supabase/tests/question_requests.sql`, decisions D-750..D-759. Needs 7.4 (reply suggestions). Epic 7 has no grilled decisions: each is a recommendation for the founder to review.
+Slice 7.5 (N-1.3, an underwriter's question becomes an information request), migration `20261125120000_question_requests.sql`, test `supabase/tests/question_requests.sql`, decisions D-750..D-759. Needs 7.4 (reply suggestions). Epic 7 has no grilled decisions: each is a recommendation for the founder to review.
 
 | # | Decision |
 |---|---|
