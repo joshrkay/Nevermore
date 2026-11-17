@@ -51,7 +51,7 @@ export function AddSenderAsContact({ firmId, message, onAdded }: { firmId: strin
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-semibold text-warning">New sender</span>
-      <button type="button" onClick={() => setOpen(true)} className="text-primary underline underline-offset-2">Add as a contact</button>
+      <button type="button" onClick={() => setOpen(true)} className="text-primary underline underline-offset-2">Add as contact</button>
       {open && (
         <Dialog open onOpenChange={(o) => { if (!o && !saving) setOpen(false); }}>
           <DialogContent>

@@ -152,9 +152,9 @@ describe("PlaceToWrite: a new sender", () => {
     renderPlace();
     const items = within(await screen.findByRole("list", { name: "Emails with Elena Marsh" })).getAllByRole("listitem");
     expect(within(items[0]).getByText("New sender")).toBeInTheDocument();
-    expect(within(items[0]).getByRole("button", { name: "Add as a contact" })).toBeInTheDocument();
-    expect(within(items[1]).queryByRole("button", { name: "Add as a contact" })).toBeNull();
-    expect(within(items[2]).queryByRole("button", { name: "Add as a contact" })).toBeNull();
+    expect(within(items[0]).getByRole("button", { name: "Add as contact" })).toBeInTheDocument();
+    expect(within(items[1]).queryByRole("button", { name: "Add as contact" })).toBeNull();
+    expect(within(items[2]).queryByRole("button", { name: "Add as contact" })).toBeNull();
   });
 
   // Catches: a sender added and the offer left on the page (the conversation not asked again), so they could be added twice; the database offers nothing
@@ -164,11 +164,11 @@ describe("PlaceToWrite: a new sender", () => {
     api.addSenderAsContact.mockResolvedValue({ id: "k9" });
     renderPlace();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Add as a contact" }));
+    await user.click(await screen.findByRole("button", { name: "Add as contact" }));
     api.getConversation.mockResolvedValue(conversation([{ ...stranger, offerContact: false }, reply, message()]));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Add contact" }));
     await waitFor(() => expect(api.addSenderAsContact).toHaveBeenCalledWith("f1", "m3", { firstName: "Aisha", lastName: "Khan", title: "", phone: "" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Add as a contact" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Add as contact" })).toBeNull());
   });
 });
 

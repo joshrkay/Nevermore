@@ -41,8 +41,8 @@ describe("AccountEmails: a new sender", () => {
     api.getAccountMessages.mockResolvedValue([stranger, message()]);
     renderEmails();
     const items = within(await screen.findByRole("list", { name: "Emails with the account's contacts" })).getAllByRole("listitem");
-    expect(within(items[0]).getByRole("button", { name: "Add as a contact" })).toBeInTheDocument();
-    expect(within(items[1]).queryByRole("button", { name: "Add as a contact" })).toBeNull();
+    expect(within(items[0]).getByRole("button", { name: "Add as contact" })).toBeInTheDocument();
+    expect(within(items[1]).queryByRole("button", { name: "Add as contact" })).toBeNull();
   });
 
   // Catches: a stranger's message said to be "Received from" the contact whose conversation it landed on, which names the wrong person.
@@ -61,10 +61,10 @@ describe("AccountEmails: a new sender", () => {
     api.addSenderAsContact.mockResolvedValue({ id: "k9" });
     renderEmails();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Add as a contact" }));
+    await user.click(await screen.findByRole("button", { name: "Add as contact" }));
     api.getAccountMessages.mockResolvedValue([{ ...stranger, offerContact: false }, message()]);
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Add contact" }));
     await waitFor(() => expect(api.addSenderAsContact).toHaveBeenCalledWith("f1", "m2", { firstName: "Aisha", lastName: "Khan", title: "", phone: "" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Add as a contact" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Add as contact" })).toBeNull());
   });
 });

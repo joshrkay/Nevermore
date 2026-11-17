@@ -30,7 +30,7 @@ describe("AddSenderAsContact", () => {
   it("says the sender is new and offers to add them as a contact", () => {
     renderOffer();
     expect(screen.getByText("New sender")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add as a contact" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add as contact" })).toBeInTheDocument();
   });
 
   // Catches: a form that starts empty (the agent retypes what the message already says), or one that lets the address be changed (the database adds the
@@ -38,7 +38,7 @@ describe("AddSenderAsContact", () => {
   it("opens with the name taken from the message and the address shown but not editable", async () => {
     const user = userEvent.setup();
     renderOffer();
-    await user.click(screen.getByRole("button", { name: "Add as a contact" }));
+    await user.click(screen.getByRole("button", { name: "Add as contact" }));
     const dialog = await screen.findByRole("dialog", { name: "Add Aisha Khan as a contact" });
     expect(within(dialog).getByLabelText("First name")).toHaveValue("Aisha");
     expect(within(dialog).getByLabelText("Last name")).toHaveValue("Khan");
@@ -50,7 +50,7 @@ describe("AddSenderAsContact", () => {
   it("adds the contact with what was typed and tells the page", async () => {
     const user = userEvent.setup();
     const onAdded = renderOffer();
-    await user.click(screen.getByRole("button", { name: "Add as a contact" }));
+    await user.click(screen.getByRole("button", { name: "Add as contact" }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("Title"), "Office Manager");
     await user.type(within(dialog).getByLabelText("Phone"), "503-555-0142");
@@ -65,7 +65,7 @@ describe("AddSenderAsContact", () => {
     const user = userEvent.setup();
     const onAdded = renderOffer({ ...sender, fromName: null });
     addSenderAsContact.mockRejectedValue(new ContactError("invalid", "Enter the contact's last name.", "22023"));
-    await user.click(screen.getByRole("button", { name: "Add as a contact" }));
+    await user.click(screen.getByRole("button", { name: "Add as contact" }));
     const dialog = await screen.findByRole("dialog", { name: "Add aisha.khan@harborview.example as a contact" });
     await user.click(within(dialog).getByRole("button", { name: "Add contact" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Enter the contact's last name.");
@@ -78,7 +78,7 @@ describe("AddSenderAsContact", () => {
     const user = userEvent.setup();
     renderOffer();
     addSenderAsContact.mockRejectedValue(new Error("fetch failed"));
-    await user.click(screen.getByRole("button", { name: "Add as a contact" }));
+    await user.click(screen.getByRole("button", { name: "Add as contact" }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Add contact" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't add the contact. Check your connection and try again.");
   });
