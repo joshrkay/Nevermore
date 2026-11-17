@@ -326,13 +326,13 @@ describe("QuotePage: Record the quote, cost areas", () => {
     await userEvent.click(within(form).getByRole("button", { name: "Add a one-off fee" }));
     await userEvent.type(within(form).getByLabelText("One-off fee 1 name"), "Setup");
     await userEvent.type(within(form).getByLabelText("One-off fee 1 amount"), "500");
-    expect(await saved(form)).toMatchObject({ oneOffFees: [{ name: "Setup", amount: 500 }], workersComp: null, unemployment: null, medical: null });
+    expect(await saved(form)).toMatchObject({ oneOffFees: [{ name: "Setup", amount: 500 }], workersComp: null, unemployment: null, medical: null, adminFee: null, adminFeeBasis: null });
   });
   // Catches: workers' comp rates that cannot be entered, a class code lost, or the rate sent as text.
   it("records a workers' comp rate as a state, a class code and a number", async () => {
     const form = await fill();
     await userEvent.click(within(form).getByRole("button", { name: "Add a workers' comp rate" }));
-    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 state"), "OR");
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 state"), "or");
     await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 class code"), "8810");
     await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 rate per $100 of payroll"), "0.45");
     expect(await saved(form)).toMatchObject({ workersComp: [{ state: "OR", class_code: "8810", rate: 0.45 }], oneOffFees: null });

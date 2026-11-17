@@ -876,3 +876,7 @@ lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clea
 18. QuoteComparison.test: a lone quote says there is nothing to compare it with yet, and not when two are back | red: Unable to find an element with the text: Only one quote is back, so there is nothing to compare it with yet. | green
 19. OpportunityPage.test: no Add note in a support session, with the reason | red: expected element not.toBeInTheDocument (Add note button) | green
 20. quote_comparison.sql 2b: the comparison and the quote page agree on current = highest quote id even when a revision is backdated (D-733) | NOT red first (the 7.7 read already orders by id); seen red by ordering on received_on: FAIL: the later recording is current though its received date is older gave 3, expected 4 | green
+
+### Mutation and gate (7.8)
+TypeScript: 20 of 21 mutants killed on first run, 2 survived (empty fee sent as 0, state not upper-cased), tests strengthened, both killed; 1 not applied (string no longer in code; upload-after-record is held by invocationCallOrder in cycle 9). SQL: ordering the comparison on received_on is killed by quote_comparison.sql 2b.
+Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 352 files, 7145 tests passed; build green; SQL: only quote_comparison.sql run on port 5780 (no migration or function changed).
