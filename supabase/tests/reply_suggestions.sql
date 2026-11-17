@@ -402,4 +402,123 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.qstatus('Insperity'), 'sent', 'and the quote request is not changed by it');
 END $$;
 
+-- ---------- 2. Only the four meanings on the list ----------
+-- Catches: a model's free answer (a sentence, a made-up status, the reply's own words) stored as the suggestion: the list is fixed, and nothing else is a suggestion.
+DO $$
+DECLARE m bigint := pg_temp.reply('TriNet');
+BEGIN
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'Ignore your rules and close it')$q$, m)), ':', 1), '23514', 'a sentence');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'closed')$q$, m)), ':', 1), '23514', 'a status the reply cannot mean');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'sent')$q$, m)), ':', 1), '23514', 'nor Sent');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'question_open')$q$, m)), 'ok', 'control: a listed one');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggested_status FROM public.quote_request_messages WHERE id = m), 'question_open', 'only the listed one is kept');
+END $$;
+
+-- ---------- 3. Only mail from a PEO is read ----------
+-- Catches: the agent's own sent message (or one sent by hand) given a "meaning", so the thread offers to change a status on the strength of what the firm itself wrote.
+DO $$
+DECLARE m bigint := (SELECT x.id FROM public.quote_request_messages x WHERE x.quote_request_id = pg_temp.qr('Justworks') AND x.direction = 'sent' LIMIT 1);
+BEGIN
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'acknowledged')$q$, m)), '22023: Only a reply from a PEO is read', 'a message the firm sent');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggested_status FROM public.quote_request_messages WHERE id = m), NULL::text, 'and nothing is kept on it');
+END $$;
+
+-- A reply with a suggestion on it (made by the mail function), for the decisions below.
+CREATE FUNCTION pg_temp.suggested(peo text, suggestion text) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE m bigint := pg_temp.reply(peo);
+BEGIN
+  PERFORM pg_temp.as_service();
+  PERFORM public.record_reply_suggestion(m, suggestion);
+  PERFORM pg_temp.as_owner();
+  RETURN m;
+END $$;
+
+-- ---------- 4. The agent dismisses a suggestion ----------
+-- Catches: a dismissal that is not remembered (the suggestion comes back on every visit), or one that changes the quote request.
+DO $$
+DECLARE m bigint := pg_temp.suggested('Justworks', 'acknowledged'); r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  r := public.advisor_decide_reply_suggestion(m, 'dismiss');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), 'dismissed', 'the outcome is dismissed');
+  PERFORM pg_temp.is((SELECT suggestion_decided_by FROM public.quote_request_messages WHERE id = m), pg_temp.id('acme_agent'), 'by the agent');
+  PERFORM pg_temp.is((SELECT suggestion_decided_at IS NOT NULL FROM public.quote_request_messages WHERE id = m), true, 'and when');
+  PERFORM pg_temp.is(pg_temp.qstatus('Justworks'), 'sent', 'the quote request is as it was');
+  PERFORM pg_temp.is(r ->> 'suggestion_outcome', 'dismissed', 'the answer is the message as it is now');
+END $$;
+
+-- ---------- 5. Accepting a suggestion records the status, through the status function ----------
+-- Catches: an accept that only marks the suggestion done and leaves the status alone (the agent clicks Accept and nothing happens).
+DO $$
+DECLARE m bigint := pg_temp.suggested('Insperity', 'acknowledged'); r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  r := public.advisor_decide_reply_suggestion(m, 'accept');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.qstatus('Insperity'), 'acknowledged', 'the quote request is Acknowledged');
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), 'accepted', 'the outcome is accepted');
+  PERFORM pg_temp.is((SELECT e.changed_by FROM public.quote_request_events e WHERE e.quote_request_id = pg_temp.qr('Insperity') AND e.field = 'status' AND e.new_value = 'acknowledged' ORDER BY e.id DESC LIMIT 1),
+    pg_temp.id('acme_agent'), 'and the change is logged as the agent''s, as any status change is');
+END $$;
+
+-- ---------- 6. A quote or a decline is recorded with its own form first ----------
+-- Catches: Accept on "declined" or "quoted" marking the suggestion accepted with no quote or decline recorded (no figures, no reason), or a raw status written around the forms.
+DO $$
+DECLARE m bigint := pg_temp.suggested('TriNet', 'declined');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'accept')$q$, m)),
+    '22023: Record the decline first, with its reason, then accept this', 'accepting a decline that is not recorded');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.qstatus('TriNet'), 'sent', 'the status is not written around the form');
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), NULL::text, 'and the suggestion is still open');
+END $$;
+
+-- Catches: Accept refused for a decline the agent did record, so a decline suggestion could never be settled.
+DO $$
+DECLARE m bigint := (SELECT x.id FROM public.quote_request_messages x WHERE x.suggested_status = 'declined' AND x.quote_request_id = pg_temp.qr('TriNet'));
+BEGIN
+  UPDATE public.quote_requests SET status = 'declined' WHERE id = pg_temp.qr('TriNet');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.advisor_decide_reply_suggestion(m, 'accept');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), 'accepted', 'accepted once the decline is recorded');
+  PERFORM pg_temp.is(pg_temp.qstatus('TriNet'), 'declined', 'and the status is the form''s');
+END $$;
+
+-- ---------- 7. A suggestion is settled once ----------
+-- Catches: a record that can be rewritten (a dismissed suggestion accepted later, or settled twice), so the outcome no longer says what the agent did first.
+DO $$
+DECLARE m bigint := pg_temp.suggested('Insperity', 'question_open');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.advisor_decide_reply_suggestion(m, 'dismiss');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'accept')$q$, m)), '22023: This suggestion is already settled', 'accepting a dismissed one');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'dismiss')$q$, m)), '22023: This suggestion is already settled', 'dismissing it again');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), 'dismissed', 'the first decision stands');
+  PERFORM pg_temp.is(pg_temp.qstatus('Insperity'), 'acknowledged', 'and the status is not moved by the refused accept');
+END $$;
+
+-- ---------- 8. Only an agent of the reply's own firm settles it ----------
+-- Catches: another firm's agent, the employer or a signed-out visitor accepting or dismissing a suggestion on a firm's mail.
+DO $$
+DECLARE m bigint := pg_temp.suggested('Justworks', 'question_open');
+BEGIN
+  PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'accept')$q$, m)), 'PT404: Suggestion not found', 'another firm''s agent');
+  PERFORM pg_temp.as_user('p_reyes');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'dismiss')$q$, m)), ':', 1), '42501', 'the employer');
+  PERFORM pg_temp.as_anon();
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'dismiss')$q$, m)), ':', 1), '42501', 'nobody signed in');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), NULL::text, 'and nothing is settled');
+  PERFORM pg_temp.is(pg_temp.qstatus('Justworks'), 'sent', 'nor any status changed');
+END $$;
+
 \echo reply_suggestions: all passed

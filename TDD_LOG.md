@@ -729,3 +729,11 @@ Mutation: SQL 11 (reason required, only-a-decline rule, list check in the functi
 ## 7.4 N-1.1 (suggest what a PEO's reply means), one test per cycle
 
 1. SQL reply_suggestions "the mail function records a suggestion on a reply" - red: `function public.record_reply_suggestion(bigint, unknown) does not exist` - green (column suggested_status, service-only record_reply_suggestion).
+2. SQL "only the four meanings on the list" - red: `FAIL: a sentence gave ok, expected 23514` - green (CHECK on suggested_status).
+3. SQL "only mail from a PEO is read" - red: `FAIL: a message the firm sent gave ok, expected 22023: Only a reply from a PEO is read` - green.
+4. SQL "the agent dismisses a suggestion" - red: `function public.advisor_decide_reply_suggestion(bigint, unknown) does not exist` - green (outcome columns, advisor_decide_reply_suggestion handling any decision as a dismissal so far).
+5. SQL "accepting a suggestion records the status, through the status function" - red: `FAIL: the quote request is Acknowledged gave sent, expected acknowledged` - green.
+6. SQL "a quote or a decline is recorded with its own form first" - red: `FAIL: accepting a decline that is not recorded gave 22023: This records Sent, Acknowledged or Question open...` - green.
+7. SQL "accepted once the decline is recorded" - NOT red-first: green on arrival (the cycle-6 branch already lets a matching status through); kept as the other half of the rule, checked by mutation.
+8. SQL "a suggestion is settled once" - red: `FAIL: accepting a dismissed one gave ok, expected 22023: This suggestion is already settled` - green.
+9. SQL "only an agent of the reply's own firm settles it" - NOT red-first: green on arrival (the function was written with the firm check, require_advisor and the guard, following the status function); checked by mutation.
