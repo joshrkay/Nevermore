@@ -22,6 +22,11 @@ describe("loadOwnedFirms", () => {
     expect(fetchOwnedFirms).toHaveBeenCalledTimes(1);
   });
 
+  it("asks nothing when nobody is signed in: the database refuses a visitor, so a signed-out page owns no firm", async () => {
+    await expect(loadOwnedFirms("")).resolves.toEqual([]);
+    expect(fetchOwnedFirms).not.toHaveBeenCalled();
+  });
+
   it("asks again for another person, so one person's answer is never given to the next to sign in", async () => {
     await loadOwnedFirms("u1");
     fetchOwnedFirms.mockResolvedValue([]);

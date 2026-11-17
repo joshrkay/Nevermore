@@ -57,6 +57,8 @@ const member = sharedLoad<MyFirm>(async (userId, sessionKey) => {
  * of no firm until the second factor is done, so an answer given before that is never handed out after it.
  */
 export function loadOwnedFirms(userId: string, sessionKey = ""): Promise<OwnedFirm[]> {
+  // Nobody signed in owns no firm, and the database refuses a visitor the question (the homepage header asks for everyone).
+  if (!userId) return Promise.resolve([]);
   return owned.load(userId, sessionKey);
 }
 
