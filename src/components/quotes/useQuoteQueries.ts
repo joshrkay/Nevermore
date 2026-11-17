@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ACCOUNT_REFRESH_MS } from "@/components/accounts/useAccountQueries";
+import { loadQuotes, type QuoteRecord } from "@/lib/advisorApi";
 import { getQuotePage, type QuotePage } from "@/lib/quotePageApi";
 
 /** The key every query of one quote's page starts with, so everything on it can be asked again together. */
@@ -18,6 +19,17 @@ export function useQuotePageQuery(firmId: string | null, quoteRequestId: string)
     refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
     refetchOnWindowFocus: (q) => keepsAsking(q),
     refetchOnReconnect: (q) => keepsAsking(q),
+    retry: false,
+  });
+}
+
+/** The quotes recorded on a quote request (N-2.1, N-2.4), asked once the quote's page has loaded, so a quote that isn't there or isn't theirs is not asked for. */
+export function useQuotesQuery(firmId: string | null, quoteRequestId: number, enabled: boolean) {
+  return useQuery<QuoteRecord[]>({
+    queryKey: [...quoteKey(firmId, String(quoteRequestId)), "quotes"],
+    queryFn: () => loadQuotes(quoteRequestId),
+    enabled: firmId !== null && enabled,
+    refetchInterval: (q) => (keepsAsking(q) ? ACCOUNT_REFRESH_MS : false),
     retry: false,
   });
 }

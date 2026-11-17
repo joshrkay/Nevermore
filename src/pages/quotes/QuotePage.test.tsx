@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), fetchMyMailbox: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -92,6 +92,7 @@ beforeEach(() => {
   peoRegistrations.loadRegisteredElsewhere.mockResolvedValue([]);
   peoCatalogRows = [];
   advisor.openQuoteRequestThread.mockResolvedValue(undefined);
+  advisor.loadQuotes.mockResolvedValue([]);
   quotes.getQuotePage.mockReset();
 });
 afterEach(() => {
@@ -331,6 +332,25 @@ describe("QuotePage: the PEO's status", () => {
   });
 });
 
+describe("QuotePage: a suggestion on a reply", () => {
+  // N-1.1. Break caught: Accept on the quote's own page that records the status and leaves the page showing the old one (and the suggestion still open).
+  it("is accepted on the PEO's thread with the submission page's own Accept, then the page is read again", async () => {
+    const user = userEvent.setup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      detail: threadOf({
+        quoteRequestMessages: [message({ id: 1, body_text: "We have your packet.", suggested_status: "acknowledged", suggestion_outcome: null })],
+        quoteRequestThreadReads: [{ quote_request_id: 7, last_opened_at: "2030-01-01T00:00:00Z", last_opened_by: "a1", last_opened_by_email: "adv@example.com" }],
+      }),
+    }));
+    advisor.decideReplySuggestion.mockResolvedValue(undefined);
+    renderPage();
+    expect(await screen.findByText(/Suggested: Acknowledged/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    expect(advisor.decideReplySuggestion).toHaveBeenCalledWith(1, "accept");
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
+  });
+});
+
 describe("QuotePage: declined", () => {
   // N-1.4. Break caught: a declined quote's own page that says Declined in the header and nothing of why, though the card on the submission says it.
   it("says why the PEO declined and in what words, and nothing on a quote that is not declined", async () => {
@@ -557,5 +577,113 @@ describe("QuotePage: the trail and the header", () => {
     const header = (await screen.findByRole("heading", { level: 1, name: "TriNet" })).closest("header") as HTMLElement;
     expect(within(header).getByText("Sent · 5 days")).toBeInTheDocument();
     expect(within(header).getByText("Sent Nov 7, 2026 from version 3")).toBeInTheDocument();
+  });
+});
+
+/** A quote as the quotes table holds it (N-2.1), with its document when it has one. */
+const storedQuote = (over: Record<string, unknown> = {}) => ({
+  id: 3, quote_request_id: 7, session_id: "s1", kind: "firm_offer", received_on: "2026-11-14", expires_on: null, proposed_start_on: null, admin_fee: null, admin_fee_basis: null,
+  one_off_fees: null, workers_comp: null, unemployment: null, medical: null, note: null, document_attachment_id: null, document: null, ...over,
+});
+const document = (over: Record<string, unknown> = {}) => ({ id: 51, file_name: "proposal.pdf", size_bytes: 412000, storage_path: "s1/41/51-proposal.pdf", ...over });
+
+describe("QuotePage: the quote document (N-2.2)", () => {
+  // Catches: a quote that holds its document but gives the agent no way to open it, or a link made from someone else's file, or one that skips the 60-second signed link.
+  it("names the quote's document and opens it through a signed link", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    advisor.mailAttachmentUrl.mockResolvedValue("https://files.example/signed");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", { value: { assign }, configurable: true });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    expect(within(panel).getByText("proposal.pdf")).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Open proposal.pdf" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://files.example/signed"));
+    expect(advisor.mailAttachmentUrl).toHaveBeenCalledWith(expect.objectContaining({ storage_path: "s1/41/51-proposal.pdf", file_name: "proposal.pdf" }));
+    expect(advisor.loadQuotes).toHaveBeenCalledWith(7);
+  });
+
+  // Catches: a revised quote that hides the earlier one (the history lost), one that lists the current quote as superseded, or an earlier quote with no date to tell it by.
+  it("lists each earlier quote as superseded with its received date, newest first, and not the current one", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([
+      storedQuote({ id: 1, kind: "estimate", received_on: null }),
+      storedQuote({ id: 3, kind: "firm_offer", received_on: "2026-11-14" }),
+      storedQuote({ id: 2, kind: "estimate", received_on: "2026-11-03", document: document({ file_name: "first-proposal.pdf" }) }),
+    ]);
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Earlier quotes" });
+    const items = within(panel).getAllByRole("listitem");
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Estimate · received Nov 3, 2026 · Superseded · first-proposal.pdf",
+      "Estimate · no received date · Superseded",
+    ]);
+  });
+
+  // Catches: a quote recorded by hand with nowhere to put the PEO's document, an upload sent for another quote, or a page that doesn't read the quotes again so the file still looks missing.
+  it("uploads the quote document of a quote that has none, for that quote, and reads the quotes again", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+    await userEvent.upload(within(panel).getByLabelText("Upload the quote document"), file);
+    await waitFor(() => expect(advisor.uploadQuoteDocument).toHaveBeenCalledWith(3, file));
+    await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  // Catches: a file the virus check blocked reported as saved, so the agent believes the quote has its document.
+  it("says the virus check blocked a file, and that it was not kept", async () => {
+    const { toast } = await import("sonner");
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "blocked" });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    await userEvent.upload(within(panel).getByLabelText("Upload the quote document"), new File(["x"], "quote.pdf", { type: "application/pdf" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The virus check blocked that file, so it was not kept."));
+  });
+
+  // Catches: making the agent upload again a proposal that already arrived by email, or offering a blocked file, or another PEO's file, as this quote's document.
+  it("offers the stored files that arrived on this quote request's emails, and names the chosen one as the document without uploading it again", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      request: { status: "quoted" },
+      detail: {
+        ...threadOf({
+          quoteRequestMessages: [message({ id: 1 }), message({ id: 2, quote_request_id: 8 })],
+          quoteRequestMailAttachments: [
+            { id: 61, message_id: 1, file_name: "Insperity proposal.pdf", size_bytes: 412000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/1/61-p.pdf" },
+            { id: 62, message_id: 1, file_name: "infected.pdf", size_bytes: 1000, status: "blocked", not_kept_reason: null, scan_signature: "Eicar", storage_path: null },
+            { id: 63, message_id: 2, file_name: "Other PEO.pdf", size_bytes: 1000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/2/63-o.pdf" },
+          ],
+        }),
+      },
+    }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    advisor.attachQuoteDocument.mockResolvedValue({});
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    const choose = within(panel).getByLabelText("Use a file from the emails");
+    expect(within(choose).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose a file", "Insperity proposal.pdf"]);
+    await userEvent.selectOptions(choose, "61");
+    await userEvent.click(within(panel).getByRole("button", { name: "Use this file" }));
+    await waitFor(() => expect(advisor.attachQuoteDocument).toHaveBeenCalledWith(3, 61));
+    await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  // Catches: an upload or a file choice offered during a Nevermore support session or on an archived account, where the database would refuse it (ADR 0024, D-432): a dead control.
+  it("offers no way to add a document in a support session or on an archived account, and still opens one that is there", async () => {
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    renderPage("/quotes/7", workspace({ isSupport: true }));
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    expect(within(panel).queryByLabelText("Upload the quote document")).not.toBeInTheDocument();
+    cleanup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" }, opportunity: { account: { id: "a1", name: "Harborview Dental Group", archived: true } } }));
+    renderPage();
+    const archived = await screen.findByRole("region", { name: "Quote document" });
+    expect(within(archived).queryByLabelText("Upload the quote document")).not.toBeInTheDocument();
   });
 });

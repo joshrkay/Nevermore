@@ -7,6 +7,7 @@ const remove = vi.fn();
 const download = vi.fn();
 const buckets: string[] = [];
 const createSignedUrl = vi.fn();
+const invoke = vi.fn();
 /** Rows each table returns to the detail page's queries, which are all select/eq/order chains. */
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
@@ -57,6 +58,7 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => query(table),
     rpc: (...args: unknown[]) => rpc(...args),
+    functions: { invoke: (...a: unknown[]) => invoke(...a) },
     storage: { from: (bucket: string) => {
       buckets.push(bucket);
       return {
@@ -84,6 +86,7 @@ const {
   setStatus,
   recordQuoteSend,
   setQuoteRequestStatus,
+  decideReplySuggestion,
   updateQuoteRequest,
   recordQuote,
   fetchIsAdmin,
@@ -100,6 +103,9 @@ const {
   reissueQuoteRequestAddress,
   openQuoteRequestThread,
   mailAttachmentUrl,
+  attachQuoteDocument,
+  loadQuotes,
+  uploadQuoteDocument,
   recordActivity,
   fetchOwnedFirms,
   listMyFirms,
@@ -620,6 +626,38 @@ describe("quote requests", () => {
     }));
   });
 
+  // N-2.2. Break caught: the document named with the wrong parameter names, or the database's refusal (a file that isn't this quote request's, or isn't scanned clean) swallowed as a success.
+  it("names a stored mail file as a quote's document through attach_quote_document, and says why the database refused one", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 3, document_attachment_id: 51 }, error: null });
+    await attachQuoteDocument(3, 51);
+    expect(rpc).toHaveBeenLastCalledWith("attach_quote_document", { p_quote_id: 3, p_attachment_id: 51 });
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "22023", message: "That file isn't stored: it was blocked, not kept, or is still being checked" } });
+    await expect(attachQuoteDocument(3, 52)).rejects.toThrow(/blocked, not kept, or is still being checked/);
+  });
+
+  // N-2.2, N-2.4. Break caught: the quotes read for another quote request, or the document left out so the page can't show or open it, or a quote's document row reshaped so a signed link can't be made from it.
+  it("reads the quotes of one quote request, each with its document's name, size and place", async () => {
+    tables.quotes = [{ id: 3, quote_request_id: 7, kind: "estimate", document: { id: 51, file_name: "proposal.pdf", size_bytes: 412000, storage_path: "s1/41/51-proposal.pdf" } }, { id: 2, quote_request_id: 7, kind: "estimate", document: null }];
+    const quotes = await loadQuotes(7);
+    expect(eqFilters).toContainEqual({ table: "quotes", column: "quote_request_id", value: 7 });
+    expect(String(selects.filter((s) => s.table === "quotes").at(-1)?.columns)).toMatch(/document:quote_request_message_attachments\(id, file_name, size_bytes, storage_path\)/);
+    expect(quotes.map((q) => q.id)).toEqual([3, 2]);
+    expect(quotes[0].document?.file_name).toBe("proposal.pdf");
+  });
+
+  // N-2.2. Break caught: the file sent to another function or without its quote, the function's answer (stored, or blocked by the virus check) lost, or its refusal shown as a generic failure.
+  it("uploads a quote document to quote-document-upload with its quote, and says what became of it or why it was refused", async () => {
+    invoke.mockResolvedValueOnce({ data: { document: { attachment_id: 51, file_name: "quote.pdf", status: "stored" } }, error: null });
+    const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+    await expect(uploadQuoteDocument(3, file)).resolves.toEqual({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    const [name, options] = invoke.mock.calls.at(-1)!;
+    expect(name).toBe("quote-document-upload");
+    expect((options.body as FormData).get("quote_id")).toBe("3");
+    expect(((options.body as FormData).get("file") as File).name).toBe("quote.pdf");
+    invoke.mockResolvedValueOnce({ data: null, error: { context: new Response(JSON.stringify({ error: "This file isn't what its name says.", code: "mismatch" }), { status: 415 }) } });
+    await expect(uploadQuoteDocument(3, file)).rejects.toThrow("This file isn't what its name says.");
+  });
+
   // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.
   it("records a decline with its reason and the PEO's words", async () => {
     await updateQuoteRequest(7, { status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: null, declineReason: "pricing", declineWords: "Below our floor" });
@@ -640,6 +678,13 @@ describe("quote requests", () => {
   it("says why the database refused an open status, in its words", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: { code: "22023", message: "TriNet is already Acknowledged." } });
     await expect(setQuoteRequestStatus(7, "acknowledged")).rejects.toThrow("TriNet is already Acknowledged.");
+  });
+
+  // N-1.1. Break caught: Accept or Dismiss sent to the status function (which would write around the suggestion's record), or under the wrong parameter names.
+  it("settles a reply's suggestion through advisor_decide_reply_suggestion", async () => {
+    rpc.mockResolvedValueOnce({ data: { message_id: 41, suggestion_outcome: "accepted" }, error: null });
+    await decideReplySuggestion(41, "accept");
+    expect(rpc).toHaveBeenLastCalledWith("advisor_decide_reply_suggestion", { p_message_id: 41, p_decision: "accept" });
   });
 
   it("opens a PEO mail attachment through a signed link from the peo-mail bucket, as a download under its own name", async () => {

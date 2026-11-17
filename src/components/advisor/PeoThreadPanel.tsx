@@ -13,6 +13,7 @@ import {
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
 import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
+import { ReplySuggestion } from "./ReplySuggestion";
 
 interface PeoThreadPanelProps {
   prospectUserId: string;
@@ -103,6 +104,7 @@ const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntr
           {showQuoted && <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words border-l-2 border-border pl-2">{quoted}</p>}
         </div>
       )}
+      <ReplySuggestion message={m} onSettled={onMoved} />
       {attachments.length > 0 && downloadsOff && <DownloadsOffNotice />}
       {attachments.length > 0 && (
         <ul aria-label="Attachments" className="space-y-1.5">

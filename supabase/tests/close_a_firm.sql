@@ -209,6 +209,12 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124170000_leads_can_convert.sql
+\i supabase/migrations/20261125090000_quote_document.sql
+\i supabase/migrations/20261125100000_reply_suggestions.sql
+\i supabase/migrations/20261125110000_quote_comparison.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -380,6 +386,9 @@ BEGIN
     ('00000000-0000-4000-8000-0000000000a4', fa, '00000000-0000-4000-8000-0000000000a1', 'note', 'Alpha note', NULL, NULL),
     ('00000000-0000-4000-8000-0000000000a5', fa, '00000000-0000-4000-8000-0000000000a1', 'task', NULL, 'Alpha task', current_date),
     ('00000000-0000-4000-8000-0000000000b4', fb, '00000000-0000-4000-8000-0000000000b1', 'note', 'Beta note', NULL, NULL);
+  -- 7.7, N-3.2: a note on each firm's opportunity's comparison, which closing deletes before the opportunities they are on.
+  INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body)
+  SELECT o.firm_id, o.id, 'internal', 'A note on ' || o.name FROM public.opportunities o WHERE o.firm_id IN (fa, fb);
   -- CRM-S3.7b: a label on each firm's account, and a bulk change with its record; closing deletes them before the accounts and, for the labels, after.
   INSERT INTO public.labels (id, firm_id, name) VALUES ('00000000-0000-4000-8000-0000000000a6', fa, 'Alpha label'), ('00000000-0000-4000-8000-0000000000b6', fb, 'Beta label');
   INSERT INTO public.account_labels (firm_id, account_id, label_id) VALUES
@@ -1177,7 +1186,7 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'intake_invitations', 0, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 8, 'recent_records', 0, 'referral_partners', 1,
-    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
+    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
@@ -1188,6 +1197,8 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = fa) + (SELECT count(*) FROM public.contacts WHERE firm_id = fa) + (SELECT count(*) FROM public.opportunities WHERE firm_id = fa), 0::bigint, 'the firm''s accounts, contacts and opportunities are deleted');
   PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE firm_id = fa), 0::bigint, 'and its calls, notes and tasks');
   PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE firm_id = fb), 1::bigint, 'the other firm''s are kept');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quote_comparison_notes WHERE firm_id = fa), 0::bigint, 'the firm''s notes on its comparisons are deleted');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quote_comparison_notes WHERE firm_id = fb), 1::bigint, 'the other firm''s are kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = fb) + (SELECT count(*) FROM public.contacts WHERE firm_id = fb) + (SELECT count(*) FROM public.opportunities WHERE firm_id = fb), 3::bigint, 'and the other firm''s are kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions WHERE id = pg_temp.id('intake_a')), 1::bigint, 'the intake on one of the opportunities is kept, with its employer');
   RAISE NOTICE 'close_a_firm: the deletion passed';
@@ -1403,8 +1414,8 @@ END $$;
 -- with the reason. A function in neither list fails, so whoever adds one has to decide.
 DO $$
 DECLARE
-  guarded text[] := ARRAY['opportunity_create', 'record_quote', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
-    'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request',
+  guarded text[] := ARRAY['opportunity_create', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'add_comparison_note', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+    'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'update_account', 'create_account', 'create_lead', 'convert_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity',
     'save_view', 'set_my_table_columns', 'set_submission_needs_action', 'set_submission_status', 'share_saved_view', 'suspend_member', 'unshare_saved_view',

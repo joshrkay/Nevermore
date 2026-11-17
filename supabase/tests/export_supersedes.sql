@@ -467,6 +467,12 @@ END $$;
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124170000_leads_can_convert.sql
+\i supabase/migrations/20261125090000_quote_document.sql
+\i supabase/migrations/20261125100000_reply_suggestions.sql
+\i supabase/migrations/20261125110000_quote_comparison.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried

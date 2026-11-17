@@ -263,6 +263,9 @@
 \i supabase/migrations/20261124150000_opportunity_activity_intake.sql
 \i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
 \i supabase/migrations/20261124170000_leads_can_convert.sql
+\i supabase/migrations/20261125090000_quote_document.sql
+\i supabase/migrations/20261125100000_reply_suggestions.sql
+\i supabase/migrations/20261125110000_quote_comparison.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -829,6 +832,8 @@ BEGIN
     INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES (fid, 'archive', now() + interval '10 minutes');
     INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after)
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
+    -- 7.7, N-3.2: a note on the owned account's search's comparison.
+    INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body) VALUES (fid, opp1, 'internal', 'Fixture comparison note');
     -- CRM-S1.2b: the owner's last opened record.
     INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
     -- CRM-L1.3a: two leads, one owned by the firm's agent and one with none, a note on the owned one, and a label on it.
@@ -1046,6 +1051,10 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
+-- The broker's notes on a comparison of quotes (7.7, N-3.2, 20261125110000): closed to the API, read through opportunity_quote_comparison by whoever may see the
+-- opportunity's account and written through add_comparison_note (supabase/tests/quote_comparison.sql).
+INSERT INTO matrix VALUES
+  ('public.quote_comparison_notes',                     '{}', NULL);
 -- ---- CRM-L1.3a: leads (20261121090000) ----
 -- Read by level through can_see_firm_record (supabase/tests/leads.sql), written by nobody through the API. Each firm has two, one owned by its agent and one
 -- with no owner: the first firm's members see both, the second's agent only their own and its owner both. Labels on leads are closed to the API.
@@ -1478,8 +1487,14 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('record_quote(p_quote_request_id bigint, p_kind text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee numeric, p_admin_fee_basis text, p_one_off_fees jsonb, p_workers_comp jsonb, p_unemployment jsonb, p_medical jsonb, p_note text)', 'advisor',
                                                                      'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO returned, with its whole offer'),
+  ('attach_quote_document(p_quote_id bigint, p_attachment_id bigint)', 'advisor',
+                                                                     'SELECT public.attach_quote_document(0, 0)', 'naming a stored mail file as a quote''s document (N-2.2)'),
+  ('start_quote_document_upload(p_quote_id bigint, p_file_name text, p_content_type text, p_size_bytes bigint)', 'advisor',
+                                                                     'SELECT public.start_quote_document_upload(0, ''x.pdf'', ''application/pdf'', 1)', 'starting the upload of a quote document recorded by hand (N-2.2)'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
+  ('advisor_decide_reply_suggestion(p_message_id bigint, p_decision text)', 'advisor',
+                                                                     'SELECT public.advisor_decide_reply_suggestion(0, ''dismiss'')', 'accepting or dismissing what a PEO''s reply was suggested to mean (N-1.1)'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
   ('advisor_open_quote_request_thread(p_quote_request_id bigint, p_seen_through timestamp with time zone)', 'advisor',
@@ -1725,6 +1740,12 @@ INSERT INTO callable VALUES
   ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
 
+-- 7.7, N-3.1 and N-3.2 (20261125110000_quote_comparison.sql; supabase/tests/quote_comparison.sql): the comparison of an opportunity's quotes and the notes on it.
+INSERT INTO callable VALUES
+  ('opportunity_quote_comparison(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the opportunity''s account, by level, reads one column for each of its quote requests, alphabetical, with the PEO''s current quote (the newest) and the notes on the comparison; PT404, one answer, for an opportunity that is not there, is another firm''s or may not be seen'),
+  ('add_comparison_note(p_firm_id uuid, p_opportunity_id uuid, p_quote_request_id bigint, p_area text, p_visibility text, p_body text)', 'own', NULL,
+   'a current member of the firm the call acts for adds a note, marked internal or for the client, to the comparison of an opportunity they may see, about one of its PEOs and a cost area or about the comparison as a whole; 42501 for anyone who is no member of that firm, PT404 for an opportunity that is not there, is another firm''s or may not be seen, PT423 for a closing firm or a support session, 55000 for an archived account');
 -- CRM-O1.3b review (20261121170000_opportunity_outcome.sql; supabase/tests/opportunity_outcome.sql): the outcome of an opportunity, in one read.
 INSERT INTO callable VALUES
   ('opportunity_outcome(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
@@ -1836,6 +1857,7 @@ BEGIN
     'SELECT public.queue_draft_expiry_reminders(1)',
     format('SELECT public.record_document_uploaded(%L)', nobody),
     'SELECT public.record_inbound_mail(''probe'', ARRAY[''x''], ''a@b.example'', NULL, NULL, NULL, NULL, NULL, false, NULL, false, NULL)',
+    'SELECT public.record_reply_suggestion(0, ''acknowledged'')',
     'SELECT public.record_inbound_attachment(0, ''probe'', ''x.pdf'', NULL, 1, NULL)',
     'SELECT public.finish_inbound_attachment(0, ''clean'', NULL, ''peo-mail'', ''x'')',
     format('SELECT public.plan_mail_move(0, NULL, %L)', nobody),
@@ -2238,7 +2260,10 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
   ('record_quote', 'advisor', 'by_id', $$SELECT public.record_quote(p_quote_request_id => {qr}, p_kind => 'estimate')::text$$),
+  ('attach_quote_document', 'advisor', 'by_id', $$SELECT public.attach_quote_document((SELECT q.id FROM public.quotes q WHERE q.quote_request_id = {qr} ORDER BY q.id LIMIT 1), 0)::text$$),
+  ('start_quote_document_upload', 'advisor', 'by_id', $$SELECT public.start_quote_document_upload((SELECT q.id FROM public.quotes q WHERE q.quote_request_id = {qr} ORDER BY q.id LIMIT 1), 'probe.pdf', 'application/pdf', 1)::text$$),
   ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
+  ('advisor_decide_reply_suggestion', 'advisor', 'by_id', $$SELECT public.advisor_decide_reply_suggestion({rmsg}, 'dismiss')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
@@ -2502,7 +2527,10 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.opportunity_create({acct}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, NULL)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"name": "Probe search"'),
   ('opportunity_create_context', 'advisor', 'by_id',
    $$SELECT jsonb_typeof(public.opportunity_create_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
-  ('opportunity_outcome', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_outcome({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+  ('opportunity_outcome', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_outcome({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('opportunity_quote_comparison', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_quote_comparison({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('add_comparison_note', 'advisor', 'by_id',
+   $$SELECT public.add_comparison_note({firm}, {opp}, NULL, NULL, 'internal', 'Probe note')::text$$, ARRAY['42501', 'PT404', 'P0002'], '"body": "Probe note"');
 
 -- CRM-O1.3a: won, lost and reopen ({opp} is the opportunity of the firm's owned account, owned by the account's owner; {plc} the account's placement and {pay} the
 -- payment on it). The opportunity's three functions are asked for a version it never had, which the member meets after every other question (22023), so nothing
@@ -2618,6 +2646,12 @@ BEGIN
     FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)
     RETURNING id::text INTO qr;
     INSERT INTO fprobe_ids VALUES (f, 'peomsg', qr);
+    -- A PEO's reply with a suggestion on it (N-1.1), written the same way.
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, subject, body_text, suggested_status)
+    SELECT '<probe-reply-' || f || '@peo.example>', q.id, q.session_id, 'received', 'dana@peo.example', 'Probe', 'Probe', 'acknowledged'
+    FROM public.quote_requests q WHERE q.session_id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END)
+    RETURNING id::text INTO qr;
+    INSERT INTO fprobe_ids VALUES (f, 'rmsg', qr);
   END LOOP;
 END $$;
 
@@ -3710,6 +3744,11 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
    $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- 7.7, N-3.2 (20261125110000): the broker's notes on a comparison of quotes.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.quote_comparison_notes', 'firm', 'its own firm_id and an opportunity of that firm; closed to the API, read through the comparison and written through add_comparison_note',
+   $m$INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body) SELECT o.firm_id, o.id, 'internal', 'Probe {tag}' FROM public.opportunities o WHERE o.firm_id = {firm} ORDER BY o.created_at, o.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.leads', 'firm', 'its own firm_id; read by level, written by no API role',
    $m$INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}', 'added_by_hand') RETURNING ctid::text$m$, false,
@@ -4374,7 +4413,7 @@ SELECT unnest(ARRAY[
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
   'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
-  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request', 'record_quote', 'record_manuscript_version',
+  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
@@ -4515,6 +4554,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_page', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads its page; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)'),
   ('opportunity_activity', 'firm_scoped', 'the same for a page of its calls, notes, tasks, quote requests'' events and record history (4e)'),
+  ('opportunity_quote_comparison', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads the comparison of its quotes and the notes on it; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)'),
+  ('add_comparison_note', 'firm_scoped', 'a current member of the firm the call acts for adds a note to the comparison of an opportunity they may see; refused for another firm''s opportunity as for one that is not there (4e)'),
   ('update_opportunity', 'firm_scoped', 'a current member of the firm the call acts for saves an opportunity''s own fields from a version, when the level rule gives it them; refused for another firm''s opportunity as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_create', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, makes an opportunity on it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),
@@ -4764,7 +4805,7 @@ SELECT unnest(ARRAY[
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',
   'queue_draft_expiry_reminders', 'queue_retention_deletions', 'reap_outbox_events', 'reconcile_outbox_events', 'record_census_template_scan',
-  'record_document_scan', 'record_document_uploaded', 'record_invitation_delivery', 'record_email_delivery_event', 'record_inbound_attachment', 'record_inbound_mail',
+  'record_document_scan', 'record_document_uploaded', 'record_invitation_delivery', 'record_email_delivery_event', 'record_inbound_attachment', 'record_inbound_mail', 'record_reply_suggestion',
   'record_ops_event', 'requeue_document_scan', 'requeue_outbox_event', 'run_retention'
 ]), 'service_only', 'not executable through the API: the service role''s work (the scheduled jobs and edge functions), or a helper the firm-scoped functions call after their own check';
 
