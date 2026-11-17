@@ -81,12 +81,14 @@ export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<ob
     ["advisor_notification", config.advisor],
     ["peo_mail_arrived", config.advisor],
     ["lead_from_link", config.advisor],
+    ["firm_waiting", config.advisor],
     ["member_left", config.firmNotice],
     ["firm_closing", config.firmNotice],
     ["export_alert", config.firmNotice],
     ["prospect_confirmation", config.prospect],
     ["information_request", config.prospectLink],
     ["draft_expiry_reminder", config.prospectLink],
+    ["firm_decision", config.prospectLink],
   ];
 }
 

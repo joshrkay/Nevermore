@@ -254,6 +254,7 @@
 \i supabase/migrations/20261123130000_new_quote_account.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
+\i supabase/migrations/20261124090000_firm_signup_emails.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -4714,7 +4715,7 @@ SELECT unnest(ARRAY[
   'current_owner_firm_ids', 'current_member_firm_ids', 'caller_is_firm_member', 'firm_activity_append', 'firm_activity_append_once', 'firm_activity_insert', 'firm_activity_resolve',
   'guard_invitation_mail_rate', 'prune_firm_activity', 'record_firm_activity', 'record_firm_event',
   'export_source_accounts', 'export_source_firm_activity', 'export_source_referral_partners',
-  'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'prune_firm_outbox_events', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
+  'complete_outbox_event', 'end_membership_now', 'outbox_owner_recipients', 'outbox_admin_recipients', 'prune_firm_outbox_events', 'consume_global_ai_budget', 'consume_ip_quota', 'document_scan_orphans', 'drop_mailboxes_of_former_members', 'enqueue_certification_notifications',
   'expire_idle_intakes', 'fail_document_scan', 'fail_intake_deletion', 'fail_outbox_event', 'finish_inbound_attachment',
   'freeze_outbox_message', 'intake_deletion_files', 'intake_owner_verified', 'intake_stored_files', 'issue_quote_request_address',
   'next_submission_reference', 'note_intake_milestone', 'note_outbox_config_problem', 'ops_alert_events', 'prune_ai_extraction_events',
@@ -4727,7 +4728,7 @@ INSERT INTO fn_class (fn, class, why)
 SELECT unnest(ARRAY[
   'certify_extra_answers', 'documents_limit_unstored', 'documents_refuse_deleting_intake', 'drop_mailbox_without_role',
   'record_membership_change', 'record_send_activity', 'keep_suspension', 'drop_mailbox_when_membership_ends',
-  'refuse_note_on_closing_firm', 'end_alert_of_closed_firm', 'enqueue_submission_notifications', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
+  'refuse_note_on_closing_firm', 'end_alert_of_closed_firm', 'enqueue_submission_notifications', 'queue_firm_signup_emails', 'queue_firm_decision_email', 'handle_new_user', 'keep_deletion_firm', 'keep_firm_owner', 'log_quote_request_change',
   'log_quote_request_note_change', 'note_held_mail', 'peo_profile_template_check', 'queue_peo_mail_alert', 'record_certification',
   'record_certified_extra_answers', 'record_document_event', 'refuse_peo_firm_address', 'reset_reviews_on_answer_change',
   'snapshot_certified_evidence', 'stamp_message_firm', 'sync_submission_workflow', 'track_certification_milestone', 'track_email_verified',

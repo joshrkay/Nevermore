@@ -14,6 +14,8 @@ import {
   parsePeoMailArrived,
   parseExportAlert,
   parseLeadFromLink,
+  parseFirmWaiting,
+  parseFirmDecision,
   parseFirmClosing,
   parseMemberLeft,
   parseDraftExpiryReminder,
@@ -23,6 +25,9 @@ import {
   renderPeoMailArrived,
   renderExportAlert,
   renderLeadFromLink,
+  renderFirmWaiting,
+  renderFirmDecision,
+  firmAddressUrl,
   renderFirmClosing,
   renderMemberLeft,
   renderDraftExpiryReminder,
@@ -109,6 +114,8 @@ export interface DispatchDeps {
   advisorRecipients: (sessionId: string) => Promise<string[]>;
   /** The addresses of the current owners of a firm: who a "member left" email goes to. Asked each time one is built or resent, like `advisorRecipients`. */
   ownerRecipients: (firmId: string) => Promise<string[]>;
+  /** The addresses of the platform admins: who the email about a firm waiting for a decision goes to. Asked each time one is built or resent, like `ownerRecipients`. */
+  adminRecipients: () => Promise<string[]>;
   log: (line: string) => void;
 }
 
@@ -170,6 +177,21 @@ function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
     const leadUrl = `${config.advisor.appBaseUrl}/leads/${encodeURIComponent(n.leadId)}`;
     return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderLeadFromLink(n, { leadUrl }) } };
+  }
+  if (row.kind === "firm_waiting") {
+    // Links to the admin Firms page, so it needs the app's address as well as the sender: the advisor readiness.
+    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseFirmWaiting(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderFirmWaiting(n, { firmsUrl: `${config.advisor.appBaseUrl}/advisor/firms` }) } };
+  }
+  if (row.kind === "firm_decision") {
+    // Links to the firm's own address on the app's domain and names the support address, so it needs the sender, the support address and the app's address.
+    if (!config.prospectLink.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseFirmDecision(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    const { from, supportEmail, appBaseUrl } = config.prospectLink;
+    return { ok: true, message: { from, to: [n.recipientEmail], replyTo: supportEmail, ...renderFirmDecision(n, { supportEmail, firmUrl: firmAddressUrl(appBaseUrl, n.address) }) } };
   }
   // Every other kind is about an intake. An event with none can never be built.
   const sessionId = row.session_id;
@@ -255,7 +277,7 @@ function firstRecipients(value: unknown): string[] | null {
 }
 
 /** The kinds sent to people of a firm, whose recipients are looked up at each send and fixed at the first preparation (D-35, D-102). */
-const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert" || kind === "lead_from_link";
+const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert" || kind === "lead_from_link" || kind === "firm_waiting";
 
 /** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
@@ -280,7 +302,10 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   if (isAdvisorKind(row.kind)) {
     try {
       // A firm's own email (a member left, a request to close, a large export, a visitor asking to be contacted) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
-      if (row.kind === "member_left" || row.kind === "firm_closing" || row.kind === "export_alert" || row.kind === "lead_from_link") {
+      if (row.kind === "firm_waiting") {
+        // The platform admins, whoever they are now; the event names a firm only for its own sake.
+        advisorTo = await deps.adminRecipients();
+      } else if (row.kind === "member_left" || row.kind === "firm_closing" || row.kind === "export_alert" || row.kind === "lead_from_link") {
         // An event that names no firm has no one to tell and never will: it is not looked up by a null id.
         if (!row.firm_id) return { outcome: "fail", reason: "invalid_payload", final: true };
         advisorTo = await deps.ownerRecipients(row.firm_id);
@@ -410,10 +435,10 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "lead_from_link");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting");
   if (config.firmNotice.ok) kinds.push("member_left", "firm_closing", "export_alert");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
-  if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
+  if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder", "firm_decision");
   return kinds;
 }
 

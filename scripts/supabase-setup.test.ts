@@ -31,6 +31,8 @@ interface Fake {
   /** When set, Resend answers every key with this status. */
   resendStatus?: number;
   resendCalls: number;
+  /** What the role-grant statement answers; unset, the account exists and the role is new. */
+  grant?: { accounts: number; newly_granted: number };
 }
 
 let dir: string;
@@ -110,7 +112,7 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
       if (fake.migrationsBefore) return send(201, fake.migrationsBefore.map((version) => ({ version })));
       return send(400, { message: 'ERROR: 42P01: relation "supabase_migrations.schema_migrations" does not exist' });
     }
-    if (query.includes("insert into public.user_roles")) return send(201, [{ accounts: 1, newly_granted: 1 }]);
+    if (query.includes("insert into public.user_roles")) return send(201, [fake.grant ?? { accounts: 1, newly_granted: 1 }]);
     if (query.includes("vault.create_secret") || query.includes("cron.schedule")) fake.setUp = true;
     return send(201, query.startsWith("select count(*)") || query.includes("::int as n") ? [{ n: countFor(query) }] : []);
   }
@@ -368,6 +370,47 @@ describe("supabase-setup", () => {
     expect(code).toBe(1); // the stand-in project is otherwise empty
     expect(cliCalls()).toEqual([]);
     expect(fake.queries.filter((q) => !q.trim().startsWith("select"))).toEqual([expect.stringContaining("lower('advisor@example.com')")]);
+  });
+
+  // Catches: the first admin can't be made without SQL (the option is unknown), or making one wants the secrets file and Docker, or grants the advisor role instead.
+  it("grants the platform admin role without needing the secrets file or the CLI", async () => {
+    const { code, out } = await run(["--project-ref", REF, "--grant-admin", "boss@example.com", "--secrets-file", path.join(dir, "none.env")]);
+
+    expect(out).toContain("Granted.");
+    expect(out).toContain("/advisor/firms");
+    expect(code).toBe(1); // the stand-in project is otherwise empty
+    expect(cliCalls()).toEqual([]);
+    const writes = fake.queries.filter((q) => !q.trim().startsWith("select"));
+    expect(writes).toEqual([expect.stringContaining("lower('boss@example.com')")]);
+    expect(writes[0]).toContain("'admin'");
+    expect(writes[0]).not.toContain("'advisor'");
+  });
+
+  // Catches: an address nobody signed up with looks granted, so the person waits for an admin page that will never show.
+  it("tells the person to sign up first when no account has the email, for either role", async () => {
+    fake.grant = { accounts: 0, newly_granted: 0 };
+    const { out } = await run(["--project-ref", REF, "--grant-admin", "nobody@example.com", "--secrets-file", path.join(dir, "none.env")]);
+
+    expect(out).toContain("No account has that email yet");
+    expect(out).not.toContain("Granted.");
+  });
+
+  // Catches: a repeat run claims to have granted again (or fails), when the person already is an admin.
+  it("says so when the account already is a platform admin, and can grant both roles in one run", async () => {
+    fake.grant = { accounts: 1, newly_granted: 0 };
+    const again = await run(["--project-ref", REF, "--grant-admin", "boss@example.com", "--secrets-file", path.join(dir, "none.env")]);
+    expect(again.out).toContain("They already had it.");
+    expect(again.out).not.toContain("Granted.");
+
+    fake.grant = undefined;
+    fake.queries.length = 0;
+    const both = await run(["--project-ref", REF, "--grant-advisor", "a@example.com", "--grant-admin", "boss@example.com", "--secrets-file", path.join(dir, "none.env")]);
+    const writes = fake.queries.filter((q) => !q.trim().startsWith("select"));
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toContain("'advisor'");
+    expect(writes[1]).toContain("'admin'");
+    expect(both.out).toContain("Granting the advisor role to a@example.com");
+    expect(both.out).toContain("Granting the platform admin role to boss@example.com");
   });
 
   it("configures auth first, and stops without guessing when it can't read the current settings", async () => {

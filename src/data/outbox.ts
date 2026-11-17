@@ -40,6 +40,8 @@ export const OUTBOX_KIND_LABELS: Record<string, string> = {
   firm_closing: "Request to close the firm",
   export_alert: "A large or repeated export",
   lead_from_link: "A visitor asked the firm to contact them",
+  firm_waiting: "A new firm is waiting for approval",
+  firm_decision: "A firm's approval or refusal",
   conversation_message: "Email to a contact or lead",
   peo_message: "Bundle sent to a PEO",
 };

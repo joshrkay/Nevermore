@@ -174,6 +174,11 @@ serve(async (req) => {
         if (e) throw e;
         return Array.isArray(owners) ? owners.filter((a): a is string => typeof a === "string") : [];
       },
+      adminRecipients: async () => {
+        const { data: admins, error: e } = await admin.rpc("outbox_admin_recipients");
+        if (e) throw e;
+        return Array.isArray(admins) ? admins.filter((a): a is string => typeof a === "string") : [];
+      },
       alertDead,
       log,
     });
