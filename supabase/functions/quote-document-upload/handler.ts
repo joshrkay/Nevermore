@@ -90,6 +90,11 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
 
   const service = deps.createClient(supabaseUrl, serviceRoleKey);
   const scan = await choice.scanner.scan(bytes);
+  if (scan.verdict === "unavailable") {
+    // Not checked, so not kept: the attachment stays pending (the thread shows it as still being checked) and the agent uploads the file again.
+    deps.log(`QUOTE_DOCUMENT_SCAN_UNAVAILABLE attachment=${attachmentId} engine=${scan.engine} reason=${scan.reason.replace(/[^A-Za-z0-9_:. -]/g, "").slice(0, 60)}`);
+    return reply({ error: "The file couldn't be checked for viruses just now. Upload it again in a minute.", code: "scan_unavailable" }, 502);
+  }
   if (scan.verdict === "infected") {
     // Blocked, its bytes dropped (never stored), alerted at once; nothing is named as the quote's document.
     await service.rpc("finish_inbound_attachment", { p_attachment_id: attachmentId, p_verdict: "infected", p_signature: scan.signature });

@@ -159,4 +159,15 @@ describe("quote-document-upload: a quote document recorded by hand, an upload li
     expect(t.logs.join("\n")).toContain("MALWARE_DETECTED source=quote-document-upload attachment=51");
     expect(t.alerts).toHaveLength(1);
   });
+
+  // Catches: a file kept readable because the scanner was busy, or an agent told "saved" for a file nothing named as the document.
+  it("keeps nothing and says to upload again when the scanner can't check the file now", async () => {
+    const t = setup({ scan: () => new Response("busy", { status: 503 }) });
+    const { status, body } = await read(await handleQuoteDocumentUpload(post({ quote_id: "3", file: file(PDF, "quote.pdf") }), t.deps));
+    expect(status).toBe(502);
+    expect(body.code).toBe("scan_unavailable");
+    expect(t.stored).toEqual([]);
+    expect(t.rpcs.map((r) => r.fn)).toEqual(["start_quote_document_upload"]);
+    expect(t.logs.join("\n")).toContain("QUOTE_DOCUMENT_SCAN_UNAVAILABLE attachment=51");
+  });
 });
