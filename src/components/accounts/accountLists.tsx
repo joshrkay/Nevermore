@@ -80,7 +80,7 @@ export function ListPanel({ id, heading, count, seeAll, headingRef, children }: 
 }) {
   return (
     <section aria-labelledby={id} className="border border-border rounded-xl p-5">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
         <h2 id={id} ref={headingRef} tabIndex={-1} className="font-display text-lg font-bold focus:outline-none">
           {heading}
           {count !== undefined && <span className="ml-2 text-base font-normal text-muted-foreground">{count}</span>}
