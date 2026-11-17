@@ -334,7 +334,7 @@ describe("SendToSeveralPeos: when no PEO has a published profile", () => {
   it("says nobody can be chosen yet, and offers no note, no Review and no checkbox", async () => {
     render(<SendToSeveralPeos {...props} catalog={[]} startOpen openLabel="Choose PEOs" />);
     const region = await screen.findByRole("region", { name: "Send to several PEOs" });
-    expect(within(region).getByText("No PEO can be chosen yet: none has a published profile.")).toBeInTheDocument();
+    expect(within(region).getByText("No PEO can be chosen yet: none has a published profile. Ask Nevermore to publish the PEOs you quote with.")).toBeInTheDocument();
     expect(within(region).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(within(region).queryByLabelText("Your note")).not.toBeInTheDocument();
     expect(within(region).queryByLabelText("Subject")).not.toBeInTheDocument();
@@ -496,7 +496,7 @@ describe("SendToSeveralPeos: choosing (CRM-Q2.5)", () => {
   it("with no PEOs listed, says so and who to ask, instead of asking the employer", async () => {
     render(<SendToSeveralPeos {...props} catalog={[]} startOpen />);
     const region = await screen.findByRole("region", { name: "Send to several PEOs" });
-    expect(within(region).getByText("No PEOs are listed yet. Ask Nevermore to list the PEOs you quote with.")).toBeInTheDocument();
+    expect(within(region).getByText("No PEO can be chosen yet: none has a published profile. Ask Nevermore to publish the PEOs you quote with.")).toBeInTheDocument();
     expect(region).not.toHaveTextContent("hasn't authorized");
     expect(within(region).queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
   });
