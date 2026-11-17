@@ -595,3 +595,8 @@ One failing test per cycle, seen red for the right reason, then the least code. 
 24. opportunity_stage.sql (existing test) - red: `ERROR:  Say why the PEO declined. Choose a reason from the list` at its line 611 - green (its decline now gives a reason: the rule it relied on changed, D-711).
 25. SQL "each decline's line keeps the words it gave" - NOT red-first: found by mutation (the words lookup without its time bound survived). Green on arrival; made red by removing the bound (see Mutation, below) and restored.
 26. SQL "the column refuses a reason that is not on the list, written directly" - NOT red-first: found by mutation (the CHECK replaced by `true` survived, the function's own IF answering first). Green on arrival; red with the CHECK removed, restored.
+
+## Gate and mutation (7.1, after the restart)
+
+Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; build green; vitest 343 files, 7001 tests: the final run failed 2 in AdvisorSubmissionPage.test.tsx on 5 s timeouts on the shared machine (161/161 pass alone); SQL 121/121 on port 5480 after cycles 22-24.
+Mutation: SQL 11 (reason required, only-a-decline rule, list check in the function, 500 bound, trim, blank words, keep reason and words on leaving, CHECK, both activity time bounds): 9 red at first, 2 survived (CHECK, words time bound), cycles 25-26 closed them, all 11 red. App 15 (DeclineReason x4, AnswerForm x6, opportunityPage x2, advisorApi x2, QuotePage x1): all red.
