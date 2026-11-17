@@ -27,6 +27,7 @@ const renderLogin = (state?: Record<string, unknown>) =>
         <Route path="/advisor" element={<p>Advisor queue</p>} />
         <Route path="/advisor/submissions/:id" element={<p>One submission</p>} />
         <Route path="/start" element={<p>The Chamber</p>} />
+        <Route path="/firms/new" element={<p>Sign up your firm form</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -133,6 +134,15 @@ describe("AuthPage", () => {
     expect(screen.getByRole("button", { name: "Create Account" })).toBeInTheDocument();
   });
 
+  // Break caught: a firm that came from "Sign up your firm" is told it is starting an intake.
+  it("opens on creating an account for someone sent from Sign up your firm, and says so", () => {
+    renderLogin({ reason: "account_needed", from: { pathname: "/firms/new" } });
+    expect(screen.getByRole("heading", { name: "Sign up your firm" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Start your intake" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/chat with Lenore/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Account" })).toBeInTheDocument();
+  });
+
   describe("creating an account", () => {
     const signUpAs = (email: string) => {
       fireEvent.click(screen.getByRole("button", { name: "Create one" }));
@@ -155,6 +165,21 @@ describe("AuthPage", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Use a different email" }));
       expect(screen.getByRole("button", { name: "Create Account" })).toBeInTheDocument();
+    });
+
+    // Break caught: a firm that signed up an account from /firms/new is dropped on the intake, or on the bare homepage, instead of the form it came for.
+    it("brings someone who came from Sign up your firm back to /firms/new, by the emailed link and by the code", async () => {
+      renderLogin({ reason: "account_needed", from: { pathname: "/firms/new" } });
+      fireEvent.change(screen.getByPlaceholderText("you@company.com"), { target: { value: "pat@example.com" } });
+      fireEvent.change(screen.getByPlaceholderText("••••••••"), { target: { value: "hunter22" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Account" }));
+      const input = await screen.findByLabelText("6-digit code");
+      expect(auth.signUp).toHaveBeenCalledWith("pat@example.com", "hunter22", undefined, "/firms/new");
+      fireEvent.click(screen.getByRole("button", { name: "Send a new email" }));
+      await waitFor(() => expect(auth.resendConfirmation).toHaveBeenCalledWith("pat@example.com", "/firms/new"));
+      fireEvent.change(input, { target: { value: "123456" } });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      expect(await screen.findByText("Sign up your firm form")).toBeInTheDocument();
     });
 
     it("confirms the account with the emailed code and goes on to the Chamber", async () => {

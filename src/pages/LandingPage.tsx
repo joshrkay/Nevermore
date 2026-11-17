@@ -360,6 +360,9 @@ const LandingPage = () => {
             <a href="#how-it-works" className="whitespace-nowrap hover:text-foreground transition-colors">How It Works</a>
             <a href="#peo-partners" className="whitespace-nowrap hover:text-foreground transition-colors">For PEO Partners</a>
             <Link to="/start" className="whitespace-nowrap hover:text-foreground transition-colors">Start your intake</Link>
+            {firm.status === "none" && (
+              <Link to="/firms/new" className="whitespace-nowrap hover:text-foreground transition-colors">Sign up your firm</Link>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">Nevermore is a service of Edgar Allan Advisory.</p>
           <LegalLinks copyright />

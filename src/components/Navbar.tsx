@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useFirmAddress } from "@/hooks/useFirmAddress";
+import { useOwnedFirms } from "@/hooks/useOwnedFirms";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { motion } from "framer-motion";
 import { User, Menu, X } from "lucide-react";
@@ -8,7 +10,13 @@ import { User, Menu, X } from "lucide-react";
 const Navbar = () => {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { user } = useAuth();
+  const { user, isAnonymous } = useAuth();
+  const firm = useFirmAddress();
+  const owned = useOwnedFirms();
+  const signedIn = !!user && !isAnonymous;
+  // Bare domain only. A signed-in person is offered it until they own a firm (null: not known yet, so not offered).
+  const workspaceLabel = owned && owned.length > 0 ? "Your firm" : "Your workspace";
+  const canSignUpFirm = firm.status === "none" && (signedIn ? owned?.length === 0 : true);
   const location = useLocation();
   const isLanding = location.pathname === "/";
 
@@ -57,6 +65,20 @@ const Navbar = () => {
               <User className="w-4 h-4" /> Profile
             </Link>
           ) : null}
+          {signedIn ? (
+            <Link to="/advisor" className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors">
+              {workspaceLabel}
+            </Link>
+          ) : (
+            <Link to="/login" className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors">
+              Sign in
+            </Link>
+          )}
+          {canSignUpFirm && (
+            <Link to="/firms/new" className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors">
+              Sign up your firm
+            </Link>
+          )}
           <Link
             to="/start"
             className="text-sm font-bold bg-primary text-primary-foreground px-5 py-2.5 rounded-full hover:bg-primary/90 transition-colors"
@@ -91,6 +113,20 @@ const Navbar = () => {
                 {link.label}
               </Link>
             )
+          )}
+          {signedIn ? (
+            <Link to="/advisor" onClick={() => setMobileOpen(false)} className="block text-sm text-muted-foreground hover:text-foreground">
+              {workspaceLabel}
+            </Link>
+          ) : (
+            <Link to="/login" onClick={() => setMobileOpen(false)} className="block text-sm text-muted-foreground hover:text-foreground">
+              Sign in
+            </Link>
+          )}
+          {canSignUpFirm && (
+            <Link to="/firms/new" onClick={() => setMobileOpen(false)} className="block text-sm text-muted-foreground hover:text-foreground">
+              Sign up your firm
+            </Link>
           )}
           <Link to="/start" onClick={() => setMobileOpen(false)} className="block text-sm font-bold text-primary">
             Start chatting →

@@ -35,6 +35,7 @@ const AuthPage = () => {
   const fromLocation = routeState?.from;
   // Advisors are given accounts; they don't sign up here.
   const forAdvisor = routeState?.audience === "advisor";
+  const forFirm = fromLocation?.pathname === "/firms/new";
   const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : forAdvisor ? "/advisor" : "/start";
   const notice =
     routeState?.reason === "expired"
@@ -119,7 +120,7 @@ const AuthPage = () => {
         <div className="bg-card border border-border rounded-xl p-8">
           {forAdvisor && <FirmName />}
           <h1 className="font-display text-2xl font-bold text-center mb-2">
-            {linkSentTo ? "Check your email" : forAdvisor ? "Advisor Sign In" : isSignUp ? "Start your intake" : "Welcome Back"}
+            {linkSentTo ? "Check your email" : forAdvisor ? "Advisor Sign In" : isSignUp ? (forFirm ? "Sign up your firm" : "Start your intake") : "Welcome Back"}
           </h1>
           <p className="text-sm text-muted-foreground text-center mb-8">
             {linkSentTo
@@ -127,7 +128,9 @@ const AuthPage = () => {
               : forAdvisor
                 ? "Sign in with your advisor account to continue."
                 : isSignUp
-                  ? "Create an account, then chat with Lenore to build your packet."
+                  ? forFirm
+                    ? "Create an account, then set up your firm."
+                    : "Create an account, then chat with Lenore to build your packet."
                   : "Sign in to continue your session."}
           </p>
 

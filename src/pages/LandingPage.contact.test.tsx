@@ -91,3 +91,16 @@ describe("the landing page, getting a quote from a firm", () => {
     expect(screen.queryByRole("link", { name: /Start chatting/ })).toBeNull();
   });
 });
+
+// A brokerage firm finds its way in from the page itself, not only from the header (decision D-1848).
+describe("the landing page, signing a firm up", () => {
+  // Break caught: the page body has no way for a brokerage to sign up, or offers it at a firm's address, where a firm is already named.
+  it("links Sign up your firm to /firms/new on the bare domain, and not at a firm's address", () => {
+    renderLanding();
+    expect(screen.getByRole("link", { name: "Sign up your firm" })).toHaveAttribute("href", "/firms/new");
+    cleanup();
+    firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
+    renderLanding();
+    expect(screen.queryByRole("link", { name: "Sign up your firm" })).toBeNull();
+  });
+});
