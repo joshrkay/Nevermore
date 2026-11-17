@@ -376,6 +376,21 @@ describe("QuotePage: an underwriter's open question", () => {
     await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(3));
   });
 
+  // Break caught: the request sent and then not seen on the quote's own thread, so the agent can't tell whether the employer was asked or has answered.
+  it("shows on the PEO's thread what the employer was asked, and that it waits", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      request: { status: "question_open" },
+      detail: {
+        pipelineStatus: "information_requested",
+        informationRequests: [{ id: 5, session_id: "s1", message: "How many of your employees work part time?", fields: [], extra_questions: [], requested_by: "a1", requested_by_email: "dana@example.com", requested_at: "2026-11-12T16:00:00Z" }],
+        ...threadOf({ quoteRequestEvents: [{ id: 9, quote_request_id: 7, session_id: "s1", note_id: null, field: "asked_employer", old_value: null, new_value: "5", changed_by: "a1", changed_by_email: "dana@example.com", changed_at: "2026-11-12T16:00:01Z" }] }),
+      },
+    }));
+    renderPage();
+    const line = await screen.findByText(/You asked the employer/);
+    expect(line).toHaveTextContent("You asked the employer: “How many of your employees work part time?” Waiting for their answer.");
+  });
+
   // Break caught: a dead panel on a quote that has no question (Ask the prospect offered about nothing; the database would refuse it).
   it("offers nothing on a quote request with no open question", async () => {
     quotes.getQuotePage.mockResolvedValue(asking("sent"));

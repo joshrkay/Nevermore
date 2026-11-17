@@ -302,6 +302,8 @@ const Detail = ({
             notes={detail.quoteRequestNotes}
             events={detail.quoteRequestEvents}
             reads={detail.quoteRequestThreadReads}
+            informationRequests={detail.informationRequests}
+            pipelineStatus={detail.pipelineStatus}
             onOpened={threadOpened}
           />
           <FieldReviewPanel

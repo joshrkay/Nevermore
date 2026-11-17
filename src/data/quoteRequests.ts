@@ -256,6 +256,7 @@ const describeBundleLinkEvent = (v: string) => {
 /** One line for a recorded change to a quote request, or a correction to one of its notes. */
 export function describeQuoteRequestEvent(e: { field: string; old_value: string | null; new_value: string | null }): string {
   if (e.field === "bundle_link") return describeBundleLinkEvent(e.new_value ?? "");
+  if (e.field === "asked_employer") return `The employer was asked about the PEO's question (request ${e.new_value ?? "?"})`;
   if (e.field in MAIL_EVENT_LABELS) return `${MAIL_EVENT_LABELS[e.field]} (message ${e.new_value ?? "?"})`;
   return `${FIELD_NAMES[e.field] ?? e.field}: ${shown(e.field, e.old_value)} → ${shown(e.field, e.new_value)}`;
 }

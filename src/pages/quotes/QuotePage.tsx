@@ -76,6 +76,8 @@ const QuotePage = () => {
         notes={detail.quoteRequestNotes}
         events={detail.quoteRequestEvents}
         reads={detail.quoteRequestThreadReads}
+        informationRequests={detail.informationRequests}
+        pipelineStatus={detail.pipelineStatus}
         footer={(
           <>
             {noReply && <p className="text-sm text-muted-foreground">{noReply}</p>}

@@ -21,7 +21,7 @@ export const ReplySuggestion = ({ message, onSettled }: { message: ThreadMessage
       toast.error(failureWords(err, DID_NOT_GO_THROUGH));
       return;
     }
-    if (decision === "accept") toast.success(`Recorded as ${label}.`);
+    if (decision === "accept") toast.success(status === "question_open" ? `Recorded as ${label}. You can ask the prospect about it: write the question in your own words.` : `Recorded as ${label}.`);
     onSettled?.();
   };
   if (message.suggestion_outcome) {

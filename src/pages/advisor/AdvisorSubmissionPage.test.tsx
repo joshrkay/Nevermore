@@ -1783,6 +1783,21 @@ describe("AdvisorSubmissionPage", () => {
     expect(api.requestInformation).not.toHaveBeenCalled();
   });
 
+  // N-1.3. Break caught: the request sent and then not seen on the PEO's thread of the submission page, so the agent can't tell it waits or was answered.
+  it("shows on the PEO's thread what the employer was asked about its question", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "information_requested",
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "question_open", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+      quoteRequestEvents: [{ id: 9, quote_request_id: 7, session_id: "s1", note_id: null, field: "asked_employer", old_value: null, new_value: "5", changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T16:00:01Z" }],
+      informationRequests: [{ id: 5, session_id: "s1", message: "How many of your employees work part time?", fields: [], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" }],
+    }));
+    renderPage();
+    const threads = await screen.findByRole("region", { name: "PEO threads" });
+    fireEvent.click(within(threads).getByRole("button", { name: /TriNet/ }));
+    expect(await within(threads).findByText(/You asked the employer/)).toHaveTextContent("Waiting for their answer.");
+  });
+
   describe("What each PEO still needs", () => {
     const sourced = { kind: "document", name: "Broker guide", checked_on: "2026-11-02" };
     const catalog = () => [
