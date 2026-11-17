@@ -319,6 +319,44 @@ describe("SendToSeveralPeos: as Choose PEOs on the opportunity's page", () => {
   });
 });
 
+// Issue #236: on a database where no PEO has a published profile (every PEO starts as an empty draft), the choosing step used to open with no PEO on it and no
+// word why: a note box and a Review button with nothing to choose.
+describe("SendToSeveralPeos: when no PEO has a published profile", () => {
+  beforeEach(() => {
+    fetchMyMailbox.mockReset().mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    loadPeoSendContext.mockReset().mockResolvedValue({ mailbox: { connected: true, address: "sam@acme.example" }, contacts: [], reply_address: null });
+    loadPeoAuthorizations.mockReset().mockResolvedValue([]);
+    loadRegisteredElsewhere.mockReset().mockResolvedValue([]);
+  });
+
+  // Catches: an empty list that looks like a list still loading or broken, with a note box and a Review button that lead nowhere.
+  it("says nobody can be chosen yet, and offers no note, no Review and no checkbox", async () => {
+    render(<SendToSeveralPeos {...props} catalog={[]} startOpen openLabel="Choose PEOs" />);
+    const region = await screen.findByRole("region", { name: "Send to several PEOs" });
+    expect(within(region).getByText("No PEO can be chosen yet: none has a published profile.")).toBeInTheDocument();
+    expect(within(region).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(region).queryByLabelText("Your note")).not.toBeInTheDocument();
+    expect(within(region).queryByLabelText("Subject")).not.toBeInTheDocument();
+    expect(within(region).queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+  });
+
+  // Catches: an empty panel that can't be put away, so the page keeps a dead panel in place of its Choose PEOs button.
+  it("can still be closed, back to the button that opened it", async () => {
+    render(<SendToSeveralPeos {...props} catalog={[]} startOpen openLabel="Choose PEOs" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+    expect(await screen.findByRole("button", { name: "Choose PEOs" })).toBeInTheDocument();
+  });
+
+  // Catches: the new message shown to a broker whose PEOs do have profiles.
+  it("says nothing of the kind when there are PEOs to choose from", async () => {
+    render(<SendToSeveralPeos {...props} startOpen />);
+    const region = await screen.findByRole("region", { name: "Send to several PEOs" });
+    expect(await within(region).findByRole("checkbox", { name: "Justworks" })).toBeInTheDocument();
+    expect(region).not.toHaveTextContent("No PEO can be chosen yet");
+    expect(within(region).getByRole("button", { name: "Review" })).toBeInTheDocument();
+  });
+});
+
 describe("SendToSeveralPeos: the label that opens it", () => {
   // Catches: a Choose PEOs that turns into "Send to several PEOs" once it has been closed, two names for one thing on one page.
   it("names the button it comes back to as it was asked to", async () => {
