@@ -7,6 +7,7 @@
 import type { FieldKey, FieldStatus } from "@/data/provenance";
 import { CLAIMS_COMPLETE } from "../../supabase/functions/chamber-extract/reply.ts";
 import { FIELDS } from "../../supabase/functions/chamber-extract/schema.ts";
+import type { ExtraQuestionAsked } from "../../supabase/functions/chamber-extract/extraQuestions";
 
 export interface ExpectedField {
   value: unknown;
@@ -21,6 +22,8 @@ export interface ExpectedField {
 export type ReplyCheck = Record<string, RegExp>;
 
 export interface Turn {
+  requested?: string[];
+  extraQuestions?: ExtraQuestionAsked[];
   message: string;
   reply?: ReplyCheck;
 }
@@ -58,10 +61,10 @@ export const FIXTURES: Fixture[] = [
       { message: "We run it as two companies, each with its own FEIN, and keep employee records in Thistledown HR." },
     ],
     expected: {
-      company_name: { value: "Mossgate Ceramics LLC", status: "confirmed" },
-      hq_state: { value: "OR", status: "confirmed" },
-      states: { value: ["OR"], status: "confirmed" },
-      employee_count: { value: 23, status: "confirmed" },
+      company_name: { value: "Mossgate Ceramics LLC", status: "inferred" },
+      hq_state: { value: "OR", status: "inferred" },
+      states: { value: ["OR"], status: "inferred" },
+      employee_count: { value: 23, status: "inferred" },
       multiple_entities: { value: true },
       fein_count: { value: 2 },
       hris_system: { value: "Thistledown HR" },
@@ -75,7 +78,7 @@ export const FIXTURES: Fixture[] = [
       { message: "Ten of them are hourly; the other four are salaried." },
     ],
     expected: {
-      employee_count: { value: 14, status: "confirmed" },
+      employee_count: { value: 14, status: "inferred" },
       hq_state: { value: "TX", status: "inferred" },
       has_nonexempt: { value: true },
       nonexempt_count: { value: 10 },
@@ -103,10 +106,10 @@ export const FIXTURES: Fixture[] = [
   },
   {
     id: "explicit-correction",
-    description: "An explicit correction replaces the earlier value.",
+    description: "An explicit conversational correction proposes a conflict for review.",
     turns: [{ message: "We have 40 employees." }, { message: "Actually it's 45, not 40." }],
     expected: {
-      employee_count: { value: 45, status: "confirmed" },
+      employee_count: { value: 40, status: "conflicting" },
     },
   },
   {
@@ -171,7 +174,7 @@ export const FIXTURES: Fixture[] = [
       { message: "Our hourly staff clock in on a mobile app. We don't use physical time clocks." },
     ],
     expected: {
-      has_handbook: { value: false, status: "confirmed" },
+      has_handbook: { value: false, status: "inferred" },
       has_1099: { value: true },
       ca_contractors: { value: true },
       uses_mobile_app: { value: true },

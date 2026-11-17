@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { sanitizeChamberPatch } from "@/data/chamberValidation";
-import type { FieldAction, FieldProvenance } from "@/data/provenance";
+import { describeSource, type FieldAction, type FieldProvenance } from "@/data/provenance";
 import { cellInput, formatCell, ROW_LISTS, type RowListField } from "@/data/rowColumns";
 
 interface RowsFieldProps {
@@ -60,6 +60,7 @@ const RowsField = ({ field, rows, provenance, onAction, hint, offer = [] }: Rows
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground">{title}</h4>
+        {provenance?.status === "conflicting" && <span className="text-xs text-warning">Conflicting answers — please choose</span>}
         {onAction && provenance?.status === "confirmed" && has && (
           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-success/15 text-success">
             {provenance.source.kind === "prospect_edit" ? "Confirmed by you" : "Confirmed"}
@@ -69,6 +70,27 @@ const RowsField = ({ field, rows, provenance, onAction, hint, offer = [] }: Rows
           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium border border-warning/50 text-warning">Lenore captured this — please confirm</span>
         )}
       </div>
+
+      {!draft && onAction && provenance?.status === "conflicting" && (
+        <div role="group" aria-label={`Resolve ${title}`} className="space-y-3 border border-warning/50 rounded p-3">
+          <p className="text-xs">Your current table is kept until you choose a version or edit it below.</p>
+          {provenance.candidates?.map((candidate, index) => (
+            <div key={index} className="space-y-1 text-xs">
+              <p>{describeSource(candidate.source)}</p>
+              <ul aria-label={`${title}, version ${index + 1}`}>
+                {(Array.isArray(candidate.value) ? candidate.value : []).map((row, at) => (
+                  <li key={at}>{columns.map((column) => `${column.label}: ${formatCell(column,
+                    typeof row === "object" && row !== null ? row[column.key] : undefined)}`).join("; ")}</li>
+                ))}
+              </ul>
+              <button type="button" aria-label={`Use version ${index + 1} for ${title}`}
+                className="underline" onClick={() => onAction({ type: "resolve", field, candidate: index })}>
+                Use this version
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {draft ? (
         <form

@@ -648,3 +648,10 @@ Nothing else may be in a message. The database refuses a transcript that breaks 
 
 A transcript is restored as saved, with repeated greetings removed: Lenore's opening line is marked `kind: "greeting"` (older openings are recognised by their words), and only the first greeting is kept. A voice session's own hello is not added again. The panel opens at the latest message without scrolling through the history, marks "Restored from your last visit" after the last restored message, and follows new messages only while the reader is at the bottom (otherwise it offers "New message"). The orb shows Lenore's latest line rather than a separate hello.
 
+
+
+### Reviewed AI proposals (ADR 0028)
+
+New chat and voice extractions require evidence from the current message and arrive inferred, even when the model says confirmed. The prospect confirms them in the workspace. A model correction flag cannot replace a document or an existing answer: differing proposals use the conflict controls. Manual edits remain protected. Tables still accept additive rows and blank cells, but differing populated cells require review. This applies to PEO extra answers too; existing stored confirmation statuses are not rewritten.
+
+The handler and extraction evaluation share server privacy preprocessing and response shaping. Evaluation retains raw and delivered replies separately; the delivered reply supplies subsequent conversation context. Run `npm run eval:extraction -- --strict` for an acceptance check that fails any failed assertion, with or without a baseline. The ordinary baseline comparison remains available separately. Provider failures fail both modes. A strict failing run cannot write a baseline. Live evaluation requires the configured Anthropic credentials.

@@ -38,6 +38,8 @@ const KNOWN = {
     // settled, said once to be that PEO's and never required, and answered through the tool's extra_answers. (Built as
     // 9 beside Epic K's 9 and renumbered when the two met, before either was released with it.)
     10: "df3a793a3cb84740390f082c6a48b8294e95f5ff63a265b587f2ce99c1bb043c",
+    // 11: evidence-backed AI proposals; only workspace review confirms or replaces answers.
+    11: "c1bace2e7db39c111ae5657c0d6911bcb51c68f16cf3756bff95af96093b064f",
   } as Record<number, string>,
   "document-extract": {
     1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526",
@@ -83,6 +85,7 @@ const USER_TURN_KNOWN: Record<number, string> = {
   9: "c435f04f957a6d7d5f62d8ff23607e7a3141c27704a16c038eb0a7e3e368e675",
   // 10: a PEO's extra questions as their own line of data. Rendered with a fifth turn that has one.
   10: "9ed94133ab76d220cd2934a822dfa1bd2f8d32acf06e7f36af0a7ea4d4f91313",
+  11: "9ed94133ab76d220cd2934a822dfa1bd2f8d32acf06e7f36af0a7ea4d4f91313",
 };
 
 describe("prompt versions", () => {

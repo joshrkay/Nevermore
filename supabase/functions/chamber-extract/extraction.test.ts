@@ -5,7 +5,10 @@ import { EXTRACT_TOOL, FIELD_GUIDE,
   FIELD_QUESTION, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 // Most cases are about the arguments, not the message: evidence is checked against `message` where it matters.
-const shape = (args: Record<string, unknown>, message = "") => shapeExtraction(args, message);
+const shape = (args: Record<string, unknown>, message = JSON.stringify(args)) => shapeExtraction({
+  ...args,
+  evidence: args.evidence ?? Object.fromEntries(FIELDS.map((field) => [field, message])),
+}, message);
 
 describe("shapeExtraction", () => {
   it("keeps the fields the model extracted, with their status, evidence and corrections", () => {
@@ -19,9 +22,9 @@ describe("shapeExtraction", () => {
     }, "Actually it's 45 people now, mainly CA and TX.");
     expect(shaped).toEqual({
       extracted: { employee_count: 45, states: ["CA", "TX"] },
-      field_status: { employee_count: "confirmed", states: "incomplete" },
+      field_status: { employee_count: "inferred", states: "incomplete" },
       evidence: { employee_count: "actually it's 45", states: "mainly CA and TX" },
-      corrected_fields: ["employee_count"],
+      corrected_fields: [],
       reply: "Thank you.",
       rejected: [],
       prompt_version: PROMPT_VERSION,
@@ -41,12 +44,12 @@ describe("shapeExtraction", () => {
       has_401k: "yes",
       key_challenges: "x".repeat(1001),
       field_status: { company_name: "confirmed", hq_state: "confirmed", states: "confirmed" },
-      evidence: { hq_state: "in california" },
+      evidence: { company_name: "Acme", hq_state: "in california" },
       corrected_fields: ["hq_state"],
-    });
+    }, "Acme");
     expect(shaped.extracted).toEqual({ company_name: "Acme" });
-    expect(shaped.field_status).toEqual({ company_name: "confirmed" });
-    expect(shaped.evidence).toEqual({});
+    expect(shaped.field_status).toEqual({ company_name: "inferred" });
+    expect(shaped.evidence).toEqual({ company_name: "Acme" });
     expect(shaped.corrected_fields).toEqual([]);
     expect(shaped.rejected.map((issue) => issue.path)).toEqual(["hq_state", "states[1]", "employee_count", "has_401k", "key_challenges"]);
     expect(shaped.rejected.find((issue) => issue.path === "key_challenges")?.reason).toBe("must be at most 1000 characters");
@@ -75,7 +78,7 @@ describe("shapeExtraction", () => {
       shift_differentials: false,
       hris_system: "Thistledown HR",
     };
-    expect(shapeExtraction(answers)).toMatchObject({ extracted: answers, rejected: [] });
+    expect(shape(answers)).toMatchObject({ extracted: answers, rejected: [] });
   });
 
   it("refuses a count that isn't a whole number of 0 or more, and a list sent as one string", () => {
@@ -106,9 +109,9 @@ describe("shapeExtraction", () => {
       evidence: { company_name: "we are Acme", industry: "retail" },
       corrected_fields: ["company_name", "industry"],
     }, "We are Acme, in retail.");
-    expect(shaped.field_status).toEqual({ company_name: "confirmed" });
+    expect(shaped.field_status).toEqual({ company_name: "inferred" });
     expect(shaped.evidence).toEqual({ company_name: "we are Acme" });
-    expect(shaped.corrected_fields).toEqual(["company_name"]);
+    expect(shaped.corrected_fields).toEqual([]);
   });
 
   it("refuses a status the client doesn't know", () => {
@@ -150,12 +153,12 @@ describe("shapeExtraction", () => {
 describe("shapeExtraction: evidence and unknown fields", () => {
   const QA_MESSAGE = "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.";
 
-  it("drops a quote that isn't the prospect's own words, keeping the answer", () => {
+  it("rejects an answer whose quote is not the prospect's own words", () => {
     const shaped = shape(
       { company_name: "Acme", industry: "Retail", field_status: { company_name: "confirmed", industry: "inferred" }, evidence: { company_name: "We're Acme", industry: "they run a shop" } },
       "We\u2019re  ACME, and we sell shoes.",
     );
-    expect(shaped.extracted).toEqual({ company_name: "Acme", industry: "Retail" });
+    expect(shaped.extracted).toEqual({ company_name: "Acme" });
     expect(shaped.evidence).toEqual({ company_name: "We're Acme" });
   });
 
@@ -180,7 +183,7 @@ describe("shapeExtraction: evidence and unknown fields", () => {
     // With no quote, with the whole message as the quote, and with a quote the message doesn't hold.
     for (const evidence of [{}, Object.fromEntries(untouched.map((f) => [f, QA_MESSAGE])), Object.fromEntries(untouched.map((f) => [f, "I don't know"]))]) {
       const shaped = shape({ ...args, evidence }, QA_MESSAGE);
-      expect(shaped.field_status).toEqual({ pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "inferred" });
+      expect(shaped.field_status).toEqual({});
       expect(shaped.doubted_unknown).toEqual(untouched);
       for (const f of untouched) expect(shaped.evidence).not.toHaveProperty(f);
     }
@@ -388,16 +391,16 @@ describe("the extraction contract", () => {
   // K-1.2: Lenore proposes a NAICS code from the description of operations; the prospect confirms it.
   it("takes a NAICS code the model proposes as inferred, however sure the model says it is", () => {
     const shaped = shape(
-      { operations_description: "We design packaging for consumer brands", naics_code: "541430", field_status: { operations_description: "confirmed", naics_code: "confirmed" }, evidence: { naics_code: "design packaging" } },
+      { operations_description: "We design packaging for consumer brands", naics_code: "541430", field_status: { operations_description: "confirmed", naics_code: "confirmed" }, evidence: { naics_code: "design packaging", operations_description: "We design packaging for consumer brands" } },
       "We design packaging for consumer brands.",
     );
     expect(shaped.extracted).toEqual({ operations_description: "We design packaging for consumer brands", naics_code: "541430" });
-    expect(shaped.field_status).toEqual({ operations_description: "confirmed", naics_code: "inferred" });
+    expect(shaped.field_status).toEqual({ operations_description: "inferred", naics_code: "inferred" });
   });
 
   it("takes a NAICS code as confirmed only when the prospect's own message gives the code", () => {
     const shaped = shape({ naics_code: "541430", field_status: { naics_code: "confirmed" }, evidence: { naics_code: "541430" } }, "Our NAICS code is 541430.");
-    expect(shaped.field_status).toEqual({ naics_code: "confirmed" });
+    expect(shaped.field_status).toEqual({ naics_code: "inferred" });
   });
 
   it("refuses a NAICS code that isn't a 2022 industry, so a made-up code never reaches the intake", () => {
@@ -435,7 +438,7 @@ describe("the extraction contract", () => {
     const value = sample(key);
     const shaped = shape({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } }, "That's as they said.");
     expect(shaped.extracted).toEqual({ [key]: value });
-    expect(shaped.field_status).toEqual({ [key]: "confirmed" });
+    expect(shaped.field_status).toEqual({ [key]: "inferred" });
     expect(shaped.evidence).toEqual({ [key]: "as they said" });
     expect(shaped.rejected).toEqual([]);
   });

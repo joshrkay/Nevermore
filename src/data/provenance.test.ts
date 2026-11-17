@@ -376,7 +376,7 @@ describe("applyExtraction's precedence ladder", () => {
       expect(settled.provenance.employee_count?.also_heard?.map((h) => h.value)).toEqual([30]);
     });
 
-    it("is cleared when the prospect confirms, edits or resolves the field", () => {
+    it("is cleared by confirmation or editing, while resolution preserves the alternatives", () => {
       const noted = fromChat(fromFile, "m1", { employee_count: 32 });
       expect(noted.provenance.employee_count?.also_heard).toHaveLength(1);
       expect(applyFieldAction(noted, { type: "confirm", field: "employee_count" }, NOW).provenance.employee_count).toEqual({
@@ -387,7 +387,7 @@ describe("applyExtraction's precedence ladder", () => {
       expect(applyFieldAction(noted, { type: "edit", field: "employee_count", value: 33 }).provenance.employee_count).not.toHaveProperty("also_heard");
       const conflict = fromDoc(noted, "d2", { employee_count: 31 });
       expect(conflict.provenance.employee_count?.also_heard).toHaveLength(1);
-      expect(applyFieldAction(conflict, { type: "resolve", field: "employee_count", candidate: 1 }).provenance.employee_count).not.toHaveProperty("also_heard");
+      expect(applyFieldAction(conflict, { type: "resolve", field: "employee_count", candidate: 1 }).provenance.employee_count?.also_heard).toEqual([{ value: 32, source: msg("m1") }, { value: 30, source: doc("d1") }]);
     });
   });
 });
@@ -700,8 +700,8 @@ describe("transcriptExtraction", () => {
     expect(transcriptExtraction({ id: "m1", text: "fifteen people", spoken: true }, meta).statuses).toEqual({
       employee_count: "inferred", company_name: "inferred", states: "incomplete",
     });
-    // Typed, the model's status stands.
-    expect(transcriptExtraction({ id: "m1", text: "15 people" }, meta).statuses?.employee_count).toBe("confirmed");
+    // Typing into chat still goes through the model; workspace review confirms.
+    expect(transcriptExtraction({ id: "m1", text: "15 people" }, meta).statuses?.employee_count).toBe("inferred");
   });
 });
 
@@ -721,17 +721,17 @@ describe("merging a spoken answer", () => {
     expect(fieldOpenItems(next.provenance)).toEqual([{ field: "employee_count", label: FIELD_LABELS.employee_count, reason: "Please confirm" }]);
   });
 
-  it("isn't confirmed by being said again, but is when the prospect types it or confirms it", () => {
+  it("stays inferred when repeated in speech or chat until a workspace confirmation", () => {
     const heard = applyExtraction(EMPTY, { employee_count: 15 }, transcriptExtraction(spoken("v1", "fifteen"), confirmedBy("employee_count", "fifteen")));
     const again = applyExtraction(heard, { employee_count: 15 }, transcriptExtraction(spoken("v2", "yes, fifteen"), confirmedBy("employee_count", "yes, fifteen")));
     expect(again.provenance.employee_count?.status).toBe("inferred");
     const typed = applyExtraction(again, { employee_count: 15 }, transcriptExtraction({ id: "m3", text: "15" }, confirmedBy("employee_count", "15")));
-    expect(typed.provenance.employee_count?.status).toBe("confirmed");
+    expect(typed.provenance.employee_count?.status).toBe("inferred");
     expect(applyFieldAction(again, { type: "confirm", field: "employee_count" }).provenance.employee_count?.status).toBe("confirmed");
   });
 
   it("never lowers an answer the prospect already typed and confirmed when they say it again", () => {
-    const typed = applyExtraction(EMPTY, { pay_frequency: "weekly" }, transcriptExtraction({ id: "m1", text: "weekly" }, confirmedBy("pay_frequency", "weekly")));
+    const typed = applyFieldAction(EMPTY, { type: "edit", field: "pay_frequency", value: "weekly" });
     const said = applyExtraction(typed, { pay_frequency: "weekly" }, transcriptExtraction(spoken("v2", "weekly"), confirmedBy("pay_frequency", "weekly")));
     expect(said.provenance.pay_frequency?.status).toBe("confirmed");
   });
