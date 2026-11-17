@@ -307,7 +307,7 @@ describe("AccountPage: the Overview", () => {
     expect(within(opportunities).getByText("Jan 1, 2027")).toBeInTheDocument();
     const quotes = screen.getByRole("region", { name: /Quotes/ });
     expect(within(quotes).getAllByRole("row")).toHaveLength(3);
-    expect(within(quotes).getAllByText("Waiting")).toHaveLength(2);
+    expect(within(quotes).getAllByRole("cell", { name: "Sent" })).toHaveLength(2);
     const activity = screen.getByRole("region", { name: /Recent activity/ });
     expect(within(activity).getByText("Employees changed from 40 to 45")).toBeInTheDocument();
     expect(within(activity).getByText("Account created")).toBeInTheDocument();
