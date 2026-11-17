@@ -1,0 +1,1 @@
+-- Keep the quote document (N-2.2, slice 7.3; docs/BROKER_CRM_BUILD.md "### 7.3 N-2.2, N-2.4 decisions", D-730 to D-739; supabase/tests/quote_document.sql).
