@@ -260,6 +260,7 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124170000_quote_comparison.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -826,6 +827,8 @@ BEGIN
     INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES (fid, 'archive', now() + interval '10 minutes');
     INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after)
     SELECT c.id, fid, 'account', acc1, '{}', '{}' FROM public.bulk_changes c WHERE c.firm_id = fid;
+    -- 7.7, N-3.2: a note on the owned account's search's comparison.
+    INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body) VALUES (fid, opp1, 'internal', 'Fixture comparison note');
     -- CRM-S1.2b: the owner's last opened record.
     INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
     -- CRM-L1.3a: two leads, one owned by the firm's agent and one with none, a note on the owned one, and a label on it.
@@ -1043,6 +1046,10 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
+-- The broker's notes on a comparison of quotes (7.7, N-3.2, 20261124170000): closed to the API, read through opportunity_quote_comparison by whoever may see the
+-- opportunity's account and written through add_comparison_note (supabase/tests/quote_comparison.sql).
+INSERT INTO matrix VALUES
+  ('public.quote_comparison_notes',                     '{}', NULL);
 -- ---- CRM-L1.3a: leads (20261121090000) ----
 -- Read by level through can_see_firm_record (supabase/tests/leads.sql), written by nobody through the API. Each firm has two, one owned by its agent and one
 -- with no owner: the first firm's members see both, the second's agent only their own and its owner both. Labels on leads are closed to the API.
@@ -1720,6 +1727,12 @@ INSERT INTO callable VALUES
   ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
 
+-- 7.7, N-3.1 and N-3.2 (20261124170000_quote_comparison.sql; supabase/tests/quote_comparison.sql): the comparison of an opportunity's quotes and the notes on it.
+INSERT INTO callable VALUES
+  ('opportunity_quote_comparison(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the opportunity''s account, by level, reads one column for each of its quote requests, alphabetical, with the PEO''s current quote (the newest) and the notes on the comparison; PT404, one answer, for an opportunity that is not there, is another firm''s or may not be seen'),
+  ('add_comparison_note(p_firm_id uuid, p_opportunity_id uuid, p_quote_request_id bigint, p_area text, p_visibility text, p_body text)', 'own', NULL,
+   'a current member of the firm the call acts for adds a note, marked internal or for the client, to the comparison of an opportunity they may see, about one of its PEOs and a cost area or about the comparison as a whole; 42501 for anyone who is no member of that firm, PT404 for an opportunity that is not there, is another firm''s or may not be seen, PT423 for a closing firm or a support session, 55000 for an archived account');
 -- CRM-O1.3b review (20261121170000_opportunity_outcome.sql; supabase/tests/opportunity_outcome.sql): the outcome of an opportunity, in one read.
 INSERT INTO callable VALUES
   ('opportunity_outcome(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
@@ -2496,7 +2509,10 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
    $$SELECT public.opportunity_create({acct}, 'Probe search', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, {firm}, NULL)::text$$, ARRAY['42501', 'PT404', 'P0002'], '"name": "Probe search"'),
   ('opportunity_create_context', 'advisor', 'by_id',
    $$SELECT jsonb_typeof(public.opportunity_create_context({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
-  ('opportunity_outcome', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_outcome({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+  ('opportunity_outcome', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_outcome({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('opportunity_quote_comparison', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.opportunity_quote_comparison({firm}, {opp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$'),
+  ('add_comparison_note', 'advisor', 'by_id',
+   $$SELECT public.add_comparison_note({firm}, {opp}, NULL, NULL, 'internal', 'Probe note')::text$$, ARRAY['42501', 'PT404', 'P0002'], '"body": "Probe note"');
 
 -- CRM-O1.3a: won, lost and reopen ({opp} is the opportunity of the firm's owned account, owned by the account's owner; {plc} the account's placement and {pay} the
 -- payment on it). The opportunity's three functions are asked for a version it never had, which the member meets after every other question (22023), so nothing
@@ -3704,6 +3720,11 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
    $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- 7.7, N-3.2 (20261124170000): the broker's notes on a comparison of quotes.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.quote_comparison_notes', 'firm', 'its own firm_id and an opportunity of that firm; closed to the API, read through the comparison and written through add_comparison_note',
+   $m$INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body) SELECT o.firm_id, o.id, 'internal', 'Probe {tag}' FROM public.opportunities o WHERE o.firm_id = {firm} ORDER BY o.created_at, o.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.leads', 'firm', 'its own firm_id; read by level, written by no API role',
    $m$INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}', 'added_by_hand') RETURNING ctid::text$m$, false,
@@ -4509,6 +4530,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
 INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_page', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads its page; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)'),
   ('opportunity_activity', 'firm_scoped', 'the same for a page of its calls, notes, tasks, quote requests'' events and record history (4e)'),
+  ('opportunity_quote_comparison', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads the comparison of its quotes and the notes on it; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)'),
+  ('add_comparison_note', 'firm_scoped', 'a current member of the firm the call acts for adds a note to the comparison of an opportunity they may see; refused for another firm''s opportunity as for one that is not there (4e)'),
   ('update_opportunity', 'firm_scoped', 'a current member of the firm the call acts for saves an opportunity''s own fields from a version, when the level rule gives it them; refused for another firm''s opportunity as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_create', 'firm_scoped', 'a current member of the firm the call acts for, who may see the account, makes an opportunity on it; another firm''s account is as not there; refused for anyone who is no member of the firm named (4e)'),

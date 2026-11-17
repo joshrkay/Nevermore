@@ -212,6 +212,7 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124170000_quote_comparison.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

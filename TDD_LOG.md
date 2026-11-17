@@ -736,3 +736,17 @@ Skill mattpocock-skills:tdd invoked first. SQL cycles run `supabase/tests/run.sh
 4. s4: an area left out is JSON null, a waived fee 0, quoted lines come through. Red: `FAIL: one-off fees come through gave <NULL>`. Green: the four jsonb areas added.
 5. s5: a stranger (own firm id, the opportunity's firm id) and a missing opportunity all get PT404. The guard had been written in cycle 1 with no test, so the test passed on first run; the guard was removed, the test seen red (`FAIL: a stranger who names their own firm`), the guard restored, green.
 6. s6: a note on a PEO's cost area, internal, is listed with who wrote it. Red: `function public.add_comparison_note(uuid, uuid, bigint, text, text, text) does not exist`. Green: the table, an unchecked writer that trims and the `notes` list in the read.
+7. s7: another firm's agent adds no note whichever firm they name (42501 for the firm they are not in, PT404 for their own firm), nothing stored. Red: `FAIL: naming the opportunity's firm, which they are not in` (the writer took any opportunity id). Green: firm_to_act_for and the opportunity/account visibility check.
+8. s8: a note is internal or client. Red: `FAIL: a mistyped mark`. Green: the visibility check in the writer.
+9. s9: a note has words, at most 2000. Red: `FAIL: blank`. Green: the body check.
+10. s10: a note's area is one of five. Red: `FAIL: an area the comparison does not have`. Green: the area check.
+11. s11: a note names a PEO of this opportunity (a second employer, Bella Cafe, set up). Red: `FAIL: another opportunity's PEO`. Green: the quote request / intake check.
+12. s12: a closing firm and a support session add no note (PT423). Red: `FAIL: a support session`. Green: assert_firm_writable.
+13. s13: an archived account takes no note and the comparison says can_add false. Red 1: `FAIL: an open account can take a note gave <NULL>` (green: can_add in the read). Red 2: `FAIL: the writer refuses`. Green: the 55000 check. (Two asserts of one test, two reds in turn.)
+14. Registry (existing tests as the red): data_isolation `quote_comparison_notes is not in the registry`, then `holds no rows`, then `closing a firm and the registry disagree`; each fixed in turn (registry row, fixture row, matrix row, firm_closing_plan line, callable/fprobe/fn_class rows, help_from_nevermore and close_a_firm lists).
+15. quoteComparisonApi.test: asks the one read with firm and opportunity. Red: `Failed to resolve import "./quoteComparisonApi"`. Green: getQuoteComparison calling the rpc.
+16. same file: reads columns, quote, null areas and notes in the screen's words. Red: `expected { can_add: true ... } to deeply equal { canAdd: true ...`. Green: zod shape and mapper.
+17. same: PT404 is notFound. Red: ZodError thrown. Green: refusal().
+18. same: a wrong shape is a failure. Red: ZodError thrown. Green: safeParse.
+19. same: addComparisonNote sends target, mark and firm. Red: `addComparisonNote is not a function`. Green: the writer call.
+20. same: a 22023 reason passes through, and PT423 / 55000 are readOnly. Two tests written together (one it, one it.each of two rows), three reds: `expected 'failed' to be 'invalid'`, `expected 'failed' to be 'readOnly'` x2. Green: both branches of refusal(). (Broke the one-at-a-time rule here.)

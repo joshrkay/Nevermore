@@ -470,3 +470,128 @@ BEGIN
   PERFORM pg_temp.is(r -> 'notes' -> 0 ->> 'area', 'admin_fee', 'the cost area it is about');
   PERFORM pg_temp.is(r -> 'notes' -> 0 ->> 'author', 'acme_agent@example.test', 'who wrote it');
 END $$;
+
+-- ---------- 7. Another firm's agent adds no note to this opportunity, whichever firm they name ----------
+-- Catches: a writer that trusts the opportunity id it is sent (a rival writes onto a prospect's comparison, and that note could later be shown to the client).
+CREATE FUNCTION pg_temp.nnotes() RETURNS bigint LANGUAGE sql AS $$ SELECT count(*) FROM public.quote_comparison_notes $$;
+
+DO $$
+DECLARE n bigint := pg_temp.nnotes(); opp uuid := pg_temp.opp('reyes');
+BEGIN
+  PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %L, %L)', pg_temp.id('acme'), opp, 'internal', 'Hi')), 6), '42501:', 'naming the opportunity''s firm, which they are not in');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %L, %L)', pg_temp.id('zenith'), opp, 'internal', 'Hi')), 6), 'PT404:', 'naming their own firm');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.nnotes(), n, 'and nothing was stored');
+END $$;
+
+-- ---------- 8. A note is marked internal or for the client, nothing else ----------
+-- Catches: a note stored with no mark, or a mistyped one, that the client's view (N-3.3) would have to guess about: an internal remark must never be taken for one for the client.
+DO $$
+DECLARE n bigint := pg_temp.nnotes(); opp uuid := pg_temp.opp('reyes');
+  call text := format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %%L, %L)', pg_temp.id('acme'), opp, 'A note');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, 'private')), 6), '22023:', 'a mistyped mark');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, '')), 6), '22023:', 'an empty mark');
+  PERFORM pg_temp.is(left(pg_temp.refusal(replace(format(call, 'x'), '''x''', 'NULL')), 6), '22023:', 'no mark');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, 'client')), 3), 'ok', 'for the client is fine');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.nnotes(), n + 1, 'only the valid one was stored');
+END $$;
+
+-- ---------- 9. A note has words, at most 2000 characters ----------
+-- Catches: an empty or whitespace-only note stored (a blank line on the client's page), or an unbounded one.
+DO $$
+DECLARE n bigint := pg_temp.nnotes(); opp uuid := pg_temp.opp('reyes');
+  call text := format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %L, %%L)', pg_temp.id('acme'), opp, 'internal');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, '   ')), 6), '22023:', 'blank');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, repeat('x', 2001))), 6), '22023:', '2001 characters');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, repeat('x', 2000))), 3), 'ok', '2000 characters');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.nnotes(), n + 1, 'only the valid one was stored');
+END $$;
+
+-- ---------- 10. A note's cost area is one of the comparison's rows ----------
+-- Catches: a note about "premium" or a typo stored against no row, which the comparison would never draw.
+DO $$
+DECLARE n bigint := pg_temp.nnotes(); opp uuid := pg_temp.opp('reyes'); area text;
+  call text := format('SELECT public.add_comparison_note(%L, %L, NULL, %%L, %L, %L)', pg_temp.id('acme'), opp, 'internal', 'A note');
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format(call, 'premium')), 6), '22023:', 'an area the comparison does not have');
+  FOREACH area IN ARRAY ARRAY['admin_fee', 'one_off_fees', 'workers_comp', 'unemployment', 'medical'] LOOP
+    PERFORM pg_temp.is(left(pg_temp.refusal(format(call, area)), 3), 'ok', area);
+  END LOOP;
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.nnotes(), n + 5, 'only the five valid ones were stored');
+END $$;
+
+-- A second employer, Bella Cafe, sent to Paychex; Acme's agent owns its account too.
+DO $$
+BEGIN
+  PERFORM pg_temp.intake('bella', 'acme', 'Bella Cafe');
+  PERFORM pg_temp.certify('bella', 1, 'EAA-2026-0044');
+  PERFORM pg_temp.authorize('bella', 'Paychex', true);
+  PERFORM pg_temp.sent('bella', 'Paychex');
+  UPDATE public.accounts SET owner_id = pg_temp.id('acme_agent') WHERE firm_id = pg_temp.id('acme');
+END $$;
+
+-- ---------- 11. A note names a PEO of this opportunity, never one of another's ----------
+-- Catches: a note pinned to another employer's PEO column, which shows under (and leaks into) the wrong comparison.
+DO $$
+DECLARE n bigint := pg_temp.nnotes(); opp uuid := pg_temp.opp('reyes');
+  other bigint := (SELECT id FROM public.quote_requests WHERE session_id = pg_temp.id('bella'));
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, %s, NULL, %L, %L)', pg_temp.id('acme'), opp, other, 'internal', 'A note')), 6), '22023:', 'another opportunity''s PEO');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, 0, NULL, %L, %L)', pg_temp.id('acme'), opp, 'internal', 'A note')), 6), '22023:', 'a PEO that is not there');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, %s, NULL, %L, %L)', pg_temp.id('acme'), opp, pg_temp.qr('TriNet'), 'internal', 'A note')), 3), 'ok', 'this opportunity''s PEO');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.nnotes(), n + 1, 'only the valid one was stored');
+END $$;
+
+-- ---------- 12. A closing firm and a support session add no note, whatever the note says (ADR 0023, ADR 0024) ----------
+-- Catches: a note added in a firm's read-only 30 days, or by Nevermore support while it is only looking.
+DO $$
+DECLARE n bigint := pg_temp.nnotes();
+  call text := format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %%L, %L)', pg_temp.id('acme'), pg_temp.opp('reyes'), 'A note');
+BEGIN
+  PERFORM pg_temp.new_user('platform_admin');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('platform_admin'), 'admin');
+  INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at)
+  VALUES (pg_temp.id('acme'), pg_temp.id('platform_admin'), 'platform_admin@example.test', 'Looking at a stuck email', now(), now() + interval '1 hour');
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format(call, 'internal')), 'PT423: Nevermore support can look, not change', 'a support session');
+  PERFORM pg_temp.is(pg_temp.refusal(format(call, 'guess')), 'PT423: Nevermore support can look, not change', 'a support session, with an invalid note');
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.support_sessions WHERE firm_id = pg_temp.id('acme');
+  INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('acme'), pg_temp.id('acme_agent'), now() + interval '30 days');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format(call, 'internal')), ':', 1), 'PT423', 'a closing firm');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format(call, 'guess')), ':', 1), 'PT423', 'a closing firm, with an invalid note');
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
+  PERFORM pg_temp.is(pg_temp.nnotes(), n, 'and nothing was stored');
+END $$;
+
+-- ---------- 13. An archived account takes no note, and the comparison says so ----------
+-- Catches: a note added under an archived account (D-432: nothing on it changes), or a screen offering Add a note it would refuse.
+DO $$
+DECLARE n bigint := pg_temp.nnotes(); opp uuid := pg_temp.opp('reyes'); r jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is((public.opportunity_quote_comparison(pg_temp.id('acme'), opp) ->> 'can_add')::boolean, true, 'an open account can take a note');
+  PERFORM pg_temp.as_owner();
+  UPDATE public.accounts SET archived_at = now() WHERE id = (SELECT account_id FROM public.opportunities WHERE id = opp);
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.add_comparison_note(%L, %L, NULL, NULL, %L, %L)', pg_temp.id('acme'), opp, 'internal', 'A note')), 6), '55000:', 'the writer refuses');
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), opp);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r ->> 'can_add')::boolean, false, 'the comparison says so');
+  PERFORM pg_temp.is(jsonb_array_length(r -> 'columns'), 3, 'and still shows the quotes');
+  UPDATE public.accounts SET archived_at = NULL WHERE id = (SELECT account_id FROM public.opportunities WHERE id = opp);
+  PERFORM pg_temp.is(pg_temp.nnotes(), n, 'and nothing was stored');
+END $$;
