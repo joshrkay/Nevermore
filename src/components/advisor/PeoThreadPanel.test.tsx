@@ -425,6 +425,12 @@ describe("PeoThreadPanel", () => {
     );
 
     // Break caught: a reply with no suggestion showing an empty box.
+    // Break caught: a suggestion on a message the firm sent (the database refuses to make one, but the page must not trust that to be so).
+    it("is not shown on a message the firm sent", () => {
+      const thread = open({ direction: "sent", suggested_status: "quoted", suggestion_outcome: null });
+      expect(thread.queryByText(/Suggested/)).not.toBeInTheDocument();
+    });
+
     it("is not shown on a reply with none", () => {
       const thread = open({ suggested_status: null });
       expect(thread.queryByText(/Suggested/)).not.toBeInTheDocument();

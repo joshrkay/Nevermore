@@ -534,4 +534,28 @@ BEGIN
   PERFORM pg_temp.is((SELECT suggested_status FROM public.quote_request_messages WHERE id = m), 'quoted', 'it is still the suggestion that was settled');
 END $$;
 
+-- ---------- 10. Mutation gaps: held mail, a closed request, an unknown decision ----------
+-- Catches: mail held for no quote request given a meaning (nobody to suggest to); Accept writing a status the status function would have refused (a closed
+-- quote request reopened as Acknowledged); a decision word that is neither accept nor dismiss treated as one of them.
+DO $$
+DECLARE held bigint; m bigint := pg_temp.suggested('Justworks', 'acknowledged'); res jsonb;
+BEGIN
+  PERFORM pg_temp.as_owner();
+  res := public.record_inbound_mail('held-' || gen_random_uuid()::text, ARRAY['not-an-address'], 'dana@nowhere.example', 'Dana', ARRAY['x@example.test'], ARRAY[]::text[], 'Late', 'text', false, '{}'::jsonb, false, now());
+  held := (res ->> 'message_id')::bigint;
+  PERFORM pg_temp.is((res ->> 'held')::boolean, true, 'control: the mail is held');
+  PERFORM pg_temp.as_service();
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.record_reply_suggestion(%s, 'acknowledged')$q$, held)), '22023: Only a reply from a PEO is read', 'held mail is not read');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'maybe')$q$, m)), '22023: Accept or dismiss', 'an unknown decision');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), NULL::text, 'settles nothing');
+  UPDATE public.quote_requests SET status = 'closed' WHERE id = pg_temp.qr('Justworks');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.advisor_decide_reply_suggestion(%s, 'accept')$q$, m)), ':', 1), '22023', 'accepting on a closed quote request is refused by the status function');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.qstatus('Justworks'), 'closed', 'and it stays closed');
+  PERFORM pg_temp.is((SELECT suggestion_outcome FROM public.quote_request_messages WHERE id = m), NULL::text, 'with the suggestion still open');
+END $$;
+
 \echo reply_suggestions: all passed
