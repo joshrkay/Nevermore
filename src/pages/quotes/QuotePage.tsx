@@ -109,7 +109,7 @@ const QuotePage = () => {
         replyAddress={replyTo}
       />
       <QuoteFigures request={request} />
-      {current && <QuoteDocument quoteRequestId={request.id} quote={current} />}
+      {current && <QuoteDocument quoteRequestId={request.id} quote={current} canChange={canAct} onChanged={() => void quoted.refetch()} />}
       <EarlierQuotes superseded={superseded} />
       <WhatWasSent request={request} currentVersion={detail.currentVersion} messages={detail.quoteRequestMessages} />
     </Frame>

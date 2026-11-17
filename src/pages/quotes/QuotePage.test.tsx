@@ -601,4 +601,17 @@ describe("QuotePage: the quote document (N-2.2)", () => {
       "Estimate · no received date · Superseded",
     ]);
   });
+
+  // Catches: a quote recorded by hand with nowhere to put the PEO's document, an upload sent for another quote, or a page that doesn't read the quotes again so the file still looks missing.
+  it("uploads the quote document of a quote that has none, for that quote, and reads the quotes again", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+    await userEvent.upload(within(panel).getByLabelText("Upload the quote document"), file);
+    await waitFor(() => expect(advisor.uploadQuoteDocument).toHaveBeenCalledWith(3, file));
+    await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
+  });
 });

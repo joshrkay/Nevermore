@@ -753,3 +753,4 @@ One line per cycle: the test, the failing line seen, then green.
 21. advisorApi.test: uploadQuoteDocument sends the file with its quote to quote-document-upload and returns what became of it, or the refusal's words | red: uploadQuoteDocument is not a function | green
 22. QuotePage.test: the quote's document is named on the page and opens through a signed link (QuoteDocument, useQuotesQuery) | red: Unable to find role="region" and name "Quote document" | green
 23. QuotePage.test: earlier quotes are listed as superseded with their received date, newest first, and the current one is not (EarlierQuotes) | red: Unable to find role="region" and name "Earlier quotes" | green
+24. QuotePage.test: a quote with no document offers an upload, for that quote, and the quotes are read again | red: Unable to find a label with the text of: Upload the quote document | green
