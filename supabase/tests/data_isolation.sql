@@ -269,6 +269,7 @@
 \i supabase/migrations/20261125120000_question_requests.sql
 \i supabase/migrations/20261125130000_broker_save_whole_form.sql
 \i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
+\i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

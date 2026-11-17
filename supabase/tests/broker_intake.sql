@@ -215,6 +215,7 @@
 \i supabase/migrations/20261125120000_question_requests.sql
 \i supabase/migrations/20261125130000_broker_save_whole_form.sql
 \i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
+\i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -935,3 +936,26 @@ SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
 SELECT COALESCE(public.opportunity_page(pg_temp.id('alpha'), pg_temp.id('opp_employer')) -> 'intake' ->> 'started_by_firm', 'missing') AS employer_started \gset
 SELECT pg_temp.as_owner();
 SELECT pg_temp.is(:'employer_started'::text, 'false', 'and an intake the employer started is not');
+
+-- 70. A draft the firm started does not expire from sitting idle (D-1911). It is the firm's working file, not a prospect's abandoned draft: a broker who leaves one for a month and comes back to it
+-- (through Continue the intake, D-1908) must find it as it was, not "expired" with the invitation, the answers and the way back gone. An employer's own idle draft still expires, as it always did.
+-- Break caught: the 30-day job ending a firm-started intake the day after a long weekend of nobody touching it, a quote started and lost.
+UPDATE public.chamber_sessions SET expires_at = now() - interval '1 day' WHERE id IN (pg_temp.id('form_intake'), :'employer_session'::uuid);
+SELECT public.expire_idle_intakes() AS moved \gset
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = :'employer_session'::uuid), 'expired', '70: an employer''s own draft, idle past its time, still expires');
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'in_progress', 'and the draft the firm started, idle past the same time, does not');
+-- 71. Nor is the reminder that a draft is about to close sent for one the firm started, whoever has it now: the client who accepted the invitation owns the intake, asked for reminders and has a verified
+-- email, and nothing is going to close it. The same client's own draft is still reminded.
+-- Break caught: "your draft closes in a few days" emailed to a client about a file that never closes, and the link in it sending them to a dead end.
+SELECT pg_temp.new_user('rem71');
+UPDATE public.profiles SET draft_reminders_at = now() WHERE user_id = pg_temp.id('rem71');
+UPDATE public.chamber_sessions SET user_id = pg_temp.id('rem71'), expires_at = now() + interval '1 day', chamber_data = chamber_data || '{"company_name": "Form Co"}' WHERE id = pg_temp.id('form_intake');
+INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data, expires_at) VALUES (pg_temp.id('rem71'), pg_temp.id('alpha'), '{"company_name": "Own Co"}', now() + interval '1 day') RETURNING id AS own_session \gset
+SELECT public.queue_draft_expiry_reminders() AS queued \gset
+SELECT pg_temp.is((SELECT count(*)::text FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id = :'own_session'::uuid), '1', '71: the client''s own draft is reminded');
+SELECT pg_temp.is((SELECT count(*)::text FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id = pg_temp.id('form_intake')), '0', 'and the draft the firm started, which the client now owns, is not');
+-- 72. The job does not stop on an intake with no user at all: a firm-started one whose starter's account was deleted (started_by goes null) and which no client has taken over.
+-- Break caught: the whole statement failing, hourly, on the one row it cannot write an event for, and no intake expiring anywhere until someone found it.
+INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data, expires_at) VALUES (NULL, pg_temp.id('alpha'), '{}', now() - interval '1 day') RETURNING id AS orphan_session \gset
+SELECT public.expire_idle_intakes() AS moved \gset
+SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = :'orphan_session'::uuid), 'in_progress', '72: an idle intake with no user and no starter is left alone, and the job still runs');
