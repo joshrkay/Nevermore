@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type {
-  QuoteRequestEventRow, QuoteRequestMailAttachmentRow, QuoteRequestMessageRow, QuoteRequestNoteRow, QuoteRequestRow, QuoteRequestThreadReadRow,
+  InformationRequestRow, QuoteRequestEventRow, QuoteRequestMailAttachmentRow, QuoteRequestMessageRow, QuoteRequestNoteRow, QuoteRequestRow, QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
 
 const toast = { success: vi.fn(), error: vi.fn() };
@@ -39,7 +39,7 @@ const read = (at: string, id = 7): QuoteRequestThreadReadRow => ({ quote_request
 
 interface Props {
   requests?: QuoteRequestRow[]; messages?: QuoteRequestMessageRow[]; attachments?: QuoteRequestMailAttachmentRow[]; notes?: QuoteRequestNoteRow[];
-  events?: QuoteRequestEventRow[]; reads?: QuoteRequestThreadReadRow[];
+  events?: QuoteRequestEventRow[]; reads?: QuoteRequestThreadReadRow[]; informationRequests?: InformationRequestRow[]; pipelineStatus?: string;
 }
 
 const panel = (p: Props = {}) => {
@@ -47,7 +47,7 @@ const panel = (p: Props = {}) => {
   render(
     <PeoThreadPanel
       prospectUserId="p1" requests={p.requests ?? [request()]} messages={p.messages ?? []} attachments={p.attachments ?? []} notes={p.notes ?? []}
-      events={p.events ?? []} reads={p.reads ?? []} onOpened={onOpened}
+      events={p.events ?? []} reads={p.reads ?? []} onOpened={onOpened} informationRequests={p.informationRequests} pipelineStatus={p.pipelineStatus}
     />,
   );
   return onOpened;
@@ -366,6 +366,46 @@ describe("PeoThreadPanel", () => {
     expect(screen.queryByText(/Change log/)).not.toBeInTheDocument();
   });
 
+  // N-1.3. Break caught: an agent who asked the employer about a PEO's question and finds no sign of it on the PEO's thread, so asks twice or forgets to answer the PEO.
+  describe("the employer asked about an open question", () => {
+    const asked = { id: 5, session_id: "s1", message: "How many of your employees work part time?", fields: ["census"], extra_questions: [], requested_by: "a1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" };
+    const logged = event({ id: 9, field: "asked_employer", old_value: null, new_value: "5", changed_at: "2026-11-12T16:00:01Z" });
+    const open = (p: Props) => {
+      panel({ reads: [read("2030-01-01T00:00:00Z")], ...p });
+      fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));
+    };
+
+    it("says what the agent asked and that the employer has not answered yet", () => {
+      open({ requests: [request({ status: "question_open" })], events: [logged], informationRequests: [asked], pipelineStatus: "information_requested" });
+      const line = screen.getByRole("status");
+      expect(line).toHaveTextContent("You asked the employer: \u201cHow many of your employees work part time?\u201d");
+      expect(line).toHaveTextContent("Waiting for their answer.");
+    });
+
+    // Break caught: an old request shown after the agent asked again (the PEO asked a second question), so the line names what the employer is no longer being asked.
+    it("names the latest request when the employer was asked more than once", () => {
+      const again = { ...asked, id: 6, message: "And the drivers' class code?" };
+      const second = event({ id: 12, field: "asked_employer", old_value: null, new_value: "6", changed_at: "2026-11-13T16:00:01Z" });
+      open({ requests: [request({ status: "question_open" })], events: [second, logged], informationRequests: [asked, again], pipelineStatus: "information_requested" });
+      expect(screen.getByRole("status")).toHaveTextContent("And the drivers' class code?");
+      expect(screen.getByRole("status")).not.toHaveTextContent("part time");
+    });
+
+    // Break caught: the line staying on the thread after the agent has written back to the PEO (the question is answered, the quote request is Sent again).
+    it("says nothing once the PEO has been answered and the quote request is Sent again", () => {
+      open({ requests: [request({ status: "sent" })], events: [logged], informationRequests: [asked], pipelineStatus: "sent_to_carrier" });
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    // Break caught: a request that goes on saying "waiting" after the employer certified again, or one that leaves the agent not knowing the PEO is still unanswered.
+    it("says the request is answered once the submission is no longer waiting on the employer, and that the PEO is still to be answered", () => {
+      open({ requests: [request({ status: "question_open" })], events: [logged], informationRequests: [asked], pipelineStatus: "sent_to_carrier" });
+      const line = screen.getByRole("status");
+      expect(line).not.toHaveTextContent("Waiting for their answer.");
+      expect(line).toHaveTextContent("The employer has answered. Write back to TriNet to answer the question.");
+    });
+  });
+
   // N-1.1. Break caught: a suggestion the agent never sees (the model read the reply for nothing), or one that looks like it already changed the status.
   describe("a suggestion on a reply", () => {
     const open = (m: Partial<QuoteRequestMessageRow>) => {
@@ -374,6 +414,14 @@ describe("PeoThreadPanel", () => {
       fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));
       return Object.assign(within(screen.getByRole("list", { name: "TriNet thread, newest first" })), { onOpened });
     };
+
+    // N-1.3. Break caught: an accepted question that ends in a plain toast, so the agent does not learn the employer can now be asked about it.
+    it("tells the agent, on accepting a question, that the employer can be asked about it", async () => {
+      api.decideReplySuggestion.mockResolvedValue(undefined);
+      const thread = open({ id: 41, suggested_status: "question_open", suggestion_outcome: null });
+      fireEvent.click(thread.getByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Recorded as Question open. You can ask the prospect about it: write the question in your own words."));
+    });
 
     it("is offered under the reply as a suggestion only, with Accept and Dismiss", () => {
       const thread = open({ suggested_status: "acknowledged", suggestion_outcome: null });

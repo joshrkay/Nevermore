@@ -266,6 +266,7 @@
 \i supabase/migrations/20261125090000_quote_document.sql
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
+\i supabase/migrations/20261125120000_question_requests.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1493,6 +1494,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.start_quote_document_upload(0, ''x.pdf'', ''application/pdf'', 1)', 'starting the upload of a quote document recorded by hand (N-2.2)'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
+  ('advisor_ask_about_question(p_quote_request_id bigint, p_message text, p_fields text[], p_extra_questions jsonb)', 'advisor',
+                                                                     'SELECT public.advisor_ask_about_question(0, ''probe'', ''{}'')', 'turning an underwriter''s question into an information request (N-1.3)'),
   ('advisor_decide_reply_suggestion(p_message_id bigint, p_decision text)', 'advisor',
                                                                      'SELECT public.advisor_decide_reply_suggestion(0, ''dismiss'')', 'accepting or dismissing what a PEO''s reply was suggested to mean (N-1.1)'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
@@ -2264,6 +2267,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('start_quote_document_upload', 'advisor', 'by_id', $$SELECT public.start_quote_document_upload((SELECT q.id FROM public.quotes q WHERE q.quote_request_id = {qr} ORDER BY q.id LIMIT 1), 'probe.pdf', 'application/pdf', 1)::text$$),
   ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
   ('advisor_decide_reply_suggestion', 'advisor', 'by_id', $$SELECT public.advisor_decide_reply_suggestion({rmsg}, 'dismiss')::text$$),
+  ('advisor_ask_about_question', 'advisor', 'by_id', $$SELECT public.advisor_ask_about_question({qr}, 'probe', '{}')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
   ('advisor_add_quote_request_note', 'advisor', 'by_id', $$SELECT public.advisor_add_quote_request_note({qr}, 'call', current_date, 'probe')::text$$),
@@ -4413,7 +4417,7 @@ SELECT unnest(ARRAY[
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
   'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
-  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'record_manuscript_version',
+  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_ask_about_question', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';

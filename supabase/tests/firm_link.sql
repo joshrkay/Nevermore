@@ -214,6 +214,7 @@
 \i supabase/migrations/20261125090000_quote_document.sql
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
+\i supabase/migrations/20261125120000_question_requests.sql
 SET client_min_messages = notice;
 
 CREATE FUNCTION pg_temp.is(got anyelement, want anyelement, label text) RETURNS void LANGUAGE plpgsql AS $$

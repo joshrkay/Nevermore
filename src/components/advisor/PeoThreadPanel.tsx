@@ -9,7 +9,7 @@ import {
 } from "@/data/mailThread";
 import {
   mailAttachmentUrl, moveMessageOffThread, openQuoteRequestThread, recordActivity,
-  type QuoteRequestEventRow, type QuoteRequestMailAttachmentRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
+  type InformationRequestRow, type QuoteRequestEventRow, type QuoteRequestMailAttachmentRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
 import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
@@ -29,6 +29,9 @@ interface PeoThreadPanelProps {
   ofRequest?: number;
   /** Under the thread: what a quote's page says of the wait (CRM-Q3.2). */
   footer?: React.ReactNode;
+  /** The submission's information requests and where its pipeline stands: what the employer was asked about a PEO's open question, and whether it still waits (N-1.3). */
+  informationRequests?: readonly InformationRequestRow[];
+  pipelineStatus?: string;
 }
 
 const badge = "text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -204,7 +207,7 @@ const Entry = ({ entry, showPeo, prospectUserId, corrected, onMoved }: { entry: 
  * timeline, newest first (story M-3.4). Choosing a thread opens it, which clears its "new PEO mail" mark for the
  * whole team, through the latest message this page showed. The prospect never sees any of it.
  */
-const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes, events, reads, onOpened, ofRequest, footer }: PeoThreadPanelProps) => {
+const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes, events, reads, onOpened, ofRequest, footer, informationRequests = [], pipelineStatus }: PeoThreadPanelProps) => {
   const [selected, setSelected] = useState<number | "all" | null>(ofRequest ?? null);
   // Threads opened since the page loaded, through the time shown: the mark clears at once, not on the next load.
   const [opened, setOpened] = useState<Record<number, string>>({});
@@ -284,6 +287,18 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
           </button>
         )}
       </div>}
+
+      {shown.filter((r) => r.status === "question_open").map((r) => {
+        const askedId = events.filter((e) => e.quote_request_id === r.id && e.field === "asked_employer").sort((a, b) => b.id - a.id)[0]?.new_value;
+        const asked = informationRequests.find((i) => String(i.id) === askedId);
+        if (!asked) return null;
+        return (
+          <p key={r.id} role="status" className="text-sm rounded-md bg-muted px-3 py-2">
+            {`You asked the employer: \u201c${asked.message}\u201d `}
+            {pipelineStatus === "information_requested" ? "Waiting for their answer." : `The employer has answered. Write back to ${r.peo_name} to answer the question.`}
+          </p>
+        );
+      })}
 
       {selected === null ? (
         <p className="text-sm text-muted-foreground">Choose a PEO to read its thread.</p>

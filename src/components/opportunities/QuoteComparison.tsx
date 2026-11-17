@@ -108,12 +108,20 @@ function NoteForm({ columns, onAddNote }: { columns: ComparisonColumn[]; onAddNo
   );
 }
 
-export function QuoteComparison({ comparison, onAddNote }: { comparison: Comparison; onAddNote: (note: NewComparisonNote) => Promise<void> }) {
+export function QuoteComparison({ comparison, onAddNote, noNotesBecause }: {
+  comparison: Comparison;
+  onAddNote: (note: NewComparisonNote) => Promise<void>;
+  /** Why no note can be added when the account itself takes notes (a Nevermore support session changes nothing, ADR 0024); said in place of the form. */
+  noNotesBecause?: string;
+}) {
   return (
     <ListPanel id="quote-comparison" heading="Compare quotes">
       {comparison.columns.length === 0 ? (
         <EmptyLine>No quotes to compare yet. Quotes appear here once the opportunity is sent to a PEO.</EmptyLine>
       ) : (
+      <>
+        {comparison.columns.every((c) => c.quote === null) && <p className="mb-3 text-sm text-muted-foreground">No quotes are back yet.</p>}
+        {comparison.columns.filter((c) => c.quote !== null).length === 1 && <p className="mb-3 text-sm text-muted-foreground">Only one quote is back, so there is nothing to compare it with yet.</p>}
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <caption className="sr-only">Quotes side by side</caption>
@@ -133,6 +141,7 @@ export function QuoteComparison({ comparison, onAddNote }: { comparison: Compari
           </tbody>
         </table>
       </div>
+      </>
       )}
       <section aria-labelledby="comparison-notes" className="mt-5">
         <h3 id="comparison-notes" className="mb-2 text-sm font-medium">Notes</h3>
@@ -146,10 +155,10 @@ export function QuoteComparison({ comparison, onAddNote }: { comparison: Compari
             </li>
           ))}
         </ul>
-        {comparison.canAdd ? (
+        {comparison.canAdd && !noNotesBecause ? (
           <NoteForm columns={comparison.columns} onAddNote={onAddNote} />
         ) : (
-          <p className="mt-3 text-sm text-muted-foreground">This account is archived, so notes can't be added.</p>
+          <p className="mt-3 text-sm text-muted-foreground">{noNotesBecause ?? "This account is archived, so notes can't be added."}</p>
         )}
       </section>
     </ListPanel>

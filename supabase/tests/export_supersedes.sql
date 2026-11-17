@@ -473,6 +473,7 @@ END $$;
 \i supabase/migrations/20261125090000_quote_document.sql
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
+\i supabase/migrations/20261125120000_question_requests.sql
 
 -- ---------- after: every entry main recorded is in the record, unchanged, in Epic 3's shape ----------
 -- Break caught: the supersedes migration drops main's entries (or the column with their counts) instead of setting them aside; the carried

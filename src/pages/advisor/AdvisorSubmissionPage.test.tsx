@@ -23,6 +23,7 @@ const api = {
   setStatus: vi.fn(),
   setNeedsAction: vi.fn(),
   requestInformation: vi.fn(),
+  askAboutQuestion: vi.fn(),
   addNote: vi.fn(),
   reviewField: vi.fn(),
   saveManuscriptVersion: vi.fn(),
@@ -1758,6 +1759,43 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(within(ask()).getByLabelText(/What do you need from them/i)).toHaveValue(""));
+  });
+
+  // N-1.3. Break caught: the PEO's words copied into what the employer reads, or a request about the question sent as a plain one (nothing ties it to the question).
+  it("asks the employer about a PEO's open question in the agent's own words, tied to that quote request", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "question_open", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+      quoteRequestMessages: [{ id: 3, quote_request_id: 7, session_id: "s1", direction: "received", is_automatic: false, new_sender: false, from_address: "dana@trinet.example", from_name: "Dana",
+        to_addresses: [], cc_addresses: [], subject: "Re: Reyes", body_text: "How many are part time?", body_truncated: false, headers: {}, sent_at: "2026-11-12T15:00:00Z", recorded_at: "2026-11-12T15:00:01Z",
+        held_reason: null, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null, address_local_part: "a.b", provider_message_id: "re_3" }],
+    }));
+    renderPage();
+    const quotes = await screen.findByRole("region", { name: "Quote requests" });
+    fireEvent.click(within(quotes).getByRole("button", { name: "Ask the prospect about this question" }));
+    const message = within(ask()).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    expect(message.value).toBe("");
+    fireEvent.change(message, { target: { value: "How many of your employees work part time?" } });
+    api.askAboutQuestion.mockResolvedValue(undefined);
+    fireEvent.click(within(ask()).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(api.askAboutQuestion).toHaveBeenCalledWith(7, "How many of your employees work part time?", [], []));
+    expect(api.requestInformation).not.toHaveBeenCalled();
+  });
+
+  // N-1.3. Break caught: the request sent and then not seen on the PEO's thread of the submission page, so the agent can't tell it waits or was answered.
+  it("shows on the PEO's thread what the employer was asked about its question", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "information_requested",
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "question_open", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+      quoteRequestEvents: [{ id: 9, quote_request_id: 7, session_id: "s1", note_id: null, field: "asked_employer", old_value: null, new_value: "5", changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T16:00:01Z" }],
+      informationRequests: [{ id: 5, session_id: "s1", message: "How many of your employees work part time?", fields: [], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" }],
+    }));
+    renderPage();
+    const threads = await screen.findByRole("region", { name: "PEO threads" });
+    fireEvent.click(within(threads).getByRole("button", { name: /TriNet/ }));
+    expect(await within(threads).findByText(/You asked the employer/)).toHaveTextContent("Waiting for their answer.");
   });
 
   describe("What each PEO still needs", () => {

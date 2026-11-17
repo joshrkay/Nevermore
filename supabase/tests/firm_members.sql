@@ -1111,6 +1111,7 @@ $$;
 \i supabase/migrations/20261125090000_quote_document.sql
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
+\i supabase/migrations/20261125120000_question_requests.sql
 DO $$
 DECLARE job cron.job;
 BEGIN
