@@ -28,6 +28,9 @@ vi.mock("@/lib/peoCatalog", async () => {
   return { readPeoCatalog: async () => parsePeoCatalog(await peoCatalogRows) };
 });
 
+// An intake the employer has not certified now opens the chamber (step 2, slice 5.5), tested on its own; a stand-in here.
+vi.mock("@/pages/ChamberPage", () => ({ default: () => <div data-testid="chamber" /> }));
+
 const { NewQuoteDialog } = await import("./NewQuoteDialog");
 
 const sourced = { kind: "document", name: "Broker guide", checked_on: "2026-11-02" };
