@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh firm_approval_gates_sending
 -- A firm sends nothing to a PEO until a platform admin has approved it (P-1.3 and Q-1.2 in docs/QUOTING_PLATFORM_STORIES.md; D-21, D-26, D-27;
--- 20261124100000_firm_approval_gates_sending.sql). The three ways a send reaches a PEO (send_to_peo, follow_up_peo, withdraw_from_peo) all record a message
+-- 20261124160000_firm_approval_gates_sending.sql). The three ways a send reaches a PEO (send_to_peo, follow_up_peo, withdraw_from_peo) all record a message
 -- with direction 'sent', and the rule is on that message, so none can skip it. Three firms: one approved, one waiting, one refused. Every migration is
 -- loaded, in filename order (D-105), this one's last.
 \set ON_ERROR_STOP 1
@@ -203,13 +203,13 @@
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
-\i supabase/migrations/20261124100000_firm_approval_gates_sending.sql
 \i supabase/migrations/20261124100000_new_quote_intake.sql
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
-\i supabase/migrations/20261124110000_leads_can_convert.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 \i supabase/migrations/20261124150000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124170000_leads_can_convert.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

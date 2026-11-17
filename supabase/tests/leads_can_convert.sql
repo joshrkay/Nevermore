@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh leads_can_convert
--- Which of a page of leads the caller may convert (CRM-L1.1's row action "Convert", #190; 20261124110000_leads_can_convert.sql): the leads table offers Convert only
+-- Which of a page of leads the caller may convert (CRM-L1.1's row action "Convert", #190; 20261124170000_leads_can_convert.sql): the leads table offers Convert only
 -- on these, so no button is offered that the database refuses (D-24, D-402), as accounts_can_change does for the accounts table. A lead can be converted when the caller
 -- may see it and change it by the level rule (D-809) and it is New or Working and not in the bin (convert_lead's own rule, D-1651). Two firms: Acme sees by level,
 -- Zenith shows everyone everything. Every migration is loaded, in filename order (D-105).
@@ -203,13 +203,13 @@
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
-\i supabase/migrations/20261124100000_firm_approval_gates_sending.sql
 \i supabase/migrations/20261124100000_new_quote_intake.sql
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
-\i supabase/migrations/20261124110000_leads_can_convert.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 \i supabase/migrations/20261124150000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124170000_leads_can_convert.sql
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
 GRANT SELECT ON fx TO anon, authenticated, service_role;
