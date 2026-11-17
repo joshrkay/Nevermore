@@ -1722,7 +1722,7 @@ export type Database = {
       // The employer opens the link the firm sent: what the page shows before sign-in, and taking the intake over (20261123120000).
       peek_intake_invite: {
         Args: { p_token_hash: string; p_firm_address: string }
-        Returns: { firm_name: string; contact_name: string | null; expires_at: string }[]
+        Returns: { firm_name: string; contact_name: string | null; expires_at: string; invited_by_name: string | null }[]
       }
       accept_intake_invite: {
         Args: { p_token_hash: string; p_firm_address: string }
@@ -1972,7 +1972,7 @@ export type Database = {
       }
       my_intake_firms: {
         Args: Record<PropertyKey, never>
-        Returns: { session_id: string; firm_name: string; company: string | null }[]
+        Returns: { session_id: string; firm_name: string; company: string | null; invited_by_name: string | null; invited_at: string | null }[]
       }
       prospect_submission_status: {
         Args: { p_session_id: string }

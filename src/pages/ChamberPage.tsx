@@ -18,6 +18,7 @@ import MobileTranscript from "@/components/chamber/MobileTranscript";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import SaveStatus from "@/components/chamber/SaveStatus";
 import BackupNotice from "@/components/chamber/BackupNotice";
+import FirmSeesBanner from "@/components/chamber/FirmSeesBanner";
 import RecoverIntake from "@/components/chamber/RecoverIntake";
 import StartOverButton from "@/components/chamber/StartOverButton";
 import InformationRequestNotice from "@/components/chamber/InformationRequestNotice";
@@ -417,6 +418,7 @@ const ChamberPage = ({ intakeId: given }: { intakeId?: string }) => {
         <LegalLinks compact className="shrink-0" />
       </div>
 
+      {sessionId && !brokerEntry && <FirmSeesBanner sessionId={sessionId} />}
       {backupOffer && <BackupNotice offer={backupOffer} onRestore={restoreBackup} onDiscard={discardBackup} />}
       {isAnonymous && sessionId && ready && certification.status === "none" && nudgeDismissedFor !== sessionId && (
         <SaveProgressNudge onSave={() => setSaveOpen(true)} onDismiss={dismissNudge} />
