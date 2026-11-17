@@ -49,6 +49,8 @@ const QuotePage = () => {
   const noReply = noReplyWords(request, hasReply);
   // A send the product made is a message of its own on the thread (direction sent); one with none was recorded by hand.
   const outside = request.sent_on !== null && !detail.quoteRequestMessages.some((m) => m.quote_request_id === request.id && m.direction === "sent");
+  // The files that arrived on this quote request's emails and are stored (scanned clean): the quote's document can be one of them (N-2.2, D-730).
+  const mailFiles = detail.quoteRequestMailAttachments.filter((a) => a.status === "stored" && detail.quoteRequestMessages.some((m) => m.id === a.message_id && m.quote_request_id === request.id));
   const local = detail.quoteRequestAddresses.find((a) => a.quote_request_id === request.id)?.local_part;
   const domain = quoteReplyDomain();
   const replyTo = local && domain ? replyAddress(local, domain) : null;
@@ -109,7 +111,7 @@ const QuotePage = () => {
         replyAddress={replyTo}
       />
       <QuoteFigures request={request} />
-      {current && <QuoteDocument quoteRequestId={request.id} quote={current} canChange={canAct} onChanged={() => void quoted.refetch()} />}
+      {current && <QuoteDocument quoteRequestId={request.id} quote={current} canChange={canAct} mailFiles={mailFiles} onChanged={() => void quoted.refetch()} />}
       <EarlierQuotes superseded={superseded} />
       <WhatWasSent request={request} currentVersion={detail.currentVersion} messages={detail.quoteRequestMessages} />
     </Frame>

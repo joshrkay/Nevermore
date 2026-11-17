@@ -626,4 +626,31 @@ describe("QuotePage: the quote document (N-2.2)", () => {
     await userEvent.upload(within(panel).getByLabelText("Upload the quote document"), new File(["x"], "quote.pdf", { type: "application/pdf" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The virus check blocked that file, so it was not kept."));
   });
+
+  // Catches: making the agent upload again a proposal that already arrived by email, or offering a blocked file, or another PEO's file, as this quote's document.
+  it("offers the stored files that arrived on this quote request's emails, and names the chosen one as the document without uploading it again", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      request: { status: "quoted" },
+      detail: {
+        ...threadOf({
+          quoteRequestMessages: [message({ id: 1 }), message({ id: 2, quote_request_id: 8 })],
+          quoteRequestMailAttachments: [
+            { id: 61, message_id: 1, file_name: "Insperity proposal.pdf", size_bytes: 412000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/1/61-p.pdf" },
+            { id: 62, message_id: 1, file_name: "infected.pdf", size_bytes: 1000, status: "blocked", not_kept_reason: null, scan_signature: "Eicar", storage_path: null },
+            { id: 63, message_id: 2, file_name: "Other PEO.pdf", size_bytes: 1000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/2/63-o.pdf" },
+          ],
+        }),
+      },
+    }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    advisor.attachQuoteDocument.mockResolvedValue({});
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    const choose = within(panel).getByLabelText("Use a file from the emails");
+    expect(within(choose).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose a file", "Insperity proposal.pdf"]);
+    await userEvent.selectOptions(choose, "61");
+    await userEvent.click(within(panel).getByRole("button", { name: "Use this file" }));
+    await waitFor(() => expect(advisor.attachQuoteDocument).toHaveBeenCalledWith(3, 61));
+    await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
+  });
 });
