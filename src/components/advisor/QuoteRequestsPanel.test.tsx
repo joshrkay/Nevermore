@@ -693,6 +693,16 @@ describe("QuoteRequestsPanel", () => {
     expect(onAskProspect).toHaveBeenCalledWith("Can they send loss runs?");
   });
 
+  // N-1.3. Break caught: no way from a PEO's open question to the employer (the agent retypes it elsewhere), or a draft that arrives already holding the PEO's own words.
+  it("offers to ask the prospect about an open question, with an empty draft for the agent's own words, and only on a question open", () => {
+    const onAskProspect = vi.fn();
+    panel({ onAskProspect, requests: [request({ id: 1, status: "acknowledged" }), request({ id: 2, peo_name: "Justworks", status: "question_open" })] });
+    const asks = screen.getAllByRole("button", { name: "Ask the prospect about this question" });
+    expect(asks).toHaveLength(1);
+    fireEvent.click(asks[0]);
+    expect(onAskProspect).toHaveBeenCalledWith("", 2);
+  });
+
   // K-1.3: the employer says which PEO it is in now, so an advisor isn't left to submit it to its own PEO unawares.
   describe("a send to the employer's current PEO", () => {
     const inPeo = { ...EMPTY_CHAMBER_DATA, in_peo: true, current_peo: "Summit Employer Services" };

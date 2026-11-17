@@ -219,9 +219,9 @@ const Detail = ({
   // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
   // draft is spent: the next one starts afresh, from the fields marked Needs follow-up. `n` only ever grows, so each
   // draft, and each send, starts the panel anew.
-  const [askDraft, setAskDraft] = useState<{ message?: string; fields?: FieldKey[]; questions?: ExtraQuestionRef[]; n: number }>({ n: 0 });
-  const askProspect = (message: string, fields?: FieldKey[], questions?: ExtraQuestionRef[]) => {
-    setAskDraft((current) => ({ message, fields, questions, n: current.n + 1 }));
+  const [askDraft, setAskDraft] = useState<{ message?: string; fields?: FieldKey[]; questions?: ExtraQuestionRef[]; aboutQuestionOf?: number; n: number }>({ n: 0 });
+  const askProspect = (message: string, fields?: FieldKey[], questions?: ExtraQuestionRef[], aboutQuestionOf?: number) => {
+    setAskDraft((current) => ({ message, fields, questions, aboutQuestionOf, n: current.n + 1 }));
     window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
   };
   const requestSent = () => {
@@ -338,6 +338,7 @@ const Detail = ({
             initialMessage={askDraft.message}
             initialFields={askDraft.fields}
             initialQuestions={askDraft.questions}
+            aboutQuestionOf={askDraft.aboutQuestionOf}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}
@@ -360,7 +361,7 @@ const Detail = ({
             threadReads={detail.quoteRequestThreadReads}
             data={detail.data}
             catalog={peoCatalog.peos}
-            onAskProspect={(message) => askProspect(message)}
+            onAskProspect={(message, aboutQuestionOf) => askProspect(message, undefined, undefined, aboutQuestionOf)}
             onChanged={quotesChanged}
           />
           <StatusPanel

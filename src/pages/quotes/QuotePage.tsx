@@ -9,6 +9,7 @@ import { CloseQuote } from "@/components/quotes/CloseQuote";
 import { WhatWasSent } from "@/components/quotes/WhatWasSent";
 import { QuoteFigures } from "@/components/quotes/QuoteFigures";
 import { QuoteSendActions } from "@/components/quotes/QuoteSendActions";
+import InformationRequestPanel from "@/components/advisor/InformationRequestPanel";
 import { QuoteDetails } from "@/components/quotes/QuoteDetails";
 import { useOpportunityOutcomeQuery } from "@/components/opportunities/useOpportunityQueries";
 import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
@@ -87,6 +88,20 @@ const QuotePage = () => {
           </>
         )}
       />
+      {canAct && request.status === "question_open" && (
+        <InformationRequestPanel
+          key={detail.informationRequests.length}
+          aboutQuestionOf={request.id}
+          sessionId={detail.id}
+          prospectUserId={detail.userId}
+          status={detail.pipelineStatus}
+          certifiedOnce={!!detail.submission?.signer_name}
+          intakeStatus={detail.intakeStatus}
+          reviews={detail.reviews}
+          requests={detail.informationRequests}
+          onChanged={() => void query.refetch()}
+        />
+      )}
       {canAct && (
         <QuoteSendActions
           request={request}

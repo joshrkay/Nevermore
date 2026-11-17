@@ -47,7 +47,8 @@ interface QuoteRequestsPanelProps {
   /** The PEOs the database holds, alphabetically, with their profiles in use (usePeoCatalog); only listed ones are offered. */
   catalog: readonly PeoRecord[];
   /** Opens Ask the prospect with an underwriter's question in it, for the advisor to edit and send as their own. */
-  onAskProspect: (question: string) => void;
+  /** Opens Ask the prospect. With `aboutQuestionOf`, the request is about that quote request's open question (N-1.3). */
+  onAskProspect: (question: string, aboutQuestionOf?: number) => void;
   onChanged: () => void;
 }
 
@@ -423,6 +424,10 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                     <button onClick={() => setAnswering(r.id)} className="text-xs text-primary underline">Record answer</button>
                   )}
                   {isOpenQuoteRequest(r.status) && <OpenStatusButtons request={r} onChanged={onChanged} />}
+                  {r.status === "question_open" && (
+                    // Never filled with the PEO's own words: the agent writes what the employer reads (N-1.3, D-751).
+                    <button onClick={() => onAskProspect("", r.id)} className="text-xs text-primary underline">Ask the prospect about this question</button>
+                  )}
                   <button onClick={() => setNoting(r.id)} className="text-xs text-primary underline">Add a note</button>
                 </div>
               )}

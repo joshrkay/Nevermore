@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), askAboutQuestion: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -58,7 +58,7 @@ const request = (over: Record<string, unknown> = {}) => ({
 /** What the page's read gives: the quote request, its submission (only what a piece under test reads) and its opportunity's page. */
 const quotePage = (over: { request?: Record<string, unknown>; detail?: Record<string, unknown>; opportunity?: Record<string, unknown> } = {}) => ({
   request: request(over.request),
-  detail: { id: "s1", userId: "p1", data: { ...EMPTY_CHAMBER_DATA, company_name: "Harborview" }, quoteRequests: [request(over.request)], ...threadOf(), ...over.detail },
+  detail: { id: "s1", userId: "p1", data: { ...EMPTY_CHAMBER_DATA, company_name: "Harborview" }, quoteRequests: [request(over.request)], pipelineStatus: "sent_to_carrier", intakeStatus: "submitted", submission: { signer_name: "Lucia Reyes" }, reviews: {}, informationRequests: [], ...threadOf(), ...over.detail },
   opportunity: {
     opportunity: { id: "o1", name: "January 2027 PEO search", accountId: "a1", submissionId: "s1", stage: "in_market" },
     account: { id: "a1", name: "Harborview Dental Group", archived: false },
@@ -347,6 +347,41 @@ describe("QuotePage: a suggestion on a reply", () => {
     await user.click(screen.getByRole("button", { name: "Accept" }));
     expect(advisor.decideReplySuggestion).toHaveBeenCalledWith(1, "accept");
     await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("QuotePage: an underwriter's open question", () => {
+  const asking = (status = "question_open") => quotePage({
+    request: { status },
+    detail: {
+      pipelineStatus: "sent_to_carrier", intakeStatus: "submitted", submission: { signer_name: "Lucia Reyes" }, reviews: {}, informationRequests: [],
+      ...threadOf({ quoteRequestMessages: [message({ id: 1, body_text: "How many of the 12 employees are part time?" })] }),
+    },
+  });
+
+  // N-1.3. Break caught: no way from the quote's own page to the employer (the agent has to go to the submission), or a draft that holds the PEO's words for the employer to read.
+  it("asks the employer from the quote's page, in the agent's own words, tied to this quote request", async () => {
+    const user = userEvent.setup();
+    quotes.getQuotePage.mockResolvedValue(asking());
+    advisor.askAboutQuestion.mockResolvedValue(undefined);
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const words = within(panel).getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    expect(words.value).toBe("");
+    await user.type(words, "How many of your 12 employees work part time?");
+    await waitFor(() => expect(advisor.openQuoteRequestThread).toHaveBeenCalled());
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
+    await user.click(within(panel).getByRole("button", { name: "Send request" }));
+    expect(advisor.askAboutQuestion).toHaveBeenCalledWith(7, "How many of your 12 employees work part time?", [], []);
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(3));
+  });
+
+  // Break caught: a dead panel on a quote that has no question (Ask the prospect offered about nothing; the database would refuse it).
+  it("offers nothing on a quote request with no open question", async () => {
+    quotes.getQuotePage.mockResolvedValue(asking("sent"));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("heading", { name: "Ask the prospect" })).not.toBeInTheDocument();
   });
 });
 
