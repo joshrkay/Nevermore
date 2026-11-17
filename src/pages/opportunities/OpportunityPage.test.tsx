@@ -349,6 +349,16 @@ describe("OpportunityPage: Compare quotes", () => {
     expect(within(table).getByRole("columnheader", { name: "PEO B" })).toBeInTheDocument();
     expect(comparison.getQuoteComparison).toHaveBeenCalledWith("f1", "o1");
   });
+  // Catches: an Add note form in a Nevermore support session (ADR 0024), which the database refuses (PT423): a form that loses what the support person typed. Reading the comparison stays.
+  it("shows the comparison but no way to add a note in a support session, and says why", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quoted] }));
+    comparison.getQuoteComparison.mockResolvedValue({ canAdd: true, columns: [column(1, "PEO A", "quoted", firm)], notes: [] });
+    renderPage("/opportunities/o1", workspace({ isSupport: true }));
+    const table = await screen.findByRole("table", { name: "Quotes side by side" });
+    expect(within(table).getByRole("columnheader", { name: "PEO A" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add note" })).not.toBeInTheDocument();
+    expect(screen.getByText("Notes can't be added during a Nevermore support session.")).toBeInTheDocument();
+  });
   // END compare
 });
 

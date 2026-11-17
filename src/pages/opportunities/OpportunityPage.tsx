@@ -162,7 +162,7 @@ const OpportunityPage = () => {
                 {!isClosed && page.quotes.some((q) => q.sentOn !== null) && <SendToAnotherPeo opportunityId={opportunity.id} />}
               </div>
             ) : undefined} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
-          {firmId && page.quotes.length > 0 && <QuoteComparisonPanel key={`compare-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} />}
+          {firmId && page.quotes.length > 0 && <QuoteComparisonPanel key={`compare-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} noNotesBecause={isSupport ? "Notes can't be added during a Nevermore support session." : undefined} />}
           <IntakePanel page={page} />
           {firmId && <AccountEmails key={`emails-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} contactName={(cid) => page.contacts.find((c) => c.id === cid)?.name ?? null} />}
           {firmId && <OpportunityActivity key={opportunity.id} firmId={firmId} opportunityId={opportunity.id} />}

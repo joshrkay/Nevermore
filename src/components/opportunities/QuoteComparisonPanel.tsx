@@ -6,10 +6,10 @@ import { QuoteComparison } from "./QuoteComparison";
 import { OpportunityError } from "@/lib/opportunityPageApi";
 import { addComparisonNote, getQuoteComparison } from "@/lib/quoteComparisonApi";
 
-// The comparison of one opportunity's quotes with its notes, asked of the database and drawn (N-3.1, N-3.2, slice 7.7). It is not mounted on a screen yet: the
-// "Compare quotes" button and its place in the menu are slice 7.8 (CRM-Q4.2), and the opportunity page's Compare is off until then (D-402).
+// The comparison of one opportunity's quotes with its notes, asked of the database and drawn (N-3.1, N-3.2, slice 7.7). The opportunity's page mounts it under the quotes
+// panel (CRM-Q4.2, slice 7.8, D-780).
 
-export function QuoteComparisonPanel({ firmId, opportunityId }: { firmId: string; opportunityId: string }) {
+export function QuoteComparisonPanel({ firmId, opportunityId, noNotesBecause }: { firmId: string; opportunityId: string; noNotesBecause?: string }) {
   const client = useQueryClient();
   const key = [...opportunityKey(firmId, opportunityId), "comparison"];
   const query = useQuery({
@@ -29,7 +29,7 @@ export function QuoteComparisonPanel({ firmId, opportunityId }: { firmId: string
       </ListPanel>
     );
   }
-  return <QuoteComparison comparison={query.data} onAddNote={async (note) => {
+  return <QuoteComparison comparison={query.data} noNotesBecause={noNotesBecause} onAddNote={async (note) => {
     await addComparisonNote(firmId, opportunityId, note);
     // The list is read again, as the database now has it.
     await client.invalidateQueries({ queryKey: key });

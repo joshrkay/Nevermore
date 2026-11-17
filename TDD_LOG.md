@@ -872,3 +872,6 @@ lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clea
 14. QuotePage.test: Record a decline is offered while the PEO has not answered and opens the reason picker with no other answer | red: Unable to find role button and name Record a decline | green
 15. QuotePage.test: a decline is recorded through updateQuoteRequest with reason and words, and the page is read again | NOT red first (AnswerForm reused as is); seen red by dropping the page refresh from RecordDecline: Unable to find an element with the text: Declined: Too small | green
 16. OpportunityPage.test: the comparison of the opportunity quotes is mounted under the quotes panel, read for this firm and opportunity | red: Unable to find role region and name Compare quotes | green
+17. QuoteComparison.test: No quotes are back yet while every PEO is waiting, statuses still in columns | red: Unable to find an element with the text: No quotes are back yet. | green
+18. QuoteComparison.test: a lone quote says there is nothing to compare it with yet, and not when two are back | red: Unable to find an element with the text: Only one quote is back, so there is nothing to compare it with yet. | green
+19. OpportunityPage.test: no Add note in a support session, with the reason | red: expected element not.toBeInTheDocument (Add note button) | green
