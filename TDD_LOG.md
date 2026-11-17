@@ -585,3 +585,7 @@ Skill `mattpocock-skills:tdd` invoked first. No migration, no function restated:
 
 - SQL, 4 mutants of the stage list and the conflict clause in send_to_peo (sent_to_carrier out, quoted out, lost and won in, ON CONFLICT DO NOTHING): 4 killed.
 - UI, 11 mutants (closed check, sent check, canAct, page's alreadySent, saved's won and lost checks, saved's alreadySent, case-insensitive match, unsent filter, backgroundLocation): 9 killed at first, 1 survived and cycle 10 killed it (the case), 1 survived as an equivalent mutant (the unsent filter, cycle 11).
+
+## Gate 5.10
+
+lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; build green; `vitest run --maxWorkers=2`: 6998 tests, a few timeouts under load each run (different files: AdvisorSubmissionPage, AccountPage, AdvisorDashboardPage), all green when rerun alone; one real failure, QuotesPage "offers each status, in words, to the Status filter" (expects Waiting), which fails identically on base e5074598, not 5.10's; the slice's 6 files: 240 passed. SQL: 120 of 120 passed on port 5470 (no migration in 5.10; peo_send 25 and 26 pin the behaviour).
