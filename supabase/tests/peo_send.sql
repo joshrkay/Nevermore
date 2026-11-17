@@ -821,3 +821,50 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.peo_send_context(%L, 'Insperity')$s$, pg_temp.id('reyes'))), 'PT404: Submission not found', 'another firm');
   PERFORM pg_temp.as_owner();
 END $$;
+
+-- ---------- 25. Another PEO can be added once a quote is out: its own quote request, the first untouched (CRM-Q3.4) ----------
+-- Catches: a send to a second PEO that is refused, or that reuses or reopens the first PEO's quote request, once the submission is Sent to PEOs.
+DO $$
+DECLARE before_q public.quote_requests; r jsonb;
+BEGIN
+  PERFORM pg_temp.intake('more', 'acme', 'More Pets');
+  PERFORM pg_temp.certify('more', 1, 'EAA-2026-0060');
+  PERFORM pg_temp.authorize('more', 'Insperity', true);
+  PERFORM pg_temp.authorize('more', 'Justworks', true);
+  PERFORM pg_temp.send('more', 'Insperity');
+  PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('more')), 'sent_to_carrier', 'Sent to PEOs after the first send');
+  SELECT * INTO before_q FROM public.quote_requests WHERE session_id = pg_temp.id('more') AND peo_name = 'Insperity';
+  r := pg_temp.send('more', 'Justworks');
+  PERFORM pg_temp.is((SELECT count(*)::integer FROM public.quote_requests WHERE session_id = pg_temp.id('more')), 2, 'two quote requests');
+  PERFORM pg_temp.is((r ->> 'quote_request_id')::bigint <> before_q.id, true, 'the second PEO has its own');
+  PERFORM pg_temp.is((SELECT q FROM public.quote_requests q WHERE q.id = before_q.id), before_q, 'the first is as it was');
+  PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('more')), 'sent_to_carrier', 'and the stage stays Sent to PEOs');
+END $$;
+
+-- ---------- 26. A PEO can still be added at Quoted, and no send is made once the opportunity is Won or Lost (CRM-Q3.4) ----------
+-- Catches: a send that is refused at Quoted (another PEO could not be added once one answered), or one that goes out after the opportunity was marked Won or Lost.
+DO $$
+DECLARE r jsonb; opp uuid; v integer;
+BEGIN
+  PERFORM pg_temp.intake('wonlost', 'acme', 'Won Lost Co');
+  PERFORM pg_temp.certify('wonlost', 1, 'EAA-2026-0061');
+  PERFORM pg_temp.authorize('wonlost', 'Insperity', true);
+  PERFORM pg_temp.authorize('wonlost', 'Justworks', true);
+  PERFORM pg_temp.authorize('wonlost', 'TriNet', true);
+  PERFORM pg_temp.send('wonlost', 'Insperity');
+  PERFORM pg_temp.fmove('wonlost', 'quoted');
+  r := pg_temp.send('wonlost', 'Justworks');
+  PERFORM pg_temp.is((r ->> 'quote_request_id') IS NOT NULL, true, 'a PEO is added at Quoted');
+  PERFORM pg_temp.is((SELECT status FROM public.submission_workflow WHERE session_id = pg_temp.id('wonlost')), 'quoted', 'the stage stays Quoted');
+  SELECT o.id, o.version INTO opp, v FROM public.opportunities o WHERE o.intake_id = pg_temp.id('wonlost');
+  PERFORM pg_temp.new_user('acme_owner');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('acme'), pg_temp.id('acme_owner'), 'owner');
+  PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
+  PERFORM public.opportunity_mark_lost(opp, 'price', NULL, pg_temp.id('acme'), v);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($s$SELECT public.send_to_peo(%L, 'TriNet', ARRAY['dana@trinet.example'], 'S', 'N')$s$, pg_temp.id('wonlost'))),
+    '22023: Move this submission to Ready for market first. It is lost', 'refused once Lost');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*)::integer FROM public.quote_requests WHERE session_id = pg_temp.id('wonlost') AND peo_name = 'TriNet'), 0, 'and nothing is recorded');
+END $$;

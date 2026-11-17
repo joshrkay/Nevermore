@@ -24,3 +24,10 @@ export function peoGreeting(names: readonly string[]): string {
   const list = first.length <= 1 ? first.join("") : `${first.slice(0, -1).join(", ")} and ${first[first.length - 1]}`;
   return list ? `Hello ${list},` : "Hello,";
 }
+
+/** Under a PEO the opportunity was already sent to, in the choosing step (CRM-Q3.4, D-1891): when, and that a second send continues the same quote. */
+export const alreadySentWords = (day: string): string => `Already sent on ${day}. Sending again continues its quote.`;
+
+/** The PEOs a quote was sent to, by name, with the day sent (CRM-Q3.4): what the choosing step marks. */
+export const sentToPeos = (quotes: readonly { peoName: string; sentOn: string | null }[]): Record<string, string> =>
+  Object.fromEntries(quotes.flatMap((q) => (q.sentOn ? [[q.peoName, q.sentOn] as const] : [])));
