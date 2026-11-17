@@ -65,8 +65,10 @@ function useSubmissionAccount(submissionId: string, attempt: number): { id: stri
   return read?.key === key ? read.account : null;
 }
 
-const AdvisorSubmissionPage = () => {
-  const { id = "" } = useParams();
+/** `submissionId` and `embedded` are for New quote's step 3, which draws this page for an opportunity's intake (CRM-Q2.4, D-1770); the route gives neither. */
+const AdvisorSubmissionPage = ({ submissionId, embedded = false }: { submissionId?: string; embedded?: boolean } = {}) => {
+  const params = useParams();
+  const id = submissionId ?? params.id ?? "";
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   // The submission whose opening has been SENT to the database (not only answered), so neither a reload after a change nor "Try again" on
@@ -122,9 +124,11 @@ const AdvisorSubmissionPage = () => {
   return (
     <div className="bg-background">
       <main className="container mx-auto px-6 py-8">
-        <Link to="/advisor" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
-          <ArrowLeft className="w-4 h-4" /> All submissions
-        </Link>
+        {!embedded && (
+          <Link to="/advisor" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
+            <ArrowLeft className="w-4 h-4" /> All submissions
+          </Link>
+        )}
 
         {load.kind === "loading" && <SubmissionLoading slow={slowLoad.slow} onTryAgain={slowLoad.tryAgain} />}
 
@@ -254,7 +258,7 @@ const Detail = ({
         <p className="text-sm text-muted-foreground font-mono">{detail.fileId ?? "File ID assigned when the prospect certifies"}</p>
         <p className="text-sm text-muted-foreground mt-1">
           {detail.certified && sub
-            ? `Certified by ${sub.signer_name}${sub.signer_title ? `, ${sub.signer_title}` : ""} · ${formatDateTime(sub.certified_at ?? sub.signed_at)}${sub.peo ? ` · Prepared for ${sub.peo}` : ""}`
+            ? `Certified by ${sub.signer_name}${sub.signer_title ? `, ${sub.signer_title}` : ""} · ${formatDateTime(sub.certified_at ?? sub.signed_at)}${detail.currentVersion !== null ? ` · version ${detail.currentVersion}` : ""}${sub.peo ? ` · Prepared for ${sub.peo}` : ""}`
             : sub?.signer_name
               ? `Certification withdrawn: the prospect changed their answers after signing. Showing their current answers${detail.signed ? "; what changed is listed below" : ""}.`
               : "Not certified yet. Showing the prospect's answers so far."}

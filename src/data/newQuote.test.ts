@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitName, stepToOpenAt } from "./newQuote";
+import { certifiedViewShows, splitName, stepToOpenAt } from "./newQuote";
 
 describe("a contact's one name box", () => {
   // Catches: a one-word name ("Lucia") kept as a first name with no last name, which the contact record refuses (a last name is required).
@@ -28,5 +28,15 @@ describe("the step New quote opens at, worked out from the data (D-1702)", () =>
   // Catches: a certified intake with nothing sent reopening before the choice of PEOs (D-1702: certified and nothing sent, step 4).
   it("is step 4 when the intake is certified and nothing has been sent", () => {
     expect(stepToOpenAt({ intake: { certified: true }, quotesSent: 0 })).toBe(4);
+  });
+});
+
+describe("when step 3 shows the existing certified view (CRM-Q2.4, D-1770)", () => {
+  // Catches: the certified view shown for an opportunity with no intake, or for an intake the employer has not certified.
+  it("shows for a certified intake and for no other state", () => {
+    expect(certifiedViewShows({ intake: { certified: true }, quotesSent: 0 })).toBe(true);
+    expect(certifiedViewShows({ intake: { certified: false }, quotesSent: 0 })).toBe(false);
+    expect(certifiedViewShows({ intake: null, quotesSent: 0 })).toBe(false);
+    expect(certifiedViewShows(null)).toBe(false);
   });
 });

@@ -20,6 +20,11 @@ export function stepToOpenAt(progress: QuoteProgress): QuoteStep {
   return 4;
 }
 
+/** Whether step 3 shows the existing certified view of the intake (the submission page's own panels): the intake is certified (CRM-Q2.4, D-1770). */
+export function certifiedViewShows(progress: QuoteProgress): boolean {
+  return progress?.intake?.certified === true;
+}
+
 /** A contact's one name box as the first and last names the contact record keeps: the first word is the first name, the rest the last name. */
 export function splitName(name: string): { firstName: string; lastName: string } {
   const [first, ...rest] = name.trim().split(/\s+/);
