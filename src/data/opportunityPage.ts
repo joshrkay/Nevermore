@@ -4,7 +4,7 @@ import type { Json } from "@/integrations/supabase/types";
 import type { OpportunityStage } from "@/lib/accountPageApi";
 import type { OpportunityChangeRow, OpportunityEdit, OpportunityEditable, OpportunityFields, OpportunityQuoteEvent } from "@/lib/opportunityPageApi";
 import { formatDay, STAGE_LABELS, valueWords } from "./accountPage";
-import { isOpenQuoteRequest } from "./quoteRequests";
+import { DECLINE_REASON_LABELS, isOpenQuoteRequest, type DeclineReason } from "./quoteRequests";
 
 // The words the opportunity's page says (story CRM-O1.1b, screen 19): the stage bar, what would move the stage on, how a quote request's row reads, and the form's
 // two conversions between what a person types and what the database holds. Words only: who may see or change an opportunity, and the stage itself, are the
@@ -159,6 +159,13 @@ export function historyWords(row: OpportunityChangeRow): string {
   return CODE_FIELDS.has(field) ? `${named} changed` : `${named} changed from ${valueOf(field, row.from)} to ${valueOf(field, row.to)}`;
 }
 
+/** A decline as a sentence: who, and when it gave one the reason and the PEO's words (N-1.4). */
+function declineWords(row: OpportunityQuoteEvent): string {
+  if (!row.declineReason) return `${row.peoName} declined`;
+  const why = DECLINE_REASON_LABELS[row.declineReason as DeclineReason] ?? row.declineReason;
+  return `${row.peoName} declined: ${why}${row.declineWords ? ` (\u201c${row.declineWords}\u201d)` : ""}`;
+}
+
 /** An event of one of the opportunity's quote requests as a sentence. */
 export function quoteEventWords(row: OpportunityQuoteEvent): string {
   switch (row.event) {
@@ -166,7 +173,7 @@ export function quoteEventWords(row: OpportunityQuoteEvent): string {
     case "acknowledged": return `${row.peoName} acknowledged it has the packet`;
     case "question_open": return `${row.peoName} has a question open`;
     case "quoted": return `${row.peoName} quoted`;
-    case "declined": return `${row.peoName} declined`;
+    case "declined": return declineWords(row);
     default: return `${row.peoName}'s quote closed`;
   }
 }

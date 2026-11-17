@@ -13,9 +13,10 @@ import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord
 import type { ChamberData } from "@/data/chamberTypes";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
+import { DeclineReason } from "@/components/quotes/DeclineReason";
 import {
   canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isOpenQuoteRequest, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
-  QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
+  DECLINE_REASON_LABELS, DECLINE_REASONS, DECLINE_WORDS_MAX, QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
   type QuoteNoteKind,
 } from "@/data/quoteRequests";
 import {
@@ -67,13 +68,22 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
   const [expiresOn, setExpiresOn] = useState(request.quote_expires_on ?? "");
   const [startOn, setStartOn] = useState(request.proposed_start_on ?? "");
   const [note, setNote] = useState(request.note ?? "");
+  const [declineReason, setDeclineReason] = useState(request.decline_reason ?? "");
+  const [declineWords, setDeclineWords] = useState(request.decline_words ?? "");
   const [saving, setSaving] = useState(false);
+  const [missingReason, setMissingReason] = useState(false);
   const failure = useSaveFailure("The answer wasn't saved. Check your connection and try again. What you typed is still here.");
   const offlineSave = useOfflineSave();
   const answerButton = useRef<HTMLButtonElement>(null);
   const quoted = status === "quoted";
+  const declined = status === "declined";
 
   const save = async () => {
+    if (declined && !declineReason) {
+      setMissingReason(true);
+      return;
+    }
+    setMissingReason(false);
     setSaving(true);
     failure.clear();
     try {
@@ -84,6 +94,7 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
         startOn: quoted ? startOn || null : null,
         adminFeePepm: quoted && fee.trim() !== "" ? Number(fee) : null,
         note: note.trim() || null,
+        ...(declined ? { declineReason: declineReason || null, declineWords: declineWords.trim() || null } : {}),
       });
       toast.success(`Recorded ${request.peo_name}'s answer.`);
       onSaved(status);
@@ -112,6 +123,20 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
           <input id={`${id}-expires`} type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} className={inputClass} />
           <label htmlFor={`${id}-start`} className="block text-xs text-muted-foreground">Proposed start</label>
           <input id={`${id}-start`} type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} className={inputClass} />
+        </>
+      )}
+      {declined && (
+        <>
+          <label htmlFor={`${id}-why`} className="block text-xs text-muted-foreground">Why they declined</label>
+          <select id={`${id}-why`} value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} className={inputClass}>
+            <option value="">Choose a reason</option>
+            {DECLINE_REASONS.map((r) => (
+              <option key={r} value={r}>{DECLINE_REASON_LABELS[r]}</option>
+            ))}
+          </select>
+          <label htmlFor={`${id}-words`} className="block text-xs text-muted-foreground">What the PEO said</label>
+          <textarea id={`${id}-words`} value={declineWords} onChange={(e) => setDeclineWords(e.target.value)} maxLength={DECLINE_WORDS_MAX} rows={2} className={inputClass} />
+          {missingReason && <p role="alert" className="text-xs text-destructive">Choose why the PEO declined.</p>}
         </>
       )}
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
@@ -369,6 +394,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                 </p>
               )}
               {quote && <p className="text-sm">{quote}</p>}
+              <DeclineReason request={r} />
               {quotedOn && <p className="text-xs text-muted-foreground">{quotedOn}</p>}
               {local && replyDomain && <ReplyAddress request={r} address={replyAddress(local, replyDomain)} onChanged={onChanged} />}
               {r.note && <p className="text-xs text-muted-foreground italic">{r.note}</p>}

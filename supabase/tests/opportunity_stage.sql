@@ -208,6 +208,7 @@
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
 \i supabase/migrations/20261124100000_new_quote_intake.sql
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
+\i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 SET client_min_messages = notice;
 
@@ -550,7 +551,7 @@ BEGIN
 
   -- A decline and a closing are not a quote.
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
-  PERFORM public.advisor_update_quote_request(trinet, 'declined');
+  PERFORM public.advisor_update_quote_request(trinet, 'declined', p_decline_reason => 'pricing');
   PERFORM public.advisor_update_quote_request(justworks, 'closed');
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is(pg_temp.pipeline('quote1'), 'sent_to_carrier', 'a decline and a closing move nothing');

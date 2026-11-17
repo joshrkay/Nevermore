@@ -173,6 +173,28 @@ export const WITHDRAWAL_REASON_LABELS: Record<WithdrawalReason, string> = {
   other: "Other",
 };
 
+/** Why a PEO declined (quote_requests.decline_reason, N-1.4); the database's list, compared by schemaSync.test.ts. */
+export const DECLINE_REASONS = [
+  // sync:begin decline_reasons
+  "industry", "too_small", "too_large", "claims_history", "states", "missing_information", "pricing", "other",
+  // sync:end decline_reasons
+] as const;
+export type DeclineReason = (typeof DECLINE_REASONS)[number];
+
+export const DECLINE_REASON_LABELS: Record<DeclineReason, string> = {
+  industry: "Outside their appetite (industry)",
+  too_small: "Too small",
+  too_large: "Too large",
+  claims_history: "Claims history",
+  states: "A state they don't cover",
+  missing_information: "Missing information",
+  pricing: "Won't price it competitively",
+  other: "Other",
+};
+
+/** The most characters of a PEO's own words a decline keeps (the database's limit). */
+export const DECLINE_WORDS_MAX = 500;
+
 const FIELD_NAMES: Record<string, string> = {
   status: "Status",
   peo_name: "PEO",
@@ -189,6 +211,8 @@ const FIELD_NAMES: Record<string, string> = {
   note_noted_on: "Note date",
   note_body: "Note text",
   withdrawn_reason: "Why withdrawn",
+  decline_reason: "Why declined",
+  decline_words: "The PEO's words",
 };
 
 // A message moved on or off a thread (story M-3.3): the event names the message by id and carries nothing from it.
@@ -201,6 +225,7 @@ const shown = (field: string, value: string | null) => {
   if (value === null) return "—";
   if (field === "note_kind") return quoteNoteKindLabel(value);
   if (field === "withdrawn_reason" && value in WITHDRAWAL_REASON_LABELS) return WITHDRAWAL_REASON_LABELS[value as WithdrawalReason];
+  if (field === "decline_reason" && value in DECLINE_REASON_LABELS) return DECLINE_REASON_LABELS[value as DeclineReason];
   return field === "status" && isQuoteRequestStatus(value) ? QUOTE_REQUEST_LABELS[value] : value;
 };
 

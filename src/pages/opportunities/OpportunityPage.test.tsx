@@ -578,7 +578,7 @@ const fieldChange: OpportunityActivityRow = {
   type: "change", entryKey: "e2", at: "2026-11-09T10:00:00+00:00", changeId: "ch2", kind: "changed", who: "dana@example.com", whoKind: "member", field: "employees", from: 40, to: 45,
   cause: null, causePeo: null, recordTable: "opportunities", recordId: "o1", recordName: "January 2027 PEO search",
 };
-const quoteEvent: OpportunityActivityRow = { type: "quote", entryKey: "quote_request_event:9", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 13, peoName: "PEO B", event: "sent", who: "dana@example.com", whoKind: "member" };
+const quoteEvent: OpportunityActivityRow = { type: "quote", entryKey: "quote_request_event:9", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 13, peoName: "PEO B", event: "sent", who: "dana@example.com", whoKind: "member", declineReason: null, declineWords: null };
 
 const serveActivity = (all: OpportunityActivityRow[]) =>
   client.listOpportunityActivity.mockImplementation(async (_f: string, _o: string, o?: { offset?: number; limit?: number }) => ({ count: all.length, rows: all.slice(o?.offset ?? 0, (o?.offset ?? 0) + (o?.limit ?? 50)) }));
@@ -618,6 +618,19 @@ describe("OpportunityPage: the activity", () => {
     const rows = (await within(await screen.findByRole("table", { name: "The opportunity's activity" })).findAllByRole("row")).slice(1);
     expect(rows.map((r) => within(r).getAllByRole("cell")[2].textContent)).toEqual([
       "Stage: In market to Quoted, by the quote from PEO B", "Stage: Qualifying to Intake under way", "PEO B quoted", "PEO B declined", "PEO B's quote closed",
+    ]);
+  });
+
+  // Catches (N-1.4): an activity line that says "PEO B declined" and not why, so the reason is only on a card nobody has open.
+  it("says why a PEO declined on its line in the activity, with its words when it gave any", async () => {
+    serveActivity([
+      { ...quoteEvent, entryKey: "q1", event: "declined", declineReason: "pricing", declineWords: "Below our floor" },
+      { ...quoteEvent, entryKey: "q2", event: "declined", declineReason: "too_small", declineWords: null },
+    ]);
+    renderPage();
+    const rows = (await within(await screen.findByRole("table", { name: "The opportunity's activity" })).findAllByRole("row")).slice(1);
+    expect(rows.map((r) => within(r).getAllByRole("cell")[2].textContent)).toEqual([
+      "PEO B declined: Won't price it competitively (\u201cBelow our floor\u201d)", "PEO B declined: Too small",
     ]);
   });
 

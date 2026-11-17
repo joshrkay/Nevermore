@@ -585,7 +585,7 @@ describe("quote requests", () => {
     await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null });
     expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
       p_quote_request_id: 7, p_status: "quoted", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: null,
-      p_admin_fee_pepm: 145.5, p_note: null,
+      p_admin_fee_pepm: 145.5, p_note: null, p_decline_reason: null, p_decline_words: null,
     });
     await addQuoteRequestNote(7, { kind: "underwriter_question", notedOn: "2026-11-12", body: "  Loss runs?  " });
     expect(rpc).toHaveBeenLastCalledWith("advisor_add_quote_request_note", {
@@ -618,6 +618,15 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("record_quote", expect.objectContaining({
       p_one_off_fees: null, p_workers_comp: null, p_unemployment: null, p_medical: [{ plan: "Gold PPO", tier: "family", monthly: 1840 }],
     }));
+  });
+
+  // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.
+  it("records a decline with its reason and the PEO's words", async () => {
+    await updateQuoteRequest(7, { status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: null, declineReason: "pricing", declineWords: "Below our floor" });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
+      p_quote_request_id: 7, p_status: "declined", p_received_on: null, p_expires_on: null, p_start_on: null,
+      p_admin_fee_pepm: null, p_note: null, p_decline_reason: "pricing", p_decline_words: "Below our floor",
+    });
   });
 
   // N-1.2. Break caught: a status sent through the answer function (which refuses the open statuses), or under the wrong parameter names.

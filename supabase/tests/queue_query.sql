@@ -491,6 +491,7 @@ SELECT pg_temp.as_owner();
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
 \i supabase/migrations/20261124100000_new_quote_intake.sql
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
+\i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 
 -- ---------- reading the new call ----------

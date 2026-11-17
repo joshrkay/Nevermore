@@ -134,3 +134,11 @@ describe("how a quote says whether it is an estimate or a firm offer", () => {
     expect(quoteKindLabel("binding")).toBe("Not marked");
   });
 });
+
+describe("the change log's decline reason", () => {
+  // N-1.4. Break caught: the log shows the code ("claims_history") and the field's raw name, which no broker reads.
+  it("names the reason and the PEO's words in words", () => {
+    expect(describeQuoteRequestEvent({ field: "decline_reason", old_value: null, new_value: "claims_history" })).toBe("Why declined: — → Claims history");
+    expect(describeQuoteRequestEvent({ field: "decline_words", old_value: "Too small", new_value: "Not in Oregon" })).toBe("The PEO's words: Too small → Not in Oregon");
+  });
+});

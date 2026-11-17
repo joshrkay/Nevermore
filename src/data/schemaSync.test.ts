@@ -34,7 +34,7 @@ import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
-import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_NOTE_KINDS, QUOTE_TIERS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES, WITHDRAWAL_REASONS } from "@/data/quoteRequests";
+import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_NOTE_KINDS, QUOTE_TIERS, QUOTE_NOTE_MAX, DECLINE_REASONS, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES, WITHDRAWAL_REASONS } from "@/data/quoteRequests";
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { MAIL_ADDRESS_PATTERN } from "../../supabase/functions/_shared/mailAddress";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
@@ -291,6 +291,11 @@ describe("server and client intake rules agree", () => {
   // M-2.4 (20261122190000): why a PEO was withdrawn, the four the withdrawal form offers and the database accepts.
   it("holds the same reasons a PEO is withdrawn for", () => {
     expect(quoted(blocks("withdrawal_reasons").join("\n"))).toEqual([...WITHDRAWAL_REASONS]);
+  });
+
+  // N-1.4 (20261124130000): why a PEO declined, the eight the decline form offers and the database accepts.
+  it("holds the same reasons a PEO declines for", () => {
+    expect(quoted(blocks("decline_reasons").join("\n"))).toEqual([...DECLINE_REASONS]);
   });
 
   // The record of who did what (20261116160001): the kinds of entry the table accepts and the page names.

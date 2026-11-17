@@ -258,6 +258,7 @@
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
 \i supabase/migrations/20261124100000_new_quote_intake.sql
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
+\i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 SET client_min_messages = notice;
 
@@ -1470,7 +1471,7 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true, true, ''oldest_waiting'')', 'the queue: one page, searched, filtered, sorted'),
   ('advisor_record_quote_send(p_session_id uuid, p_peo text, p_sent_on date)', 'advisor',
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
-  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
+  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text, p_decline_reason text, p_decline_words text)', 'advisor',
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('record_quote(p_quote_request_id bigint, p_kind text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee numeric, p_admin_fee_basis text, p_one_off_fees jsonb, p_workers_comp jsonb, p_unemployment jsonb, p_medical jsonb, p_note text)', 'advisor',
                                                                      'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO returned, with its whole offer'),
