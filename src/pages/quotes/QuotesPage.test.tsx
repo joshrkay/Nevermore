@@ -195,7 +195,9 @@ describe("the Quotes page (CRM-Q4.1)", () => {
     renderAt();
     await screen.findByText("Reyes Bakery");
     await userEvent.click(await screen.findByRole("button", { name: "Filter by Status" }));
-    for (const name of ["Not sent yet", "Waiting", "Acknowledged", "Question open", "Quoted", "Declined", "Closed"]) expect(await screen.findByText(name, { selector: "label, [role=option], [role=menuitemcheckbox], span" })).toBeInTheDocument();
+    // Within the Status filter: "Sent" is also a column's heading (D-1833 made a sent quote read Sent).
+    const statusFilter = await screen.findByRole("dialog", { name: "Filter on Status" });
+    for (const name of ["Not sent yet", "Sent", "Acknowledged", "Question open", "Quoted", "Declined", "Closed"]) expect(within(statusFilter).getByText(name, { selector: "label, [role=option], [role=menuitemcheckbox], span" })).toBeInTheDocument();
   });
 
   // Catches: the columns the table has beyond the usual seven unreachable, so a broker can't see a quote's File ID or its target start.

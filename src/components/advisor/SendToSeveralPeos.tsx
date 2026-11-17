@@ -210,10 +210,12 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     );
   }
   return (
-    <section aria-label="Send to several PEOs" className="border border-border rounded-md p-3 space-y-3 text-sm">
-      {step !== "done" && <MailboxForWriting returnTo={p.returnTo} />}
+    // basis-full: where this sits in a wrapping row (Choose PEOs, beside a panel's heading) it takes the row under the heading, not a column beside it. Anywhere else the class does nothing.
+    <section aria-label="Send to several PEOs" className="basis-full border border-border rounded-md p-3 space-y-3 text-sm">
+      {step !== "done" && choices.length > 0 && <MailboxForWriting returnTo={p.returnTo} />}
       {step === "choose" && choices.length === 0 ? (
-        <p className="text-sm">No PEOs are listed yet. Ask Nevermore to list the PEOs you quote with.</p>
+        // No PEO has a published profile (a PEO starts as an empty draft until Nevermore publishes it, #236, D-1787): say so and who to ask, rather than a note box and a Review with nothing to choose.
+        <p role="status" className="text-muted-foreground">No PEO can be chosen yet: none has a published profile. Ask Nevermore to publish the PEOs you quote with.</p>
       ) : step === "choose" ? (
         <>
           <ul className="space-y-2">
