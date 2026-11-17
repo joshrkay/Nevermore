@@ -524,6 +524,36 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // What a PEO quoted on a quote request, the whole offer (20261124140000). Firm members read it; it is written only through record_quote. A cost area that is null
+      // was not quoted (it is never an empty list or 0). The newest row of a quote request is its current quote.
+      quotes: {
+        Row: {
+          // The fee in dollars per employee per month, or in percent of payroll, as admin_fee_basis says; null with its basis.
+          admin_fee: number | null
+          // One of QUOTE_ADMIN_FEE_BASES (src/data/quoteRequests.ts).
+          admin_fee_basis: string | null
+          expires_on: string | null
+          id: number
+          // One of QUOTE_KINDS: an estimate or a firm offer.
+          kind: string
+          // Each { plan, tier, monthly }, or null.
+          medical: Json | null
+          note: string | null
+          // Each { name, amount }, or null.
+          one_off_fees: Json | null
+          proposed_start_on: string | null
+          quote_request_id: number
+          received_on: string | null
+          session_id: string
+          // Each { state, charge: 'employer_rate' } or { state, charge: 'peo_rate', rate }, or null.
+          unemployment: Json | null
+          // Each { state, class_code, rate per 100 dollars of payroll }, or null.
+          workers_comp: Json | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
       // through advisor_add_referral_partner and advisor_update_referral_partner.
       // PEOs and their requirement profiles (20261115090000). Advisors read the PEOs and the published versions
@@ -1522,6 +1552,24 @@ export type Database = {
       }
       advisor_set_quote_request_status: {
         Args: { p_quote_request_id: number; p_status: string }
+        Returns: Json
+      }
+      // A quote a PEO returned, the whole offer (20261124140000). Leave a cost area out and it stays "Not quoted"; an empty list or 0 is refused.
+      record_quote: {
+        Args: {
+          p_admin_fee?: number | null
+          p_admin_fee_basis?: string | null
+          p_expires_on?: string | null
+          p_kind: string
+          p_medical?: Json | null
+          p_note?: string | null
+          p_one_off_fees?: Json | null
+          p_quote_request_id: number
+          p_received_on?: string | null
+          p_start_on?: string | null
+          p_unemployment?: Json | null
+          p_workers_comp?: Json | null
+        }
         Returns: Json
       }
       advisor_update_quote_request: {

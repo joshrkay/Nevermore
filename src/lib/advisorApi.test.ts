@@ -85,6 +85,7 @@ const {
   recordQuoteSend,
   setQuoteRequestStatus,
   updateQuoteRequest,
+  recordQuote,
   fetchIsAdmin,
   loadPeoDirectory,
   loadPeoCatalogDirectory,
@@ -598,6 +599,25 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_correct_quote_request_note", {
       p_note_id: 21, p_kind: "call", p_noted_on: "2026-11-11", p_body: "Loss runs, three years.",
     });
+  });
+
+  // N-2.1. Break caught: a cost area sent as an empty list or zero instead of left out (which would read as quoted, not "Not quoted"), or under the wrong parameter names.
+  it("records a whole quote through record_quote, leaving out each cost area it doesn't hold", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 3, kind: "firm_offer" }, error: null });
+    await recordQuote(7, { kind: "firm_offer", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: "2027-01-01", adminFee: 42.5, adminFeeBasis: "per_employee_per_month", note: "By phone" });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", {
+      p_quote_request_id: 7, p_kind: "firm_offer", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: "2027-01-01",
+      p_admin_fee: 42.5, p_admin_fee_basis: "per_employee_per_month", p_one_off_fees: null, p_workers_comp: null, p_unemployment: null, p_medical: null, p_note: "By phone",
+    });
+  });
+
+  // N-2.1. Break caught: a form that has no one-off fees sending [] (the database refuses it, so the agent can't save), or a quote with no workers' comp stored as quoted.
+  it("sends an empty cost area as left out, not as an empty list", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 4, kind: "estimate" }, error: null });
+    await recordQuote(7, { kind: "estimate", oneOffFees: [], workersComp: [], unemployment: [], medical: [{ plan: "Gold PPO", tier: "family", monthly: 1840 }] });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", expect.objectContaining({
+      p_one_off_fees: null, p_workers_comp: null, p_unemployment: null, p_medical: [{ plan: "Gold PPO", tier: "family", monthly: 1840 }],
+    }));
   });
 
   // N-1.2. Break caught: a status sent through the answer function (which refuses the open statuses), or under the wrong parameter names.
