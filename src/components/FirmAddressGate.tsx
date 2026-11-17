@@ -18,6 +18,16 @@ import { platformFirmsUrl } from "@/lib/firmHost";
 // twice. At an address no firm holds they are not mounted at all (D-27).
 const SIGN_IN_LANDING_PATHS: readonly string[] = [AUTH_CALLBACK_PATH, BROKER_CALLBACK_PATH];
 
+// An employer is never a member of the firm whose address they work at (D-1907). The firm's own "Get a quote" link, an invitation's link (`/intake-invite`) and a sign-in
+// at the address all make one a signed-in person who is not a member, and they still have to finish: verify their email, accept the invitation, sign. These are the pages
+// that are theirs, or that hold nothing of the firm. Only the person who would otherwise see "You aren't a member of this firm" reaches them this way: a member, a
+// suspended firm's member, a person whose request to join waits and a support session are answered as before, and every page of the firm's console stays shut. The database,
+// not this list, decides whose intake and packet they may read.
+const EMPLOYER_PAGES: readonly string[] = ["/start", "/profile", "/intake-invite", "/login", "/privacy", "/terms", "/f"];
+const EMPLOYER_PAGE_PREFIXES: readonly string[] = ["/manuscript", "/b/"];
+const isEmployerPage = (pathname: string): boolean =>
+  EMPLOYER_PAGES.includes(pathname) || EMPLOYER_PAGE_PREFIXES.some((p) => pathname === p || (p.endsWith("/") ? pathname.startsWith(p) : pathname.startsWith(`${p}/`)));
+
 // "suspended": a current member of a firm that Nevermore has suspended (story CRM-P1.8). "asked": not a member, but signed in from an
 // organisation the firm lists, so an owner now has their request to join (story CRM-P1.4). "support": a platform admin with an open support
 // session for this firm, let in to read it (CRM-P2.4); "support_ended": the same admin once the hour is over.
@@ -142,7 +152,9 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   if (pathname === JOIN_PATH) return <>{children}</>;
   if (loading) return <Checking />;
   if (!signedIn) return <>{children}</>;
-  if (membership === "checking") return <Checking />;
+  // An employer's page holds nothing of the firm's console, so it stays up while the person is checked: taken down and put back, the intake returned to its first tab and the
+  // statements an employer had ticked were gone, at the moment they verified their email.
+  if (membership === "checking") return isEmployerPage(pathname) ? <>{children}</> : <Checking />;
   if (membership === "error") {
     return (
       <Message title="We couldn't check your access">
@@ -151,6 +163,7 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     );
   }
   if (membership === "not_member") {
+    if (isEmployerPage(pathname)) return <>{children}</>;
     return (
       <Message title="You aren't a member of this firm">
         <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
