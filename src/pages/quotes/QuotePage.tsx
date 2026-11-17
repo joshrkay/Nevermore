@@ -5,6 +5,8 @@ import { QuoteHeader } from "@/components/quotes/QuoteHeader";
 import { OpenStatusButtons, ReplyAddress } from "@/components/advisor/QuoteRequestsPanel";
 import { ClosedBanner } from "@/components/quotes/ClosedBanner";
 import { DeclineReason } from "@/components/quotes/DeclineReason";
+import { RecordQuote } from "@/components/quotes/RecordQuote";
+import { RecordDecline } from "@/components/quotes/RecordDecline";
 import { CloseQuote } from "@/components/quotes/CloseQuote";
 import { WhatWasSent } from "@/components/quotes/WhatWasSent";
 import { QuoteFigures } from "@/components/quotes/QuoteFigures";
@@ -46,6 +48,8 @@ const QuotePage = () => {
   // the account's records (D-209); the database asks the same.
   const canAct = firmId !== null && !isSupport && !page.account.archived && page.canChange;
   const canClose = canAct && isOpenQuoteRequest(request.status);
+  // A quote is recorded on a request that is not closed (the database takes none on a closed one), and a revised quote is a new quote (D-720).
+  const canRecordQuote = canAct && request.status !== "closed";
   const hasReply = detail.quoteRequestMessages.some((m) => m.quote_request_id === request.id && m.direction === "received");
   const noReply = noReplyWords(request, hasReply);
   // A send the product made is a message of its own on the thread (direction sent); one with none was recorded by hand.
@@ -68,10 +72,12 @@ const QuotePage = () => {
       </nav>
       {request.status === "closed" && <ClosedBanner request={request} closeReason={outcome.data?.quotes[request.id]?.closeReason} />}
       <DeclineReason request={request} className="mb-6 rounded-xl border border-border bg-muted/40 p-4" />
-      <QuoteHeader request={request} actions={canClose ? (
+      <QuoteHeader request={request} actions={canRecordQuote || canClose ? (
         <>
-          <OpenStatusButtons request={request} onChanged={() => void query.refetch()} />
-          <CloseQuote request={request} onClosed={() => void query.refetch()} />
+          {canRecordQuote && <RecordQuote request={request} mailFiles={mailFiles} onRecorded={() => { void query.refetch(); void quoted.refetch(); }} />}
+          {canClose && <RecordDecline request={request} onRecorded={() => void query.refetch()} />}
+          {canClose && <OpenStatusButtons request={request} onChanged={() => void query.refetch()} />}
+          {canClose && <CloseQuote request={request} onClosed={() => void query.refetch()} />}
         </>
       ) : undefined} />
       <PeoThreadPanel

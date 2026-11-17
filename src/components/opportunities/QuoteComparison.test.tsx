@@ -163,6 +163,25 @@ describe("an opportunity sent to no PEO", () => {
   });
 });
 
+describe("how many quotes are back (CRM-Q4.2's states)", () => {
+  // Catches: a table of "Not quoted" cells with no word that nothing has come back, so the broker reads the PEOs as having quoted nothing instead of not having answered.
+  it("says no quotes are back yet while every PEO is still waiting, with each PEO's status still in its column", () => {
+    draw(comparison({ columns: [{ quoteRequestId: 1, peoName: "Insperity", status: "sent", quote: null }, { quoteRequestId: 2, peoName: "TriNet", status: "acknowledged", quote: null }] }));
+    expect(screen.getByText("No quotes are back yet.")).toBeInTheDocument();
+    expect(cells("Status").map((c) => c.textContent)).toEqual(["Sent", "Acknowledged"]);
+  });
+  // Catches: one filled column drawn with no word that there is nothing to compare it with, and the same word drawn once two quotes are back.
+  it("says there is nothing to compare a lone quote with yet, and not when two are back", () => {
+    const { unmount } = draw(comparison({ columns: [{ quoteRequestId: 1, peoName: "Insperity", status: "quoted", quote: quote() }, { quoteRequestId: 2, peoName: "TriNet", status: "sent", quote: null }] }));
+    expect(screen.getByText("Only one quote is back, so there is nothing to compare it with yet.")).toBeInTheDocument();
+    expect(screen.queryByText("No quotes are back yet.")).not.toBeInTheDocument();
+    unmount();
+    draw(comparison({ columns: [{ quoteRequestId: 1, peoName: "Insperity", status: "quoted", quote: quote() }, { quoteRequestId: 2, peoName: "TriNet", status: "quoted", quote: quote({ id: 2 }) }] }));
+    expect(screen.queryByText(/nothing to compare it with yet/)).not.toBeInTheDocument();
+  });
+  // END back
+});
+
 describe("an account that takes no notes", () => {
   // Catches: an Add note form offered on an archived account that the database would refuse (D-432), so the broker types a note and loses it.
   it("shows the notes but no form, and says why", () => {

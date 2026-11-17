@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn(), askAboutQuestion: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn(), askAboutQuestion: vi.fn(), recordQuote: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -241,17 +241,242 @@ describe("QuotePage: Follow up or withdraw", () => {
   });
 });
 
-describe("QuotePage: what Epic 7 builds", () => {
-  // Catches: a Record the quote or Record a decline button that opens nothing (D-1706, D-402: no dead buttons; slice 7.8 adds them), on any status.
-  it("has no Record the quote or Record a decline, whatever the status", async () => {
-    for (const status of ["sent", "acknowledged", "question_open", "quoted", "declined", "closed"]) {
+describe("QuotePage: Record the quote", () => {
+  // Catches: no way to record a quote from its own page, a button on a closed quote (the database refuses a quote on a closed request: a dead button), or none where a revised quote is recorded (quoted, declined).
+  it("offers Record the quote on a quote request that is not closed, and nothing on a closed one", async () => {
+    for (const status of ["sent", "acknowledged", "question_open", "quoted", "declined"]) {
       quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
       renderPage();
       await screen.findByRole("heading", { level: 1, name: "TriNet" });
-      expect(screen.queryByRole("button", { name: /record (the|a) (quote|decline)/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Record the quote" }), status).toBeInTheDocument();
+      cleanup();
+    }
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "closed" } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    expect(screen.queryByRole("button", { name: /record (the|a) (quote|decline)/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: Record the quote, the form", () => {
+  const open = async (status = "sent") => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record the quote" }));
+    return screen.getByRole("form", { name: "Record the quote from TriNet" });
+  };
+
+  // Catches: a quote recorded with no say whether it is an estimate or a firm offer (the comparison would show an estimate as a firm offer, D-722): the form must refuse before it asks the database.
+  it("will not record a quote until it is marked an estimate or a firm offer", async () => {
+    const form = await open();
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Say whether this is an estimate or a firm offer.");
+    expect(advisor.recordQuote).not.toHaveBeenCalled();
+  });
+});
+
+describe("QuotePage: Record the quote, saving", () => {
+  const open = async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage());
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record the quote" }));
+    return screen.getByRole("form", { name: "Record the quote from TriNet" });
+  };
+  beforeEach(() => advisor.recordQuote.mockResolvedValue({ id: 3 }));
+
+  // Catches: a cost area left empty sent as an empty list or zero (the comparison would read it as quoted, D-721), a fee sent with the wrong basis, or a page that does not read the quote again.
+  it("records the figures through recordQuote only, leaves every empty cost area out, reads the page again and closes the form", async () => {
+    const form = await open();
+    await userEvent.selectOptions(within(form).getByLabelText("Estimate or firm offer"), "firm_offer");
+    await userEvent.type(within(form).getByLabelText("Admin fee"), "40");
+    await userEvent.selectOptions(within(form).getByLabelText("Admin fee basis"), "per_employee_per_month");
+    await userEvent.type(within(form).getByLabelText("Expires on"), "2026-12-05");
+    await userEvent.type(within(form).getByLabelText("Note"), "By phone");
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.recordQuote).toHaveBeenCalledTimes(1));
+    expect(advisor.recordQuote).toHaveBeenCalledWith(7, {
+      kind: "firm_offer", receivedOn: null, expiresOn: "2026-12-05", startOn: null, adminFee: 40, adminFeeBasis: "per_employee_per_month",
+      oneOffFees: null, workersComp: null, unemployment: null, medical: null, note: "By phone",
+    });
+    expect(advisor.updateQuoteRequest).not.toHaveBeenCalled();
+    await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("form", { name: "Record the quote from TriNet" })).not.toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: Record the quote, cost areas", () => {
+  const fill = async (kind = "estimate") => {
+    quotes.getQuotePage.mockResolvedValue(quotePage());
+    advisor.recordQuote.mockResolvedValue({ id: 3 });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record the quote" }));
+    const form = screen.getByRole("form", { name: "Record the quote from TriNet" });
+    await userEvent.selectOptions(within(form).getByLabelText("Estimate or firm offer"), kind);
+    return form;
+  };
+  const saved = async (form: HTMLElement) => {
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.recordQuote).toHaveBeenCalledTimes(1));
+    return advisor.recordQuote.mock.calls[0][1];
+  };
+
+  // Catches: one-off fees that cannot be typed (the story's "one-off fees"), or an amount sent as text, which the database refuses.
+  it("records a one-off fee as a name and a number", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add a one-off fee" }));
+    await userEvent.type(within(form).getByLabelText("One-off fee 1 name"), "Setup");
+    await userEvent.type(within(form).getByLabelText("One-off fee 1 amount"), "500");
+    expect(await saved(form)).toMatchObject({ oneOffFees: [{ name: "Setup", amount: 500 }], workersComp: null, unemployment: null, medical: null, adminFee: null, adminFeeBasis: null });
+  });
+  // Catches: workers' comp rates that cannot be entered, a class code lost, or the rate sent as text.
+  it("records a workers' comp rate as a state, a class code and a number", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add a workers' comp rate" }));
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 state"), "or");
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 class code"), "8810");
+    await userEvent.type(within(form).getByLabelText("Workers' comp rate 1 rate per $100 of payroll"), "0.45");
+    expect(await saved(form)).toMatchObject({ workersComp: [{ state: "OR", class_code: "8810", rate: 0.45 }], oneOffFees: null });
+  });
+  // Catches: an unemployment line that sends a rate for the employer's own rate (the database refuses extra keys), or one that cannot take the PEO's rate.
+  it("records unemployment tax per state as the employer's own rate or the PEO's rate with its percent", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add an unemployment line" }));
+    await userEvent.type(within(form).getByLabelText("Unemployment line 1 state"), "OR");
+    await userEvent.selectOptions(within(form).getByLabelText("Unemployment line 1 how it is charged"), "peo_rate");
+    await userEvent.type(within(form).getByLabelText("Unemployment line 1 percent of taxable wages"), "2.7");
+    await userEvent.click(within(form).getByRole("button", { name: "Add an unemployment line" }));
+    await userEvent.type(within(form).getByLabelText("Unemployment line 2 state"), "wa");
+    await userEvent.selectOptions(within(form).getByLabelText("Unemployment line 2 how it is charged"), "employer_rate");
+    expect(within(form).queryByLabelText("Unemployment line 2 percent of taxable wages")).not.toBeInTheDocument();
+    expect((await saved(form)).unemployment).toEqual([{ state: "OR", charge: "peo_rate", rate: 2.7 }, { state: "WA", charge: "employer_rate" }]);
+  });
+  // Catches: medical rates that cannot be entered, a tier sent in words instead of its code, or the monthly rate sent as text.
+  it("records a medical rate as a plan, a tier and a monthly number", async () => {
+    const form = await fill();
+    await userEvent.click(within(form).getByRole("button", { name: "Add a medical rate" }));
+    await userEvent.type(within(form).getByLabelText("Medical rate 1 plan"), "Gold PPO");
+    await userEvent.selectOptions(within(form).getByLabelText("Medical rate 1 tier"), "employee_spouse");
+    await userEvent.type(within(form).getByLabelText("Medical rate 1 monthly rate per employee"), "812.5");
+    expect((await saved(form)).medical).toEqual([{ plan: "Gold PPO", tier: "employee_spouse", monthly: 812.5 }]);
+  });
+  // Catches: a refused quote (a fee with no basis, a closed request) that closes the form as if saved, or loses what the agent typed.
+  it("says why the database refused the quote, keeps what was typed and does not close the form", async () => {
+    const { AdvisorApiError } = await import("@/lib/advisorApi");
+    const form = await fill("firm_offer");
+    advisor.recordQuote.mockRejectedValue(new AdvisorApiError("An administrative fee comes with its basis: per employee per month, or percent of payroll"));
+    await userEvent.type(within(form).getByLabelText("Admin fee"), "40");
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    expect(await within(form).findByText(/administrative fee comes with its basis/)).toBeInTheDocument();
+    expect(within(form).getByLabelText("Admin fee")).toHaveValue(40);
+    expect(within(form).getByLabelText("Estimate or firm offer")).toHaveValue("firm_offer");
+    expect(quotes.getQuotePage).toHaveBeenCalledTimes(1);
+  });
+  // Catches: a document uploaded before the quote exists (it would have no quote to name it), or for the wrong quote (D-738: the form saves first, then uploads with the new quote's id).
+  it("records the quote first and then names the chosen file as its document, for the new quote", async () => {
+    const form = await fill();
+    const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    await userEvent.upload(within(form).getByLabelText("Quote document"), file);
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.uploadQuoteDocument).toHaveBeenCalledWith(3, file));
+    expect(advisor.recordQuote.mock.invocationCallOrder[0]).toBeLessThan(advisor.uploadQuoteDocument.mock.invocationCallOrder[0]);
+  });
+  // Catches: a document the virus check blocked, or an upload that failed, leaving the form open on a quote that is already recorded (saving again would record it twice) or saying nothing of the file.
+  it("closes the form once the quote is recorded and says so when its document was blocked or not kept", async () => {
+    const { toast } = await import("sonner");
+    const form = await fill();
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "blocked" });
+    await userEvent.upload(within(form).getByLabelText("Quote document"), new File(["x"], "quote.pdf", { type: "application/pdf" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The quote was recorded, but the virus check blocked its document, so it was not kept."));
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Record the quote from TriNet" })).not.toBeInTheDocument());
+    expect(advisor.recordQuote).toHaveBeenCalledTimes(1);
+  });
+  // Catches: making the agent upload again a proposal that already arrived on this quote request's emails, or offering a blocked file or another PEO's file as the document.
+  it("names a stored file from this quote request's emails as the document, for the new quote, without uploading it", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      detail: threadOf({
+        quoteRequestMessages: [message({ id: 1 }), message({ id: 2, quote_request_id: 8 })],
+        quoteRequestMailAttachments: [
+          { id: 61, message_id: 1, file_name: "Insperity proposal.pdf", size_bytes: 412000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/1/61-p.pdf" },
+          { id: 62, message_id: 1, file_name: "infected.pdf", size_bytes: 1000, status: "blocked", not_kept_reason: null, scan_signature: "Eicar", storage_path: null },
+          { id: 63, message_id: 2, file_name: "Other PEO.pdf", size_bytes: 1000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/2/63-o.pdf" },
+        ],
+      }),
+    }));
+    advisor.recordQuote.mockResolvedValue({ id: 3 });
+    advisor.attachQuoteDocument.mockResolvedValue({});
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record the quote" }));
+    const form = screen.getByRole("form", { name: "Record the quote from TriNet" });
+    await userEvent.selectOptions(within(form).getByLabelText("Estimate or firm offer"), "estimate");
+    const choose = within(form).getByLabelText("Use a file from the emails");
+    expect(within(choose).getAllByRole("option").map((o) => o.textContent)).toEqual(["No file from the emails", "Insperity proposal.pdf"]);
+    await userEvent.selectOptions(choose, "61");
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.attachQuoteDocument).toHaveBeenCalledWith(3, 61));
+    expect(advisor.uploadQuoteDocument).not.toHaveBeenCalled();
+  });
+  // END cost areas
+});
+
+describe("QuotePage: who sees Record the quote and Record a decline", () => {
+  // Catches: record buttons in a Nevermore support session (ADR 0024), on an archived account (D-432) or for someone the level rule keeps from changing the account (D-209): dead buttons the database refuses.
+  it("offers neither in a support session, on an archived account or to someone who may not change the account", async () => {
+    const none = () => expect(screen.queryByRole("button", { name: /record (the|a) (quote|decline)/i })).not.toBeInTheDocument();
+    quotes.getQuotePage.mockResolvedValue(quotePage());
+    renderPage("/quotes/7", workspace({ isSupport: true }));
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    none();
+    cleanup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({ opportunity: { account: { id: "a1", name: "Harborview Dental Group", archived: true } } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    none();
+    cleanup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({ opportunity: { canChange: false } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    none();
+  });
+});
+
+describe("QuotePage: Record a decline", () => {
+  // Catches: no way to record a decline from the quote's page, a button on a quote that has already quoted, declined or closed (nothing for it to do), or a form that offers the other answers (a quote has its own form, which keeps its figures).
+  it("offers Record a decline while the PEO has not answered, and opens the submission page's reason picker, with no other answer to choose", async () => {
+    for (const status of ["sent", "acknowledged", "question_open"]) {
+      quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: "Record a decline" }));
+      expect(screen.getByLabelText("Why they declined")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Answer")).not.toBeInTheDocument();
+      cleanup();
+    }
+    for (const status of ["quoted", "declined", "closed"]) {
+      quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
+      renderPage();
+      await screen.findByRole("heading", { level: 1, name: "TriNet" });
+      expect(screen.queryByRole("button", { name: "Record a decline" }), status).not.toBeInTheDocument();
       cleanup();
     }
   });
+  // Catches: a decline recorded with no reason (N-1.4), through some other writer than the existing decline call (which keeps the reason and the log), or a page that still shows the PEO as waiting afterwards.
+  it("records the decline through the existing update with its reason and the PEO's words, and reads the page again", async () => {
+    quotes.getQuotePage.mockResolvedValueOnce(quotePage()).mockResolvedValue(quotePage({ request: { status: "declined", decline_reason: "too_small", decline_words: "Under 10 employees" } }));
+    advisor.updateQuoteRequest.mockResolvedValue(undefined);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record a decline" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose why the PEO declined.");
+    expect(advisor.updateQuoteRequest).not.toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByLabelText("Why they declined"), "too_small");
+    await userEvent.type(screen.getByLabelText("What the PEO said"), "Under 10 employees");
+    await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
+    await waitFor(() => expect(advisor.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ status: "declined", declineReason: "too_small", declineWords: "Under 10 employees" })));
+    expect(await screen.findByText("Declined: Too small")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record a decline" })).not.toBeInTheDocument();
+  });
+  // END decline
 });
 
 describe("QuotePage: Send again", () => {
