@@ -58,24 +58,44 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
       headers: { ...corsHeaders, "Content-Type": "application/json", "X-Request-Id": requestId },
     });
 
-  const supabaseUrl = deps.env("SUPABASE_URL") as string;
-  const anonKey = deps.env("SUPABASE_ANON_KEY") as string;
-  const serviceRoleKey = deps.env("SUPABASE_SERVICE_ROLE_KEY") as string;
-  const authHeader = req.headers.get("Authorization") as string;
+  const refuse = (status: number, code: string, message: string) => reply({ error: message, code }, status);
+  if (req.method !== "POST") return refuse(405, "bad_request", "Method not allowed");
+
+  const supabaseUrl = deps.env("SUPABASE_URL");
+  const anonKey = deps.env("SUPABASE_ANON_KEY");
+  const serviceRoleKey = deps.env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    deps.log("QUOTE_DOCUMENT_CONFIG_MISSING: SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY must be set");
+    return refuse(503, "unavailable", "Uploads aren't available right now.");
+  }
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return refuse(401, "unauthorized", "Unauthorized");
   const agent = deps.createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
+  const { data: { user } } = await agent.auth.getUser();
+  if (!user) return refuse(401, "unauthorized", "Unauthorized");
 
   // A scanner, before anything else (ADR 0002): never a file kept, or an upload started, that nothing can scan.
   const choice = selectScanner(deps.env, deps.scanner);
   if (!choice.ok) {
     deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}; uploads are refused until it is fixed (docs/SUPABASE_SETUP.md, "Malware scanning")`);
-    return reply({ error: "Uploads are paused while virus checking is set up. Try again once it is.", code: "scanner_missing" }, 503);
+    return refuse(503, "scanner_missing", "Uploads are paused while virus checking is set up. Try again once it is.");
   }
 
-  const body = (await readBodyCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES)) as Uint8Array;
-  const form = await new Response(body as Uint8Array<ArrayBuffer>, { headers: { "Content-Type": req.headers.get("Content-Type") ?? "" } }).formData();
-  const quoteId = form.get("quote_id") as string;
-  const upload = form.get("file") as File;
-  const fileName = cleanFileName(upload.name ?? "");
+  const body = await readBodyCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES);
+  if (!body) return refuse(413, "too_large", "A quote document can be up to 20 MB.");
+  let form: FormData;
+  try {
+    form = await new Response(body as Uint8Array<ArrayBuffer>, { headers: { "Content-Type": req.headers.get("Content-Type") ?? "" } }).formData();
+  } catch {
+    return refuse(400, "bad_request", "Send the file as multipart form data.");
+  }
+  const quoteId = form.get("quote_id");
+  const upload = form.get("file");
+  if (typeof quoteId !== "string" || !QUOTE_ID.test(quoteId)) return refuse(400, "bad_request", "quote_id is required.");
+  if (!upload || typeof upload === "string") return refuse(400, "bad_request", "file is required.");
+  if (upload.size === 0) return refuse(422, "empty", "This file is empty.");
+  if (upload.size > MAX_UPLOAD_BYTES) return refuse(413, "too_large", "A quote document can be up to 20 MB.");
+  const fileName = cleanFileName((upload as File).name ?? "");
   const bytes = new Uint8Array(await upload.arrayBuffer());
   const sniffed = sniffUpload(bytes.subarray(0, SNIFF_BYTES), fileName);
   if (!sniffed.ok) {

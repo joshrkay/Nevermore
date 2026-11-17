@@ -182,4 +182,19 @@ describe("quote-document-upload: a quote document recorded by hand, an upload li
       expect(t.rpcs.map((r) => r.fn)).toEqual(["start_quote_document_upload"]);
     }
   });
+
+  // Catches: an upload from someone not signed in, a request that names no quote or sends no file, or an empty file, reaching the database or the scanner.
+  it("refuses a request that is not a signed-in POST of a quote number and a non-empty file, recording nothing", async () => {
+    const t = setup();
+    const answer = async (req: Request, deps = t.deps) => (await handleQuoteDocumentUpload(req, deps)).status;
+    expect(await answer(new Request("https://functions.test/quote-document-upload", { method: "GET" }))).toBe(405);
+    expect(await answer(post({ quote_id: "3", file: file(PDF, "quote.pdf") }, {}))).toBe(401);
+    expect(await answer(post({ quote_id: "3", file: file(PDF, "quote.pdf") }, { Authorization: "Bearer agent-jwt" }), setup({ user: null }).deps)).toBe(401);
+    expect(await answer(post({ file: file(PDF, "quote.pdf") }))).toBe(400);
+    expect(await answer(post({ quote_id: "three", file: file(PDF, "quote.pdf") }))).toBe(400);
+    expect(await answer(post({ quote_id: "3" }))).toBe(400);
+    expect(await answer(post({ quote_id: "3", file: file(new Uint8Array(0), "quote.pdf") }))).toBe(422);
+    expect(t.rpcs).toEqual([]);
+    expect(t.stored).toEqual([]);
+  });
 });
