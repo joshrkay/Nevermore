@@ -725,4 +725,10 @@ One failing test per cycle, seen red for the right reason, then the least code. 
 
 Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; build green; vitest 343 files, 7001 tests: the final run failed 2 in AdvisorSubmissionPage.test.tsx on 5 s timeouts on the shared machine (161/161 pass alone); SQL 121/121 on port 5480 after cycles 22-24.
 Mutation: SQL 11 (reason required, only-a-decline rule, list check in the function, 500 bound, trim, blank words, keep reason and words on leaving, CHECK, both activity time bounds): 9 red at first, 2 survived (CHECK, words time bound), cycles 25-26 closed them, all 11 red. App 15 (DeclineReason x4, AnswerForm x6, opportunityPage x2, advisorApi x2, QuotePage x1): all red.
-482. SQL 1: an agent names a stored mail attachment as a quote's document | red: ERROR: function public.attach_quote_document(bigint, bigint) does not exist | green
+
+## 7.3 N-2.2 keep the quote document, N-2.4 a revised quote (quote_document.sql, 20261124150000_quote_document.sql)
+
+One line per cycle: the test, the failing line seen, then green.
+
+1. SQL 1: an agent names a stored mail attachment as a quote's document | red: ERROR: function public.attach_quote_document(bigint, bigint) does not exist | green
+2. SQL 2: another firm's agent, or a quote that is not there, is refused PT404 and the quote keeps its document | red: FAIL: another firm's agent gave ok, expected PT404: Quote not found | green

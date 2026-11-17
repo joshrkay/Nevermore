@@ -398,3 +398,20 @@ BEGIN
   PERFORM pg_temp.is((SELECT x.document_attachment_id FROM public.quotes x WHERE x.id = (q ->> 'id')::bigint), f, 'and the quote keeps it');
   PERFORM pg_temp.as_owner();
 END $$;
+
+CREATE FUNCTION pg_temp.qid(peo text) RETURNS bigint LANGUAGE sql AS $$ SELECT max(id) FROM public.quotes WHERE quote_request_id = pg_temp.qr(peo) $$;
+-- The superuser's view of one quote's document.
+CREATE FUNCTION pg_temp.doc_of(q bigint) RETURNS bigint LANGUAGE sql AS $$ SELECT document_attachment_id FROM public.quotes WHERE id = q $$;
+
+-- ---------- 2. Another firm's agent can't name a document on this firm's quote ----------
+-- Catches: a quote of another firm taking a file, or the refusal telling a stranger that the quote exists.
+DO $$
+DECLARE f bigint; q bigint := pg_temp.qid('Insperity');
+BEGIN
+  f := pg_temp.mail_file('Insperity', 'stored', 'other.pdf');
+  PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, f)), 'PT404: Quote not found', 'another firm''s agent');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', 999999, f)), 'PT404: Quote not found', 'a quote that is not there is the same answer');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'the quote kept its own document');
+END $$;
