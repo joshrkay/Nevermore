@@ -124,3 +124,11 @@ describe("the change log's new statuses", () => {
     expect(describeQuoteRequestEvent({ field: "status", old_value: "acknowledged", new_value: "question_open" })).toBe("Status: Acknowledged → Question open");
   });
 });
+
+describe("the change log's decline reason", () => {
+  // N-1.4. Break caught: the log shows the code ("claims_history") and the field's raw name, which no broker reads.
+  it("names the reason and the PEO's words in words", () => {
+    expect(describeQuoteRequestEvent({ field: "decline_reason", old_value: null, new_value: "claims_history" })).toBe("Why declined: — → Claims history");
+    expect(describeQuoteRequestEvent({ field: "decline_words", old_value: "Too small", new_value: "Not in Oregon" })).toBe("The PEO's words: Too small → Not in Oregon");
+  });
+});

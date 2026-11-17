@@ -326,6 +326,9 @@ export type Database = {
           quoted_version?: number | null
           // Why it was withdrawn (M-2.4), one of WITHDRAWAL_REASONS, for advisors only; cleared when a send reopens it.
           withdrawn_reason?: string | null
+          // N-1.4: why the PEO declined, one of DECLINE_REASONS, and its own words; kept when the request moves on, replaced by a later decline.
+          decline_reason?: string | null
+          decline_words?: string | null
         }
         Insert: never
         Update: never
@@ -1527,6 +1530,8 @@ export type Database = {
       advisor_update_quote_request: {
         Args: {
           p_admin_fee_pepm?: number | null
+          p_decline_reason?: string | null
+          p_decline_words?: string | null
           p_expires_on?: string | null
           p_note?: string | null
           p_quote_request_id: number

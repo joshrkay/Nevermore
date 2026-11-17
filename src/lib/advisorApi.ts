@@ -552,6 +552,9 @@ export interface QuoteAnswer {
   startOn: string | null;
   adminFeePepm: number | null;
   note: string | null;
+  /** A decline's reason, one of DECLINE_REASONS (N-1.4), and the PEO's own words; only a decline has them. */
+  declineReason?: string | null;
+  declineWords?: string | null;
 }
 
 /** Records a PEO's answer on a quote request, replacing what was recorded before. Every change is logged. */
@@ -564,6 +567,8 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
     p_start_on: answer.startOn,
     p_admin_fee_pepm: answer.adminFeePepm,
     p_note: answer.note,
+    p_decline_reason: answer.declineReason ?? null,
+    p_decline_words: answer.declineWords ?? null,
   });
   if (error) fail(error, "Couldn't record the answer.");
 }
