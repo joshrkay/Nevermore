@@ -45,7 +45,7 @@ export function QuoteDocument({ quoteRequestId, quote, canChange, mailFiles, onC
       setUploading(false);
     }
   };
-  const useFile = async () => {
+  const nameFile = async () => {
     setUploading(true);
     try {
       await attachQuoteDocument(quote.id, Number(chosen));
@@ -76,7 +76,7 @@ export function QuoteDocument({ quoteRequestId, quote, canChange, mailFiles, onC
               {mailFiles.map((f) => <option key={f.id} value={f.id}>{f.file_name}</option>)}
             </select>
           </label>
-          <Button type="button" variant="outline" disabled={chosen === "" || uploading} onClick={() => void useFile()}>Use this file</Button>
+          <Button type="button" variant="outline" disabled={chosen === "" || uploading} onClick={() => void nameFile()}>Use this file</Button>
         </div>
       )}
       {!doc && canChange && (
