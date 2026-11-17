@@ -758,3 +758,12 @@ One line per cycle: the test, the failing line seen, then green.
 26. QuotePage.test: the stored files that arrived on this quote request's emails can be named as the quote's document, without uploading again; blocked and other PEOs' files are not offered | red: Unable to find a label with the text of: Use a file from the emails | green
 27. QuotePage.test: no way to add a document in a support session or on an archived account (red seen by passing canChange always true, then restored to canAct) | red: expected document not to contain element, found <input type=file ...> (with the guard removed) | green
 28. SQL 10 and 11 (characterisation: a hand upload goes started, scanned, named; a revised quote keeps the earlier quote and its document; a deleted file leaves its quote with no document) | red: NOT red first: green on first run, no code change (all existing functions and the ON DELETE SET NULL of the first cycle); kept as regression tests | green
+
+Notes: cycles 10 and 28 are the only lines not seen red first (28 is two characterisation tests, no code added); cycle 27 was seen red by temporarily passing `canChange` always true. Cycle 11 is the registries (each of data_isolation, help_from_nevermore, close_a_firm seen red before its edit). Test 5 of quote_document.sql was strengthened after a mutant survived (TriNet now has a quote of its own).
+
+### Mutation (7.3)
+TypeScript, 20 of 20 killed (mut.py: current is the lowest id; sniff check off; scanner check off; infected and unavailable treated as clean; wrong bucket; attach as the service role; PT423 as a server error; no sign-in; empty file accepted; wrong parameter name; loadQuotes of every request; upload without its quote; a not-stored or another PEO's mail file offered; upload offered in a support session; current listed as superseded; not marked superseded; blocked upload not reported; document opened without a signed link).
+SQL, 14 of 14 killed (mutsql.py: each of the three checks off in attach_quote_document and in start_quote_document_upload; any quote request's file; a file that isn't stored; recorded as received mail; not by the agent; started as stored; the wrong folder; ON DELETE NO ACTION; answering nothing). One survived first (any quote request's file) because TriNet had no quote of its own: the test was strengthened and the mutant killed.
+
+### Gate (7.3)
+lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 348 files, 7070 tests passed; build green; every SQL test on port 5730: 125 passed.

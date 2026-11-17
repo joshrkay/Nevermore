@@ -451,7 +451,9 @@ END $$;
 DO $$
 DECLARE q bigint := pg_temp.qid('Insperity'); f bigint := pg_temp.mail_file('TriNet', 'stored', 'trinet.pdf'); stmt text;
 BEGIN
+  -- TriNet has quoted too, so its file belongs to a quote that exists (the check must tie the file to THIS quote's request, not to any quote request that has a quote).
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.record_quote(p_quote_request_id => pg_temp.qr('TriNet'), p_kind => 'estimate');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, f)),
     '22023: That file isn''t on this quote request''s mail', 'another PEO''s file');
   PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, 999999)),
