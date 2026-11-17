@@ -430,3 +430,18 @@ BEGIN
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'the quote kept its own document');
 END $$;
+
+-- ---------- 4. Only a file that is stored, and so scanned clean, can be a quote's document ----------
+-- Catches: a blocked (malware), still-pending or not-kept attachment named as the document, which would offer a signed link to a file the scanner never passed or that isn't there.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); st text; f bigint;
+BEGIN
+  FOREACH st IN ARRAY ARRAY['blocked', 'pending', 'not_kept'] LOOP
+    f := pg_temp.mail_file('Insperity', st, st || '.pdf');
+    PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+    PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, f)),
+      '22023: That file isn''t stored: it was blocked, not kept, or is still being checked', st || ' file');
+    PERFORM pg_temp.as_owner();
+    PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, st || ': the quote kept its own document');
+  END LOOP;
+END $$;

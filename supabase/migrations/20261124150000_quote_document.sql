@@ -17,6 +17,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.quotes x WHERE x.id = p_quote_id AND public.quote_request_in_my_firm(x.quote_request_id)) THEN
     RAISE EXCEPTION 'Quote not found' USING ERRCODE = 'PT404';
   END IF;
+  -- Only a file that is stored, which is to say scanned clean (receive-mail settles it): never a blocked, pending or not-kept one.
+  IF NOT EXISTS (SELECT 1 FROM public.quote_request_message_attachments a WHERE a.id = p_attachment_id AND a.status = 'stored') THEN
+    RAISE EXCEPTION 'That file isn''t stored: it was blocked, not kept, or is still being checked' USING ERRCODE = '22023';
+  END IF;
   UPDATE public.quotes SET document_attachment_id = p_attachment_id WHERE id = p_quote_id RETURNING * INTO q;
   RETURN to_jsonb(q);
 END;
