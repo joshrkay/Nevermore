@@ -34,7 +34,7 @@ import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
-import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES, WITHDRAWAL_REASONS } from "@/data/quoteRequests";
+import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_NOTE_KINDS, QUOTE_TIERS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES, WITHDRAWAL_REASONS } from "@/data/quoteRequests";
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { MAIL_ADDRESS_PATTERN } from "../../supabase/functions/_shared/mailAddress";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
@@ -310,6 +310,19 @@ describe("server and client intake rules agree", () => {
   it("holds the same kinds of quote request note, in the table and in the function that checks one", () => {
     expect(quoted(blocks("quote_request_note_kinds").join("\n"))).toEqual([...QUOTE_NOTE_KINDS]);
     expect(quoted(blocks("quote_request_note_kinds_checked").join("\n"))).toEqual([...QUOTE_NOTE_KINDS]);
+  });
+
+  // A quote's whole offer (20261124140000): the mark it carries.
+  it("holds the same marks on a quote: an estimate or a firm offer", () => {
+    expect(quoted(blocks("quote_kinds").join("\n"))).toEqual([...QUOTE_KINDS]);
+  });
+
+  it("holds the same bases an administrative fee is charged on", () => {
+    expect(quoted(blocks("quote_admin_fee_bases").join("\n"))).toEqual([...QUOTE_ADMIN_FEE_BASES]);
+  });
+
+  it("holds the same coverage tiers a medical rate is quoted at", () => {
+    expect(quoted(blocks("quote_tiers").join("\n"))).toEqual([...QUOTE_TIERS]);
   });
 
   it("caps a quote request note at the same length", () => {

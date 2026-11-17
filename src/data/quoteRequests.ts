@@ -65,6 +65,27 @@ export const MAIL_BODY_MAX = 100_000;
 /** The longest a note can be; the database refuses a longer one. */
 export const QUOTE_NOTE_MAX = 2000;
 
+/**
+ * The mark a quote carries (N-2.1): an estimate, or a firm offer the PEO stands behind. Required; the comparison never shows one as the other. The same list is in the
+ * `quotes_kind_check` constraint (20261124140000_quote_offer.sql); src/data/schemaSync.test.ts keeps them equal.
+ */
+export const QUOTE_KINDS = ["estimate", "firm_offer"] as const;
+export type QuoteKind = (typeof QUOTE_KINDS)[number];
+
+/** What an administrative fee is charged on (N-2.1): per employee per month, or percent of payroll. The same list is in `quotes_admin_fee_check`. */
+export const QUOTE_ADMIN_FEE_BASES = ["per_employee_per_month", "percent_of_payroll"] as const;
+export type QuoteAdminFeeBasis = (typeof QUOTE_ADMIN_FEE_BASES)[number];
+
+/** The coverage tiers a medical rate is quoted at (N-2.1): employee only, with spouse, with children, family. The same list is in `quote_medical_valid`. */
+export const QUOTE_TIERS = ["employee_only", "employee_spouse", "employee_children", "family"] as const;
+export type QuoteTier = (typeof QUOTE_TIERS)[number];
+
+export const QUOTE_KIND_LABELS: Record<QuoteKind, string> = { estimate: "Estimate", firm_offer: "Firm offer" };
+
+/** A quote's mark in words. Anything that is not one of the two reads "Not marked", never as an estimate or as a firm offer (N-2.1). */
+export const quoteKindLabel = (kind: string | null | undefined): string =>
+  typeof kind === "string" && (QUOTE_KINDS as readonly string[]).includes(kind) ? QUOTE_KIND_LABELS[kind as QuoteKind] : "Not marked";
+
 export const isQuoteNoteKind = (k: unknown): k is QuoteNoteKind =>
   typeof k === "string" && (QUOTE_NOTE_KINDS as readonly string[]).includes(k);
 
