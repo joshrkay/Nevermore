@@ -382,6 +382,15 @@ describe("PeoThreadPanel", () => {
       expect(line).toHaveTextContent("Waiting for their answer.");
     });
 
+    // Break caught: an old request shown after the agent asked again (the PEO asked a second question), so the line names what the employer is no longer being asked.
+    it("names the latest request when the employer was asked more than once", () => {
+      const again = { ...asked, id: 6, message: "And the drivers' class code?" };
+      const second = event({ id: 12, field: "asked_employer", old_value: null, new_value: "6", changed_at: "2026-11-13T16:00:01Z" });
+      open({ requests: [request({ status: "question_open" })], events: [second, logged], informationRequests: [asked, again], pipelineStatus: "information_requested" });
+      expect(screen.getByRole("status")).toHaveTextContent("And the drivers' class code?");
+      expect(screen.getByRole("status")).not.toHaveTextContent("part time");
+    });
+
     // Break caught: the line staying on the thread after the agent has written back to the PEO (the question is answered, the quote request is Sent again).
     it("says nothing once the PEO has been answered and the quote request is Sent again", () => {
       open({ requests: [request({ status: "sent" })], events: [logged], informationRequests: [asked], pipelineStatus: "sent_to_carrier" });

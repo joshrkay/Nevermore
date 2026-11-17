@@ -391,6 +391,14 @@ describe("QuotePage: an underwriter's open question", () => {
     expect(line).toHaveTextContent("You asked the employer: “How many of your employees work part time?” Waiting for their answer.");
   });
 
+  // Break caught: a panel offered to someone who cannot send it (a Nevermore support session reads only, ADR 0024): a dead button the database would refuse.
+  it("offers no way to ask the employer during a support session", async () => {
+    quotes.getQuotePage.mockResolvedValue(asking());
+    renderPage("/quotes/7", workspace({ isSupport: true }));
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("heading", { name: "Ask the prospect" })).not.toBeInTheDocument();
+  });
+
   // Break caught: a dead panel on a quote that has no question (Ask the prospect offered about nothing; the database would refuse it).
   it("offers nothing on a quote request with no open question", async () => {
     quotes.getQuotePage.mockResolvedValue(asking("sent"));

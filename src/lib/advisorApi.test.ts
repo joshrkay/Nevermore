@@ -85,6 +85,7 @@ const {
   recordQuoteSend,
   setQuoteRequestStatus,
   decideReplySuggestion,
+  askAboutQuestion,
   updateQuoteRequest,
   recordQuote,
   fetchIsAdmin,
@@ -648,6 +649,15 @@ describe("quote requests", () => {
     rpc.mockResolvedValueOnce({ data: { message_id: 41, suggestion_outcome: "accepted" }, error: null });
     await decideReplySuggestion(41, "accept");
     expect(rpc).toHaveBeenLastCalledWith("advisor_decide_reply_suggestion", { p_message_id: 41, p_decision: "accept" });
+  });
+
+  // N-1.3. Break caught: the quote request, the agent's words or the answers it names lost on the way (a request that asks the employer nothing, or about no question).
+  it("asks the employer about a question through advisor_ask_about_question, with the quote request, the trimmed words, the answers and the PEO's own questions", async () => {
+    rpc.mockResolvedValueOnce({ data: { request_id: 5 }, error: null });
+    await askAboutQuestion(7, "  How many work part time?  ", ["census"], [{ peo_id: 3, key: "k", question: "Q?" }]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_ask_about_question", {
+      p_quote_request_id: 7, p_message: "How many work part time?", p_fields: ["census"], p_extra_questions: [{ peo_id: 3, key: "k", question: "Q?" }],
+    });
   });
 
   it("opens a PEO mail attachment through a signed link from the peo-mail bucket, as a download under its own name", async () => {
