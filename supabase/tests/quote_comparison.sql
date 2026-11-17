@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh quote_comparison
 -- A quote that holds the whole offer (N-2.1, slice 7.2; docs/BROKER_CRM_BUILD.md D-720 to D-729; 20261124140000_quote_comparison.sql). One row of `quotes` for each quote a
--- The broker's comparison of an opportunity's quotes and the notes on it (N-3.1, N-3.2, slice 7.7; docs/BROKER_CRM_BUILD.md D-770 to D-779; 20261124170000_quote_comparison.sql). Two firms.
+-- The broker's comparison of an opportunity's quotes and the notes on it (N-3.1, N-3.2, slice 7.7; docs/BROKER_CRM_BUILD.md D-770 to D-779; 20261125110000_quote_comparison.sql). Two firms.
 -- Every migration is loaded, in filename order (D-105), this slice's last.
 -- rates by plan and tier, an expiry and a proposed start, marked an estimate or a firm offer. A cost area a quote leaves out is absent, never zero. Two firms.
 -- Every migration is loaded, in filename order (D-105), this slice's last.
@@ -208,9 +208,9 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
-\i supabase/migrations/20261124150000_quote_document.sql
-\i supabase/migrations/20261124160000_reply_suggestions.sql
-\i supabase/migrations/20261124170000_quote_comparison.sql
+\i supabase/migrations/20261125090000_quote_document.sql
+\i supabase/migrations/20261125100000_reply_suggestions.sql
+\i supabase/migrations/20261125110000_quote_comparison.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

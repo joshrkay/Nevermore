@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh quote_document
--- Keeping the quote document (N-2.2, slice 7.3; docs/BROKER_CRM_BUILD.md D-730 to D-739; 20261124150000_quote_document.sql). A quote names the file the PEO sent: a mail attachment already
+-- Keeping the quote document (N-2.2, slice 7.3; docs/BROKER_CRM_BUILD.md D-730 to D-739; 20261125090000_quote_document.sql). A quote names the file the PEO sent: a mail attachment already
 -- stored and scanned on its quote request, or one an agent uploaded by hand (a hand-made mail message with one attachment, the same store). Two firms.
 -- Every migration is loaded, in filename order (D-105), this slice's last.
 \set ON_ERROR_STOP 1
@@ -206,7 +206,7 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
-\i supabase/migrations/20261124150000_quote_document.sql
+\i supabase/migrations/20261125090000_quote_document.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

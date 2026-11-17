@@ -1,7 +1,7 @@
 // The request handler for quote-document-upload, with everything it touches passed in. index.ts wires in Deno, the real Supabase client and a connection for the scanner; the
 // tests wire in fakes. No remote imports, so it runs under Deno and Vitest alike.
 //
-// The way a quote document recorded by hand reaches storage (N-2.2, D-731; migration 20261124150000_quote_document.sql). It is an upload like any other (docs/adr/0002), and
+// The way a quote document recorded by hand reaches storage (N-2.2, D-731; migration 20261125090000_quote_document.sql). It is an upload like any other (docs/adr/0002), and
 // it is kept the way a file that arrived by mail is kept, so it reuses receive-mail's rules and store: an agent's browser sends multipart form data (quote_id, file), and
 //
 //   1. the bytes are checked: not empty, at most 20 MB, a file type uploads take, in fact as in name (fileSignature.ts);

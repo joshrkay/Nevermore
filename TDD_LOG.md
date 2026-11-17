@@ -813,7 +813,7 @@ Skill mattpocock-skills:tdd invoked first. SQL cycles run `supabase/tests/run.sh
 
 Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; build green; vitest 349 files, 7086 tests, all pass (--maxWorkers=1); SQL: all 125 tests pass on port 5770.
 Mutation: SQL 20 mutations of the migration against quote_comparison.sql (newest-quote order, [] for a left-out area, a waived fee read as null, mark check, 2000 bound, blank body, area list, PEO check, writable check, archived check, can_add, firm check, account-visibility check in the writer, author, trim, note order, column order, note area and PEO in the read): 18 red at first, 1 survived (note order, cycle 40 closed it), 1 expected to survive here and caught by close_a_firm.sql (closing keeps the notes: red `a count per table of what was deleted`). The two account-visibility guards were each removed once more after cycle 41: both red. JS 22 mutations of QuoteComparison, QuoteComparisonPanel and quoteComparisonApi (Not quoted as $0.00, waived fee as Not quoted, percent as dollars, kinds swapped, expiry backwards, default to client, blank note sendable, mark label swapped, canAdd ignored, PEO / area / trim dropped, box not emptied, refusal hidden, empty state, no re-read, notFound with Try again, firm not sent, bad shape accepted, archived not read-only, reason lost, mark not sent): all 22 red.
-## 7.3 N-2.2 keep the quote document, N-2.4 a revised quote (quote_document.sql, 20261124150000_quote_document.sql)
+## 7.3 N-2.2 keep the quote document, N-2.4 a revised quote (quote_document.sql, 20261125090000_quote_document.sql)
 
 One line per cycle: the test, the failing line seen, then green.
 

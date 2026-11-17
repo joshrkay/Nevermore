@@ -412,7 +412,7 @@ export type Database = {
           bundle_link_id?: number | null
           // M-2.3: the version the PEO held when this message is an update; null on every other message.
           update_from_version?: number | null
-          // N-1.1 (20261124160000): what the AI suggested the reply means, and what the agent did with it. Never the reply's words.
+          // N-1.1 (20261125100000): what the AI suggested the reply means, and what the agent did with it. Never the reply's words.
           suggested_status?: "acknowledged" | "question_open" | "quoted" | "declined" | null
           suggestion_outcome?: "accepted" | "dismissed" | null
           suggestion_decided_by?: string | null
@@ -540,7 +540,7 @@ export type Database = {
           admin_fee: number | null
           // One of QUOTE_ADMIN_FEE_BASES (src/data/quoteRequests.ts).
           admin_fee_basis: string | null
-          // The mail attachment (quote_request_message_attachments.id) the PEO's quote document is, or null (20261124150000): a file stored and scanned on the quote request's own mail.
+          // The mail attachment (quote_request_message_attachments.id) the PEO's quote document is, or null (20261125090000): a file stored and scanned on the quote request's own mail.
           document_attachment_id: number | null
           expires_on: string | null
           id: number
@@ -1349,7 +1349,7 @@ export type Database = {
       }
       // How an opportunity ended, in one read (20261121170000): {lost_reason, lost_note, placement, renewal, payments, received_to_date, quotes}; raises PT404 as opportunity_page does.
       opportunity_outcome: { Args: { p_firm_id: string; p_opportunity_id: string }; Returns: Json }
-      // The comparison of an opportunity's quotes and the notes on it (20261124170000, N-3.1, N-3.2): {can_add, columns: [{quote_request_id, peo_name, status, quote}], notes};
+      // The comparison of an opportunity's quotes and the notes on it (20261125110000, N-3.1, N-3.2): {can_add, columns: [{quote_request_id, peo_name, status, quote}], notes};
       // raises PT404 as opportunity_page does. add_comparison_note adds a note (internal or client) and answers {id, body}.
       opportunity_quote_comparison: { Args: { p_firm_id: string; p_opportunity_id: string }; Returns: Json }
       add_comparison_note: {
@@ -1567,7 +1567,7 @@ export type Database = {
         Args: { p_peo: string; p_sent_on?: string | null; p_session_id: string }
         Returns: Json
       }
-      // Accepts (records the status through the status function) or dismisses what a PEO's reply was suggested to mean (20261124160000).
+      // Accepts (records the status through the status function) or dismisses what a PEO's reply was suggested to mean (20261125100000).
       advisor_decide_reply_suggestion: {
         Args: { p_message_id: number; p_decision: "accept" | "dismiss" }
         Returns: Json
@@ -1594,12 +1594,12 @@ export type Database = {
         }
         Returns: Json
       }
-      // Names a stored mail file of the quote request as a quote's document (20261124150000); the quote, as a row.
+      // Names a stored mail file of the quote request as a quote's document (20261125090000); the quote, as a row.
       attach_quote_document: {
         Args: { p_attachment_id: number; p_quote_id: number }
         Returns: Json
       }
-      // Starts the upload of a quote document recorded by hand (20261124150000): a hand-made message with one pending attachment. Answers { attachment_id, message_id, folder }.
+      // Starts the upload of a quote document recorded by hand (20261125090000): a hand-made message with one pending attachment. Answers { attachment_id, message_id, folder }.
       start_quote_document_upload: {
         Args: { p_content_type: string; p_file_name: string; p_quote_id: number; p_size_bytes: number }
         Returns: Json

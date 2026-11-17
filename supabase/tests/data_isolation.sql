@@ -260,9 +260,9 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
-\i supabase/migrations/20261124150000_quote_document.sql
-\i supabase/migrations/20261124160000_reply_suggestions.sql
-\i supabase/migrations/20261124170000_quote_comparison.sql
+\i supabase/migrations/20261125090000_quote_document.sql
+\i supabase/migrations/20261125100000_reply_suggestions.sql
+\i supabase/migrations/20261125110000_quote_comparison.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1048,7 +1048,7 @@ INSERT INTO matrix VALUES
   ('public.account_labels',                             '{}', NULL),
   ('public.bulk_changes',                               '{}', NULL),
   ('public.bulk_change_records',                        '{}', NULL);
--- The broker's notes on a comparison of quotes (7.7, N-3.2, 20261124170000): closed to the API, read through opportunity_quote_comparison by whoever may see the
+-- The broker's notes on a comparison of quotes (7.7, N-3.2, 20261125110000): closed to the API, read through opportunity_quote_comparison by whoever may see the
 -- opportunity's account and written through add_comparison_note (supabase/tests/quote_comparison.sql).
 INSERT INTO matrix VALUES
   ('public.quote_comparison_notes',                     '{}', NULL);
@@ -1735,7 +1735,7 @@ INSERT INTO callable VALUES
   ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
 
--- 7.7, N-3.1 and N-3.2 (20261124170000_quote_comparison.sql; supabase/tests/quote_comparison.sql): the comparison of an opportunity's quotes and the notes on it.
+-- 7.7, N-3.1 and N-3.2 (20261125110000_quote_comparison.sql; supabase/tests/quote_comparison.sql): the comparison of an opportunity's quotes and the notes on it.
 INSERT INTO callable VALUES
   ('opportunity_quote_comparison(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) who may see the opportunity''s account, by level, reads one column for each of its quote requests, alphabetical, with the PEO''s current quote (the newest) and the notes on the comparison; PT404, one answer, for an opportunity that is not there, is another firm''s or may not be seen'),
@@ -3738,7 +3738,7 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.bulk_change_records', 'firm', 'its own firm_id, and a bulk change of that firm; closed to the API',
    $m$WITH c AS (INSERT INTO public.bulk_changes (firm_id, action, undo_until) VALUES ({firm}, 'archive', now()) RETURNING id, firm_id) INSERT INTO public.bulk_change_records (change_id, firm_id, record_type, account_id, before, after) SELECT c.id, c.firm_id, 'account', a.id, '{}', '{}' FROM c, public.accounts a WHERE a.firm_id = {firm} ORDER BY a.created_at, a.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
--- 7.7, N-3.2 (20261124170000): the broker's notes on a comparison of quotes.
+-- 7.7, N-3.2 (20261125110000): the broker's notes on a comparison of quotes.
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.quote_comparison_notes', 'firm', 'its own firm_id and an opportunity of that firm; closed to the API, read through the comparison and written through add_comparison_note',
    $m$INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body) SELECT o.firm_id, o.id, 'internal', 'Probe {tag}' FROM public.opportunities o WHERE o.firm_id = {firm} ORDER BY o.created_at, o.id LIMIT 1 RETURNING ctid::text$m$, false,

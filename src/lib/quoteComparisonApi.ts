@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { QuoteAdminFeeBasis, QuoteKind } from "@/data/quoteRequests";
 import { OpportunityError } from "@/lib/opportunityPageApi";
 
-// The comparison of an opportunity's quotes and the notes on it (N-3.1, N-3.2, slice 7.7; 20261124170000_quote_comparison.sql). One read, `opportunity_quote_comparison`,
+// The comparison of an opportunity's quotes and the notes on it (N-3.1, N-3.2, slice 7.7; 20261125110000_quote_comparison.sql). One read, `opportunity_quote_comparison`,
 // answers one column for each PEO with its current quote; a cost area a quote leaves out is null, never an empty list or 0 (D-721), and stays null here.
 
 export interface OneOffFee { name: string; amount: number }

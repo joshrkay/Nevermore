@@ -1508,7 +1508,7 @@ Slice 7.2 (N-2.1, a quote holds the whole offer; the database and API half, the 
 
 ### 7.4 N-1.1 decisions
 
-Slice 7.4 (N-1.1, suggest what a PEO's reply means: the message is data, outcomes are recorded without content), migration `20261124160000_reply_suggestions.sql`, test `supabase/tests/reply_suggestions.sql`, decisions D-740..D-749. Needs 7.0 (N-1.2, slice 5.1). Epic 7 has no grilled decisions: each is a recommendation for the founder to review.
+Slice 7.4 (N-1.1, suggest what a PEO's reply means: the message is data, outcomes are recorded without content), migration `20261125100000_reply_suggestions.sql`, test `supabase/tests/reply_suggestions.sql`, decisions D-740..D-749. Needs 7.0 (N-1.2, slice 5.1). Epic 7 has no grilled decisions: each is a recommendation for the founder to review.
 
 | # | Decision |
 |---|---|
@@ -1524,7 +1524,7 @@ Slice 7.4 (N-1.1, suggest what a PEO's reply means: the message is data, outcome
 | D-749 | **Registries and privacy.** The advisor function is in `data_isolation.sql` (function table, two-firm probe with a fixture reply, writes list), `help_from_nevermore.sql` (a write, refused to support) and `close_a_firm.sql` (guarded list, asks `assert_firm_writable` first); the service function is in the service-only list and its probe. The data policy's PEO correspondence class says the AI provider reads each reply and what is kept. Not built: N-1.3 (an underwriter's question becomes an information request), which builds on this |
 ### 7.7 N-3.1, N-3.2 decisions
 
-Slice 7.7 (N-3.1, the broker's comparison of quotes, and N-3.2, notes on it; the read, the notes and the component with its tests; the button that opens it is 7.8), migration `20261124170000_quote_comparison.sql`, decisions D-770..D-779. Epic 7 has no grilled decisions: each is a recommendation for the founder to review.
+Slice 7.7 (N-3.1, the broker's comparison of quotes, and N-3.2, notes on it; the read, the notes and the component with its tests; the button that opens it is 7.8), migration `20261125110000_quote_comparison.sql`, decisions D-770..D-779. Epic 7 has no grilled decisions: each is a recommendation for the founder to review.
 
 | # | Decision |
 |---|---|
@@ -1540,7 +1540,7 @@ Slice 7.7 (N-3.1, the broker's comparison of quotes, and N-3.2, notes on it; the
 | D-779 | **Not mounted.** The "Compare quotes" button and its place in the menu are 7.8 (CRM-Q4.2), and the opportunity page's quotes panel keeps its Compare off until then (D-402), so `QuoteComparisonPanel` is on no screen and no button leads to it. 7.8 mounts it with `<QuoteComparisonPanel firmId opportunityId />` |
 ### 7.3 N-2.2, N-2.4 decisions
 
-Slice 7.3 (N-2.2, keep the quote document; N-2.4, a revised quote), migration `20261124150000_quote_document.sql`, SQL test `supabase/tests/quote_document.sql`, decisions D-730..D-739, built test-first in `lane/7.3` from 10308e73 (`TDD_LOG.md`, "## 7.3"). Epic 7 has no grilled decisions: each is a recommendation for the founder to review. The founder's reuse rule (D-1763) applies: a quote document is kept the way a file that arrived by mail is kept.
+Slice 7.3 (N-2.2, keep the quote document; N-2.4, a revised quote), migration `20261125090000_quote_document.sql`, SQL test `supabase/tests/quote_document.sql`, decisions D-730..D-739, built test-first in `lane/7.3` from 10308e73 (`TDD_LOG.md`, "## 7.3"). Epic 7 has no grilled decisions: each is a recommendation for the founder to review. The founder's reuse rule (D-1763) applies: a quote document is kept the way a file that arrived by mail is kept.
 
 | # | Decision |
 |---|---|
