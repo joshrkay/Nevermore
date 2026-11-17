@@ -267,6 +267,7 @@
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
 \i supabase/migrations/20261125120000_question_requests.sql
+\i supabase/migrations/20261125130000_broker_save_whole_form.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

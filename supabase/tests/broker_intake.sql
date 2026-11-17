@@ -191,9 +191,29 @@
 \i supabase/migrations/20261122220000_lead_page.sql
 \i supabase/migrations/20261122230000_request_contact.sql
 \i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261122250000_convert_lead.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
+\i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123120000_broker_intake.sql
 \i supabase/migrations/20261123120100_broker_intake_columns.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
+\i supabase/migrations/20261124090000_firm_signup_emails.sql
+\i supabase/migrations/20261124100000_new_quote_intake.sql
+\i supabase/migrations/20261124110000_employer_sees_firm.sql
+\i supabase/migrations/20261124130000_quote_decline_reason.sql
+\i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124160000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124170000_leads_can_convert.sql
+\i supabase/migrations/20261125090000_quote_document.sql
+\i supabase/migrations/20261125100000_reply_suggestions.sql
+\i supabase/migrations/20261125110000_quote_comparison.sql
+\i supabase/migrations/20261125120000_question_requests.sql
+\i supabase/migrations/20261125130000_broker_save_whole_form.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -851,3 +871,50 @@ SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = pg_temp
 -- 62. A member's update of the intake's version is refused (D-1759a): the version is what the browser's saves check against, moved on by the database.
 -- Break caught: a broker sets the version so another tab's save no longer matches, or matches when it shouldn't.
 SELECT pg_temp.is(pg_temp.state_as('a_agent', 'alpha-advisory', format($q$UPDATE public.chamber_sessions SET data_version = data_version + 5 WHERE id = %L$q$, pg_temp.id('hole_intake'))), '42501', 'a member''s update of the version is refused');
+
+-- 63..68. A member's save the way the browser makes it (D-1906). The chamber saves the whole form, not just what changed: every answer not given is a JSON null (or an empty list),
+-- and what the member entered is marked as a broker entry already (markBrokerEntries), the way it is drawn on screen. The database keeps its own marks, so neither may stop the save.
+-- Break caught: every save by a member of the firm refused ("The FEIN is typed by the employer" for the empty FEIN the form carries, "Only the firm's members enter answers as the broker" for the mark
+-- the chamber already made), so what a broker types or tells Lenore is shown on screen and never kept; and, once past those, a hundred empty answers marked as the broker's.
+CREATE FUNCTION pg_temp.form_save(who text, intake uuid, answers jsonb, enterer uuid DEFAULT NULL) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE n bigint; s text;
+BEGIN
+  PERFORM pg_temp.as_user(who, 'alpha-advisory');
+  BEGIN
+    UPDATE public.chamber_sessions SET
+      chamber_data = '{"fein": null, "entity_type": null, "website": null, "industry": null, "states": [], "census": [], "pto_types": []}'::jsonb || chamber_data || answers,
+      field_provenance = field_provenance || COALESCE((SELECT jsonb_object_agg(k, jsonb_build_object('status', 'inferred', 'source', jsonb_build_object('kind', 'broker_entry', 'member_id', COALESCE(enterer, auth.uid())), 'updated_at', '2026-11-20T10:00:00.000Z')) FROM jsonb_object_keys(answers) k), '{}')
+    WHERE id = intake;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    PERFORM pg_temp.as_owner();
+    RETURN 'rows:' || n;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE;
+    PERFORM pg_temp.as_owner();
+    RETURN s;
+  END;
+END $$;
+SELECT pg_temp.opp('opp_form', 'alpha', 'a_agent');
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT public.start_broker_intake(pg_temp.id('opp_form')) ->> 'intake_id' AS form_intake \gset
+SELECT pg_temp.as_owner();
+INSERT INTO fx VALUES ('form_intake', :'form_intake'::uuid);
+SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"company_name": "Form Co", "employee_count": 12}'), 'rows:1', '63: a member''s whole-form save, empty answers and the chamber''s own broker marks included, goes through');
+SELECT pg_temp.is((SELECT chamber_data ->> 'company_name' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'Form Co', 'and the answer is kept');
+SELECT pg_temp.is((SELECT field_provenance -> 'company_name' -> 'source' ->> 'member_id' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), pg_temp.id('a_agent')::text, 'marked as a broker entry naming the member');
+SELECT pg_temp.is((SELECT field_provenance -> 'company_name' ->> 'status' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'inferred', 'never confirmed');
+SELECT pg_temp.is((SELECT count(*)::text FROM public.chamber_sessions s, jsonb_object_keys(s.field_provenance) WHERE s.id = pg_temp.id('form_intake')), '2', '64: only the two answers given are marked: no empty answer is marked as the broker''s');
+SELECT pg_temp.is((SELECT (chamber_data ? 'fein' OR chamber_data ? 'states' OR chamber_data ? 'census')::text FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'false', 'and no empty answer is written into the intake');
+-- 65. A second whole-form save that adds one answer and carries the first as it was: the first keeps its mark and time.
+SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"industry": "Bakery"}'), 'rows:1', '65: a second whole-form save adds an answer');
+SELECT pg_temp.is((SELECT field_provenance -> 'company_name' ->> 'updated_at' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')) = (SELECT field_provenance -> 'employee_count' ->> 'updated_at' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')) AND (SELECT field_provenance -> 'industry' -> 'source' ->> 'kind' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')) = 'broker_entry', 'true', 'the earlier answers are as they were and the new one is a broker entry');
+-- 66. The member's own mark is the database's: a save that names another member as the enterer is kept as the caller's.
+SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"website": "form.example"}', pg_temp.id('b_owner')), 'rows:1', '66: a member naming another person as the enterer is not refused...');
+SELECT pg_temp.is((SELECT field_provenance -> 'website' -> 'source' ->> 'member_id' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), pg_temp.id('a_agent')::text, '...and the answer is marked as the caller''s, whatever the save said');
+-- 67. The FEIN is still the employer's: a member's whole-form save that gives one is refused, and so is one that blanks the one the employer typed; nothing in either is kept.
+SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"fein": "123456789", "industry": "Cafe"}'), '42501', '67: a whole-form save that gives a FEIN is still refused');
+UPDATE public.chamber_sessions SET chamber_data = chamber_data || '{"fein": "987654321"}' WHERE id = pg_temp.id('form_intake');
+SELECT pg_temp.is(pg_temp.form_save('a_agent', pg_temp.id('form_intake'), '{"fein": null, "industry": "Cafe"}'), '42501', 'and one that blanks the FEIN the employer typed');
+SELECT pg_temp.is((SELECT chamber_data ->> 'industry' FROM public.chamber_sessions WHERE id = pg_temp.id('form_intake')), 'Bakery', 'nothing of either save is kept');
+-- 68. Whoever is not a member still cannot give an answer a broker's mark, whole form or not (test 55 above says it for the employer; this is the same save from a stranger's account).
+SELECT pg_temp.is(pg_temp.form_save('client', pg_temp.id('form_intake'), '{"industry": "Forged"}'), 'rows:0', '68: a stranger''s whole-form save changes nothing (row security shows them no such row)');
