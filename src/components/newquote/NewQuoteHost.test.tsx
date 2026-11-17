@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Outlet, Route } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
@@ -31,8 +32,11 @@ const Shell = () => (
   </WorkspaceContext.Provider>
 );
 
-const renderAt = (entry: string | { pathname: string; search?: string; state?: unknown }) =>
-  render(
+let queryClient: QueryClient;
+const renderAt = (entry: string | { pathname: string; search?: string; state?: unknown }) => {
+  queryClient = new QueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
     <MemoryRouter initialEntries={[entry]}>
       <BackgroundRoutes>
         <Route element={<Shell />}>
@@ -43,8 +47,10 @@ const renderAt = (entry: string | { pathname: string; search?: string; state?: u
           <Route path="/new-quote/:opportunityId" element={null} />
         </Route>
       </BackgroundRoutes>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </QueryClientProvider>,
   );
+};
 
 afterEach(() => cleanup());
 
@@ -83,5 +89,29 @@ describe("New quote drawn over the page it was opened from (D-1709)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close without saving" }));
     expect(screen.getByTestId("where")).toHaveTextContent("/advisor");
     expect(screen.getByText("The queue")).toBeInTheDocument();
+  });
+
+  // Catches: the page beneath still showing what it showed before New quote changed the opportunity (an intake started in the dialog, "No intake yet" and Start the quote left on the page until a reload).
+  it("refreshes the opportunity it was opened on when it closes, whichever way", async () => {
+    renderAt({ pathname: "/new-quote/o1", state: { backgroundLocation: { pathname: "/opportunities/o1", search: "", hash: "", state: null, key: "k" } } });
+    const refresh = vi.spyOn(queryClient, "invalidateQueries");
+    await userEvent.click(screen.getByRole("button", { name: "Close without saving" }));
+    expect(refresh).toHaveBeenCalledWith({ queryKey: ["opportunity", "f1", "o1"] });
+  });
+
+  // Catches: step 1 making an opportunity and the page it opens showing an older answer for it, as it would from the page cache.
+  it("refreshes the opportunity step 1 made when it saves", async () => {
+    renderAt("/new-quote");
+    const refresh = vi.spyOn(queryClient, "invalidateQueries");
+    await userEvent.click(screen.getByRole("button", { name: "Save and close" }));
+    expect(refresh).toHaveBeenCalledWith({ queryKey: ["opportunity", "f1", "o9"] });
+  });
+
+  // Catches: a refresh of an opportunity nobody named (closing step 1 without saving has none), or of the wrong firm's.
+  it("refreshes nothing when it closes without an opportunity", async () => {
+    renderAt("/new-quote");
+    const refresh = vi.spyOn(queryClient, "invalidateQueries");
+    await userEvent.click(screen.getByRole("button", { name: "Close without saving" }));
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

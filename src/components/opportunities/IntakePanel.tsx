@@ -26,7 +26,8 @@ const firstOpenItem = (i: IntakeSummary["openItems"]): string | null =>
 
 const answersWords = (n: number) => `${n} ${n === 1 ? "answer" : "answers"}`;
 
-export function IntakePanel({ page }: { page: OpportunityPage }) {
+/** `startQuote` is the way to start the intake, given only where the page may offer it (the database refuses it on an archived account, in a support session and on a closed opportunity). */
+export function IntakePanel({ page, startQuote }: { page: OpportunityPage; startQuote?: React.ReactNode }) {
   const { intake, opportunity, mainContact } = page;
   if (!intake) {
     const next = nextStepWords(opportunity.stage, null, null, mainContact?.name ?? null);
@@ -34,6 +35,7 @@ export function IntakePanel({ page }: { page: OpportunityPage }) {
       <ListPanel id="opportunity-intake" heading="Intake">
         <p className="text-sm font-medium">No intake yet</p>
         {next && <p className="mt-1 text-sm text-muted-foreground">{next}</p>}
+        {startQuote && <div className="mt-3">{startQuote}</div>}
       </ListPanel>
     );
   }
