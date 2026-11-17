@@ -70,7 +70,11 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
   const upload = form.get("file") as File;
   const fileName = cleanFileName(upload.name ?? "");
   const bytes = new Uint8Array(await upload.arrayBuffer());
-  sniffUpload(bytes.subarray(0, SNIFF_BYTES), fileName);
+  const sniffed = sniffUpload(bytes.subarray(0, SNIFF_BYTES), fileName);
+  if (!sniffed.ok) {
+    const code = sniffed.reason === "executable" ? "executable" : sniffed.reason === "mismatch" ? "mismatch" : "unsupported";
+    return reply({ error: code === "unsupported" ? "That file type can't be kept as a quote document." : "This file isn't what its name says.", code }, 415);
+  }
 
   const { data: started } = await agent.rpc("start_quote_document_upload", {
     p_quote_id: Number(quoteId), p_file_name: fileName, p_content_type: upload.type, p_size_bytes: bytes.length,

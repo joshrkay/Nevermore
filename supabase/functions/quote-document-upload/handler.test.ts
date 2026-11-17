@@ -122,4 +122,17 @@ describe("quote-document-upload: a quote document recorded by hand, an upload li
     expect(finish).toMatchObject({ key: "service-key", args: { p_attachment_id: 51, p_verdict: "clean", p_bucket: "peo-mail", p_path: t.stored[0].path } });
     expect(t.rpcs.find((r) => r.fn === "attach_quote_document")).toMatchObject({ key: "anon-key", auth: "Bearer agent-jwt", args: { p_quote_id: 3, p_attachment_id: 51 } });
   });
+
+  // Catches: a program, or a file that isn't what its name says, kept as a quote document, or an upload recorded on the thread before its bytes were looked at.
+  it("refuses a file that is not what its name says, or an executable, before anything is recorded", async () => {
+    const t = setup();
+    const renamed = await read(await handleQuoteDocumentUpload(post({ quote_id: "3", file: file(new TextEncoder().encode("MZ\u0090 not a pdf"), "quote.pdf") }), t.deps));
+    expect(renamed.status).toBe(415);
+    expect(renamed.body.code).toBe("mismatch");
+    const exe = await read(await handleQuoteDocumentUpload(post({ quote_id: "3", file: file(new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03]), "quote.exe") }), t.deps));
+    expect(exe.status).toBe(415);
+    expect(exe.body.code).toBe("executable");
+    expect(t.rpcs).toEqual([]);
+    expect(t.stored).toEqual([]);
+  });
 });
