@@ -1,9 +1,9 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh opportunity_activity_intake
 -- An opportunity's Activity shows its intake's own events (joshrkay/Nevermore#237; docs/prd-screens/19-opportunity.png draws an Intake kind;
--- 20261124120000_opportunity_activity_intake.sql, which restates opportunity_activity from 20261123100000_quote_statuses.sql): that a member started it, that the
+-- 20261124150000_opportunity_activity_intake.sql, which restates opportunity_activity from 20261124130000_quote_decline_reason.sql): that a member started it, that the
 -- client was invited and reminded, and each certification (the first, and every later version). Read from what is already recorded (chamber_sessions.started_by,
--- intake_invitations, chamber_certifications), so nothing new is written. Two firms. Every migration is loaded, in filename order (D-105), this one's last.
+-- intake_invitations, chamber_certifications), so nothing new is written. Two firms. Every migration is loaded, in filename order (D-105).
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
@@ -204,8 +204,12 @@
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
 \i supabase/migrations/20261124100000_firm_approval_gates_sending.sql
+\i supabase/migrations/20261124100000_new_quote_intake.sql
+\i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124110000_leads_can_convert.sql
-\i supabase/migrations/20261124120000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124130000_quote_decline_reason.sql
+\i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_opportunity_activity_intake.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);

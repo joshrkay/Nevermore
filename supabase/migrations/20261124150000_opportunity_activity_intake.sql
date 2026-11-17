@@ -10,8 +10,10 @@
 -- carries the invitation link's token and names the invitee by name, or by address where no name is on file. who is a member of the firm, or for a certification the
 -- employer's signer (who_kind 'client'): they are not a member and are not named by their account.
 --
--- opportunity_activity is restated from 20261123100000_quote_statuses.sql with every rule it had (the page size and offset, the filters, the refusal for an
--- opportunity the caller may not see, the history read newest first), and the one branch added. CREATE OR REPLACE keeps its grants.
+-- opportunity_activity is restated from its newest definition, 20261124130000_quote_decline_reason.sql (which carries the decline a quote's line gave), with every rule it
+-- had (the page size and offset, the filters, the refusal for an opportunity the caller may not see, the history read newest first), and the one branch added. It is
+-- numbered after 20261124140000 so that no later restatement can undo it: two migrations written side by side that each restate this function, applied in
+-- filename order, leave only the second's. CREATE OR REPLACE keeps its grants.
 
 SET lock_timeout = '5s';
 
@@ -75,7 +77,13 @@ BEGIN
     SELECT 'quote_request_event:' || e.id, e.changed_at,
            jsonb_build_object('type', 'quote', 'entry_key', 'quote_request_event:' || e.id, 'at', e.changed_at, 'quote_request_id', e.quote_request_id,
                               'peo_name', q.peo_name, 'event', e.new_value, 'who', public.record_history_who(e.changed_by, e.actor_is_staff),
-                              'who_kind', CASE WHEN e.actor_is_staff THEN 'nevermore' WHEN e.changed_by IS NULL THEN 'system' ELSE 'member' END)
+                              'who_kind', CASE WHEN e.actor_is_staff THEN 'nevermore' WHEN e.changed_by IS NULL THEN 'system' ELSE 'member' END,
+                              'decline_reason', CASE WHEN e.new_value = 'declined' THEN (SELECT d.new_value FROM public.quote_request_events d
+                                WHERE d.quote_request_id = e.quote_request_id AND d.field = 'decline_reason' AND d.changed_at <= e.changed_at
+                                ORDER BY d.changed_at DESC, d.id DESC LIMIT 1) END,
+                              'decline_words', CASE WHEN e.new_value = 'declined' THEN (SELECT d.new_value FROM public.quote_request_events d
+                                WHERE d.quote_request_id = e.quote_request_id AND d.field = 'decline_words' AND d.changed_at <= e.changed_at
+                                ORDER BY d.changed_at DESC, d.id DESC LIMIT 1) END)
     FROM public.quote_request_events e JOIN public.quote_requests q ON q.id = e.quote_request_id
     WHERE p_filter IN ('all', 'changes') AND o.intake_id IS NOT NULL AND e.session_id = o.intake_id AND e.field = 'status'
       AND e.new_value IN ('sent', 'acknowledged', 'question_open', 'quoted', 'declined', 'closed')

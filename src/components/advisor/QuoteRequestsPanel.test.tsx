@@ -242,20 +242,87 @@ describe("QuoteRequestsPanel", () => {
     expect(api.setStatus).not.toHaveBeenCalled();
   });
 
-  it("records a decline with only a note: a decline has no dates or fee", async () => {
+  it("records a decline with a reason and a note: a decline has no dates or fee", async () => {
     panel({ status: "sent_to_carrier" });
     const row = screen.getByTestId("quote-request-7");
     fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
     fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
     expect(within(row).queryByLabelText("Expires on")).not.toBeInTheDocument();
+    fireEvent.change(within(row).getByLabelText("Why they declined"), { target: { value: "industry" } });
     fireEvent.change(within(row).getByLabelText("Note"), { target: { value: "Outside their appetite." } });
     fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
     await waitFor(() =>
       expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, {
         status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: "Outside their appetite.",
+        declineReason: "industry", declineWords: null,
       }),
     );
     expect(screen.queryByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
+  });
+
+  // N-1.4. Break caught: a decline form with no way to say why, so a decline keeps nothing but its status.
+  it("asks why a PEO declined, from a short list, with room for the PEO's own words", () => {
+    panel({ status: "sent_to_carrier" });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
+    expect(within(row).queryByLabelText("Why they declined")).not.toBeInTheDocument();
+    fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
+    const why = within(row).getByLabelText("Why they declined");
+    expect(within(why).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Choose a reason", "Outside their appetite (industry)", "Too small", "Too large", "Claims history", "A state they don't cover",
+      "Missing information", "Won't price it competitively", "Other",
+    ]);
+    expect(within(row).getByLabelText("What the PEO said")).toHaveAttribute("maxlength", "500");
+  });
+
+  // N-1.4. Break caught: a reason picked and words typed that never reach the database, so the form looks done and the decline is bare.
+  it("records a decline with the reason chosen and the PEO's words", async () => {
+    panel({ status: "sent_to_carrier" });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
+    fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
+    fireEvent.change(within(row).getByLabelText("Why they declined"), { target: { value: "pricing" } });
+    fireEvent.change(within(row).getByLabelText("What the PEO said"), { target: { value: "  Below our floor  " } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
+    await waitFor(() => expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ status: "declined", declineReason: "pricing", declineWords: "Below our floor" })));
+  });
+
+  // N-1.4. Break caught: a decline saved with no reason, which the database refuses with words the broker can't act on.
+  it("won't save a decline until a reason is chosen, and keeps what was typed", () => {
+    panel({ status: "sent_to_carrier" });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
+    fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
+    fireEvent.change(within(row).getByLabelText("What the PEO said"), { target: { value: "Not this year" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
+    expect(within(row).getByRole("alert")).toHaveTextContent("Choose why the PEO declined.");
+    expect(api.updateQuoteRequest).not.toHaveBeenCalled();
+    expect(within(row).getByLabelText("What the PEO said")).toHaveValue("Not this year");
+  });
+
+  // N-1.4. Break caught: a declined card that says Declined and nothing more, the story's whole gap.
+  it("shows a declined request's reason and the PEO's words on its card, and nothing for one that has none", () => {
+    panel({
+      requests: [
+        request({ id: 8, peo_name: "Justworks", status: "declined", decline_reason: "pricing", decline_words: "Below our floor" }),
+        request({ id: 9, peo_name: "Insperity", status: "declined" }),
+        request({ id: 7, status: "quoted", decline_reason: "states", decline_words: "Kept from an earlier decline" }),
+      ],
+    });
+    const declined = screen.getByTestId("quote-request-8");
+    expect(within(declined).getByText("Declined: Won't price it competitively")).toBeInTheDocument();
+    expect(within(declined).getByText("\u201cBelow our floor\u201d")).toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-9")).queryByText(/^Declined:/)).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-7")).queryByText(/^Declined:/)).not.toBeInTheDocument();
+  });
+
+  // N-1.4. Break caught: correcting a recorded decline starts the reason from blank, so saving the correction asks again or loses what was kept.
+  it("opens a declined request's answer with its reason and the PEO's words in place", () => {
+    panel({ requests: [request({ status: "declined", decline_reason: "too_large", decline_words: "Over 500 employees" })] });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
+    expect(within(row).getByLabelText("Why they declined")).toHaveValue("too_large");
+    expect(within(row).getByLabelText("What the PEO said")).toHaveValue("Over 500 employees");
   });
 
   it("adds a note of a call, with the day it happened", async () => {
@@ -356,6 +423,7 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(within(row).getByLabelText("Admin fee per employee per month ($)"), { target: { value: "99" } });
     fireEvent.change(within(row).getByLabelText("Expires on"), { target: { value: "2026-12-01" } });
     fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
+    fireEvent.change(within(row).getByLabelText("Why they declined"), { target: { value: "other" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
     await waitFor(() => expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ adminFeePepm: null, expiresOn: null })));
   });

@@ -18,9 +18,11 @@ import MobileTranscript from "@/components/chamber/MobileTranscript";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import SaveStatus from "@/components/chamber/SaveStatus";
 import BackupNotice from "@/components/chamber/BackupNotice";
+import FirmSeesBanner from "@/components/chamber/FirmSeesBanner";
 import RecoverIntake from "@/components/chamber/RecoverIntake";
 import StartOverButton from "@/components/chamber/StartOverButton";
 import InformationRequestNotice from "@/components/chamber/InformationRequestNotice";
+import { IntakeProgress } from "@/components/chamber/IntakeProgress";
 import { SaveProgressButton, SaveProgressDialog, SaveProgressNudge } from "@/components/chamber/SaveProgress";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import LegalLinks from "@/components/LegalLinks";
@@ -66,7 +68,7 @@ const Notice = ({ title, children }: { title: string; children: ReactNode }) => 
  * The intake: Lenore on one side and the tabs on the other. `intakeId` opens a given intake instead of the signed-in person's own, for a member of the firm working an intake the firm started
  * (D-1751): the same chamber, saving through the same path, with what they enter marked as a broker entry and the employer's own steps left out. Without it, the employer's own, as before.
  */
-const ChamberPage = ({ intakeId: given }: { intakeId?: string }) => {
+const ChamberPage = ({ intakeId: given, embedded = false }: { intakeId?: string; embedded?: boolean }) => {
   // At /client-intake/:intakeId the address names it (a member of the firm opening the firm's intake); New quote's step 2 gives it.
   const params = useParams();
   const intakeId = given ?? params.intakeId;
@@ -367,7 +369,7 @@ const ChamberPage = ({ intakeId: given }: { intakeId?: string }) => {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className={`${embedded ? "h-full" : "h-screen"} flex flex-col bg-background`}>
       {/* Top bar */}
       {/* Wraps rather than overflows: on a phone, the "Ready" badge made it wider than the screen, which widened the
           page and pushed the fixed chat bar below the fold. */}
@@ -416,6 +418,9 @@ const ChamberPage = ({ intakeId: given }: { intakeId?: string }) => {
         <SignOutButton className="shrink-0" saveFirst={saveAll} />
         <LegalLinks compact className="shrink-0" />
       </div>
+
+      {sessionId && !brokerEntry && <FirmSeesBanner sessionId={sessionId} />}
+      {brokerEntry && <IntakeProgress data={chamberData} provenance={provenance} />}
 
       {backupOffer && <BackupNotice offer={backupOffer} onRestore={restoreBackup} onDiscard={discardBackup} />}
       {isAnonymous && sessionId && ready && certification.status === "none" && nudgeDismissedFor !== sessionId && (

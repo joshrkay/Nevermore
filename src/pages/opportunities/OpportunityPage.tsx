@@ -17,12 +17,14 @@ import { AccountEmails } from "@/components/conversations/AccountEmails";
 import EmailAContact from "@/components/conversations/EmailAContact";
 import { emailChoices } from "@/components/conversations/emailChoices";
 import { ChoosePeos } from "@/components/opportunities/ChoosePeos";
+import { SendToAnotherPeo } from "@/components/opportunities/SendToAnotherPeo";
 import { OpportunityHeader, OpportunityHeaderLoading } from "@/components/opportunities/OpportunityHeader";
 import { opportunityKey, useOpportunityOutcomeQuery, useOpportunityPageQuery } from "@/components/opportunities/useOpportunityQueries";
 import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
 import { LoadFailed, NotAvailable, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { sentToPeos } from "@/data/peoSend";
 import { useAuth } from "@/hooks/useAuth";
 import type { OpportunityFields, OpportunityPage as Page } from "@/lib/opportunityPageApi";
 
@@ -153,7 +155,12 @@ const OpportunityPage = () => {
             key={opportunity.id}
             page={page}
             needs={needs}
-            action={canAct && page.intake?.certifiedAt ? <ChoosePeos needs={needs} onChoose={() => setChoosingPeos(true)} returnTo={`/opportunities/${opportunity.id}`} onSent={closed} /> : undefined} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
+            action={canAct && page.intake?.certifiedAt ? (
+              <div className="flex flex-wrap items-start gap-2">
+                <ChoosePeos alreadySent={sentToPeos(page.quotes)} needs={needs} onChoose={() => setChoosingPeos(true)} returnTo={`/opportunities/${opportunity.id}`} onSent={closed} />
+                {!isClosed && page.quotes.some((q) => q.sentOn !== null) && <SendToAnotherPeo opportunityId={opportunity.id} />}
+              </div>
+            ) : undefined} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
           <IntakePanel page={page} />
           {firmId && <AccountEmails key={`emails-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} contactName={(cid) => page.contacts.find((c) => c.id === cid)?.name ?? null} />}
           {firmId && <OpportunityActivity key={opportunity.id} firmId={firmId} opportunityId={opportunity.id} />}

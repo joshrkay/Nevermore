@@ -91,7 +91,8 @@ const header = () => screen.getByRole("heading", { level: 1 }).closest("header")
 
 const Where = () => {
   const l = useLocation();
-  return <p data-testid="where">{l.pathname + l.search}</p>;
+  const from = (l.state as { backgroundLocation?: { pathname: string } } | null)?.backgroundLocation?.pathname;
+  return <p data-testid="where" data-from={from}>{l.pathname + l.search}</p>;
 };
 let queryClient: QueryClient;
 const renderPage = (path = "/opportunities/o1", ws: Workspace = workspace()) => {
@@ -331,7 +332,7 @@ describe("OpportunityPage: the quotes", () => {
     advisor.loadSubmission.mockResolvedValue(certified());
   });
 
-  // Catches: a quotes panel that leaves out a column D-424 names, or shows a column a later epic owns (Emails is off, D-402; Compare and Send to another PEO too).
+  // Catches: a quotes panel that leaves out a column D-424 names, or shows a column a later epic owns (Emails is off, D-402; Compare too; Send to another PEO is on since 5.10, D-1890).
   it("lists one row per quote request: PEO, status, sent, admin fee, expires and still needs, with no Emails column", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ quotes: [quoted, quote(2)] }));
     renderPage();
@@ -346,7 +347,7 @@ describe("OpportunityPage: the quotes", () => {
     expect(cell(a, "Expires")).toHaveTextContent("Dec 5, 2026");
     expect(cell(b, "Admin fee")).toHaveTextContent("Not yet");
     expect(cell(b, "Expires")).toHaveTextContent("Not yet");
-    expect(within(panel).queryByRole("link", { name: /Compare|Send to another PEO/ })).toBeNull();
+    expect(within(panel).queryByRole("link", { name: /Compare/ })).toBeNull();
   });
 
   // Catches: "Sent · N days" shown for a quote that is no longer waiting, or counted from the wrong day, or "1 days".
@@ -577,7 +578,7 @@ const fieldChange: OpportunityActivityRow = {
   type: "change", entryKey: "e2", at: "2026-11-09T10:00:00+00:00", changeId: "ch2", kind: "changed", who: "dana@example.com", whoKind: "member", field: "employees", from: 40, to: 45,
   cause: null, causePeo: null, recordTable: "opportunities", recordId: "o1", recordName: "January 2027 PEO search",
 };
-const quoteEvent: OpportunityActivityRow = { type: "quote", entryKey: "quote_request_event:9", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 13, peoName: "PEO B", event: "sent", who: "dana@example.com", whoKind: "member" };
+const quoteEvent: OpportunityActivityRow = { type: "quote", entryKey: "quote_request_event:9", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 13, peoName: "PEO B", event: "sent", who: "dana@example.com", whoKind: "member", declineReason: null, declineWords: null };
 
 const serveActivity = (all: OpportunityActivityRow[]) =>
   client.listOpportunityActivity.mockImplementation(async (_f: string, _o: string, o?: { offset?: number; limit?: number }) => ({ count: all.length, rows: all.slice(o?.offset ?? 0, (o?.offset ?? 0) + (o?.limit ?? 50)) }));
@@ -617,6 +618,19 @@ describe("OpportunityPage: the activity", () => {
     const rows = (await within(await screen.findByRole("table", { name: "The opportunity's activity" })).findAllByRole("row")).slice(1);
     expect(rows.map((r) => within(r).getAllByRole("cell")[2].textContent)).toEqual([
       "Stage: In market to Quoted, by the quote from PEO B", "Stage: Qualifying to Intake under way", "PEO B quoted", "PEO B declined", "PEO B's quote closed",
+    ]);
+  });
+
+  // Catches (N-1.4): an activity line that says "PEO B declined" and not why, so the reason is only on a card nobody has open.
+  it("says why a PEO declined on its line in the activity, with its words when it gave any", async () => {
+    serveActivity([
+      { ...quoteEvent, entryKey: "q1", event: "declined", declineReason: "pricing", declineWords: "Below our floor" },
+      { ...quoteEvent, entryKey: "q2", event: "declined", declineReason: "too_small", declineWords: null },
+    ]);
+    renderPage();
+    const rows = (await within(await screen.findByRole("table", { name: "The opportunity's activity" })).findAllByRole("row")).slice(1);
+    expect(rows.map((r) => within(r).getAllByRole("cell")[2].textContent)).toEqual([
+      "PEO B declined: Won't price it competitively (\u201cBelow our floor\u201d)", "PEO B declined: Too small",
     ]);
   });
 
@@ -2160,5 +2174,62 @@ describe("OpportunityPage: after Choose PEOs sends (D-1727)", () => {
     await userEvent.click(await within(sending).findByRole("button", { name: "Send to 1 PEO" }));
     await waitFor(() => expect(peoSend.sendToPeo).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(client.getOpportunityPage.mock.calls.length).toBeGreaterThan(before));
+  });
+});
+
+// ---------- 5.10: Send to another PEO (CRM-Q3.4, D-1890..) ----------
+describe("OpportunityPage: Send to another PEO (CRM-Q3.4)", () => {
+  beforeEach(() => {
+    advisor.loadSubmission.mockResolvedValue(certified());
+  });
+
+  // Catches: an opportunity with a quote already out and no way from its quotes panel into step 4 of New quote to add another PEO.
+  it("offers Send to another PEO on the quotes panel once a quote was sent, leading to New quote on this opportunity", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)] }));
+    renderPage();
+    const link = await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("link", { name: "Send to another PEO" });
+    expect(link).toHaveAttribute("href", "/new-quote/o1");
+  });
+
+  // Catches: a link that replaces the opportunity's page instead of opening New quote over it, so "Save and close" would have nowhere to return to (D-1709).
+  it("opens New quote over the opportunity's page, which it was opened from", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)] }));
+    renderPage();
+    await userEvent.click(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("link", { name: "Send to another PEO" }));
+    expect(await screen.findByTestId("where")).toHaveTextContent("/new-quote/o1");
+    expect(screen.getByTestId("where")).toHaveAttribute("data-from", "/opportunities/o1");
+  });
+
+  // Catches: Choose PEOs on the page itself (the same step 4) that doesn't mark the PEOs already sent to, so the two doors into the choosing disagree.
+  it("marks the PEOs already sent to in the page's own Choose PEOs", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1, { peoName: "Justworks" })] }));
+    advisor.loadSubmission.mockResolvedValue(certified({ fileId: "EAA-2026-0117", submission: { signer_name: "Elena Marsh", signer_title: "Owner", signed_at: "2026-10-28T10:00:00Z", file_id: "EAA-2026-0117", version: 2 } }));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name"], sources: { answers: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" } } } }];
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([{ peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }]);
+    renderPage();
+    await userEvent.click(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("button", { name: "Choose PEOs" }));
+    const sending = await screen.findByRole("region", { name: "Send to several PEOs" });
+    expect(await within(sending).findByText("Already sent on Nov 6, 2026. Sending again continues its quote.")).toBeInTheDocument();
+  });
+
+  // Catches: "another PEO" offered where none was sent yet (Choose PEOs is the first send), or where the database refuses a send (support session, archived account, no certified intake).
+  it.each([
+    ["no quote sent yet", page({ quotes: [quote(1, { sentOn: null })] }), workspace()],
+    ["an archived account", page({ quotes: [quote(1)], account: { id: "a1", name: "Harborview Dental Group", archived: true } }), workspace()],
+    ["a support session", page({ quotes: [quote(1)] }), workspace({ isSupport: true })],
+    ["an intake nobody has certified", page({ quotes: [quote(1)], intake: { ...intake, certifiedAt: null } }), workspace()],
+  ])("offers no Send to another PEO for %s", async (_who, pageOf, ws) => {
+    client.getOpportunityPage.mockResolvedValue(pageOf);
+    renderPage("/opportunities/o1", ws);
+    await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("table");
+    expect(screen.queryByRole("link", { name: "Send to another PEO" })).toBeNull();
+  });
+
+  // Catches: a PEO offered to be added after the opportunity was won or lost, where the database refuses every send (a PEO can be added only before Won or Lost).
+  it.each(["won", "lost"] as const)("offers no Send to another PEO once the opportunity is %s", async (stage) => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)] }, { stage }));
+    renderPage();
+    await within(await screen.findByRole("region", { name: /^Quotes/ })).findByText("PEO A");
+    expect(screen.queryByRole("link", { name: "Send to another PEO" })).toBeNull();
   });
 });

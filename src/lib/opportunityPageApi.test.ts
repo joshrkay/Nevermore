@@ -159,8 +159,16 @@ describe("listOpportunityActivity", () => {
       type: "change", entryKey: "e1", at: "2026-11-11T10:00:00+00:00", changeId: "ch1", kind: "stage_changed", who: "dana@x.example", whoKind: "member", field: "stage",
       from: "ready_to_send", to: "in_market", cause: "quote_send", causePeo: "PEO B", recordTable: "opportunities", recordId: "o1", recordName: "January 2027 PEO search",
     });
-    expect(got.rows[1]).toEqual({ type: "quote", entryKey: "quote_request_event:9", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 13, peoName: "PEO B", event: "sent", who: "dana@x.example", whoKind: "member" });
+    expect(got.rows[1]).toEqual({ type: "quote", entryKey: "quote_request_event:9", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 13, peoName: "PEO B", event: "sent", who: "dana@x.example", whoKind: "member", declineReason: null, declineWords: null });
     expect(got.rows[2]).toMatchObject({ type: "note", id: "n1", body: "Elena wants all three", opportunity: { id: "o1", name: "January 2027 PEO search" } });
+  });
+
+  // Catches (N-1.4): a decline's reason and words dropped on the way from the database, so the line can only say "declined".
+  it("reads a decline's reason and the PEO's words into the quote request's event", async () => {
+    const declined = { ...quote, event: "declined", decline_reason: "pricing", decline_words: "Below our floor" };
+    rpc.mockResolvedValue({ data: { count: 1, rows: [declined] }, error: null });
+    const got = (await listOpportunityActivity("f1", "o1"))!;
+    expect(got.rows[0]).toMatchObject({ type: "quote", event: "declined", declineReason: "pricing", declineWords: "Below our floor" });
   });
 
   // Catches (N-1.2): the whole activity panel failing ("not the agreed shape") the first time a PEO acknowledges or asks a question, because the event list

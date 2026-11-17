@@ -10,7 +10,7 @@ const BELOW_THE_HEADING = "basis-full";
  * (it is read for the quotes anyway, or now) and opens the component once it is here, and once the PEOs have been read too: drawn sooner, it would say nobody can be
  * chosen for as long as the PEOs were loading, and would start with none ticked (which PEOs are ready is worked out once, when it is drawn).
  */
-export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = false }: {
+export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = false, alreadySent }: {
   needs: ReturnType<typeof useStillNeeds>;
   /** Asks the page to read the submission now, when it was not read for the quotes. */
   onChoose: () => void;
@@ -18,6 +18,8 @@ export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = fa
   onSent: () => void;
   /** Already chosen when drawn (New quote's step 4 opens at the choosing, D-1763). */
   startChosen?: boolean;
+  /** The PEOs already sent to and the day (CRM-Q3.4): marked in the choosing step. */
+  alreadySent?: Readonly<Record<string, string>>;
 }) {
   const [chosen, setChosen] = useState(startChosen);
   if (!chosen) {
@@ -50,6 +52,7 @@ export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = fa
       returnTo={returnTo}
       onSent={onSent}
       startOpen
+      alreadySent={alreadySent}
       openLabel="Choose PEOs"
     />
   );

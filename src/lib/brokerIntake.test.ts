@@ -177,9 +177,15 @@ describe("the employer opening the link", () => {
   // Break caught: the page can't say whose invitation it is, or asks the database with the wrong address.
   it("peeks at the link and answers the firm's name and who it is for", async () => {
     rpc.mockResolvedValue({ data: [{ firm_name: "Acme Brokers", contact_name: "Lucia", expires_at: "2026-12-04T10:00:00Z" }], error: null });
-    expect(await api.peekIntakeInvite("the-token", "acme-brokers")).toEqual({ firmName: "Acme Brokers", contactName: "Lucia" });
+    expect(await api.peekIntakeInvite("the-token", "acme-brokers")).toEqual({ firmName: "Acme Brokers", contactName: "Lucia", invitedBy: null });
     expect(rpc.mock.calls[0][0]).toBe("peek_intake_invite");
     expect((rpc.mock.calls[0][1] as { p_firm_address: string }).p_firm_address).toBe("acme-brokers");
+  });
+
+  // Break caught: the page names the firm but not the person who sent the link (CRM-Q2.3, D-1881).
+  it("answers who sent the link", async () => {
+    rpc.mockResolvedValue({ data: [{ firm_name: "Acme Brokers", contact_name: "Lucia", invited_by_name: "Ana Agent" }], error: null });
+    expect(await api.peekIntakeInvite("the-token", "acme-brokers")).toMatchObject({ invitedBy: "Ana Agent" });
   });
 
   // Break caught: the token itself goes to the database (it is meant to reach it only as its hash, so a log of requests never holds a working link).
@@ -241,13 +247,13 @@ describe("the employer opening the link", () => {
   // Break caught: an invitation made with no name shows the page a name of "undefined".
   it("answers no name when the invitation had none", async () => {
     rpc.mockResolvedValue({ data: [{ firm_name: "Acme Brokers" }], error: null });
-    expect(await api.peekIntakeInvite("t", "acme-brokers")).toEqual({ firmName: "Acme Brokers", contactName: null });
+    expect(await api.peekIntakeInvite("t", "acme-brokers")).toEqual({ firmName: "Acme Brokers", contactName: null, invitedBy: null });
   });
 
   // Break caught: the database answering one row rather than a list reads as no invitation.
   it("reads a single row as well as a list", async () => {
     rpc.mockResolvedValue({ data: { firm_name: "Acme Brokers", contact_name: "Lucia" }, error: null });
-    expect(await api.peekIntakeInvite("t", "acme-brokers")).toEqual({ firmName: "Acme Brokers", contactName: "Lucia" });
+    expect(await api.peekIntakeInvite("t", "acme-brokers")).toEqual({ firmName: "Acme Brokers", contactName: "Lucia", invitedBy: null });
   });
 });
 describe("the employer taking the intake", () => {

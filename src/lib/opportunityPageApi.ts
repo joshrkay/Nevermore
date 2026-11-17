@@ -126,6 +126,9 @@ export interface OpportunityQuoteEvent {
   event: "sent" | "acknowledged" | "question_open" | "quoted" | "declined" | "closed";
   who: string;
   whoKind: "member" | "nevermore" | "system";
+  /** For a decline: the reason that decline gave (one of DECLINE_REASONS) and the PEO's words (N-1.4); null for every other event. */
+  declineReason: string | null;
+  declineWords: string | null;
 }
 
 /**
@@ -260,6 +263,7 @@ const changeSchema = z.object({
 const quoteEventSchema = z.object({
   type: z.literal("quote"), entry_key: z.string().min(1), at: z.string().min(1), quote_request_id: z.number().int(), peo_name: z.string(),
   event: z.enum(["sent", "acknowledged", "question_open", "quoted", "declined", "closed"]), who: z.string(), who_kind: whoKind,
+  decline_reason: nullableText.optional(), decline_words: nullableText.optional(),
 });
 const intakeEventSchema = z.object({
   type: z.literal("intake"), entry_key: z.string().min(1), at: z.string().min(1), event: z.enum(["started", "invited", "reminded", "certified"]),
@@ -281,7 +285,7 @@ const activityOf = (a: z.infer<typeof activityShape>): OpportunityActivityRow =>
     };
   }
   if (a.type === "quote") {
-    return { type: "quote", entryKey: a.entry_key, at: a.at, quoteRequestId: a.quote_request_id, peoName: a.peo_name, event: a.event, who: a.who, whoKind: a.who_kind };
+    return { type: "quote", entryKey: a.entry_key, at: a.at, quoteRequestId: a.quote_request_id, peoName: a.peo_name, event: a.event, who: a.who, whoKind: a.who_kind, declineReason: a.decline_reason ?? null, declineWords: a.decline_words ?? null };
   }
   if (a.type === "intake") {
     return { type: "intake", entryKey: a.entry_key, at: a.at, event: a.event, version: a.version, reference: a.reference, invitee: a.invitee, who: a.who, whoKind: a.who_kind };
