@@ -1,7 +1,10 @@
-import { ListPanel } from "@/components/accounts/accountLists";
+import { useState } from "react";
+import { EmptyLine, ListPanel } from "@/components/accounts/accountLists";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { quoteKindLabel } from "@/data/quoteRequests";
 import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
-import type { ComparisonColumn, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
+import { COMPARISON_AREAS, type ComparisonArea, ComparisonColumn, ComparisonNote, NewComparisonNote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
 
 // The broker's comparison of an opportunity's quotes (N-3.1, slice 7.7): one column for each PEO, one row for each cost area, the same rows for every PEO.
 
@@ -18,6 +21,20 @@ const TIER_WORDS: Record<string, string> = { employee_only: "employee only", emp
 /** A list of lines in one cell, or Not quoted when the quote leaves the area out (null, never an empty list). */
 const lines = <T,>(items: T[] | null | undefined, words: (item: T) => string) =>
   items ? <ul className="space-y-1">{items.map((item) => <li key={words(item)}>{words(item)}</li>)}</ul> : NOT_QUOTED;
+
+const AREA_WORDS: Record<ComparisonArea, string> = {
+  admin_fee: "administrative fee", one_off_fees: "one-off fees", workers_comp: "workers' comp", unemployment: "unemployment tax", medical: "medical",
+};
+
+const AREA_LABELS: Record<ComparisonArea, string> = {
+  admin_fee: "Administrative fee", one_off_fees: "One-off fees", workers_comp: "Workers' comp", unemployment: "Unemployment tax", medical: "Medical",
+};
+
+/** What a note is about: a PEO, and within it a cost area, or the comparison as a whole. */
+const aboutWords = (n: ComparisonNote, columns: ComparisonColumn[]) => {
+  const peo = columns.find((c) => c.quoteRequestId === n.quoteRequestId)?.peoName;
+  return [peo ?? (n.area ? null : "The comparison"), n.area ? AREA_WORDS[n.area] : null].filter(Boolean).join(", ");
+};
 
 type Row = { label: string; cell: (c: ComparisonColumn) => React.ReactNode };
 
@@ -42,9 +59,61 @@ const ROWS: Row[] = [
   { label: "Medical", cell: (c) => lines(c.quote?.medical, (m) => `${m.plan}, ${TIER_WORDS[m.tier] ?? m.tier}: ${dollars(m.monthly)} a month`) },
 ];
 
-export function QuoteComparison({ comparison }: { comparison: Comparison; onAddNote: (note: never) => Promise<void> }) {
+/** The form for a note (N-3.2). Internal unless the broker marks it for the client. */
+function NoteForm({ columns, onAddNote }: { columns: ComparisonColumn[]; onAddNote: (note: NewComparisonNote) => Promise<void> }) {
+  const [body, setBody] = useState("");
+  const [peo, setPeo] = useState<number | null>(null);
+  const [area, setArea] = useState<ComparisonArea | null>(null);
+  const [visibility, setVisibility] = useState<"internal" | "client">("internal");
+  const [refused, setRefused] = useState<string | null>(null);
+  const select = "block w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm";
+  return (
+    <form
+      className="mt-3 space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setRefused(null);
+        onAddNote({ quoteRequestId: peo, area, visibility, body: body.trim() }).then(
+          () => setBody(""),
+          (err: unknown) => setRefused(err instanceof Error ? err.message : "The note couldn't be added. Try again."),
+        );
+      }}
+    >
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label htmlFor="comparison-note-peo" className="block text-xs text-muted-foreground">About</label>
+          <select id="comparison-note-peo" className={select} value={peo ?? ""} onChange={(e) => setPeo(e.target.value === "" ? null : Number(e.target.value))}>
+            <option value="">The whole comparison</option>
+            {columns.map((c) => <option key={c.quoteRequestId} value={c.quoteRequestId}>{c.peoName}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="comparison-note-area" className="block text-xs text-muted-foreground">Cost area</label>
+          <select id="comparison-note-area" className={select} value={area ?? ""} onChange={(e) => setArea(e.target.value === "" ? null : (e.target.value as ComparisonArea))}>
+            <option value="">No particular area</option>
+            {COMPARISON_AREAS.map((a) => <option key={a} value={a}>{AREA_LABELS[a]}</option>)}
+          </select>
+        </div>
+      </div>
+      <fieldset className="flex gap-4 text-sm">
+        <legend className="sr-only">Who may read it</legend>
+        <label className="flex items-center gap-1.5"><input type="radio" name="comparison-note-visibility" checked={visibility === "internal"} onChange={() => setVisibility("internal")} />Internal</label>
+        <label className="flex items-center gap-1.5"><input type="radio" name="comparison-note-visibility" checked={visibility === "client"} onChange={() => setVisibility("client")} />For the client</label>
+      </fieldset>
+      <label htmlFor="comparison-note" className="block text-xs text-muted-foreground">Note</label>
+      <Textarea id="comparison-note" value={body} rows={3} maxLength={2000} onChange={(e) => setBody(e.target.value)} />
+      {refused && <p role="alert" className="text-sm text-destructive">{refused}</p>}
+      <Button type="submit" disabled={body.trim() === ""}>Add note</Button>
+    </form>
+  );
+}
+
+export function QuoteComparison({ comparison, onAddNote }: { comparison: Comparison; onAddNote: (note: NewComparisonNote) => Promise<void> }) {
   return (
     <ListPanel id="quote-comparison" heading="Compare quotes">
+      {comparison.columns.length === 0 ? (
+        <EmptyLine>No quotes to compare yet. Quotes appear here once the opportunity is sent to a PEO.</EmptyLine>
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <caption className="sr-only">Quotes side by side</caption>
@@ -64,6 +133,25 @@ export function QuoteComparison({ comparison }: { comparison: Comparison; onAddN
           </tbody>
         </table>
       </div>
+      )}
+      <section aria-labelledby="comparison-notes" className="mt-5">
+        <h3 id="comparison-notes" className="mb-2 text-sm font-medium">Notes</h3>
+        <ul className="space-y-2 text-sm">
+          {comparison.notes.map((n) => (
+            <li key={n.id} className="rounded-md border border-border/60 p-3">
+              <p>{n.body}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {n.visibility === "client" ? "For the client" : "Internal"} · {aboutWords(n, comparison.columns)}{n.author ? ` · ${n.author}` : ""}
+              </p>
+            </li>
+          ))}
+        </ul>
+        {comparison.canAdd ? (
+          <NoteForm columns={comparison.columns} onAddNote={onAddNote} />
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">This account is archived, so notes can't be added.</p>
+        )}
+      </section>
     </ListPanel>
   );
 }

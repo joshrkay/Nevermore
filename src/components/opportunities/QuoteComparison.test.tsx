@@ -1,6 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { ComparedQuote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
+import userEvent from "@testing-library/user-event";
+import type { ComparedQuote, NewComparisonNote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
 
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
@@ -27,7 +28,8 @@ const cells = (row: string) => {
   const th = within(screen.getByRole("table", { name: "Quotes side by side" })).getByRole("rowheader", { name: row });
   return within(th.closest("tr") as HTMLElement).getAllByRole("cell");
 };
-const draw = (c: Comparison = comparison()) => render(<QuoteComparison comparison={c} onAddNote={vi.fn()} />);
+const draw = (c: Comparison = comparison(), onAddNote: (n: NewComparisonNote) => Promise<void> = vi.fn().mockResolvedValue(undefined)) =>
+  render(<QuoteComparison comparison={c} onAddNote={onAddNote} />);
 
 describe("what a quote leaves out (D-721)", () => {
   // Catches: a cost area a quote leaves out drawn as blank, 0 or "$0.00", which reads as free; and a PEO that has not quoted drawn as an empty column.
@@ -120,6 +122,109 @@ describe("the administrative fee", () => {
   it("reads Not quoted when the quote leaves the fee out", () => {
     draw(comparison({ columns: [{ quoteRequestId: 1, peoName: "Insperity", status: "quoted", quote: quote({ adminFee: null, adminFeeBasis: null }) }] }));
     expect(cells("Administrative fee")[0].textContent).toBe("Not quoted");
+  });
+});
+
+describe("the broker's notes (N-3.2)", () => {
+  const note = (over: Record<string, unknown> = {}) => ({ id: 1, quoteRequestId: 1, area: "admin_fee", visibility: "internal", body: "Waived the first year", author: "dana@acme.example", createdAt: "2026-11-11T10:00:00+00:00", ...over });
+
+  // Catches: a note that does not say whom it is about or who may read it: an internal remark that could be taken for one for the client.
+  it("lists each note with its words, who wrote it, what it is about and whether it is internal or for the client", () => {
+    draw(comparison({ notes: [note(), note({ id: 2, quoteRequestId: null, area: null, visibility: "client", body: "Insperity is our pick", author: null })] }));
+    const list = within(screen.getByRole("region", { name: "Notes" })).getAllByRole("listitem");
+    expect(list[0]).toHaveTextContent("Waived the first year");
+    expect(list[0]).toHaveTextContent("Internal");
+    expect(list[0]).toHaveTextContent("Insperity, administrative fee");
+    expect(list[0]).toHaveTextContent("dana@acme.example");
+    expect(list[1]).toHaveTextContent("For the client");
+    expect(list[1]).toHaveTextContent("The comparison");
+    expect(list[1]).not.toHaveTextContent("Internal");
+  });
+});
+
+describe("adding a note", () => {
+  // Catches: a note saved for the client without the broker choosing that (the safe default is internal), or sent with a target nobody picked.
+  it("sends the words as an internal note about the whole comparison unless told otherwise", async () => {
+    const onAddNote = vi.fn().mockResolvedValue(undefined);
+    draw(comparison(), onAddNote);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Note"), "  Ask about the first-year waiver  ");
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    expect(onAddNote).toHaveBeenCalledWith({ quoteRequestId: null, area: null, visibility: "internal", body: "Ask about the first-year waiver" });
+  });
+});
+
+describe("an opportunity sent to no PEO", () => {
+  // Catches: an empty table (headings and no columns) where the broker needs to be told why there is nothing to compare.
+  it("says there is nothing to compare yet instead of drawing a table", () => {
+    draw(comparison({ columns: [] }));
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.getByText("No quotes to compare yet. Quotes appear here once the opportunity is sent to a PEO.")).toBeInTheDocument();
+  });
+});
+
+describe("an account that takes no notes", () => {
+  // Catches: an Add note form offered on an archived account that the database would refuse (D-432), so the broker types a note and loses it.
+  it("shows the notes but no form, and says why", () => {
+    draw(comparison({ canAdd: false, notes: [{ id: 1, quoteRequestId: null, area: null, visibility: "internal", body: "Kept", author: null, createdAt: "2026-11-11T10:00:00+00:00" }] }));
+    expect(screen.queryByRole("button", { name: "Add note" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Note")).not.toBeInTheDocument();
+    expect(screen.getByText("Kept")).toBeInTheDocument();
+    expect(screen.getByText("This account is archived, so notes can't be added.")).toBeInTheDocument();
+  });
+});
+
+describe("a note the database refuses", () => {
+  // Catches: a refused note (a closing firm, an archived account) lost without a word, with the broker's text gone or an unhandled error in the console.
+  it("says why and keeps the words", async () => {
+    draw(comparison(), vi.fn().mockRejectedValue(new Error("This account is archived. Nothing on its opportunities can be changed.")));
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Note"), "Waived the first year");
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("This account is archived. Nothing on its opportunities can be changed.");
+    expect(screen.getByLabelText("Note")).toHaveValue("Waived the first year");
+    expect(screen.getByRole("button", { name: "Add note" })).toBeEnabled();
+  });
+});
+
+describe("after a note is sent", () => {
+  // Catches: the words left in the box after a save (a second click adds the same note twice).
+  it("empties the box once the note is saved", async () => {
+    draw();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Note"), "Waived the first year");
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    await waitFor(() => expect(screen.getByLabelText("Note")).toHaveValue(""));
+  });
+});
+
+describe("a note with nothing in it", () => {
+  // Catches: a blank note sent to the database (an empty line on the client's page) or a button that looks live with nothing to add.
+  it("can't be added until it has words", async () => {
+    const onAddNote = vi.fn().mockResolvedValue(undefined);
+    draw(comparison(), onAddNote);
+    const user = userEvent.setup();
+    expect(screen.getByRole("button", { name: "Add note" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Note"), "   ");
+    expect(screen.getByRole("button", { name: "Add note" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Note"), "x");
+    expect(screen.getByRole("button", { name: "Add note" })).toBeEnabled();
+    expect(onAddNote).not.toHaveBeenCalled();
+  });
+});
+
+describe("choosing what a note is about and who may read it", () => {
+  // Catches: the PEO, the cost area or the mark chosen on the form dropped on the way to the writer, so every note lands on the whole comparison as internal.
+  it("sends the PEO, the cost area and the mark the broker chose", async () => {
+    const onAddNote = vi.fn().mockResolvedValue(undefined);
+    draw(comparison(), onAddNote);
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("About"), "Insperity");
+    await user.selectOptions(screen.getByLabelText("Cost area"), "Administrative fee");
+    await user.click(screen.getByLabelText("For the client"));
+    await user.type(screen.getByLabelText("Note"), "Waived the first year");
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    expect(onAddNote).toHaveBeenCalledWith({ quoteRequestId: 1, area: "admin_fee", visibility: "client", body: "Waived the first year" });
   });
 });
 

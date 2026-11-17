@@ -750,3 +750,22 @@ Skill mattpocock-skills:tdd invoked first. SQL cycles run `supabase/tests/run.sh
 18. same: a wrong shape is a failure. Red: ZodError thrown. Green: safeParse.
 19. same: addComparisonNote sends target, mark and firm. Red: `addComparisonNote is not a function`. Green: the writer call.
 20. same: a 22023 reason passes through, and PT423 / 55000 are readOnly. Two tests written together (one it, one it.each of two rows), three reds: `expected 'failed' to be 'invalid'`, `expected 'failed' to be 'readOnly'` x2. Green: both branches of refusal(). (Broke the one-at-a-time rule here.)
+21. QuoteComparison.test: a column per PEO in the order given, a row per cost area. Red: `Failed to resolve import "./QuoteComparison"`. Then red for my own test's wrong expectation (`expected [ 'Insperity', 'TriNet' ] to deeply equal [ '', ...]`), fixed to a "Cost area" corner header, green.
+22. a left-out area reads Not quoted, for every area of a PEO with no quote. Red: `Unable to find an accessible element with the role "cell"`. Green: a cell per column per row, Not quoted.
+23. the fee with its basis, a waived fee $0.00, a left-out fee Not quoted. Three tests written together: two red (`expected [ 'Not quoted', 'Not quoted' ] to deeply equal ...`, `expected 'Not quoted' to be '$0.00 per employee per month'`), the third (null reads Not quoted) green on first run because the stub already drew Not quoted. Green: feeWords.
+24. Status row: Firm offer / Estimate / the status of a PEO with no quote. Red: `expected [ '', '', '' ] to deeply equal [ 'Firm offer', 'Estimate', 'Sent' ]`. Green: quoteKindLabel / quoteStatusLabel.
+25. Expires row: Expired <date>, a live date, Not given, Not yet quoted (and the frame test's row list gained Expires). Red: `expected [ Array(6) ] to deeply equal [ 'Status', 'Expires', ...]`. Green: the Expires row.
+26. the four lists (one-off, workers' comp, unemployment, medical). Four tests written together (breaking one-at-a-time), four reds (`Unable to find an accessible element with the role "listitem"`); implemented and run one list at a time: 4 red, 3, 2, 1, 0.
+27. notes listed with words, mark, target and author. Red: `Unable to find an accessible element with the role "region" and name "Notes"`. Green: the notes section.
+28. add form sends an internal note about the whole comparison. Red: `Unable to find a label with the text of: Note`. Green: textarea and button.
+29. the PEO, area and mark chosen are sent. Red: `Unable to find a label with the text of: About`. Green: the two selects and the radios.
+30. a note with no words can't be added. Red: 1 failed (button enabled). Green: disabled while blank.
+31. the box empties once saved. Red: `Expected the element to have value:` . Green: setBody("") after the save.
+32. a refused note says why and keeps the words. Red: `Unable to find role="alert"`. Green: the refusal message.
+33. an account that takes no notes shows no form and says why. Red: `expected document not to contain element, found <button`. Green: canAdd switch.
+34. an opportunity sent to no PEO says so, draws no table. Red: `expected document not to contain element, found <table`. Green: EmptyLine.
+35. QuoteComparisonPanel.test: asks for this firm's opportunity and draws it. Red: `Failed to resolve import "./QuoteComparisonPanel"`. Green: the panel.
+36. loading shows the heading with grey lines; a failure says so and Try again asks again. Two tests written together, two reds (`Unable to find an accessible element with the role "heading"`, `Unable to find role="alert"`); implemented loading, then failure (which also needed the useAuth mock in the test).
+37. adding a note re-reads the list. Red: `Unable to find an element with the text: Ask about the waiver`. Green: invalidateQueries.
+38. an opportunity that isn't available says so with no Try again. Red: `Unable to find an element with the text: That opportunity isn't available.`. Green: the notFound branch.
+39. close_a_firm.sql: a note in each firm's fixture; closing deletes firm A's and keeps B's. Red (before the fixture): the deleted-counts list had no `quote_comparison_notes`. Green: the firm_closing_plan line from cycle 14 plus the expected count.
