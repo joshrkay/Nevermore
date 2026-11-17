@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, olderVersionNote, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
+import { DECLINE_REASON_LABELS, DECLINE_REASONS, declineReasonLabel, describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, olderVersionNote, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
 
 describe("the receiving subdomain for reply addresses", () => {
   it("is off unless a subdomain is set", () => {
@@ -122,5 +122,23 @@ describe("the change log's new statuses", () => {
   it("names Acknowledged and Question open in words", () => {
     expect(describeQuoteRequestEvent({ field: "status", old_value: "sent", new_value: "acknowledged" })).toBe("Status: Sent → Acknowledged");
     expect(describeQuoteRequestEvent({ field: "status", old_value: "acknowledged", new_value: "question_open" })).toBe("Status: Acknowledged → Question open");
+  });
+});
+
+// N-1.4. Break caught: a reason the database accepts that the screen has no words for (it would show as its code), or a request declined before reasons existed shown with
+// a made-up one.
+describe("why a PEO declined, in words", () => {
+  it("has words for every reason, in the order the answer form offers them", () => {
+    expect(DECLINE_REASONS).toEqual(["below_minimum_headcount", "state_not_served", "industry_or_class_code_excluded", "claims_or_loss_history", "incomplete_information", "other"]);
+    expect(DECLINE_REASONS.map((r) => DECLINE_REASON_LABELS[r])).toEqual([
+      "Below minimum headcount", "A state not served", "Industry or class code excluded", "Claims or loss history", "Incomplete information", "Other",
+    ]);
+  });
+
+  it("says the reason of a declined request, and nothing for one with none or one it does not know", () => {
+    expect(declineReasonLabel("claims_or_loss_history")).toBe("Claims or loss history");
+    expect(declineReasonLabel(null)).toBeNull();
+    expect(declineReasonLabel(undefined)).toBeNull();
+    expect(declineReasonLabel("too_expensive")).toBeNull();
   });
 });

@@ -259,6 +259,7 @@
 \i supabase/migrations/20261124100000_firm_approval_gates_sending.sql
 \i supabase/migrations/20261124110000_leads_can_convert.sql
 \i supabase/migrations/20261124120000_opportunity_activity_intake.sql
+\i supabase/migrations/20261124130000_decline_reason.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1458,8 +1459,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true, true, ''oldest_waiting'')', 'the queue: one page, searched, filtered, sorted'),
   ('advisor_record_quote_send(p_session_id uuid, p_peo text, p_sent_on date)', 'advisor',
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
-  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
-                                                                     'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
+  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text, p_decline_reason text)', 'advisor',
+                                                                     'SELECT public.advisor_update_quote_request(0, ''declined'', NULL, NULL, NULL, NULL, NULL, ''other'')', 'recording a PEO''s answer'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
@@ -2218,7 +2219,7 @@ $$;
 INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_record_quote_send', 'advisor', 'by_id', $$SELECT public.advisor_record_quote_send({sid}, 'Probe PEO', NULL)::text$$),
   ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
-  ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
+  ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined', NULL, NULL, NULL, NULL, NULL, 'other')::text$$),
   ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),

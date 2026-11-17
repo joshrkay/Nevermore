@@ -217,7 +217,7 @@ describe("QuotePage: Close", () => {
     await user.type(screen.getByLabelText("Why it is closed (optional)"), "Employer chose another PEO");
     expect(advisor.updateQuoteRequest).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Close this quote" }));
-    await waitFor(() => expect(advisor.updateQuoteRequest).toHaveBeenCalledWith(7, { status: "closed", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: "Employer chose another PEO" }));
+    await waitFor(() => expect(advisor.updateQuoteRequest).toHaveBeenCalledWith(7, { status: "closed", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: "Employer chose another PEO", declineReason: null }));
     await waitFor(() => expect(quotes.getQuotePage).toHaveBeenCalledTimes(2));
   });
 });

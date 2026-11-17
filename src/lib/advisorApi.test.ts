@@ -581,10 +581,16 @@ describe("quote requests", () => {
   it("records a send, an answer and a note through the advisor functions", async () => {
     await recordQuoteSend("s1", "TriNet", "2026-11-10");
     expect(rpc).toHaveBeenLastCalledWith("advisor_record_quote_send", { p_session_id: "s1", p_peo: "TriNet", p_sent_on: "2026-11-10" });
-    await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null });
+    await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null, declineReason: null });
     expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
       p_quote_request_id: 7, p_status: "quoted", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: null,
-      p_admin_fee_pepm: 145.5, p_note: null,
+      p_admin_fee_pepm: 145.5, p_note: null, p_decline_reason: null,
+    });
+    // N-1.4: a decline goes with its reason and the PEO's words, and nothing a quote has.
+    await updateQuoteRequest(7, { status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: "Dana: not in Oregon.", declineReason: "state_not_served" });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
+      p_quote_request_id: 7, p_status: "declined", p_received_on: null, p_expires_on: null, p_start_on: null,
+      p_admin_fee_pepm: null, p_note: "Dana: not in Oregon.", p_decline_reason: "state_not_served",
     });
     await addQuoteRequestNote(7, { kind: "underwriter_question", notedOn: "2026-11-12", body: "  Loss runs?  " });
     expect(rpc).toHaveBeenLastCalledWith("advisor_add_quote_request_note", {

@@ -13,7 +13,7 @@ import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type Dr
 import { parsePeoCatalog } from "@/data/peoProfiles";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
-import type { QuoteNoteKind } from "@/data/quoteRequests";
+import type { DeclineReason, QuoteNoteKind } from "@/data/quoteRequests";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -544,7 +544,7 @@ export async function recordQuoteSend(sessionId: string, peo: string, sentOn: st
   if (error) fail(error, "Couldn't record the send.");
 }
 
-/** What a PEO answered: its quote's terms only when it quoted (dates YYYY-MM-DD, the fee in dollars). */
+/** What a PEO answered: its quote's terms only when it quoted (dates YYYY-MM-DD, the fee in dollars), and why only when it declined (N-1.4). */
 export interface QuoteAnswer {
   status: "quoted" | "declined" | "closed";
   receivedOn: string | null;
@@ -552,6 +552,8 @@ export interface QuoteAnswer {
   startOn: string | null;
   adminFeePepm: number | null;
   note: string | null;
+  /** Required for a decline, and for no other answer: the database refuses a decline without one and a reason with any other answer. */
+  declineReason: DeclineReason | null;
 }
 
 /** Records a PEO's answer on a quote request, replacing what was recorded before. Every change is logged. */
@@ -564,6 +566,7 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
     p_start_on: answer.startOn,
     p_admin_fee_pepm: answer.adminFeePepm,
     p_note: answer.note,
+    p_decline_reason: answer.declineReason,
   });
   if (error) fail(error, "Couldn't record the answer.");
 }
