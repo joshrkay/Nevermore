@@ -614,4 +614,16 @@ describe("QuotePage: the quote document (N-2.2)", () => {
     await waitFor(() => expect(advisor.uploadQuoteDocument).toHaveBeenCalledWith(3, file));
     await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
   });
+
+  // Catches: a file the virus check blocked reported as saved, so the agent believes the quote has its document.
+  it("says the virus check blocked a file, and that it was not kept", async () => {
+    const { toast } = await import("sonner");
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "blocked" });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    await userEvent.upload(within(panel).getByLabelText("Upload the quote document"), new File(["x"], "quote.pdf", { type: "application/pdf" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The virus check blocked that file, so it was not kept."));
+  });
 });

@@ -30,7 +30,8 @@ export function QuoteDocument({ quoteRequestId, quote, canChange, onChanged }: {
   const upload = async (file: File) => {
     setUploading(true);
     try {
-      await uploadQuoteDocument(quote.id, file);
+      const result = await uploadQuoteDocument(quote.id, file);
+      if (result.status === "blocked") toast.error("The virus check blocked that file, so it was not kept.");
       onChanged();
     } catch (err) {
       toast.error(failureWords(err, DID_NOT_GO_THROUGH));
