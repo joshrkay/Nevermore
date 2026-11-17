@@ -91,3 +91,14 @@ The `tdd` skill was the first tool call. One test, seen red, then only its code,
 | 84 | AdvisorActivityPage.test.tsx (existing): a table a later version adds reads as the database named it (its example, quotes, is now a table the page knows: changed to invoices) | `× still reads as a sentence for a table a later version adds, as the database named it` (seen in the whole-suite run) | green |
 | 85 | export_supersedes.sql (existing): the export functions left are Epic 3's, the leads' reader and now the quotes' | `FAIL: only Epic 3's export functions are left ...` (seen in the whole-suite run; the function list lacked export_source_quotes) | green |
 | 86 | quotes_query.sql 2: a half-done opportunity on an archived account is no row | found by mutation, not red-first: with the `archived_at IS NULL` condition taken out the test still passed (SURVIVED); the fixture (an archived account with an intake and an opportunity) was added, `FAIL: two quote requests and one opportunity left half done; one with no intake, one lost and one on an archived account are none gave 4, expected 3` was seen with the mutant, and the condition was put back | green |
+
+## Mutation
+
+Each rule broken, one at a time, the tests of the file run, the rule put back (scripts in the scratchpad's 5.11 folder).
+
+- SQL, 14 mutants (level rule, won or lost half-done, archived half-done, no intake half-done, new mail first, expiry order, page size, blank last, writable check, member to own, link revoke, close reason stored, export filters, export keys): 14 killed; one survived at first (the archived account's half-done row) and cycle 86 closed it.
+- Page and api, 23 mutants (account and PEO links, half-done PEO link, the Open and Waiting views, expiry and days waiting, support gating of the changes and New quote, all-that-match as keys, owner and close sent wrongly, both apis, the menu path and current section, the route, vercel, Submissions, the export table): 22 killed; one survived, "a half-done row gets a PEO link", an equivalent mutant (a row with a PEO always has a quote request id, so the second condition cannot differ).
+
+## Gate
+
+lint 0 errors (19 existing warnings, none in 5.11 files); typecheck:functions and typecheck:app clean; `vitest run --maxWorkers=2` 334 files, 6693 tests: three failed in the first run, one mine (AdvisorActivityPage used quotes as its unknown table: cycle 84) and two 5 s timeouts in AccountsPage.test.tsx and AccountsPage.bulk.test.tsx on a shared machine (a different test each time; both files rerun alone: 104 passed); build green; SQL 116 tests on 5460: 114 passed, accounts_query and export_supersedes failed on things 5.11 changed (cycles 83, 85), both fixed and rerun green.
