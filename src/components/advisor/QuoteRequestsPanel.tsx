@@ -15,7 +15,6 @@ import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import {
   canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isOpenQuoteRequest, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote, quotedOnOlderNote,
-  DECLINE_REASON_LABELS, DECLINE_REASONS, declineReasonLabel, type DeclineReason,
   QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress,
   type QuoteNoteKind,
 } from "@/data/quoteRequests";
@@ -59,7 +58,7 @@ const ANSWERS: { value: QuoteAnswer["status"]; label: string }[] = [
   { value: "closed", label: "Closed (withdrawn, expired, or the employer went elsewhere)" },
 ];
 
-/** Records what one PEO answered. A quote has dates and a fee; a decline has a reason (N-1.4) and a note; a closure has only a note. */
+/** Records what one PEO answered. A quote has dates and a fee; a decline or a closure has only a note. */
 const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; onSaved: (status: QuoteAnswer["status"]) => void; onCancel: () => void }) => {
   const id = `answer-${request.id}`;
   const [status, setStatusValue] = useState<QuoteAnswer["status"]>(request.status === "declined" ? "declined" : "quoted");
@@ -68,21 +67,13 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
   const [expiresOn, setExpiresOn] = useState(request.quote_expires_on ?? "");
   const [startOn, setStartOn] = useState(request.proposed_start_on ?? "");
   const [note, setNote] = useState(request.note ?? "");
-  // A request already declined opens with its reason chosen; one declined before reasons existed opens with none and needs one to be saved again.
-  const [declineReason, setDeclineReason] = useState<DeclineReason | "">(DECLINE_REASONS.find((r) => r === request.decline_reason) ?? "");
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The answer wasn't saved. Check your connection and try again. What you typed is still here.");
   const offlineSave = useOfflineSave();
   const answerButton = useRef<HTMLButtonElement>(null);
   const quoted = status === "quoted";
-  const declined = status === "declined";
 
   const save = async () => {
-    // The database refuses a decline with no reason; said here first, before the call, in the form's own words.
-    if (declined && declineReason === "") {
-      failure.say("Say why it declined.");
-      return;
-    }
     setSaving(true);
     failure.clear();
     try {
@@ -93,7 +84,6 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
         startOn: quoted ? startOn || null : null,
         adminFeePepm: quoted && fee.trim() !== "" ? Number(fee) : null,
         note: note.trim() || null,
-        declineReason: declined && declineReason !== "" ? declineReason : null,
       });
       toast.success(`Recorded ${request.peo_name}'s answer.`);
       onSaved(status);
@@ -122,17 +112,6 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
           <input id={`${id}-expires`} type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} className={inputClass} />
           <label htmlFor={`${id}-start`} className="block text-xs text-muted-foreground">Proposed start</label>
           <input id={`${id}-start`} type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} className={inputClass} />
-        </>
-      )}
-      {declined && (
-        <>
-          <label htmlFor={`${id}-why`} className="block text-xs text-muted-foreground">Why did it decline?</label>
-          <select id={`${id}-why`} value={declineReason} onChange={(e) => setDeclineReason(e.target.value as DeclineReason | "")} className={inputClass}>
-            <option value="">Choose a reason</option>
-            {DECLINE_REASONS.map((r) => (
-              <option key={r} value={r}>{DECLINE_REASON_LABELS[r]}</option>
-            ))}
-          </select>
         </>
       )}
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
@@ -370,7 +349,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                     <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-semibold whitespace-nowrap">New PEO mail</span>
                   )}
                   <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
-                    {isQuoteRequestStatus(r.status) ? (r.status === "acknowledged" || r.status === "question_open" ? quoteStatusWords(r.status, QUOTE_REQUEST_LABELS[r.status], r.sent_on, localToday()) : r.status === "declined" && declineReasonLabel(r.decline_reason) ? `${QUOTE_REQUEST_LABELS.declined} · ${declineReasonLabel(r.decline_reason)}` : QUOTE_REQUEST_LABELS[r.status]) : r.status}
+                    {isQuoteRequestStatus(r.status) ? (r.status === "acknowledged" || r.status === "question_open" ? quoteStatusWords(r.status, QUOTE_REQUEST_LABELS[r.status], r.sent_on, localToday()) : QUOTE_REQUEST_LABELS[r.status]) : r.status}
                   </span>
                 </span>
               </div>

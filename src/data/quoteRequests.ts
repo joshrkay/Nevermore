@@ -18,26 +18,6 @@ export const QUOTE_REQUEST_LABELS: Record<QuoteRequestStatus, string> = {
 };
 
 /**
- * Why a PEO declined (N-1.4, #206; the list is #88's decision 5): required when a quote request is marked declined, and the PEO's words stay in the request's note beside it.
- * The database holds the same list (20261124130000_decline_reason.sql, decline_reasons()); src/data/schemaSync.test.ts keeps them equal.
- */
-export const DECLINE_REASONS = ["below_minimum_headcount", "state_not_served", "industry_or_class_code_excluded", "claims_or_loss_history", "incomplete_information", "other"] as const;
-export type DeclineReason = (typeof DECLINE_REASONS)[number];
-
-export const DECLINE_REASON_LABELS: Record<DeclineReason, string> = {
-  below_minimum_headcount: "Below minimum headcount",
-  state_not_served: "A state not served",
-  industry_or_class_code_excluded: "Industry or class code excluded",
-  claims_or_loss_history: "Claims or loss history",
-  incomplete_information: "Incomplete information",
-  other: "Other",
-};
-
-/** A declined request's reason in words; null for a request declined before reasons existed, or a reason this list does not hold. */
-export const declineReasonLabel = (reason: string | null | undefined): string | null =>
-  reason != null && (DECLINE_REASONS as readonly string[]).includes(reason) ? DECLINE_REASON_LABELS[reason as DeclineReason] : null;
-
-/**
  * The pipeline stages at which a send can be recorded: the advisor has reviewed the file. The database holds the
  * same list (advisor_record_quote_send); src/data/schemaSync.test.ts keeps them equal.
  */

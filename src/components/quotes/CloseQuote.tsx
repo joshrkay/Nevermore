@@ -18,7 +18,7 @@ export function CloseQuote({ request, onClosed }: { request: QuoteRequestRow; on
     setSaving(true);
     failure.clear();
     try {
-      await updateQuoteRequest(request.id, { status: "closed", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: why.trim() || null, declineReason: null });
+      await updateQuoteRequest(request.id, { status: "closed", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: why.trim() || null });
       setAsking(false);
       onClosed();
     } catch (err) {
