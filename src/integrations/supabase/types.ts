@@ -1563,6 +1563,11 @@ export type Database = {
         Args: { p_message_id: number; p_decision: "accept" | "dismiss" }
         Returns: Json
       }
+      // An underwriter's open question asked of the employer, as an information request tied to the quote request (20261124180000).
+      advisor_ask_about_question: {
+        Args: { p_quote_request_id: number; p_message: string; p_fields?: string[]; p_extra_questions?: Json }
+        Returns: Json
+      }
       advisor_set_quote_request_status: {
         Args: { p_quote_request_id: number; p_status: string }
         Returns: Json

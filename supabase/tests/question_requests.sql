@@ -414,3 +414,54 @@ BEGIN
     AND i.message = 'Insperity asks how many of the 12 employees are part time.' AND i.fields = ARRAY['census']), 1::bigint, 'the employer is asked, naming the answers');
   PERFORM pg_temp.is(pg_temp.qstatus('Insperity'), 'question_open', 'and the quote request still waits on the answer');
 END $$;
+
+-- ---------- 2. Only an open question is asked about ----------
+-- Catches: a request raised "about a question" on a quote request that has none (Sent, Acknowledged, Closed), so the employer is asked for something no PEO asked.
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_ask_about_question(%s, 'Anything more?', '{}')$q$, pg_temp.qr('TriNet'))),
+    '22023: This quote request has no open question to ask about', 'a quote request that is Sent');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.setq('TriNet', 'acknowledged');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(format($q$SELECT public.advisor_ask_about_question(%s, 'Anything more?', '{}')$q$, pg_temp.qr('TriNet'))), ':', 1), '22023', 'one that is Acknowledged');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*) FROM public.information_requests WHERE message = 'Anything more?'), 0::bigint, 'and nothing was asked');
+END $$;
+
+-- ---------- 3. Another firm's quote request is not found ----------
+-- Catches: an agent of another firm (or a guessed number) asking the employer a question about a quote request that is not theirs: it must read as not found, and nothing is asked.
+DO $$
+DECLARE theirs bigint := pg_temp.qr('Insperity');
+BEGIN
+  PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
+  PERFORM pg_temp.is(pg_temp.refusal(format($q$SELECT public.advisor_ask_about_question(%s, 'Not mine', '{}')$q$, theirs)), 'PT404: Quote request not found', 'another firm''s quote request');
+  PERFORM pg_temp.is(pg_temp.refusal($q$SELECT public.advisor_ask_about_question(-5, 'Not mine', '{}')$q$), 'PT404: Quote request not found', 'one that does not exist');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT count(*) FROM public.information_requests WHERE message = 'Not mine'), 0::bigint, 'and nothing was asked');
+END $$;
+
+-- ---------- 4. The quote request's log says the employer was asked ----------
+-- Catches: a request that is not tied to the question it answers (nothing on the quote request says the employer was asked, who asked, or which request), so the page can't show it waiting or answered.
+DO $$
+DECLARE r jsonb;
+BEGIN
+  PERFORM pg_temp.setq('Justworks', 'question_open');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  r := public.advisor_ask_about_question(pg_temp.qr('Justworks'), 'Justworks wants the workers'' comp class code for the drivers.', '{}');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT e.new_value FROM public.quote_request_events e WHERE e.quote_request_id = pg_temp.qr('Justworks') AND e.field = 'asked_employer'), r ->> 'request_id', 'the log names the request');
+  PERFORM pg_temp.is((SELECT e.changed_by FROM public.quote_request_events e WHERE e.quote_request_id = pg_temp.qr('Justworks') AND e.field = 'asked_employer'), pg_temp.id('acme_agent'), 'and who asked');
+END $$;
+
+-- ---------- 5. Answering the underwriter on the thread returns the quote request to Sent ----------
+-- Catches: asking the employer leaving the quote request stuck at Question open after the agent has written back to the PEO (no new status writer: the thread's own trigger, D-1733, does it).
+DO $$
+BEGIN
+  PERFORM pg_temp.is(pg_temp.qstatus('Justworks'), 'question_open', 'still open while the employer has not answered');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.follow_up_peo(pg_temp.qr('Justworks'), ARRAY['dana@justworks.example'], 'Re: Reyes Bakery', 'Dana, the drivers are class 7219.');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.qstatus('Justworks'), 'sent', 'the reply to the PEO returns it to Sent');
+END $$;
