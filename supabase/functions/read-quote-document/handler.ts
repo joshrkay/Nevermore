@@ -5,11 +5,13 @@
 // proposal: nothing is stored here, and nothing becomes the quote until the broker confirms through record_quote. Everything runs as the calling agent, so row security
 // decides whether they may see the quote and the stored file.
 
+import { refusalError, retryLater } from "../document-extract/ask.ts";
 import { buildPromptText, type TextSection } from "../document-extract/parse.ts";
 import type { AskModel, Outcome } from "../document-extract/read.ts";
+import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { readJsonCapped } from "../_shared/body.ts";
 import { aiError, type AiErrorReply } from "../_shared/ai/errors.ts";
-import { callModel, type ModelDeps } from "../_shared/ai/model.ts";
+import { callModel, failureLogLine, failureResponse, type ModelDeps, type ModelFailureKind } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { PROPOSE_TOOL, SYSTEM_PROMPT } from "./prompt.ts";
 import { shapeQuoteProposal, type QuoteProposal } from "./proposal.ts";
@@ -76,18 +78,48 @@ export async function handleReadQuoteDocument(req: Request, deps: QuoteReadDeps)
   if (typeof quoteId !== "number" || !Number.isSafeInteger(quoteId) || quoteId < 1) return refuse(aiError("bad_request", { message: "quote_id is required" }));
 
   const { data: quote } = await supabase.from("quotes").select("id, document_attachment_id").eq("id", quoteId).maybeSingle();
+  if (!quote) return refuse(aiError("not_found"));
+  if (quote.document_attachment_id === null) return reply({ error: "This quote has no document to read.", code: "no_document" }, 422);
   const { data: file } = await supabase.from("quote_request_message_attachments").select("id, file_name, status, storage_bucket, storage_path, size_bytes").eq("id", Number(quote?.document_attachment_id)).maybeSingle();
-  const { data: blob } = await supabase.storage.from(String(file?.storage_bucket)).download(String(file?.storage_path));
-  const bytes = new Uint8Array(await blob!.arrayBuffer());
-
+  if (!file || file.status !== "stored" || typeof file.storage_bucket !== "string" || typeof file.storage_path !== "string") {
+    return reply({ error: "The quote's document can't be read: it was not kept, or is still being checked.", code: "not_readable" }, 409);
+  }
+  // With no model set up nothing is proposed, and nothing else changes: the file is not even fetched.
   const chosen = selectAdapter(deps.env, PROPOSE_TOOL, { maxTokens: 4096 });
   let proposal: QuoteProposal = { draft: {}, sources: {} };
+  if (!chosen.ok) {
+    deps.logError(`AI_CONFIG_MISSING: ${chosen.problem}`);
+    return reply({ status: "unavailable", proposal }, 200);
+  }
+  const { data: blob } = await supabase.storage.from(file.storage_bucket).download(file.storage_path);
+  const bytes = new Uint8Array(await blob!.arrayBuffer());
+  let failed: ModelFailureKind | null = null;
   const ask: AskModel = async (sections: TextSection[]) => {
-    if (!chosen.ok) return [];
+    // The one budget every AI call shares: the caller's quota, their address's, and the daily ceiling for everyone.
+    const budget = await checkAiBudget({ headers: req.headers, env: deps.env, user: supabase, createAdmin: (key) => deps.createClient(supabaseUrl, key), log: deps.logError });
+    if (!budget.allowed) throw refusalError(budget);
     const result = await callModel(chosen.adapter, { system: SYSTEM_PROMPT, user: `<quote_document>\n${buildPromptText(sections)}\n</quote_document>` }, { fetch: deps.fetch, sleep: deps.sleep, now: deps.now, timeoutMs: 30_000 });
-    if (result.ok) proposal = shapeQuoteProposal(result.args, sections.map((s) => s.label));
+    if (result.ok) {
+      proposal = shapeQuoteProposal(result.args, sections.map((s) => s.label));
+    } else {
+      // Fixed fields only: a provider's response can echo the document's text.
+      deps.logError(failureLogLine({ requestId, provider: chosen.adapter.name, result }));
+      failed = result.kind;
+    }
     return [];
   };
-  const outcome = await deps.readDocument(bytes, String(file?.file_name), ask);
+  let outcome: Outcome;
+  try {
+    outcome = await deps.readDocument(bytes, String(file.file_name), ask);
+  } catch (e) {
+    // A budget refusal is not the document's fault: say when to come back.
+    const later = retryLater(e);
+    if (later) return refuse(aiError(later.code, { status: later.status, message: later.message }));
+    throw e;
+  }
+  if (failed) {
+    const f = failureResponse(failed);
+    return refuse(aiError(f.code, { status: f.status, message: f.message }));
+  }
   return reply({ status: outcome.status === "extracted" ? "proposed" : outcome.status, proposal }, 200);
 }

@@ -31,6 +31,9 @@ interface Setup {
   reader?: Reader;
   responses?: Array<Response | Error>;
   user?: { id: string } | null;
+  budget?: Record<string, boolean>;
+  quote?: Record<string, unknown> | null;
+  file?: Record<string, unknown> | null;
 }
 
 const setup = (opts: Setup = {}) => {
@@ -49,15 +52,15 @@ const setup = (opts: Setup = {}) => {
     auth: { getUser: async () => ({ data: { user: opts.user === undefined ? { id: USER } : opts.user } }) },
     rpc: async (fn) => {
       steps.push(`${key}:${fn}`);
-      return { data: true, error: null };
+      return { data: fn in (opts.budget ?? {}) ? opts.budget![fn] : true, error: null };
     },
     from: (table) => ({
       select: () => ({
         eq: () => ({
           maybeSingle: async () => ({
             data: table === "quotes"
-              ? { id: 7, document_attachment_id: 51 }
-              : { id: 51, file_name: "quote.pdf", status: "stored", storage_bucket: "peo-mail", storage_path: "intake/9/51-quote.pdf", size_bytes: 1000 },
+              ? (opts.quote === undefined ? { id: 7, document_attachment_id: 51 } : opts.quote)
+              : (opts.file === undefined ? { id: 51, file_name: "quote.pdf", status: "stored", storage_bucket: "peo-mail", storage_path: "intake/9/51-quote.pdf", size_bytes: 1000 } : opts.file),
             error: null,
           }),
         }),
@@ -141,5 +144,91 @@ describe("read-quote-document: the request", () => {
     expect((await handleReadQuoteDocument(post("x".repeat(5000)), t.deps)).status).toBe(413);
     expect(t.readDocument).not.toHaveBeenCalled();
     expect(t.steps.filter((s) => s.startsWith("download"))).toEqual([]);
+  });
+});
+
+describe("read-quote-document: which quote", () => {
+  it("answers not found for a quote the caller's row security does not show (another firm's, or none), and reads and asks nothing", async () => {
+    const t = setup({ quote: null });
+    const { status, body } = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps));
+    expect(status).toBe(404);
+    expect(body).toMatchObject({ code: "not_found", request_id: REQUEST });
+    expect(t.steps).toEqual([]);
+    expect(t.readDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe("read-quote-document: the quote's document", () => {
+  it("says so (422 no_document) when the quote names no document, and downloads and asks nothing", async () => {
+    const t = setup({ quote: { id: 7, document_attachment_id: null } });
+    const { status, body } = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps));
+    expect(status).toBe(422);
+    expect(body).toMatchObject({ code: "no_document", error: "This quote has no document to read." });
+    expect(t.steps).toEqual([]);
+    expect(t.readDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe("read-quote-document: a file that was not kept", () => {
+  it("reads only a file that is stored (scanned clean): a pending, blocked or not-kept file is 409 not_readable, never downloaded or sent to the model", async () => {
+    for (const status of ["pending", "blocked", "not_kept"]) {
+      const t = setup({ file: { id: 51, file_name: "quote.pdf", status, storage_bucket: null, storage_path: null, size_bytes: 1000 } });
+      const { status: http, body } = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps));
+      expect(http, status).toBe(409);
+      expect(body.code).toBe("not_readable");
+      expect(t.steps).toEqual([]);
+      expect(t.readDocument).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe("read-quote-document: no model set up", () => {
+  it("proposes nothing and breaks nothing without a model key: 200 unavailable with an empty proposal, the file not even downloaded, no budget spent", async () => {
+    const t = setup({ env: { ANTHROPIC_API_KEY: undefined } });
+    const { status, body } = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps));
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ status: "unavailable", proposal: { draft: {}, sources: {} } });
+    expect(t.steps).toEqual([]);
+    expect(t.fetchFn).not.toHaveBeenCalled();
+    expect(t.logs).toEqual(["AI_CONFIG_MISSING: ANTHROPIC_API_KEY is not set"]);
+  });
+});
+
+describe("read-quote-document: the AI budget", () => {
+  it("spends one call of the shared budget (the caller's, their address's and the day's ceiling) before the model is asked, and not before", async () => {
+    const t = setup();
+    await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps);
+    expect(t.steps.filter((s) => s.includes("consume_") || s === "model")).toEqual([
+      "anon-key:consume_ai_quota",
+      "service-key:consume_ip_quota",
+      "service-key:consume_global_ai_budget",
+      "model",
+    ]);
+  });
+});
+
+describe("read-quote-document: a refused budget", () => {
+  it("never reaches the model when the budget refuses: a rate limit is 429 and the day's ceiling 503, in their codes, and nothing is proposed", async () => {
+    const limited = setup({ budget: { consume_ai_quota: false } });
+    const a = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), limited.deps));
+    expect(a.status).toBe(429);
+    expect(a.body).toMatchObject({ code: "rate_limited", request_id: REQUEST });
+    const capped = setup({ budget: { consume_global_ai_budget: false } });
+    const b = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), capped.deps));
+    expect(b.status).toBe(503);
+    expect(b.body.code).toBe("daily_cap");
+    for (const t of [limited, capped]) expect(t.fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("read-quote-document: a model that fails", () => {
+  it("answers 502 in the failure's code with nothing proposed, and logs the kind of failure only, never the document's words", async () => {
+    const t = setup({ responses: [new Response(SECRET, { status: 500 }), new Response(SECRET, { status: 500 })] });
+    const { status, body } = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps));
+    expect(status).toBe(502);
+    expect(body).toMatchObject({ code: "provider_error", request_id: REQUEST });
+    expect(JSON.stringify(body)).not.toContain("Pinnacle");
+    expect(t.logs.join("\n")).toContain("AI_CALL_FAILED");
+    expect(t.logs.join("\n")).not.toContain("Pinnacle");
   });
 });

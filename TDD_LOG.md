@@ -871,3 +871,10 @@ No migration: a proposal is returned, never stored (D-760). Tests run under vite
 10. handler.test: reads the quote's own document and answers the figures with the page of each | red: Failed to resolve import "./handler" (function not there) | green
 11. handler.test: no Authorization header or no signed-in user is refused 401 before anything is touched | red: expected 200 to be 401 | green
 12. handler.test: preflight, non-POST 405, body not JSON or no positive whole quote_id 400, over 4 KB 413, nothing read | red: expected 401 to be 200 (the preflight reached the sign-in check) | green
+13. handler.test: a quote row security does not show is 404 not_found, nothing read or asked | red (seen after removing the line I had written together with the test): expected 200 to be 404 | green
+14. handler.test: a quote with no document is 422 no_document, nothing downloaded or asked | red: expected 200 to be 422 | green
+15. handler.test: a pending, blocked or not-kept file is 409 not_readable, never downloaded or sent to the model | red: expected 200 to be 409 | green
+16. handler.test: no model key proposes nothing (200 unavailable, empty proposal), file not fetched, no model call, one config log | red: expected { status: 'proposed', ... } to match object { status: 'unavailable' } | green
+17. handler.test: one call of the shared AI budget (user, address, day) is spent before the model is asked | red: expected [ 'model' ] to deeply equal [ 'anon-key:consume_ai_quota', ... ] | green
+18. handler.test: a refused budget never reaches the model (rate limit 429 rate_limited, day ceiling 503 daily_cap) | red: expected 200 to be 429 | green
+19. handler.test: a failing model is 502 provider_error, nothing proposed, log has the failure kind and none of the document | red: expected 200 to be 502 | green
