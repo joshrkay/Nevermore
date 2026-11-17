@@ -264,6 +264,14 @@ _Avoid_: consent (the intake consent is a different record), permission, release
 What a PEO returns on a quote request when it offers to take the employer on: when it arrived, when it expires, the proposed start date and the headline admin fee per employee per month, with the advisor's note. Recorded by an advisor and seen only by advisors. It is kept whole in its own row (`quotes`): marked an **estimate** or a **firm offer**, with its administrative fee and what it is charged on (per employee per month, or percent of payroll), one-off fees, workers' comp rates, unemployment tax and medical rates. A cost area the PEO did not give is "Not quoted", never a cost of zero. A revised quote is a second row on the same quote request and the newest is current; Mark quoted alone adds no row. The file a PEO attaches is the quote document: it arrives on the thread and is scanned before anyone can open it. When a newer packet version is sent to a PEO that has quoted, the quote request stays quoted and its quote is marked as given on the older version until an advisor records the PEO's new answer.
 _Avoid_: proposal, offer, pricing
 
+**Comparison** (code: `opportunity_quote_comparison`, `QuoteComparison`; slice 7.7, N-3.1, D-770 to D-773):
+The broker's side-by-side of one opportunity's quotes: one column for each PEO the opportunity was sent to, alphabetical, one row for each cost area (administrative fee, one-off fees, workers' comp, unemployment tax, medical), the same rows for every PEO. A column shows the PEO's current **Quote** (its newest row, D-720), labelled **Estimate** or **Firm offer**, and marks it expired once its expiry has passed; a PEO that has not quoted shows its status. What a quote leaves out reads "Not quoted", never zero or blank; a waived fee is a real $0.00. Seen by whoever may see the opportunity's account.
+_Avoid_: quote comparison table, bid sheet, side-by-side
+
+**Comparison note** (code: `quote_comparison_notes`, `add_comparison_note`; slice 7.7, N-3.2, D-774 to D-776):
+A broker's note on a **Comparison**, kept with the opportunity: about the whole comparison, one PEO's column, or one cost area of it, marked **internal** or **for the client**. Written through one function, by anyone who may see the account, never on an archived account or in a closing firm's read-only days; never edited or deleted. Showing a note marked for the client to the prospect is N-3.3, not built.
+_Avoid_: quote note (a **Quote request note** is the record of a call or an email with a PEO), comment
+
 **Needs advisor action**:
 A submission an advisor has marked because someone on the team has to act on it, with an optional note saying what. It shows on the queue, which can list only these, until an advisor clears it, and stays through pipeline stage changes. It belongs to the whole submission, where an advisor follow-up belongs to one field, and the prospect never sees it.
 _Avoid_: flag, flagged, follow-up flag

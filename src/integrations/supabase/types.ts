@@ -1347,6 +1347,13 @@ export type Database = {
       }
       // How an opportunity ended, in one read (20261121170000): {lost_reason, lost_note, placement, renewal, payments, received_to_date, quotes}; raises PT404 as opportunity_page does.
       opportunity_outcome: { Args: { p_firm_id: string; p_opportunity_id: string }; Returns: Json }
+      // The comparison of an opportunity's quotes and the notes on it (20261124170000, N-3.1, N-3.2): {can_add, columns: [{quote_request_id, peo_name, status, quote}], notes};
+      // raises PT404 as opportunity_page does. add_comparison_note adds a note (internal or client) and answers {id, body}.
+      opportunity_quote_comparison: { Args: { p_firm_id: string; p_opportunity_id: string }; Returns: Json }
+      add_comparison_note: {
+        Args: { p_firm_id: string; p_opportunity_id: string; p_quote_request_id: number | null; p_area: string | null; p_visibility: string; p_body: string }
+        Returns: Json
+      }
       // Renewals (20261120110000, CRM-A2.4a): an account's renewals with days away, and adding, changing and deleting one from a version; "Didn't renew" and its undo.
       account_renewals: { Args: { p_firm_id: string | null; p_account_id: string; p_time_zone?: string }; Returns: Json }
       add_renewal: {

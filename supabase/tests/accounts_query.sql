@@ -213,6 +213,7 @@
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
 \i supabase/migrations/20261124160000_reply_suggestions.sql
+\i supabase/migrations/20261124170000_quote_comparison.sql
 
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
