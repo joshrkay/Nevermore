@@ -734,3 +734,4 @@ One line per cycle: the test, the failing line seen, then green.
 2. SQL 2: another firm's agent, or a quote that is not there, is refused PT404 and the quote keeps its document | red: FAIL: another firm's agent gave ok, expected PT404: Quote not found | green
 3. SQL 3: the employer and a visitor can't name a document (42501) | red: FAIL: the employer gave PT404, expected 42501 (the advisor check had been taken out and the test seen red) | green
 4. SQL 4: a blocked, pending or not-kept attachment can't be a quote's document | red: FAIL: blocked file gave ok, expected 22023: That file isn't stored... | green
+5. SQL 5: another PEO's file, or an id that is not there, can't be a quote's document | red: FAIL: another PEO's file gave ok (expected 22023: That file isn't on this quote request's mail) | green

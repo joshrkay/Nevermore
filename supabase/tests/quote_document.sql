@@ -445,3 +445,17 @@ BEGIN
     PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, st || ': the quote kept its own document');
   END LOOP;
 END $$;
+
+-- ---------- 5. The file has to be on this quote request's own mail ----------
+-- Catches: a quote showing another PEO's proposal (TriNet's file on Insperity's quote), or an unrelated id.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); f bigint := pg_temp.mail_file('TriNet', 'stored', 'trinet.pdf'); stmt text;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, f)),
+    '22023: That file isn''t on this quote request''s mail', 'another PEO''s file');
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, 999999)),
+    '22023: That file isn''t on this quote request''s mail', 'a file that is not there');
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'the quote kept its own document');
+END $$;
