@@ -18,11 +18,11 @@ import { MAX_CHAT_MESSAGE_CHARS, MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT
 import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shared/followUp.ts";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactForModel } from "../_shared/sensitive.ts";
-import { shapeExtraction } from "./extraction.ts";
-import { fitExtraQuestions, readExtraQuestions, shapeExtraAnswers } from "./extraQuestions.ts";
-import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn, workspaceForTurn } from "./prompt.ts";
-import { guardReply } from "./reply.ts";
-import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
+import { prepareTurn } from "./prepare.ts";
+import { shapeResponse } from "./response.ts";
+import { fitExtraQuestions, readExtraQuestions } from "./extraQuestions.ts";
+import { buildUserPrompt, NEXT_FIELDS, serializeTurn } from "./prompt.ts";
+import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 import { UUID } from "../_shared/uuid.ts";
 
 const corsHeaders = {
@@ -208,7 +208,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     const fitted = fitExtraQuestions(sent.questions, MAX_EXTRA_QUESTIONS_CHARS);
     const extra = { questions: fitted.kept, skipped: [...sent.skipped, ...fitted.left] };
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
-    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested, extraQuestions: extra.questions };
+    const turn = prepareTurn({ message, context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested, extraQuestions: extra.questions });
     const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
@@ -260,10 +260,9 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!budget.allowed) return await fail(aiError(budget.code, { status: budget.status, message: budget.error }));
 
     // 5. Ask the model, with the user turn built as the extraction eval builds it (prompt.ts).
-    const unsettled = unsettledForTurn(turn);
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt({ message, ...turn }) },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt(turn) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;
@@ -278,20 +277,12 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       return await fail(aiError("invalid_response"));
     }
 
-    // The field Lenore was asking about is the first one not yet settled (the prompt tells her to ask it).
-    const { stopping, doubted_unknown: doubted, ...shaped } = shapeExtraction(result.args, message, unsettled[0]?.key);
-    // The next field this message didn't settle. An incomplete answer is still to settle, so it is asked about
-    // again; "don't know" (an unknown the prospect's own words support) settles a field.
-    const answered = new Set([
-      ...Object.keys(shaped.extracted).filter((k) => shaped.field_status[k] !== "incomplete"),
-      ...Object.entries(shaped.field_status).flatMap(([k, v]) => (v === "unknown" ? [k] : [])),
-    ]);
-    const ask = unsettled.find((f) => !answered.has(f.key));
-    const guarded = guardReply(shaped.reply, ask ? FIELD_QUESTION[ask.key] : null, stopping, workspaceForTurn(turn));
-    if (guarded.reason) {
-      deps.logError(`LENORE_REPLY_GUARDED request=${requestId} session=${event.sessionId ?? "-"} reason=${guarded.reason} next=${ask?.key ?? "-"}`);
+    const delivered = shapeResponse(result.args, turn);
+    const shaped = delivered.response;
+    const doubted = delivered.doubted_unknown;
+    if (delivered.guardReason) {
+      deps.logError(`LENORE_REPLY_GUARDED request=${requestId} session=${event.sessionId ?? "-"} reason=${delivered.guardReason} next=${delivered.next ?? "-"}`);
     }
-    shaped.reply = guarded.reply;
     event.fields = Object.keys(shaped.extracted);
     event.refusedPaths = shaped.rejected.map((issue) => issue.path);
     // Paths only: the refused values are the prospect's words.
@@ -303,11 +294,10 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       deps.logError(`EXTRACTION_UNKNOWN_DOUBTED request=${requestId} session=${event.sessionId ?? "-"} fields=${doubted.join(",")}`);
     }
     // A PEO's extra questions answered in the same message, as each question takes them. Ids only in the log.
-    const extraAnswers = shapeExtraAnswers(result.args.extra_answers, extra.questions, message);
-    if (extraAnswers.refused.length > 0) {
-      deps.logError(`EXTRA_ANSWERS_REFUSED request=${requestId} session=${event.sessionId ?? "-"} ids=${extraAnswers.refused.join(",")}`);
+    if (delivered.refusedExtra.length > 0) {
+      deps.logError(`EXTRA_ANSWERS_REFUSED request=${requestId} session=${event.sessionId ?? "-"} ids=${delivered.refusedExtra.join(",")}`);
     }
-    return await finish({ ...shaped, extra_answers: extraAnswers.answers }, 200, null);
+    return await finish({ ...shaped }, 200, null);
   } catch (e) {
     deps.logError(unexpectedErrorLine(requestId, e));
     return await fail(aiError("internal"));

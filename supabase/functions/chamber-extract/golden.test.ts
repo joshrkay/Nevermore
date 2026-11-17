@@ -23,6 +23,7 @@ const INTAKE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const RANK = new Map(INTAKE_FIELDS.map((f) => [f.key, f.rank]));
 
 interface Turn {
+  requested?: string[];
   /** Something the prospect does in the workspace before writing (resolving a conflict, uploading a census). */
   act?: (state: IntakeState) => IntakeState;
   prospect: string;
@@ -107,8 +108,9 @@ async function run(turns: Turn[], start: IntakeState = { data: { ...EMPTY_CHAMBE
       ...chatContext(answers, statusesOf(state.provenance), transcript, message.id),
       census: { rows: census.rows, work_states: census.workStates },
       session_id: INTAKE,
+      requested: turn.requested,
     };
-    const fn = functionWith(turn.model);
+    const fn = functionWith({ ...turn.model, evidence: { ...Object.fromEntries(Object.keys(turn.model).map(k => [k, turn.prospect])), ...turn.model.evidence as object } });
     const response = await handleRequest(
       new Request("https://project.test/functions/v1/chamber-extract", { method: "POST", headers: { Authorization: "Bearer t", "Content-Type": "application/json" }, body: JSON.stringify(body) }),
       fn.deps,
@@ -120,7 +122,8 @@ async function run(turns: Turn[], start: IntakeState = { data: { ...EMPTY_CHAMBE
     // What the prompt names is never settled, and is in rank order.
     const named = nextNamed(prompt);
     for (const key of named) expect(settledBefore, `${at}: the prompt names settled ${key}`).not.toContain(key);
-    expect(named.map((k) => RANK.get(k)), `${at}: rank order`).toEqual([...named.map((k) => RANK.get(k))].sort((a, b) => a! - b!));
+    const ordinary = named.filter((k) => !turn.requested?.includes(k));
+    expect(ordinary.map((k) => RANK.get(k)), `${at}: rank order`).toEqual([...ordinary.map((k) => RANK.get(k))].sort((a, b) => a! - b!));
     expect(named, at).not.toContain("census");
 
     // The answer, as ChamberPage applies it, then Lenore's reply, then (once) her word that it is ready.
@@ -190,8 +193,9 @@ describe("golden transcripts", () => {
       { prospect: "We're Acme.", model: { ...said("company_name", "Acme"), reply: "Do you work with any 1099 contractors?" } },
       {
         prospect: "Yes",
+        requested: ["has_1099"],
         model: { ...said("has_1099", true, "confirmed", "Yes"), reply: "Do any of them work in California?" },
-        expect: { promptIncludes: ['{"sender":"lenore","text":"Do you work with any 1099 contractors?"}'], data: { has_1099: true }, statuses: { has_1099: "confirmed" } },
+        expect: { promptIncludes: ['{"sender":"lenore","text":"Do you work with any 1099 contractors?"}'], data: { has_1099: true }, statuses: { has_1099: "inferred" } },
       },
     ]);
   });
@@ -218,13 +222,13 @@ describe("golden transcripts", () => {
     ]);
   });
 
-  it("lets an explicit correction replace an earlier answer instead of conflicting", async () => {
+  it("keeps an explicit conversational correction as a conflict until reviewed", async () => {
     await run([
       { prospect: "About 40 people.", model: { ...said("employee_count", 40), reply: "Forty." } },
       {
         prospect: "Actually it's 45, not 40.",
         model: { ...said("employee_count", 45, "confirmed", "it's 45, not 40"), corrected_fields: ["employee_count"], reply: "Forty-five." },
-        expect: { data: { employee_count: 45 }, statuses: { employee_count: "confirmed" } },
+        expect: { data: { employee_count: 40 }, statuses: { employee_count: "conflicting" } },
       },
     ]);
   });
@@ -371,7 +375,7 @@ describe("golden transcripts", () => {
     ], { data, provenance });
   });
 
-  it("takes a voice call's answers as Inferred until the prospect types or confirms them, and tells Lenore's voice what is next", async () => {
+  it("keeps typed and spoken extractions inferred until workspace review, and tells Lenore's voice what is next", async () => {
     const { state, transcript } = await run([
       {
         prospect: "We're Quill and Ink Bindery, in New York and New Jersey.",
@@ -405,7 +409,7 @@ describe("golden transcripts", () => {
         prospect: "Yes, bi-weekly is right.",
         model: { ...said("pay_frequency", "bi-weekly", "confirmed", "bi-weekly is right"), reply: "Thank you. How many employees do you have?" },
         // Typed, the same answer is confirmed.
-        expect: { statuses: { pay_frequency: "confirmed", company_name: "inferred" }, ready: true, announced: false },
+        expect: { statuses: { pay_frequency: "inferred", company_name: "inferred" }, ready: true, announced: false },
       },
       {
         prospect: "Our legal name is Quill & Ink Bindery LLC.",

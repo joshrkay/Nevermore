@@ -1,0 +1,11 @@
+# AI intake answers are proposals until reviewed
+
+Lenore's extracted answers, typed or spoken, are inferred until the prospect confirms, edits or applies them in the workspace. A model's assertion that a message explicitly stated an answer does not establish confirmation. Extracted answers need evidence quoting the current message; values without it are refused. Contextual yes/no and numeric answers need an identifiable preceding question, otherwise Lenore asks for clarification.
+
+A model's correction flag never authorizes replacement. A proposed answer that disagrees with a document or another conversation answer preserves the current value and offers candidates through the existing conflict controls. Manual edits remain protected. Resolving a conflict records the prospect as the confirming source and retains the other candidates as also-heard notes. For tables, additive rows and blank cells still merge; a differing populated cell proposes a merged table as a conflict, preserving the original table until the prospect chooses.
+
+This amends ADR 0007's permission for conversational corrections to change populated table cells. It also replaces the earlier glossary rule that a model could mark a typed chat answer confirmed. Existing saved confirmation statuses are retained; this policy applies to new extractions. Applied documents and explicit workspace actions keep their current behavior.
+
+Privacy preprocessing runs on the server before provider calls, including current messages, supported context, recent conversation and PEO question text. Census rows and legal entity details are excluded (entity presence alone is retained for follow-up), FEINs are masked, and table context contains identifying columns only. Evaluation uses the same preprocessing and response shaping as production, records raw and delivered replies separately, and feeds delivered replies into subsequent turns.
+
+`eval:extraction -- --strict` fails any failing assertion regardless of baseline state; baseline comparison remains available for investigating regressions. Provider failures always fail the run. A strict failed run cannot be recorded as a baseline. This does not replace live-model accuracy measurement.

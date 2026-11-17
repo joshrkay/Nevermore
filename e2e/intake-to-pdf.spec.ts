@@ -158,11 +158,13 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText(INTAKE_EXTRACTION.hq_state, { exact: true })).toHaveCount(2);
     await expect(page.getByText("5 of 17 fields captured")).toBeVisible();
 
-    // Industry is the one value Lenore inferred rather than read from the message.
-    await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(1);
-    await page.getByRole("button", { name: "Confirm Industry", exact: true }).click();
+    // Every AI-captured answer stays inferred until the prospect reviews it.
+    await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(5);
+    for (const label of ["Business Name", "Industry", "HQ State", "All States", "Employee Count"]) {
+      await page.getByRole("button", { name: `Confirm ${label}`, exact: true }).click();
+    }
     await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(0);
-    await expect(page.getByText("You confirmed this")).toHaveCount(1);
+    await expect(page.getByText("You confirmed this")).toHaveCount(5);
 
     await page.getByRole("button", { name: "Add Target Start", exact: true }).click();
     await page.getByRole("textbox", { name: "Target Start", exact: true }).fill(TARGET_START);

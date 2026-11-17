@@ -84,12 +84,9 @@ describe("shapeExtraAnswers: the model's answers to the extra questions, kept on
       { id: "5.union", value: "None", field_status: "confirmed" },
     ], asked, message)).toEqual({
       answers: [
-        { id: "5.vehicles", value: true, field_status: "confirmed", evidence: "a few of them drive vans" },
-        // A paraphrase isn't evidence.
-        { id: "5.fleet", value: 4, field_status: "inferred" },
-        { id: "5.union", value: "None", field_status: "confirmed" },
+        { id: "5.vehicles", value: true, field_status: "inferred", evidence: "a few of them drive vans" },
       ],
-      refused: [],
+      refused: ["5.fleet", "5.union"],
     });
   });
 
@@ -111,7 +108,6 @@ describe("shapeExtraAnswers: the model's answers to the extra questions, kept on
       { id: "5.union", value: "Teamsters" },
     ], asked, message).answers).toEqual([
       { id: "9.notes", field_status: "unknown", evidence: "I don't know about the rest yet" },
-      { id: "5.union", value: "None" },
     ]);
     expect(shapeExtraAnswers("nonsense", asked, message)).toEqual({ answers: [], refused: [] });
   });

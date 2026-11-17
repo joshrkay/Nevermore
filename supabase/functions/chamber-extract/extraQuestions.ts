@@ -93,7 +93,6 @@ export function fitExtraQuestions(questions: readonly ExtraQuestionAsked[], maxC
 /** Whether `v` answers `q` exactly as sent, by the rules the browser and the database hold: no value is repaired. */
 const fits = (q: ExtraQuestionAsked, v: unknown): v is string | number | boolean => answersAsAsked(q.kind, q.choices, v);
 
-const STATUSES = ["confirmed", "inferred", "incomplete"] as const;
 
 /**
  * The model's extra_answers as the browser's response: only for a question sent, the first answer to each, a value
@@ -118,7 +117,8 @@ export function shapeExtraAnswers(raw: unknown, questions: readonly ExtraQuestio
       refused.push(a.id);
       continue;
     }
-    const status = (STATUSES as readonly unknown[]).includes(a.field_status) ? (a.field_status as ExtraAnswerHeard["field_status"]) : undefined;
+    if (!quote) { refused.push(a.id); continue; }
+    const status = a.field_status === "incomplete" ? "incomplete" : "inferred";
     answers.push({ id: q.id, value: a.value, ...(status ? { field_status: status } : {}), ...(quote ? { evidence: quote } : {}) });
   }
   return { answers, refused };

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { chatAnswers, OPENING_MESSAGE } from "@/data/chat";
 import type { ModelRequest, ModelResult } from "../../supabase/functions/_shared/ai/model";
+import { prepareTurn } from "../../supabase/functions/chamber-extract/prepare";
 import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt";
 import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
 import { FIXTURES, type Fixture } from "./fixtures";
@@ -99,7 +100,10 @@ const stubModel = (overrides: Record<string, ModelResult> = {}) => {
     if (overrides[message]) return overrides[message];
     if (!(message in CANNED)) throw new Error(`no canned answer for ${JSON.stringify(message)}`);
     // "Noted." unless the canned answer has a reply of its own.
-    return { ok: true, args: CANNED[message] ? { reply: "Noted.", ...CANNED[message] } : null, attempts: 1, latencyMs: 0 };
+    const canned = CANNED[message];
+    const args = canned ? { reply: "Noted.", ...canned,
+      evidence: { ...Object.fromEntries(Object.keys(canned).map((key) => [key, message])), ...canned.evidence as object } } : null;
+    return { ok: true, args, attempts: 1, latencyMs: 0 };
   });
   return { call: call as ModelCall & typeof call, requests };
 };
@@ -113,22 +117,22 @@ describe("runFixture", () => {
     expect(model.requests).toHaveLength(2);
     expect(model.requests[0]).toEqual({
       system: SYSTEM_PROMPT,
-      user: buildUserPrompt({ message: "We have 40 employees.", context: chatAnswers(EMPTY_CHAMBER_DATA), statuses: {}, recent: [{ sender: "lenore", text: OPENING_MESSAGE }] }),
+      user: buildUserPrompt(prepareTurn({ message: "We have 40 employees.", context: chatAnswers(EMPTY_CHAMBER_DATA), statuses: {}, recent: [{ sender: "lenore", text: OPENING_MESSAGE }] })),
     });
     const afterFirst = { ...EMPTY_CHAMBER_DATA, employee_count: 40 };
     expect(model.requests[1].user).toBe(
-      buildUserPrompt({
+      buildUserPrompt(prepareTurn({
         message: "Payroll is getting harder to manage with 55 employees.",
         context: chatAnswers(afterFirst),
         // No. 17 of the ACORD 130 questions is closed once the intake has an answer (K-3.4).
-        statuses: { employee_count: "confirmed", wcq_17: "not_applicable" },
+        statuses: { employee_count: "inferred", wcq_17: "not_applicable" },
         // The conversation so far, from Lenore's opening line to her answer to the first message.
         recent: [
           { sender: "lenore", text: OPENING_MESSAGE },
           { sender: "user", text: "We have 40 employees." },
-          { sender: "lenore", text: "Noted." },
+          { sender: "lenore", text: "Noted. What is the company's legal name?" },
         ],
-      }),
+      })),
     );
     // The roster never leaves the browser: the answers carry no census, and the prompt says only that none is uploaded.
     expect(model.requests[1].user).not.toContain('"census"');
@@ -143,11 +147,11 @@ describe("runFixture", () => {
     expect(model.requests[0].user).not.toMatch(/6789/);
   });
 
-  it("merges like the Chamber: a correction replaces, a contradiction conflicts, a longer list extends", async () => {
+  it("merges like the Chamber: corrections and contradictions need review, additive lists extend", async () => {
     const model = stubModel();
     const corrected = await runFixture(fixture("explicit-correction"), model.call);
-    expect(corrected.state.data.employee_count).toBe(45);
-    expect(corrected.state.provenance.employee_count?.status).toBe("confirmed");
+    expect(corrected.state.data.employee_count).toBe(40);
+    expect(corrected.state.provenance.employee_count?.status).toBe("conflicting");
 
     const conflicting = await runFixture(fixture("contradiction"), model.call);
     expect(conflicting.state.data.employee_count).toBe(40);
@@ -283,7 +287,7 @@ describe("main", () => {
   it("prints the table and how to record a baseline when there is none, and exits cleanly", async () => {
     const t = setup();
     expect(await main(t.deps)).toBe(0);
-    expect(t.output()).toMatch(/clean-profile\s+company_name\s+pass\s+"Mossgate Ceramics LLC" \(confirmed\)/);
+    expect(t.output()).toMatch(/clean-profile\s+company_name\s+pass\s+"Mossgate Ceramics LLC" \(inferred\)/);
     expect(t.output()).toMatch(/Accuracy: (\d+)\/\1 cells \(100%\)/);
     expect(t.output()).toContain("npm run eval:extraction -- --update-baseline");
     expect(t.written).toEqual([]);
@@ -309,7 +313,7 @@ describe("main", () => {
     const t = setup({ baseline, model: stubModel({ "Actually it's 45, not 40.": regressed }) });
     expect(await main(t.deps)).toBe(1);
     expect(t.output()).toContain("REGRESSIONS: 1 cell(s)");
-    expect(t.output()).toContain("explicit-correction/employee_count: 45 (confirmed) -> 40 (conflicting)");
+    expect(t.output()).toContain("explicit-correction/employee_count: 40 (conflicting) -> 40 (inferred)");
   });
 
   it("reports cells that are new since the baseline", async () => {
@@ -342,10 +346,10 @@ describe("main", () => {
     expect(t.model.requests).toEqual([]);
   });
 
-  it("reports failed model calls but exits cleanly when there is no baseline to regress from", async () => {
+  it("fails incomplete model runs even without a baseline", async () => {
     const failed: ModelResult = { ok: false, kind: "provider_error", httpStatus: 500, attempts: 2, latencyMs: 0 };
     const t = setup({ model: stubModel({ "hi, what is a PEO?": failed }) });
-    expect(await main(t.deps)).toBe(0);
+    expect(await main(t.deps)).toBe(1);
     expect(t.output()).toContain("nothing-extractable: turn 1: model call failed (provider_error, HTTP 500)");
     expect(t.output()).toContain("No baseline yet");
   });

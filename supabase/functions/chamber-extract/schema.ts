@@ -202,7 +202,8 @@ const perField = (schema: unknown) => ({
 // so Lenore can say where each goes. 10 adds a PEO's own extra questions (L-2.3): the user turn may list them as data,
 // Lenore asks them once the intake's fields are settled, saying once whose they are and never that they are required,
 // and the tool reports answers in extra_answers.
-export const PROMPT_VERSION = 10;
+// 11: evidence is mandatory; AI values are proposals and corrections require review.
+export const PROMPT_VERSION = 11;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -223,9 +224,9 @@ Never extract a federal employer identification number (FEIN or EIN), the employ
 A short answer ("yes", "no", "about twelve", "weekly") answers the question Lenore asked last in the recent conversation: capture it against the field that question was about.
 
 For every field you return, also report:
-- field_status: "confirmed" if the prospect stated it explicitly, "inferred" if you derived or assumed it from what they said, "incomplete" if they gave only part of the answer (e.g. "a few states, mainly CA").
+- field_status: "inferred" for every proposed answer, even if explicitly stated; only the prospect's review action confirms it. Use "incomplete" if they gave only part of the answer (e.g. "a few states, mainly CA").
 - evidence: the short phrase from the prospect's message that supports it (at most ${MAX_EVIDENCE_CHARS} characters, quoted verbatim).
-- corrected_fields: list a field only when the prospect explicitly corrects a value already captured ("actually it's 45 people, not 40").
+- corrected_fields: leave empty. A changed value is a proposal for the prospect to review, never permission to overwrite an existing answer.
 
 When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so, quoted verbatim. Mark only the fields they said they don't know. Never mark a field "unknown" because the message simply doesn't mention it: a field the message doesn't speak to gets no status at all, and Lenore asks about it later. An "unknown" without the prospect's own words of not knowing is discarded.
 

@@ -1,9 +1,6 @@
-// Turns the model's tool arguments into the response the browser reads. Only known fields get
-// through, each one only if it is valid under the intake schema (_shared/intakeSchema.ts) exactly as
-// the model sent it, and a status, evidence quote or correction survives only for a field that was
-// extracted, or (status "unknown" and its evidence) for a field the prospect said they don't know. An evidence
-// quote survives only when it is the prospect's own words from the message, and "unknown" only with such a quote that
-// says they don't know (QA F4, F11). No Deno or network imports, so it is unit-tested with the frontend suite.
+// AI values are proposals: schema-valid values need a quote from the current message and can
+// never establish confirmation or authorize a correction. Unknown fields additionally need a
+// quote saying the prospect does not know. Relative imports keep the contract shared with eval.
 
 import { isNaicsCode } from "../_shared/naics2022.ts";
 import { type IntakeIssue, validateIntakeField } from "../_shared/intakeSchema.ts";
@@ -120,7 +117,10 @@ export function shapeExtraction(args: Record<string, unknown>, message: string, 
     if (issues.length > 0) rejected.push(...issues);
     // Six digits the model made up are not an industry (K-1.2).
     else if (k === "naics_code" && !isNaicsCode(v)) rejected.push({ path: k, reason: "is not a 2022 NAICS code" });
-    else extracted[k] = v;
+    else if (typeof (args.evidence as Record<string, unknown> | undefined)?.[k] !== "string" ||
+      !quotesMessage((args.evidence as Record<string, string>)[k], message)) {
+      rejected.push({ path: k, reason: "requires evidence from the current message" });
+    } else extracted[k] = v;
   }
   // A value's status is confirmed, inferred or incomplete. "unknown" (the prospect doesn't know, D23) holds no
   // value, so it is kept only for a known field the model gave no value: a value marked unknown is a
@@ -139,7 +139,7 @@ export function shapeExtraction(args: Record<string, unknown>, message: string, 
       if (k in extracted) {
         // A NAICS code is the model's proposal for the prospect to confirm, unless their message gives the code itself.
         if (k === "naics_code" && v === "confirmed" && !message.includes(String(extracted[k]))) field_status[k] = "inferred";
-        else if (v !== "unknown") field_status[k] = v;
+        else if (v !== "unknown") field_status[k] = v === "confirmed" ? "inferred" : v;
       } else if (v === "unknown" && FIELDS.includes(k) && !(k in refused)) {
         const quote = rawEvidence[k];
         if (quoted(quote) && saysNotKnown(quote)) unknown.push(k);
@@ -156,9 +156,8 @@ export function shapeExtraction(args: Record<string, unknown>, message: string, 
   const evidence = Object.fromEntries(
     Object.entries(pickPerField(rawEvidence, { ...extracted, ...field_status }, quoted)).map(([k, v]) => [k, v.trim().slice(0, MAX_EVIDENCE_CHARS)]),
   );
-  const corrected_fields = Array.isArray(args.corrected_fields)
-    ? args.corrected_fields.filter((f: unknown): f is string => typeof f === "string" && f in extracted)
-    : [];
+  // A model's correction flag is not permission to replace an existing answer.
+  const corrected_fields: string[] = [];
   const reply = typeof args.reply === "string" && args.reply.trim() ? args.reply : null;
   const stopping = args.prospect_stopping === true;
   return { extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version: PROMPT_VERSION, stopping, doubted_unknown };

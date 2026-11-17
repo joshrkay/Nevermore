@@ -1084,10 +1084,10 @@ _Avoid_: source quote, citation
 Every captured field has exactly one field status.
 
 **Confirmed**:
-The prospect typed the answer explicitly, or entered, applied or confirmed it in the workspace. A spoken answer is not confirmed until the prospect confirms it or types it.
+The prospect entered, applied or confirmed the answer in the workspace. AI extraction from typed or spoken conversation does not establish confirmation (ADR 0028).
 
 **Inferred**:
-Lenore derived or assumed the answer from what the prospect said, or heard it spoken, and the prospect hasn't confirmed it.
+Lenore proposed the answer from typed or spoken conversation, and the prospect hasn't confirmed it in the workspace (ADR 0028).
 _Avoid_: guessed, low confidence
 
 **Incomplete**:
@@ -1161,7 +1161,7 @@ What the AI proposed from a quote's document (N-2.3, `readQuoteDocument`): the f
 _Avoid_: auto-quote, extraction, import
 
 **Also heard**:
-An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
+An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field. Resolving a conflict retains the other candidates as notes (ADR 0028).
 _Avoid_: alternative, rejected value
 
 **Review state**:
