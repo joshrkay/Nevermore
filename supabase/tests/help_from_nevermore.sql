@@ -218,6 +218,7 @@ INSERT INTO cron.job (jobname, schedule, command) VALUES ('prune-firm-activity',
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_quote_document.sql
 \i supabase/migrations/20261124160000_reply_suggestions.sql
 \i supabase/migrations/20261124170000_quote_comparison.sql
 SET client_min_messages = notice;
@@ -1151,7 +1152,7 @@ DECLARE
     'advisor_needs_second_factor', 'advisor_open_quote_request_thread', 'open_conversation', 'advisor_outbox_summary', 'firm_activity_list', 'firm_activity_people', 'firm_members', 'account_renewals', 'opportunity_page', 'opportunity_activity', 'opportunity_quote_comparison', 'merge_preview', 'resolve_merged_record', 'duplicate_account_check', 'duplicate_contact_check', 'lead_page', 'lead_activity', 'lead_activity_options', 'lead_convert_context',
     'firm_support_sessions', 'list_saved_views', 'my_firm_at_address', 'menu_counts', 'my_firm_closure', 'my_mailbox', 'my_table_columns', 'open_submission',
     'queue_list_submissions', 'queue_view_counts', 'my_recent_records', 'record_history_list', 'retention_review_due', 'search_records', 'session_verified_fields', 'peo_send_context', 'my_intake_firms', 'peo_registered_elsewhere', 'peo_registration_statement', 'leads_bin', 'intake_invite_status', 'broker_may_enter_intake'];
-  writes text[] := ARRAY['opportunity_create', 'record_quote', 'add_comparison_note', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  writes text[] := ARRAY['opportunity_create', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'add_comparison_note', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_note_underwriter_question', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information',
     'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'advisor_update_referral_partner', 'approve_join_request', 'cancel_invitation',
     'change_saved_view', 'decline_join_request', 'delete_saved_view', 'invite_member', 'lift_member_suspension', 'record_manuscript_version',
@@ -1230,7 +1231,7 @@ END $$;
 -- cannot use it to change a firm's data. The list of functions is the one supabase/tests/close_a_firm.sql keeps for the closing guard.
 DO $$
 DECLARE
-  guarded text[] := ARRAY['opportunity_create', 'record_quote', 'add_comparison_note', 'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
+  guarded text[] := ARRAY['opportunity_create', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'add_comparison_note', 'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'delete_commission_payment', 'opportunity_mark_lost', 'opportunity_mark_won', 'opportunity_reopen', 'record_commission_payment', 'set_placement_commission', 'update_commission_payment', 'update_opportunity', 'accept_invitation', 'add_firm_organisation', 'advisor_add_quote_request_note', 'advisor_add_referral_partner', 'advisor_correct_quote_request_note',
     'advisor_record_quote_send', 'advisor_reissue_quote_request_address', 'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request',
     'advisor_update_referral_partner', 'approve_join_request', 'ask_to_join_firm', 'cancel_invitation', 'change_saved_view', 'decline_join_request', 'delete_saved_view',
     'update_account', 'create_account', 'create_lead', 'convert_lead', 'send_conversation_message', 'add_sender_as_contact', 'add_contact', 'update_contact', 'move_contact', 'note_recent_record', 'archive_account', 'restore_account', 'delete_account', 'change_account_owner', 'bulk_accounts_change', 'bulk_accounts_preview', 'bulk_accounts_undo', 'log_activity', 'update_activity', 'add_to_note', 'set_task_done', 'invite_member', 'lift_member_suspension', 'remove_firm_organisation', 'remove_member', 'rename_saved_view', 'resend_invitation', 'review_submission_field', 'add_renewal', 'update_renewal', 'delete_renewal', 'mark_renewal_not_renewed', 'undo_renewal_not_renewed', 'merge_accounts', 'merge_contacts', 'account_keep_separate', 'update_lead', 'mark_lead_not_fit', 'reopen_lead', 'log_lead_activity',

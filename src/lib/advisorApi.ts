@@ -620,6 +620,64 @@ export async function recordQuote(quoteRequestId: number, offer: QuoteOffer): Pr
   return data;
 }
 
+/**
+ * Names a mail file already stored and scanned on the quote request's thread as the quote's document (N-2.2, D-730): no second upload. The database refuses a file that isn't
+ * on this quote request's mail or isn't scanned clean, and says so.
+ */
+export async function attachQuoteDocument(quoteId: number, attachmentId: number): Promise<Json> {
+  const { data, error } = await supabase.rpc("attach_quote_document", { p_quote_id: quoteId, p_attachment_id: attachmentId });
+  if (error) fail(error, "Couldn't keep that file with the quote.");
+  return data;
+}
+
+/** The file a quote names as its document: a mail attachment stored and scanned on the quote request's thread (D-730). `storage_path` is what a signed link is made from (mailAttachmentUrl). */
+export interface QuoteDocumentFile {
+  id: number;
+  file_name: string;
+  size_bytes: number;
+  storage_path: string | null;
+}
+
+/** A quote as stored (N-2.1), with its document when it has one. */
+export type QuoteRecord = Database["public"]["Tables"]["quotes"]["Row"] & { document: QuoteDocumentFile | null };
+
+/**
+ * The quotes recorded on a quote request, each with its document. Row security shows a member of the firm their own; another firm's quote request answers nothing. The order is
+ * not promised: quoteRevisions (src/data/quoteRevisions.ts) says which is current.
+ */
+export async function loadQuotes(quoteRequestId: number): Promise<QuoteRecord[]> {
+  const { data, error } = await supabase
+    .from("quotes")
+    .select("*, document:quote_request_message_attachments(id, file_name, size_bytes, storage_path)")
+    .eq("quote_request_id", quoteRequestId);
+  if (error) fail(error, "Couldn't load the quotes.");
+  return (data ?? []) as unknown as QuoteRecord[];
+}
+
+/** What became of an uploaded quote document: `stored` and named as the quote's document, or `blocked` by the virus check (kept nowhere, named nowhere). */
+export interface UploadedQuoteDocument {
+  attachmentId: number;
+  fileName: string;
+  status: "stored" | "blocked";
+}
+
+/**
+ * Uploads a quote document recorded by hand through quote-document-upload (N-2.2, D-731), which checks and scans the file, keeps it with the quote request's mail and names it
+ * as the quote's document. A refusal comes back in the function's words (a file that isn't what its name says, an upload paused, a quote that isn't theirs).
+ */
+export async function uploadQuoteDocument(quoteId: number, file: File): Promise<UploadedQuoteDocument> {
+  const form = new FormData();
+  form.append("quote_id", String(quoteId));
+  form.append("file", file, file.name);
+  const { data, error } = await supabase.functions.invoke("quote-document-upload", { body: form });
+  if (error) {
+    const { reason } = await functionErrorReply(error as { context?: unknown });
+    throw new AdvisorApiError(reason ?? "Couldn't upload the quote document. Try again.");
+  }
+  const d = (data as { document?: { attachment_id: number; file_name: string; status: "stored" | "blocked" } }).document!;
+  return { attachmentId: d.attachment_id, fileName: d.file_name, status: d.status };
+}
+
 /** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */
 export type OpenQuoteStatus = "sent" | "acknowledged" | "question_open";
 

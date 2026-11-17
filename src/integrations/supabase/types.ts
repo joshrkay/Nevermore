@@ -540,6 +540,8 @@ export type Database = {
           admin_fee: number | null
           // One of QUOTE_ADMIN_FEE_BASES (src/data/quoteRequests.ts).
           admin_fee_basis: string | null
+          // The mail attachment (quote_request_message_attachments.id) the PEO's quote document is, or null (20261124150000): a file stored and scanned on the quote request's own mail.
+          document_attachment_id: number | null
           expires_on: string | null
           id: number
           // One of QUOTE_KINDS: an estimate or a firm offer.
@@ -1590,6 +1592,16 @@ export type Database = {
           p_unemployment?: Json | null
           p_workers_comp?: Json | null
         }
+        Returns: Json
+      }
+      // Names a stored mail file of the quote request as a quote's document (20261124150000); the quote, as a row.
+      attach_quote_document: {
+        Args: { p_attachment_id: number; p_quote_id: number }
+        Returns: Json
+      }
+      // Starts the upload of a quote document recorded by hand (20261124150000): a hand-made message with one pending attachment. Answers { attachment_id, message_id, folder }.
+      start_quote_document_upload: {
+        Args: { p_content_type: string; p_file_name: string; p_quote_id: number; p_size_bytes: number }
         Returns: Json
       }
       advisor_update_quote_request: {

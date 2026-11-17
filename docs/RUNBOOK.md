@@ -76,7 +76,7 @@ Alerts that come from elsewhere:
 |---|---|---|
 | `OUTBOX_DEAD` (webhook and log) | `dispatch-outbox`, when a notification email gives up | `docs/NOTIFICATIONS.md`, "Operating" |
 | `DELETION_FAILED` (webhook and log) | `purge-intakes`, when a deletion gives up. The same failure also raises `OPS_ALERT kind=deletion_failed` within five minutes, so expect both | [Deletion failed](#deletion-failed) |
-| `MALWARE_DETECTED` (webhook and log) | `document-upload`, `census-template-upload` (a PEO template workbook, `template=` and `peo=`) or `document-scan`, at once, for every detection. The first in an hour also raises `OPS_ALERT kind=malware_detected`, so expect both | [Malware detected](#malware-detected) |
+| `MALWARE_DETECTED` (webhook and log) | `document-upload`, `census-template-upload` (a PEO template workbook, `template=` and `peo=`), `quote-document-upload` (a quote document uploaded by hand, `attachment=`) or `document-scan`, at once, for every detection. The first in an hour also raises `OPS_ALERT kind=malware_detected`, so expect both | [Malware detected](#malware-detected) |
 | `SCAN_FAILED` (webhook and log) | `document-scan`, when an upload gives up after six attempts. Also raises `OPS_ALERT kind=scan_failed` | [Scan failed](#scan-failed) |
 
 Log lines to know (fixed fields only, never names, paths, messages or provider text):

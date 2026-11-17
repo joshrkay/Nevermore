@@ -260,6 +260,7 @@
 \i supabase/migrations/20261124110000_employer_sees_firm.sql
 \i supabase/migrations/20261124130000_quote_decline_reason.sql
 \i supabase/migrations/20261124140000_quote_offer.sql
+\i supabase/migrations/20261124150000_quote_document.sql
 \i supabase/migrations/20261124160000_reply_suggestions.sql
 \i supabase/migrations/20261124170000_quote_comparison.sql
 SET client_min_messages = notice;
@@ -1483,6 +1484,10 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('record_quote(p_quote_request_id bigint, p_kind text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee numeric, p_admin_fee_basis text, p_one_off_fees jsonb, p_workers_comp jsonb, p_unemployment jsonb, p_medical jsonb, p_note text)', 'advisor',
                                                                      'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO returned, with its whole offer'),
+  ('attach_quote_document(p_quote_id bigint, p_attachment_id bigint)', 'advisor',
+                                                                     'SELECT public.attach_quote_document(0, 0)', 'naming a stored mail file as a quote''s document (N-2.2)'),
+  ('start_quote_document_upload(p_quote_id bigint, p_file_name text, p_content_type text, p_size_bytes bigint)', 'advisor',
+                                                                     'SELECT public.start_quote_document_upload(0, ''x.pdf'', ''application/pdf'', 1)', 'starting the upload of a quote document recorded by hand (N-2.2)'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
   ('advisor_decide_reply_suggestion(p_message_id bigint, p_decision text)', 'advisor',
@@ -2250,6 +2255,8 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
   ('record_quote', 'advisor', 'by_id', $$SELECT public.record_quote(p_quote_request_id => {qr}, p_kind => 'estimate')::text$$),
+  ('attach_quote_document', 'advisor', 'by_id', $$SELECT public.attach_quote_document((SELECT q.id FROM public.quotes q WHERE q.quote_request_id = {qr} ORDER BY q.id LIMIT 1), 0)::text$$),
+  ('start_quote_document_upload', 'advisor', 'by_id', $$SELECT public.start_quote_document_upload((SELECT q.id FROM public.quotes q WHERE q.quote_request_id = {qr} ORDER BY q.id LIMIT 1), 'probe.pdf', 'application/pdf', 1)::text$$),
   ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
   ('advisor_decide_reply_suggestion', 'advisor', 'by_id', $$SELECT public.advisor_decide_reply_suggestion({rmsg}, 'dismiss')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
@@ -4400,7 +4407,7 @@ SELECT unnest(ARRAY[
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
   'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
-  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'record_quote', 'record_manuscript_version',
+  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_decide_reply_suggestion', 'advisor_update_quote_request', 'record_quote', 'attach_quote_document', 'start_quote_document_upload', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';

@@ -14,7 +14,10 @@ import { useOpportunityOutcomeQuery } from "@/components/opportunities/useOpport
 import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
 import { noReplyWords, peoContactWords } from "@/data/quotePage";
 import { isOpenQuoteRequest, quoteReplyDomain, replyAddress } from "@/data/quoteRequests";
-import { useQuotePageQuery } from "@/components/quotes/useQuoteQueries";
+import { useQuotePageQuery, useQuotesQuery } from "@/components/quotes/useQuoteQueries";
+import { QuoteDocument } from "@/components/quotes/QuoteDocument";
+import { EarlierQuotes } from "@/components/quotes/EarlierQuotes";
+import { quoteRevisions } from "@/data/quoteRevisions";
 import { LoadFailed, NotAvailable, PlaceholderLine, PlaceholderLines, PlaceholderPanel, RecordLoading } from "@/components/workspace/states";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
 
@@ -31,6 +34,9 @@ const QuotePage = () => {
   // Why a quote closed when the opportunity's close ended it (D-424), read beside the page so a failure of it never hides the page.
   const outcome = useOpportunityOutcomeQuery(firmId, query.data?.opportunity.opportunity.id ?? "", query.data?.request.status === "closed");
   const needs = useStillNeeds(firmId, query.data?.detail.id ?? null, query.data != null);
+  // The quotes recorded on it (N-2.1): the newest is the current one (N-2.4). Read beside the page, so a failure of it never hides the page.
+  const quoted = useQuotesQuery(firmId, query.data?.request.id ?? 0, query.data != null);
+  const { current, superseded } = quoteRevisions(quoted.data ?? []);
   if (query.isError && query.data === undefined) return <Frame><LoadFailed error={query.error as Error} what="this quote" onRetry={() => void query.refetch()} /></Frame>;
   if (query.data === null) return <Frame><NotAvailable noun="quote" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
   if (query.data === undefined) return <Frame><QuoteLoading /></Frame>;
@@ -43,6 +49,8 @@ const QuotePage = () => {
   const noReply = noReplyWords(request, hasReply);
   // A send the product made is a message of its own on the thread (direction sent); one with none was recorded by hand.
   const outside = request.sent_on !== null && !detail.quoteRequestMessages.some((m) => m.quote_request_id === request.id && m.direction === "sent");
+  // The files that arrived on this quote request's emails and are stored (scanned clean): the quote's document can be one of them (N-2.2, D-730).
+  const mailFiles = detail.quoteRequestMailAttachments.filter((a) => a.status === "stored" && detail.quoteRequestMessages.some((m) => m.id === a.message_id && m.quote_request_id === request.id));
   const local = detail.quoteRequestAddresses.find((a) => a.quote_request_id === request.id)?.local_part;
   const domain = quoteReplyDomain();
   const replyTo = local && domain ? replyAddress(local, domain) : null;
@@ -104,6 +112,8 @@ const QuotePage = () => {
         replyAddress={replyTo}
       />
       <QuoteFigures request={request} />
+      {current && <QuoteDocument quoteRequestId={request.id} quote={current} canChange={canAct} mailFiles={mailFiles} onChanged={() => void quoted.refetch()} />}
+      <EarlierQuotes superseded={superseded} />
       <WhatWasSent request={request} currentVersion={detail.currentVersion} messages={detail.quoteRequestMessages} />
     </Frame>
   );
