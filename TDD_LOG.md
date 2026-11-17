@@ -735,3 +735,4 @@ One line per cycle: the test, the failing line seen, then green.
 3. SQL 3: the employer and a visitor can't name a document (42501) | red: FAIL: the employer gave PT404, expected 42501 (the advisor check had been taken out and the test seen red) | green
 4. SQL 4: a blocked, pending or not-kept attachment can't be a quote's document | red: FAIL: blocked file gave ok, expected 22023: That file isn't stored... | green
 5. SQL 5: another PEO's file, or an id that is not there, can't be a quote's document | red: FAIL: another PEO's file gave ok (expected 22023: That file isn't on this quote request's mail) | green
+6. SQL 6: a support session and a closing firm name no document (PT423) | red: FAIL: a support session gave ok, expected PT423: Nevermore support can look, not change | green

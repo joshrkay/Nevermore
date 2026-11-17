@@ -12,6 +12,8 @@ AS $$
 DECLARE
   q public.quotes;
 BEGIN
+  -- Closing firms are read-only and so is a support session (ADR 0023, 0024), checked before anything about the quote is said.
+  PERFORM public.assert_firm_writable((SELECT zs.firm_id FROM public.quotes zq JOIN public.chamber_sessions zs ON zs.id = zq.session_id WHERE zq.id = p_quote_id));
   PERFORM public.require_advisor();
   -- Only an advisor of the quote's own firm; another firm's quote and one that is not there are the same answer.
   IF NOT EXISTS (SELECT 1 FROM public.quotes x WHERE x.id = p_quote_id AND public.quote_request_in_my_firm(x.quote_request_id)) THEN

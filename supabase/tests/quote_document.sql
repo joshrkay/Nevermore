@@ -459,3 +459,25 @@ BEGIN
   PERFORM pg_temp.as_owner();
   PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'the quote kept its own document');
 END $$;
+
+-- ---------- 6. A closing firm and a support session name no document (ADR 0023, ADR 0024) ----------
+-- Catches: a document attached in a firm's read-only 30 days, or by Nevermore support while it is only looking.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); f bigint := pg_temp.mail_file('Insperity', 'stored', 'late.pdf'); stmt text := '';
+BEGIN
+  stmt := format('SELECT public.attach_quote_document(%s, %s)', q, f);
+  PERFORM pg_temp.new_user('platform_admin');
+  INSERT INTO public.user_roles (user_id, role) VALUES (pg_temp.id('platform_admin'), 'admin');
+  INSERT INTO public.support_sessions (firm_id, admin_id, admin_email, reason, started_at, ends_at)
+  VALUES (pg_temp.id('acme'), pg_temp.id('platform_admin'), 'platform_admin@example.test', 'Looking at a stuck email', now(), now() + interval '1 hour');
+  PERFORM pg_temp.as_user('platform_admin', 'acme-brokers');
+  PERFORM pg_temp.is(pg_temp.refusal(stmt), 'PT423: Nevermore support can look, not change', 'a support session');
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.support_sessions WHERE firm_id = pg_temp.id('acme');
+  INSERT INTO public.firm_closures (firm_id, asked_by, closes_at) VALUES (pg_temp.id('acme'), pg_temp.id('acme_agent'), now() + interval '30 days');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM pg_temp.is(split_part(pg_temp.refusal(stmt), ':', 1), 'PT423', 'a closing firm');
+  PERFORM pg_temp.as_owner();
+  DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
+  PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'and the quote kept its own document');
+END $$;
