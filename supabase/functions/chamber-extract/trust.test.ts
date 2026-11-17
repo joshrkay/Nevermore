@@ -83,7 +83,7 @@ describe("AI answers need evidence and a prospect's review", () => {
     }, recent: [{ sender: "user", text: "123-45-6789" }],
     extraQuestions: [{ id: "1.q", peo: "EIN 12-3456789", text: "SSN 123-45-6789?", kind: "choice", choices: ["12-3456789"], answered: false }] });
     expect(JSON.stringify(turn)).not.toMatch(/123-45-6789|12-3456789|123456789|Private employee|unsupported/);
-    expect(turn.context).toMatchObject({ fein: "[masked]6789", industry: null, medical_plans: [{ name: "Gold" }] });
+    expect(turn.context).toMatchObject({ fein: "[masked]6789", entities: [{}], industry: null, medical_plans: [{ name: "Gold" }] });
     expect(prepareTurn(turn)).toEqual(turn);
   });
 });

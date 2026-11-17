@@ -21,7 +21,9 @@ export function prepareTurn(turn: UserTurn): UserTurn {
     ...turn,
     message: redactForModel(turn.message),
     context: Object.fromEntries(Object.entries(context).flatMap(([key, value]) => {
-      if (!keys.has(key) || key === "census" || key === "entities") return [];
+      if (!keys.has(key) || key === "census") return [];
+      // Preserve presence for workspace follow-up without sending entity names or tax IDs.
+      if (key === "entities") return [[key, Array.isArray(value) ? value.map(() => ({})) : []]];
       if (key === "fein") {
         // Presence is useful to follow-up; the full identifier never is.
         return [[key, typeof value === "string" && value ? `[masked]${value.replace(/\D/g, "").slice(-4)}` : null]];
