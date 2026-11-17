@@ -14,6 +14,9 @@ AS $$
     -- sync:end decline_reasons
   ]
 $$;
+-- A helper for the column's CHECK, not an API function: no browser role runs it (the privileged-function gate in data_isolation.sql), the service role still can.
+REVOKE ALL ON FUNCTION public.quote_decline_reasons() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.quote_decline_reasons() TO service_role;
 
 ALTER TABLE public.quote_requests
   ADD COLUMN decline_reason text CONSTRAINT quote_requests_decline_reason_check CHECK (decline_reason = ANY (public.quote_decline_reasons())),

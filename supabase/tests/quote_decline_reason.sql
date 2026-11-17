@@ -522,4 +522,23 @@ BEGIN
   PERFORM pg_temp.is(lines, '["pricing", "states"]'::jsonb, 'two declines, two reasons, oldest first');
 END $$;
 
+-- ---------- 10b. Each decline's line keeps the words it gave ----------
+-- Catches: the same break as 10 for the PEO's words, which are read by their own lookup: today's words on yesterday's decline.
+DO $$
+DECLARE lines jsonb;
+BEGIN
+  SELECT jsonb_agg(x ->> 'decline_words' ORDER BY x ->> 'at') INTO lines
+  FROM jsonb_array_elements(pg_temp.activity()) x WHERE x ->> 'type' = 'quote' AND x ->> 'peo_name' = 'Insperity' AND x ->> 'event' = 'declined';
+  PERFORM pg_temp.is(lines, '["Too far below our floor for a bakery this size", "Not in Oregon"]'::jsonb, 'two declines, two sets of words, oldest first');
+END $$;
+
+
+-- ---------- 11. The column refuses a reason that is not on the list, whoever writes it ----------
+-- Catches: a write that does not come through the function (a script, a later function) storing a word the cards cannot name.
+DO $$
+BEGIN
+  PERFORM pg_temp.is(pg_temp.refusal($s$UPDATE public.quote_requests SET decline_reason = 'bored' WHERE id = $s$ || pg_temp.qr('TriNet')),
+    '23514: new row for relation "quote_requests" violates check constraint "quote_requests_decline_reason_check"', 'a reason not on the list, written directly');
+END $$;
+
 \echo quote_decline_reason: all passed

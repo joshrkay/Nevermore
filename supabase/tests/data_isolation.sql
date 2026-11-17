@@ -1456,7 +1456,7 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true, true, ''oldest_waiting'')', 'the queue: one page, searched, filtered, sorted'),
   ('advisor_record_quote_send(p_session_id uuid, p_peo text, p_sent_on date)', 'advisor',
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
-  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
+  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text, p_decline_reason text, p_decline_words text)', 'advisor',
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
