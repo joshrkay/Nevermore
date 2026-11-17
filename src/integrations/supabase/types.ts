@@ -150,7 +150,10 @@ export type Database = {
           submission: Json | null
           transcript: Json
           updated_at: string
-          user_id: string
+          // The employer; empty for a broker-started intake until its invitee accepts (20261123120000, D-1703).
+          user_id: string | null
+          // The member of the firm who started the intake, for a broker-started one; set by the database (20261123120000).
+          started_by: string | null
         }
         Insert: {
           chamber_data?: Json
@@ -166,6 +169,7 @@ export type Database = {
           last_activity_at?: never
           referral_code?: string | null
           schema_version?: never
+          started_by?: never
           status?: string
           submission?: Json | null
           transcript?: Json
@@ -190,6 +194,7 @@ export type Database = {
           // The source is fixed when the intake is created: the database keeps it whatever an update sends.
           referral_code?: never
           schema_version?: never
+          started_by?: never
           status?: string
           submission?: Json | null
           transcript?: Json
@@ -1677,6 +1682,28 @@ export type Database = {
       firm_takes_intakes: {
         Args: { p_address: string }
         Returns: boolean
+      }
+      // A broker starts an intake for a client, enters answers, invites the client and reminds them (20261123120000, slice 5.3: P-2.2, P-2.4).
+      start_broker_intake: {
+        Args: { p_opportunity_id: string; p_firm_id?: string }
+        Returns: Json
+      }
+      broker_may_enter_intake: {
+        Args: { p_intake_id: string }
+        Returns: boolean
+      }
+      intake_invite_status: {
+        Args: { p_intake_id: string }
+        Returns: Json
+      }
+      // The employer opens the link the firm sent: what the page shows before sign-in, and taking the intake over (20261123120000).
+      peek_intake_invite: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: { firm_name: string; contact_name: string | null; expires_at: string }[]
+      }
+      accept_intake_invite: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: Json
       }
       // Signing up a firm and its approval (20261116170000).
       sign_up_firm: {

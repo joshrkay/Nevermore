@@ -249,6 +249,8 @@
 \i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123120000_broker_intake.sql
+\i supabase/migrations/20261123120100_broker_intake_columns.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
@@ -784,6 +786,11 @@ BEGIN
     INSERT INTO public.opportunities (firm_id, account_id, name, intake_id, main_contact_id)
     VALUES (fid, acc1, 'Fixture search', pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), main_contact) RETURNING id INTO opp1;
     INSERT INTO public.opportunities (firm_id, account_id, name) VALUES (fid, acc2, 'Fixture search');
+    -- 5.3: a withdrawn invitation to the certified intake's employer (the table's one row for each firm; reached only through the functions, by nobody directly).
+    INSERT INTO public.intake_invitations (firm_id, intake_id, email, token_hash, expires_at, status)
+    VALUES (fid, pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END), 'invitee-' || f || '@client.example', encode(extensions.digest('intake-invitation-' || f, 'sha256'), 'hex'), now() + interval '14 days', 'withdrawn');
+    -- 5.3: the certified intake is one the firm's member started (no new row, so no count of intakes moves): the broker functions find it, and are told it is closed.
+    UPDATE public.chamber_sessions SET started_by = agent WHERE id = pg_temp.id(CASE f WHEN 'a' THEN 'pa_cert' ELSE 'pb_cert' END);
     -- CRM-E1.5: a note on each account and a task on the owned one.
     INSERT INTO public.activities (firm_id, account_id, kind, body) VALUES (fid, acc1, 'note', 'Fixture note'), (fid, acc2, 'note', 'Fixture note');
     INSERT INTO public.activities (firm_id, account_id, kind, title, due_on, assignee_id) VALUES (fid, acc1, 'task', 'Fixture task', current_date, agent);
@@ -936,6 +943,9 @@ INSERT INTO matrix VALUES
   -- Invitations to join a firm (20261116190000): nobody reads them through the API, owners included; an owner reaches
   -- the pending ones through firm_pending_invitations(), and the token's hash is never returned (supabase/tests/firm_invitations.sql).
   ('public.firm_invitations',                           '{}', NULL),
+  -- The invitation of a broker-started intake to its employer (20261123120000): nobody reads it through the API, firm members included; they read where it stands through
+  -- intake_invite_status(), and the link's hash is never returned (supabase/tests/broker_intake.sql).
+  ('public.intake_invitations',                         '{}', NULL),
   -- The organisations a firm lists, and the requests to join it (CRM-P1.4, 20261118100000): closed to the API, owners included; an owner
   -- reads and changes them through functions that check ownership (supabase/tests/join_by_organisation.sql).
   ('public.firm_organisations',                         '{}', NULL),
@@ -1321,7 +1331,14 @@ INSERT INTO callable VALUES
   ('intake_owner_in_my_firm(p_user_id uuid)', 'own',     NULL, 'the consent and profile policies call it as the caller: whether a person owns an intake of a firm the caller currently belongs to'),
   ('colleague_in_my_firm(p_user_id uuid)',    'own',     NULL, 'the profile policy calls it as the caller: whether a person is a current member of a firm the caller currently belongs to'),
   ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
-  ('firm_takes_intakes(p_address text)',     'anyone',  NULL, 'whether the link at a firm address takes intakes now (P-2.1, D-1741): a yes or no for a signed-out visitor, nothing else about the firm; no name, no reason'),
+  ('start_broker_intake(p_opportunity_id uuid, p_firm_id uuid)', 'own', NULL, 'a current member of the firm starts the intake of one of its opportunities, in the firm and with no employer user (P-2.2, D-1703); the same refusal for another firm''s opportunity as for one that does not exist (supabase/tests/broker_intake.sql)'),
+  ('invite_intake_client(p_intake_id uuid, p_email text, p_contact_name text, p_token_hash text)', 'own', NULL, 'a current member of the intake''s firm invites the client of a broker-started intake with a one-use link of 14 days, kept as a hash (D-1711); the same refusal for another firm''s intake as for one that does not exist'),
+  ('remind_intake_invite(p_intake_id uuid, p_token_hash text)', 'own', NULL, 'a current member of the intake''s firm replaces the waiting link with a fresh one and revokes the old (D-1711); the same refusal for another firm''s intake as for one that does not exist'),
+  ('intake_invite_status(p_intake_id uuid)', 'own', NULL, 'a current member of the intake''s firm reads where the invitation stands, never the link or its hash; the same refusal for another firm''s intake as for one that does not exist'),
+  ('broker_may_enter_intake(p_intake_id uuid)', 'own', NULL, 'whether the caller may enter answers into an intake as the broker: a yes or no about the caller only, false for anyone who is not a current member of its firm'),
+  ('accept_intake_invite(p_token_hash text, p_firm_address text)', 'own', NULL, 'the person signed in with the invited email verified, at the firm''s own address, becomes the intake''s employer (D-1703, D-1711); acts only for the caller and the one invitation its token opens, and never for a member of the firm'),
+  ('peek_intake_invite(p_token_hash text, p_firm_address text)', 'anyone', NULL, 'what the page behind an invitation link shows before sign-in (D-1711): the firm''s name, who it is for and when it ends, for the one link its hash opens at that firm''s own address, and nothing else; marks the link opened'),
+  ('firm_takes_intakes(p_address text)',     'anyone',  NULL,'whether the link at a firm address takes intakes now (P-2.1, D-1741): a yes or no for a signed-out visitor, nothing else about the firm; no name, no reason'),
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('sign_up_firm(p_name text, p_address text)', 'own',     NULL, 'a signed-in person with a verified email makes a firm of their own and becomes its owner; refuses guests and unverified accounts; acts only for the caller'),
   ('invite_member(p_firm_id uuid, p_email text, p_role text, p_team_id uuid, p_token_hash text)', 'own', NULL, 'a current owner of the firm invites an email with a role; refused for every other caller, another firm''s owner and a platform admin included (supabase/tests/firm_invitations.sql)'),
@@ -2222,6 +2239,14 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   -- A referral partner is its firm's own: adding one to a firm, or changing one by its code, is that firm's members' alone.
   ('advisor_add_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_add_referral_partner('probe-added', 'Probe', 'other', {firm})::text$$),
   ('advisor_update_referral_partner', 'advisor', 'by_id', $$SELECT public.advisor_update_referral_partner({partner}, 'Probe', 'other', {firm}, 1)::text$$);
+-- A broker starts and works an intake (5.3, P-2.2): a current member of the firm acts on the firm's own opportunity and intakes; the other firm's members, a platform admin, a former member, a prospect,
+-- a guest and signed-out callers are refused, or told there is no such row (PT404), never served. Each firm's certified intake is one its member started (the fixtures), so a member gets past the firm
+-- to "this intake is closed" (55000) from the two that write to an open one, and the opportunity already holds an intake, so a member of its firm is told PT409 by the start.
+INSERT INTO fprobe (fn, who, shape, call, member_ok) VALUES
+  ('start_broker_intake', 'advisor', 'by_id', $$SELECT public.start_broker_intake({opp})::text$$, '^PT409$'),
+  ('invite_intake_client', 'advisor', 'by_id', $$SELECT public.invite_intake_client({sid}, 'probe@example.test', NULL, repeat('a', 64))::text$$, '^55000$'),
+  ('remind_intake_invite', 'advisor', 'by_id', $$SELECT public.remind_intake_invite({sid}, repeat('b', 64))::text$$, '^55000$'),
+  ('intake_invite_status', 'advisor', 'by_id', $$SELECT public.intake_invite_status({sid})::text$$, '^ok:');
 -- Invitations (CRM-P1.2): only a current owner of the firm invites, resends, withdraws and lists. The matrix's admin and second
 -- firm owner are those owners; every other caller, the other firm's owner and a platform admin included, is refused (D-16, D-18).
 INSERT INTO fprobe (fn, who, shape, call) VALUES
@@ -3543,6 +3568,11 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
   ('public.firm_invitations', 'firm', 'its own firm_id; closed to the API, owners read the pending ones through a function',
    $m$INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, expires_at)
       VALUES ({firm}, 'probe-{tag}@example.test', 'agent', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '7 days') RETURNING ctid::text$m$, false),
+  -- The invitation of a broker-started intake to its employer (5.3): its own firm_id. Closed to the API, members included (they read where it stands through a
+  -- function), so no positive control. The probe row is a withdrawn one so it never meets the one-waiting-link-per-intake index.
+  ('public.intake_invitations', 'firm', 'its own firm_id; closed to the API, members read where it stands through a function',
+   $m$INSERT INTO public.intake_invitations (firm_id, intake_id, email, token_hash, expires_at, status)
+      VALUES ({firm}, {intake}, 'probe-{tag}@example.test', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '14 days', 'withdrawn') RETURNING ctid::text$m$, false),
   -- A firm's listed organisation and a request to join it (CRM-P1.4): its own firm_id. Closed to the API, owners included (an owner reaches
   -- them through functions), so no positive control. The request's probe row is a declined one so it never meets the one-open-per-person index.
   ('public.firm_organisations', 'firm', 'its own firm_id; closed to the API, owners read and change the list through functions',
@@ -3718,7 +3748,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests',
   'public.peo_authorizations');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures', 'public.support_sessions');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.intake_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures', 'public.support_sessions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -4634,6 +4664,17 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('current_intake_consent_id', 'own', 'consent trigger helper, as the caller: row security limits it to the caller''s own agreement'),
   ('firm_public_name', 'public', 'what a firm address shows before sign-in: the name of a firm that exists, nothing else (D-27)'),
   ('firm_takes_intakes', 'public', 'whether the link at a firm address takes intakes now: a yes or no, nothing else about the firm (P-2.1, D-1741)'),
+  ('peek_intake_invite', 'public', 'what the page behind an invitation link shows before sign-in: the firm''s name, who it is for and when it ends, for the one link its hash opens (D-1711)'),
+  ('start_broker_intake', 'firm_scoped', 'a current member of the firm starts the intake of one of its opportunities (5.3); the same refusal for another firm''s opportunity as for one that does not exist (supabase/tests/broker_intake.sql)'),
+  ('invite_intake_client', 'firm_scoped', 'a current member of the intake''s firm invites the client of a broker-started intake; the same refusal for another firm''s intake as for one that does not exist (supabase/tests/broker_intake.sql)'),
+  ('remind_intake_invite', 'firm_scoped', 'a current member of the intake''s firm replaces the waiting link with a fresh one; the same refusal for another firm''s intake as for one that does not exist (supabase/tests/broker_intake.sql)'),
+  ('intake_invite_status', 'firm_scoped', 'a current member of the intake''s firm reads where the invitation stands, never its hash; the same refusal for another firm''s intake as for one that does not exist (supabase/tests/broker_intake.sql)'),
+  ('broker_may_enter_intake', 'own', 'whether the caller may enter answers into an intake as the broker: about the caller only, false for anyone who is not a current member of its firm'),
+  ('accept_intake_invite', 'own', 'the person signed in with the invited email verified takes over the intake the one link they hold opens, at that firm''s address; never a member of the firm (supabase/tests/broker_intake.sql)'),
+  ('record_intake_invite_delivery', 'service_only', 'what the invite-client function records once it has tried the email: no API role can call it'),
+  ('broker_intake_for_member', 'service_only', 'the broker-started intake a member is working on, locked for a write: asked inside the broker functions; no API role can call it'),
+  ('work_broker_started_intake', 'trigger', 'a member''s save of an intake their firm started marks what they entered as a broker entry and leaves the employer''s answers, the FEIN and the employer alone (D-1751, D-1710)'),
+  ('refuse_member_certification', 'trigger', 'refuses a certification from a member of the intake''s firm: only the employer certifies (D-1703)'),
   ('firm_for_intake_link', 'service_only', 'the firm whose link an address is, when it takes intakes now: the intake trigger and firm_takes_intakes ask it; not callable through the API'),
   ('keep_intake_firm', 'trigger', 'places a new intake in the firm of the address it was started at (the default firm with none), refuses a link that takes none, and freezes the firm afterwards (P-2.1, D-1704)'),
   ('intake_accepts_files', 'deferred', 'upload policy helper: answers for any intake of any firm, not the caller''s; the file stories scope it'),
@@ -4848,6 +4889,7 @@ INSERT INTO secret_columns VALUES
   ('public.broker_mailboxes', 'token_ciphertext', 'ciphertext', 'a broker''s mailbox refresh token, sealed by the mailbox function; only the sending function reads it back'),
   ('public.broker_mailboxes', 'token_iv', 'ciphertext', 'the sealing''s initialisation vector, kept with the ciphertext it belongs to'),
   ('public.firm_invitations', 'token_hash', 'hash', 'the SHA-256 of an invitation link''s secret; the link itself is mailed once and never kept'),
+  ('public.intake_invitations', 'token_hash', 'hash', 'the SHA-256 of a broker-started intake''s invitation link (5.3, D-1711); the link itself is mailed once and never kept'),
   ('public.bundle_links', 'token_hash', 'hash', 'the SHA-256 of a bundle link''s token (6.6b, ADR 0003); the token is answered once to the advisor who issues it and never kept'),
   ('public.conversation_message_files', 'token_hash', 'hash', 'the SHA-256 of a file link''s token (6.3, D-605); the token is answered only to send-mail, which puts it in the message, and never kept');
 -- The functions the API roles can run that name a secret's table, each swept below as every caller with a statement that calls it.
@@ -4864,6 +4906,16 @@ INSERT INTO secret_readers VALUES
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.invite_member({firm_a}, 'secret-probe@example.test', 'agent', NULL, repeat('b', 64)) f$$),
   ('resend_invitation(p_invitation_id uuid, p_token_hash text)', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.resend_invitation({inv_a}, repeat('a', 64)) f$$),
   ('cancel_invitation(p_invitation_id uuid)', $$SELECT public.cancel_invitation({inv_a})::text$$),
+  -- 5.3: the invitation of a broker-started intake. Each reads its row to check the hash given, or to say where it stands; none answers the hash.
+  ('invite_intake_client(p_intake_id uuid, p_email text, p_contact_name text, p_token_hash text)',
+   $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.invite_intake_client((SELECT s.id FROM public.chamber_sessions s WHERE s.firm_id = {firm_a} ORDER BY s.created_at, s.id LIMIT 1), 'secret-probe@example.test', NULL, repeat('b', 64)) f$$),
+  ('remind_intake_invite(p_intake_id uuid, p_token_hash text)',
+   $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.remind_intake_invite((SELECT s.id FROM public.chamber_sessions s WHERE s.firm_id = {firm_a} ORDER BY s.created_at, s.id LIMIT 1), repeat('a', 64)) f$$),
+  ('peek_intake_invite(p_token_hash text, p_firm_address text)',
+   $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.peek_intake_invite(repeat('a', 64), 'acme-advisory') f$$),
+  ('accept_intake_invite(p_token_hash text, p_firm_address text)', $$SELECT public.accept_intake_invite(repeat('a', 64), 'acme-advisory')::text$$),
+  ('intake_invite_status(p_intake_id uuid)',
+   $$SELECT public.intake_invite_status((SELECT s.id FROM public.chamber_sessions s WHERE s.firm_id = {firm_a} ORDER BY s.created_at, s.id LIMIT 1))::text$$),
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)',
    $$SELECT public.issue_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), 1, gen_random_uuid(), '[{"name": "a.pdf", "what": "A"}]')::text$$),
   ('revoke_bundle_link(p_quote_request_id bigint, p_reason text)', $$SELECT public.revoke_bundle_link((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1))::text$$),
@@ -5102,7 +5154,7 @@ BEGIN
   -- firm_public_name is on the list on purpose (CRM-P1.3a): it is the one thing a firm address shows before sign-in: a firm's name, and nothing else (D-27).
   -- firm_takes_intakes (P-2.1) is the other: whether a firm's link takes intakes, a yes or no.
   WHERE p.prosecdef AND has_function_privilege('anon', p.oid, 'EXECUTE');
-  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), firm_takes_intakes(p_address text), has_role(_role app_role), is_advisor(), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
+  IF missing IS DISTINCT FROM 'firm_public_name(p_address text), firm_takes_intakes(p_address text), has_role(_role app_role), is_advisor(), peek_intake_invite(p_token_hash text, p_firm_address text), report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)' THEN
     RAISE EXCEPTION 'FAIL: SECURITY DEFINER functions signed-out callers can run changed: %', missing;
   END IF;
 

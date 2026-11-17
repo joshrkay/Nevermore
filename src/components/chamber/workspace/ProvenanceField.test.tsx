@@ -7,6 +7,7 @@ import CompanyTab from "./CompanyTab";
 import ProvenanceField from "./ProvenanceField";
 import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
+import { BrokerEntryContext } from "./BrokerEntryContext";
 
 const inferred = applyExtraction(
   { data: EMPTY_CHAMBER_DATA, provenance: {} },
@@ -281,5 +282,69 @@ describe("advisor verification and what else was heard", () => {
     expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm Employee Count" }));
     expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+  });
+});
+
+describe("an answer a broker entered (D-1710)", () => {
+  const MEMBER = "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11";
+  const brokered: IntakeState = {
+    data: { ...EMPTY_CHAMBER_DATA, company_name: "Acme", employee_count: 40 },
+    provenance: {
+      company_name: { status: "inferred", source: { kind: "broker_entry", member_id: MEMBER }, updated_at: "2026-11-20T10:00:00.000Z" },
+      employee_count: { status: "inferred", source: { kind: "broker_entry", member_id: MEMBER }, updated_at: "2026-11-20T10:00:00.000Z" },
+    },
+  };
+
+  // Break caught: the employer is told Lenore captured an answer their broker typed, so they can't tell it from what they said.
+  it("tells the employer their broker entered it, not that Lenore captured it", () => {
+    render(<Harness initial={brokered} tab="company" />);
+    expect(screen.getAllByText("Your broker entered this").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("Lenore captured this — please confirm")).not.toBeInTheDocument();
+  });
+
+  // Break caught: changing a broker's answer leaves it marked as the broker's, so the employer's own answer is shown as the firm's.
+  it("becomes the employer's own once they change it", () => {
+    render(<Harness initial={brokered} tab="company" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Employee Count" }));
+    fireEvent.change(screen.getByLabelText("Employee Count"), { target: { value: "42" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByText("42")).toBeInTheDocument();
+    expect(screen.getByText("You confirmed this")).toBeInTheDocument();
+    // The other answer is still the broker's.
+    expect(screen.getByText("Your broker entered this")).toBeInTheDocument();
+  });
+
+  // Break caught: once the employer's certification has confirmed a broker's entry the page still asks them to confirm it, or forgets whose it was.
+  it("stays marked as the broker's, and confirmed, after the employer certified", () => {
+    const certified: IntakeState = {
+      ...brokered,
+      provenance: {
+        company_name: { status: "confirmed", source: { kind: "broker_entry", member_id: MEMBER }, updated_at: "2026-11-20T10:00:00.000Z", employer_confirmed_at: "2026-11-21T10:00:00.000Z" },
+      },
+    };
+    render(<Harness initial={certified} tab="company" />);
+    expect(screen.getByText("Confirmed")).toBeInTheDocument();
+    expect(screen.getByText("Your broker entered this")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm Business Name" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the FEIN in a broker's chamber (ADR 0006, D-1751)", () => {
+  // Break caught: the broker is offered a box for the FEIN, which only the employer types.
+  it("offers no way to type the FEIN, and every other answer keeps its edit", () => {
+    render(
+      <BrokerEntryContext.Provider value>
+        <ProvenanceField label="FEIN" field="fein" display={null} raw={null} onAction={() => {}} />
+        <ProvenanceField label="Business Name" field="company_name" display={null} raw={null} onAction={() => {}} />
+      </BrokerEntryContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "Add FEIN" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Business Name" })).toBeInTheDocument();
+    expect(screen.getByText(/the employer types this/i)).toBeInTheDocument();
+  });
+
+  it("is typed by the employer as before", () => {
+    render(<ProvenanceField label="FEIN" field="fein" display={null} raw={null} onAction={() => {}} />);
+    expect(screen.getByRole("button", { name: "Add FEIN" })).toBeInTheDocument();
   });
 });

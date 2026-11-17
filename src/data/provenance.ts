@@ -31,7 +31,11 @@ export type FieldSource =
   | { kind: "transcript"; message_id: string; quote?: string; prompt_version?: number }
   // A value the prospect applied from an uploaded document (document-extract's candidates).
   | { kind: "document"; document_id: string; document_name?: string; location?: string }
-  | { kind: "prospect_edit" };
+  | { kind: "prospect_edit" }
+  // An answer a member of the firm entered in a broker-started intake (D-1710): typed on a tab, or typed or pasted to Lenore. member_id is the member (a user id); message_id and quote are
+  // set when it was told to Lenore, as a transcript source's are. It is never the employer's confirmed answer: certifying confirms it (the status), and the source stays so the broker's
+  // step can show what the employer changed. public.provenance_source_is_valid (20261123120000) keeps the same entries.
+  | { kind: "broker_entry"; member_id: string; message_id?: string; quote?: string };
 
 export interface FieldCandidate {
   value: unknown;
@@ -42,6 +46,8 @@ export interface FieldProvenance {
   status: FieldStatus;
   source: FieldSource;
   updated_at: string; // ISO timestamp
+  /** When the employer certified over a broker's entry, which confirmed it (set by the database, D-1710). */
+  employer_confirmed_at?: string;
   /** The competing values, present only while the field is conflicting. */
   candidates?: FieldCandidate[];
   /**
@@ -193,6 +199,12 @@ const sourceSchema: z.ZodType<FieldSource, z.ZodTypeDef, unknown> = z.union([
     location: z.string().optional(),
   }),
   z.object({ kind: z.literal("prospect_edit") }),
+  z.object({
+    kind: z.literal("broker_entry"),
+    member_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+    message_id: z.string().min(1).optional(),
+    quote: z.string().max(MAX_QUOTE_CHARS).optional(),
+  }),
 ]) as unknown as z.ZodType<FieldSource, z.ZodTypeDef, unknown>;
 
 const candidateSchema = z.object({ value: z.unknown(), source: sourceSchema });
@@ -202,6 +214,8 @@ const provenanceSchema = z.object({
   status: z.enum(FIELD_STATUSES),
   source: sourceSchema,
   updated_at: z.string(),
+  // Set by the database when the employer certified over a broker's entry (20261123120000): kept, so a save sends it back as it was.
+  employer_confirmed_at: z.string().optional(),
   candidates: z.array(candidateSchema).optional(),
   // Only notes, so a malformed one is dropped rather than losing the whole entry.
   also_heard: z
@@ -272,7 +286,9 @@ export function visibleAlsoHeard(entry: FieldProvenance, candidatesShown = true)
 
 // Which source stands when two disagree: the prospect's own answer, then a document they applied,
 // then the conversation. The value that loses is kept on the field as also_heard.
-const RANK: Record<FieldSource["kind"], number> = { prospect_edit: 3, document: 2, transcript: 1 };
+// A broker's entry ranks lowest (D-1710): nothing a broker entered counts as the employer's, so the employer's own word, a document they applied or their conversation with Lenore stands
+// over it, and a broker's value that disagrees with theirs is only noted.
+const RANK: Record<FieldSource["kind"], number> = { prospect_edit: 4, document: 3, transcript: 2, broker_entry: 1 };
 
 // The rank a field holds: its source's, or while it is conflicting, its highest candidate's.
 const fieldRank = (entry: FieldProvenance) =>
@@ -378,6 +394,9 @@ export function mergeHeard(
       ),
     };
   }
+
+  // A broker's later entry replaces their own earlier one (the same source kind, not two voices disagreeing: the firm is correcting itself), whoever the member was.
+  if (source.kind === "broker_entry" && prev.source.kind === "broker_entry" && !conflicting) return take(status);
 
   // The prospect corrected it in chat. A value from another kind of source is noted; one from the same kind is what
   // they corrected.
@@ -703,6 +722,8 @@ export function describeSource(source: FieldSource): string {
       return `From document ${source.document_name ?? source.document_id}${source.location ? ` (${source.location})` : ""}`;
     case "prospect_edit":
       return "Entered or confirmed by the prospect";
+    case "broker_entry":
+      return source.quote ? `Told to Lenore by the firm: “${source.quote}”` : "Entered by the firm";
   }
 }
 
@@ -773,4 +794,40 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
     corrections: parseFieldList(m.corrected_fields),
     unknown,
   };
+}
+
+// ---------- A broker working the chamber (D-1751) ----------
+
+/**
+ * What the chamber holds after a member of the firm changed an intake the firm started, as the database will keep it (public.work_broker_started_intake): every answer whose value changed is a broker
+ * entry naming the member, inferred, with the message and words kept when it was heard from a message; an answer the employer typed, closed or gave Lenore keeps what it held, and the FEIN, which only
+ * the employer types, is never changed. Everything that goes into the chamber (typing, Lenore, a document) goes through updateIntake, so this is the one place the broker's marks are made on screen.
+ */
+export function markBrokerEntries(before: IntakeState, after: IntakeState, memberId: string, now: Date = new Date()): IntakeState {
+  const data = { ...after.data } as Record<string, unknown>;
+  const provenance: ProvenanceMap = { ...before.provenance };
+  const was = before.data as unknown as Record<string, unknown>;
+  for (const key of Object.keys(after.data) as FieldKey[]) {
+    if (JSON.stringify(data[key]) === JSON.stringify(was[key])) {
+      data[key] = was[key];
+      continue;
+    }
+    const held = before.provenance[key];
+    const theirs = key === "fein" || held?.source.kind === "prospect_edit" || held?.status === "not_applicable"
+      || (!isEmpty(was[key]) && held?.source.kind !== "broker_entry");
+    if (theirs) {
+      data[key] = was[key];
+      continue;
+    }
+    const heard = after.provenance[key]?.source;
+    const source: FieldSource = { kind: "broker_entry", member_id: memberId };
+    if (heard && (heard.kind === "transcript" || heard.kind === "broker_entry")) {
+      const messageId = heard.message_id;
+      if (messageId) source.message_id = messageId;
+      if (heard.quote) source.quote = heard.quote;
+    }
+    if (isEmpty(data[key])) delete provenance[key];
+    else provenance[key] = { status: "inferred", source, updated_at: now.toISOString() };
+  }
+  return { data: data as unknown as ChamberData, provenance };
 }

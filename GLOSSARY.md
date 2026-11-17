@@ -878,6 +878,14 @@ _Avoid_: edit (of a fixed note)
 When something last happened on an account: the newest of its creation, a call, note or task logged or completed on it, its contacts or its opportunities, a quote request's status changing and (from Epic 6) an email. Editing a field is not activity. A call counts at when it took place, a note or a task when it was made, a task again when it is done and a note at each addition. Opening a task again, or changing a call, a task or a note's text, is not activity (code: `account_activity_times(firm, account)`, the one function that gains a branch for email in Epic 6).
 _Avoid_: last modified, updated
 
+**Broker-started intake**:
+An intake a member of a firm starts on one of the firm's opportunities (New quote, step 2), with its account and opportunity made first (ADR 0025): it is in the firm, linked to the opportunity from the start, and has no employer user until the client accepts the **Intake invitation**. The firm's members read it as they read every intake of the firm and enter answers as **Broker entries**; only the employer certifies, and the database refuses a certification from a member of the firm.
+_Avoid_: draft intake, agent intake
+
+**Intake invitation**:
+The one-use link, at the firm's address and good for 14 days, that asks the client of a **Broker-started intake** to finish and certify it. It is emailed as "<Firm> via Nevermore" by Nevermore's own sender, kept only as a hash, and opening it (signed in with the address it was sent to) makes the intake the client's. **Remind** sends a fresh link and revokes the old; the first invitation's time and when the client last opened a link carry over, and show on the broker's step 3.
+_Avoid_: client link, share link
+
 ### Advisors
 
 **Advisor Console**:
@@ -1032,8 +1040,12 @@ An answer read from an uploaded document. It waits for the prospect to apply it,
 _Avoid_: suggestion, extracted value
 
 **Field source**:
-Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), or the prospect's own action in the workspace. Typed and spoken messages are the same kind of source: when they give different answers, the field is conflicting and the prospect chooses.
+Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), the prospect's own action in the workspace, or a **Broker entry**. Typed and spoken messages are the same kind of source: when they give different answers, the field is conflicting and the prospect chooses.
 _Avoid_: origin, provenance (provenance is the source and the field status together)
+
+**Broker entry**:
+A field source for an answer a member of the firm entered in an intake the firm started: typed on a tab, or typed or pasted to Lenore (then with the message and the words it came from). It carries the member who entered it and is never the employer's confirmed answer: its status is inferred until the employer certifies, which confirms it as theirs and leaves the source standing, so the firm can see what the employer changed. The employer sees it as "Your broker entered this", and an answer they change becomes theirs. It ranks below the employer's own word, a document they applied and their conversation with Lenore, so what the employer said is never replaced by it. The FEIN is never a broker entry: the employer types it.
+_Avoid_: agent entry, firm answer, prefill
 
 **Evidence quote**:
 The prospect's own words, from the message an extracted answer came from, that the answer rests on, kept short. Only an answer has one: a field the prospect never answered, or said they don't know, is never quoted.

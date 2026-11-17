@@ -52,6 +52,7 @@ const AdvisorMembersPage = lazy(() => import("./pages/advisor/AdvisorMembersPage
 const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
 const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
 const JoinFirmPage = lazy(() => import("./pages/JoinFirmPage"));
+const IntakeInvitePage = lazy(() => import("./pages/IntakeInvitePage"));
 const FirmInvitationsPage = lazy(() => import("./pages/FirmInvitationsPage"));
 const ChooseFirmPage = lazy(() => import("./pages/ChooseFirmPage"));
 // Read rarely, so kept out of the main bundle too.
@@ -74,6 +75,11 @@ const AppRoutes = () => (
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/firms/new" element={<SignUpFirmPage />} />
                 <Route path="/join" element={<JoinFirmPage />} />
+                {/* The link in a broker's invitation to finish and certify an intake (slice 5.3): the secret is after the #, and the database decides who may take the intake over. */}
+                <Route path="/intake-invite" element={<IntakeInvitePage />} />
+                {/* The existing intake (Lenore and the tabs) opened by a member of the firm on an intake the firm started (slice 5.3, D-1751): New quote's step 2 (slice 5.5) is this chamber, and it has
+                    no menu to put around it. The employer's agreement is the employer's, so no consent gate; the database decides who may enter answers there. */}
+                <Route path="/client-intake/:intakeId" element={<RequireFirm><ChamberPage /></RequireFirm>} />
                 <Route path="/choose-firm" element={<ChooseFirmPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />

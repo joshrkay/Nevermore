@@ -17,6 +17,7 @@ import WorkersCompTab from "./WorkersCompTab";
 import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
+import { BrokerEntryContext } from "./BrokerEntryContext";
 import { RequestedFieldsContext } from "./RequestedFieldsContext";
 import { NO_REQUESTED_FIELDS } from "@/data/informationRequest";
 import PEOMatchTab, { type PEOMatchTabProps } from "../PEOMatchTab";
@@ -69,6 +70,8 @@ interface LiveWorkspaceProps {
   requestedQuestions?: readonly ExtraQuestionRef[];
   /** The PEOs the database lists, when the page already reads them (usePeoCatalog); otherwise PEO Match reads them. */
   peoCatalog?: { peos: PeoRecord[]; status: PeoCatalogStatus };
+  /** A member of the firm working an intake the firm started, as the broker (D-1751): the employer's own steps, Certify & sign and the FEIN, are left to the employer. */
+  brokerEntry?: boolean;
 }
 
 const NO_REQUESTED_QUESTIONS: readonly ExtraQuestionRef[] = [];
@@ -115,6 +118,7 @@ const LiveWorkspace = ({
   onExtraAnswers,
   requestedQuestions = NO_REQUESTED_QUESTIONS,
   peoCatalog,
+  brokerEntry = false,
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
@@ -148,7 +152,7 @@ const LiveWorkspace = ({
 
       {/* Tab bar */}
       <div className="border-b border-border flex overflow-x-auto flex-shrink-0">
-        {WORKSPACE_TABS.map(tab => (
+        {WORKSPACE_TABS.filter((tab) => !(brokerEntry && tab.key === "reckoning")).map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -165,6 +169,7 @@ const LiveWorkspace = ({
       </div>
 
       {/* Tab content */}
+      <BrokerEntryContext.Provider value={brokerEntry}>
       <VerifiedFieldsContext.Provider value={verified}>
         <RequestedFieldsContext.Provider value={requested}>
         <div className="flex-1 overflow-y-auto">
@@ -191,7 +196,7 @@ const LiveWorkspace = ({
               data={data}
               selectedPeo={chosenPeo}
               onSelect={setChosenPeo}
-              onProceed={() => setActiveTab("reckoning")}
+              onProceed={() => setActiveTab(brokerEntry ? "review" : "reckoning")}
               extraAnswers={extraAnswers}
               onExtraAnswers={isDemo ? undefined : onExtraAnswers}
               requestedQuestions={requestedQuestions}
@@ -214,6 +219,7 @@ const LiveWorkspace = ({
         </div>
         </RequestedFieldsContext.Provider>
       </VerifiedFieldsContext.Provider>
+      </BrokerEntryContext.Provider>
     </div>
   );
 };

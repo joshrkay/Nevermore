@@ -11,7 +11,7 @@ import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup } from "@/data/intakeBackup";
 import { intakeSourceColumns, recalledSource } from "@/data/intakeSource";
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
-import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, markBrokerEntries, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
 import { NO_EXTRA_ANSWERS, parseExtraAnswers, type ExtraAnswers } from "@/data/extraAnswers";
 import { describeRequiredKeys } from "@/data/readiness";
@@ -50,7 +50,7 @@ export const VERIFY_EMAIL_MESSAGE = "Certifying needs a verified email. Verify y
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
   | "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
-  | "chosen_peo" | "extra_answers" | "created_at" | "file_id" | "user_id"
+  | "chosen_peo" | "extra_answers" | "created_at" | "file_id" | "user_id" | "started_by"
 >;
 
 /** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
@@ -70,6 +70,11 @@ interface UseChamberSessionReturn {
   fileId: string | null;
   /** True when a requested session couldn't be opened; no replacement is created until startNew(). */
   resumeFailed: boolean;
+  /**
+   * True when the intake on screen is one the caller's firm started and the caller is working it as the broker, not as its employer (D-1751): what they enter is marked as a broker entry,
+   * and the chamber leaves the employer's own steps (certifying, the FEIN) to the employer.
+   */
+  brokerEntry: boolean;
   /** Starts a fresh intake. Never resumes an existing one. */
   startNew: () => void;
   /**
@@ -197,7 +202,7 @@ function unexplainedFailure(error: unknown, sessionId: string): SubmitFailure {
   };
 }
 const ROW_COLUMNS =
-  "id, user_id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, extra_answers, created_at, file_id";
+  "id, user_id, started_by, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, extra_answers, created_at, file_id";
 // What a certification reads back: the submission as the database stamped it (its File ID, version and
 // documents), and the intake's File ID.
 const CERTIFIED_COLUMNS = "id, data_version, status, submission, file_id";
@@ -322,6 +327,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [fileId, setFileId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false);
+  // Working an intake the firm started, as the broker (D-1751): whether, and as whom (the member's user id, which names them on every entry).
+  const [brokerEntry, setBrokerEntry] = useState(false);
+  const brokerRef = useRef<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
@@ -944,7 +952,18 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .eq("id", id)
         .maybeSingle();
       if (error) console.error("Failed to load session:", error);
-      if (!data || data.user_id !== userId) return "unavailable";
+      if (!data) return "unavailable";
+      // The one intake that isn't the caller's own that opens here is one their firm started, when the database says they may enter answers there (D-1751).
+      if (data.user_id !== userId) {
+        if (!data.started_by) return "unavailable";
+        const may = await supabase.rpc("broker_may_enter_intake", { p_intake_id: id });
+        if (may.error || may.data !== true) return "unavailable";
+        brokerRef.current = userId;
+        setBrokerEntry(true);
+      } else {
+        brokerRef.current = null;
+        setBrokerEntry(false);
+      }
       if (data.status === "expired") {
         // Nothing of it is shown: the prospect is told it expired and can start again.
         setExpired({ at: data.expires_at ?? null });
@@ -1265,7 +1284,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const updateIntake = useCallback((updater: (prev: IntakeState) => IntakeState) => {
     // Read and write through the refs so data and provenance never come from different renders.
     const prev = dataRef.current;
-    const next = updater({ data: prev, provenance: provenanceRef.current });
+    const before = { data: prev, provenance: provenanceRef.current };
+    let next = updater(before);
+    // The firm's member works the chamber as the broker: what they enter is marked as theirs, as the database will keep it (D-1751).
+    if (brokerRef.current) next = markBrokerEntries(before, next, brokerRef.current);
     dataRef.current = next.data;
     provenanceRef.current = next.provenance;
     setChamberDataRaw(next.data);
@@ -1480,6 +1502,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     sessionId,
     fileId: sessionId ? fileId : null,
     resumeFailed,
+    brokerEntry,
     startNew,
     loadFailed,
     retryLoad,

@@ -20,5 +20,8 @@ export function sourceLine(source: FieldSource): string {
       return `From ${source.document_name ?? "an uploaded document"}${source.location ? ` (${source.location})` : ""}`;
     case "prospect_edit":
       return "You confirmed this";
+    case "broker_entry":
+      // Told to Lenore by the broker, or typed on a tab (D-1710): the employer sees it was their broker's, never that Lenore heard it from them.
+      return source.quote ? `Your broker told Lenore: “${source.quote}”` : "Your broker entered this";
   }
 }

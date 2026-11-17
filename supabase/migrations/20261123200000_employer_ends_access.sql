@@ -89,6 +89,10 @@ BEGIN
   IF TG_OP = 'UPDATE' AND current_setting('nevermore.ending_firm_access', true) = NEW.id::text THEN
     RETURN NEW;
   END IF;
+  -- A broker's start (start_broker_intake) names the firm itself: the opportunity's, which the caller is a member of.
+  IF TG_OP = 'INSERT' AND NEW.started_by IS NOT NULL AND NEW.firm_id IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
   IF TG_OP = 'INSERT' THEN
     v_address := NULLIF(lower(btrim(NULLIF(current_setting('request.headers', true), '')::jsonb ->> 'x-firm-address')), '');
     IF v_address IS NULL THEN
@@ -232,6 +236,7 @@ AS $$
   SELECT * FROM (VALUES
     -- Deleted: the firm's own working data.
     (10, 'public.firm_invitations', 'delete', 'firm_id', 'pending and past invitations to join'),
+    (11, 'public.intake_invitations', 'delete', 'firm_id', 'the invitations of broker-started intakes to their employers (the link, never its token); the intakes stay with their employers'),
     (20, 'public.firm_organisations', 'delete', 'firm_id', 'the listed Google domains and Microsoft tenants'),
     (30, 'public.join_requests', 'delete', 'firm_id', 'requests to join'),
     (40, 'public.table_preferences', 'delete', 'firm_id', 'each person''s column choices'),
