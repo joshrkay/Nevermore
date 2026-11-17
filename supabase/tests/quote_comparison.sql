@@ -386,3 +386,87 @@ BEGIN
   PERFORM pg_temp.is(r -> 'columns' -> 0 ->> 'status', 'sent', 'a PEO with no quote shows its status');
   PERFORM pg_temp.is(r -> 'columns' -> 0 -> 'quote', 'null'::jsonb, 'and no quote');
 END $$;
+
+-- ---------- 2. A PEO's column shows its current quote: the newest row, the earlier one kept in the history ----------
+-- Catches: the comparison reading the first quote a PEO sent, so a revised quote (N-2.4) never shows and the broker compares a figure the PEO has withdrawn.
+DO $$
+DECLARE r jsonb; first_id bigint; second_id bigint;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  first_id := (public.record_quote(p_quote_request_id => pg_temp.qr('Insperity'), p_kind => 'estimate', p_admin_fee => 45, p_admin_fee_basis => 'per_employee_per_month') ->> 'id')::bigint;
+  second_id := (public.record_quote(p_quote_request_id => pg_temp.qr('Insperity'), p_kind => 'firm_offer', p_admin_fee => 40, p_admin_fee_basis => 'per_employee_per_month') ->> 'id')::bigint;
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), pg_temp.opp('reyes'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((r -> 'columns' -> 0 -> 'quote' ->> 'id')::bigint, second_id, 'the newer quote is the current one');
+  PERFORM pg_temp.is(r -> 'columns' -> 0 -> 'quote' ->> 'kind', 'firm_offer', 'and says what it is');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quotes WHERE id = first_id), 1::bigint, 'the earlier quote is kept');
+END $$;
+
+-- ---------- 3. The column carries the quote's administrative fee with its basis, its dates and its note ----------
+-- Catches: a fee shown with no basis ($40 a month and 40% of payroll look alike), or a quote with no expiry, so the broker can't tell it has lapsed.
+DO $$
+DECLARE r jsonb; q jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.record_quote(p_quote_request_id => pg_temp.qr('TriNet'), p_kind => 'estimate', p_received_on => current_date - 10, p_expires_on => current_date - 1,
+    p_start_on => current_date + 30, p_admin_fee => 3.5, p_admin_fee_basis => 'percent_of_payroll', p_note => 'By phone');
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), pg_temp.opp('reyes'));
+  PERFORM pg_temp.as_owner();
+  q := r -> 'columns' -> 2 -> 'quote';
+  PERFORM pg_temp.is((q ->> 'admin_fee')::numeric, 3.5::numeric, 'the fee');
+  PERFORM pg_temp.is(q ->> 'admin_fee_basis', 'percent_of_payroll', 'its basis');
+  PERFORM pg_temp.is(q ->> 'expires_on', (current_date - 1)::text, 'the expiry');
+  PERFORM pg_temp.is(q ->> 'received_on', (current_date - 10)::text, 'received');
+  PERFORM pg_temp.is(q ->> 'proposed_start_on', (current_date + 30)::text, 'the proposed start');
+  PERFORM pg_temp.is(q ->> 'note', 'By phone', 'the note');
+END $$;
+
+-- ---------- 4. A cost area a quote leaves out is null, a waived one is 0 and the lines of a quoted area come through ----------
+-- Catches: an area left out coming back as [] or 0 (the screen would read "Not quoted" as "free"), or a waived fee of 0 coming back null (it would read "Not quoted").
+DO $$
+DECLARE r jsonb; q jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.record_quote(p_quote_request_id => pg_temp.qr('Justworks'), p_kind => 'firm_offer', p_admin_fee => 0, p_admin_fee_basis => 'per_employee_per_month',
+    p_one_off_fees => '[{"name": "Setup", "amount": 500}]'::jsonb, p_workers_comp => '[{"state": "CA", "class_code": "8810", "rate": 0.42}]'::jsonb,
+    p_unemployment => '[{"state": "CA", "charge": "employer_rate"}]'::jsonb);
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), pg_temp.opp('reyes'));
+  PERFORM pg_temp.as_owner();
+  q := r -> 'columns' -> 1 -> 'quote';
+  PERFORM pg_temp.is((q ->> 'admin_fee')::numeric, 0::numeric, 'a waived fee is 0');
+  PERFORM pg_temp.is(q -> 'one_off_fees' -> 0 ->> 'name', 'Setup', 'one-off fees come through');
+  PERFORM pg_temp.is((q -> 'workers_comp' -> 0 ->> 'rate')::numeric, 0.42::numeric, 'workers'' comp comes through');
+  PERFORM pg_temp.is(q -> 'unemployment' -> 0 ->> 'charge', 'employer_rate', 'unemployment comes through');
+  PERFORM pg_temp.is(q -> 'medical', 'null'::jsonb, 'medical, left out, is null');
+  PERFORM pg_temp.is(r -> 'columns' -> 2 -> 'quote' -> 'one_off_fees', 'null'::jsonb, 'and so are another quote''s one-off fees, never an empty list');
+END $$;
+
+-- ---------- 5. Another firm's agent and a missing opportunity get the one refusal ----------
+-- Catches: the comparison answering for an opportunity of another firm (a rival sees every PEO's price on a prospect), or telling "not yours" from "not there".
+DO $$
+DECLARE opp uuid := pg_temp.opp('reyes');
+BEGIN
+  PERFORM pg_temp.as_user('zenith_agent', 'zenith-benefits');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.opportunity_quote_comparison(%L, %L)', pg_temp.id('zenith'), opp)), 6), 'PT404:', 'a stranger who names their own firm');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.opportunity_quote_comparison(%L, %L)', pg_temp.id('acme'), opp)), 6), 'PT404:', 'a stranger who names the opportunity''s firm');
+  PERFORM pg_temp.is(left(pg_temp.refusal(format('SELECT public.opportunity_quote_comparison(%L, %L)', pg_temp.id('acme'), gen_random_uuid())), 6), 'PT404:', 'an opportunity that is not there');
+  PERFORM pg_temp.as_owner();
+END $$;
+
+-- ---------- 6. A broker adds a note on a PEO's figure, marked internal or for the client, and the comparison lists it with who wrote it ----------
+-- Catches: a note that loses what it is about (the PEO, the cost area) or who may read it, so an internal remark could later be shown to the client as one.
+DO $$
+DECLARE r jsonb; n jsonb;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  n := public.add_comparison_note(pg_temp.id('acme'), pg_temp.opp('reyes'), pg_temp.qr('Justworks'), 'admin_fee', 'internal', '  Waived only for the first year.  ');
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), pg_temp.opp('reyes'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(n ->> 'body', 'Waived only for the first year.', 'the writer answers with the note, trimmed');
+  PERFORM pg_temp.is(jsonb_array_length(r -> 'notes'), 1, 'one note');
+  PERFORM pg_temp.is(r -> 'notes' -> 0 ->> 'body', 'Waived only for the first year.', 'its words');
+  PERFORM pg_temp.is(r -> 'notes' -> 0 ->> 'visibility', 'internal', 'who may read it');
+  PERFORM pg_temp.is((r -> 'notes' -> 0 ->> 'quote_request_id')::bigint, pg_temp.qr('Justworks'), 'the PEO it is about');
+  PERFORM pg_temp.is(r -> 'notes' -> 0 ->> 'area', 'admin_fee', 'the cost area it is about');
+  PERFORM pg_temp.is(r -> 'notes' -> 0 ->> 'author', 'acme_agent@example.test', 'who wrote it');
+END $$;

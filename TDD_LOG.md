@@ -731,3 +731,8 @@ Mutation: SQL 11 (reason required, only-a-decline rule, list check in the functi
 Skill mattpocock-skills:tdd invoked first. SQL cycles run `supabase/tests/run.sh quote_comparison`; component cycles run vitest on the named file.
 
 1. quote_comparison.sql s1: one column per PEO, alphabetical, no-quote PEO shows status and a null quote. Red: `function public.opportunity_quote_comparison(uuid, uuid) does not exist`. Green: the function with `columns` only (the fixture also makes Acme's agent the account owner, a setup line, since an agent sees an unowned account only at an everyone-sees firm).
+2. quote_comparison.sql s2: the current quote is the newest row of a quote request, the earlier kept. Red: `FAIL: the newer quote is the current one gave <NULL>`. Green: lateral join on the newest quotes row, with id and kind.
+3. s3: the column carries fee with basis, dates and note. Red: `FAIL: the fee gave <NULL>`. Green: those columns added.
+4. s4: an area left out is JSON null, a waived fee 0, quoted lines come through. Red: `FAIL: one-off fees come through gave <NULL>`. Green: the four jsonb areas added.
+5. s5: a stranger (own firm id, the opportunity's firm id) and a missing opportunity all get PT404. The guard had been written in cycle 1 with no test, so the test passed on first run; the guard was removed, the test seen red (`FAIL: a stranger who names their own firm`), the guard restored, green.
+6. s6: a note on a PEO's cost area, internal, is listed with who wrote it. Red: `function public.add_comparison_note(uuid, uuid, bigint, text, text, text) does not exist`. Green: the table, an unchecked writer that trims and the `notes` list in the read.
