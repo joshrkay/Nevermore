@@ -338,6 +338,15 @@ export const DATA_CLASSES: DataClass[] = [
     awaitingCounsel: "How long a registration is kept once its intake is deleted or its firm has closed, and what an employer who asks for deletion is told about it, is counsel's to set (QP-D4).",
   },
   {
+    id: "intake_access_ends",
+    label: "Firm access ended by the employer",
+    sensitivity: "internal",
+    examples: "Each time an employer ended a firm's access to their intake (CRM-P2.5): which firm (its name as it was), which intake and opportunity, which employer and when. It holds no answers.",
+    stored: { tables: ["intake_access_ends"], buckets: [], elsewhere: [] },
+    retention: "Kept: it is the firm's record of why an opportunity lost its intake. It stays when the intake is deleted and when the firm closes.",
+    deletion: "Never changed or deleted by anyone: the table refuses it. Closed to the API; the firm reads the note the ending leaves on the opportunity.",
+  },
+  {
     id: "mailbox_token",
     label: "Advisor mailbox connection",
     sensitivity: "restricted",

@@ -69,3 +69,25 @@ export async function listMyCertifiedIntakes(userId: string): Promise<MyCertifie
     return { id: row.id, company: typeof company === "string" && company.trim() !== "" ? company : "Your company" };
   });
 }
+
+/** The employer ends the firm's access to one of their intakes (CRM-P2.5, D-1714). The database decides who may (the intake's own employer) and what it refuses. */
+export async function endFirmAccess(sessionId: string): Promise<void> {
+  const { error } = await supabase.rpc("employer_end_firm_access", { p_session_id: sessionId });
+  if (error) throw refused(error);
+}
+
+/** An intake of the signed-in employer that an outside firm can see, with the firm's name. */
+export interface MyIntakeFirm {
+  id: string;
+  firm: string;
+  company: string;
+}
+
+const intakeFirmsSchema = z.array(z.object({ session_id: z.string().min(1), firm_name: z.string().min(1), company: z.string().nullable() }));
+
+/** The firm that sees each of the employer's own intakes (an employer can't read a firm's name, so the database says it), for "End <Firm>'s access". */
+export async function listMyIntakeFirms(): Promise<MyIntakeFirm[]> {
+  const { data, error } = await supabase.rpc("my_intake_firms");
+  if (error) throw refused(error);
+  return intakeFirmsSchema.parse(data).map((r) => ({ id: r.session_id, firm: r.firm_name, company: r.company ?? "Your company" }));
+}

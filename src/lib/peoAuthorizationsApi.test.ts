@@ -13,7 +13,7 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: { rpc: (...a: unknown[]) => rpc(...a), from: (table: string) => (asked.push(["from", table]), chain) },
 }));
 
-const { listMyCertifiedIntakes, loadPeoAuthorizations, setPeoAuthorization } = await import("./peoAuthorizationsApi");
+const { endFirmAccess, listMyCertifiedIntakes, listMyIntakeFirms, loadPeoAuthorizations, setPeoAuthorization } = await import("./peoAuthorizationsApi");
 
 beforeEach(() => {
   rpc.mockReset();
@@ -77,5 +77,36 @@ describe("listMyCertifiedIntakes", () => {
     expect(asked).toContainEqual(["from", "chamber_sessions"]);
     expect(asked).toContainEqual(["eq", "user_id", "u1"]);
     expect(asked).toContainEqual(["eq", "status", "submitted"]);
+  });
+});
+
+describe("endFirmAccess", () => {
+  // Break caught: the ending is asked of the wrong intake, or a refusal (not the employer's intake, no firm sees it) is swallowed so the profile says it is done.
+  it("asks the database to end the firm's access to one intake, and fails with its words when it refuses", async () => {
+    rpc.mockResolvedValue({ data: {}, error: null });
+    await endFirmAccess("s1");
+    expect(rpc).toHaveBeenLastCalledWith("employer_end_firm_access", { p_session_id: "s1" });
+    rpc.mockResolvedValue({ data: null, error: { code: "22023", message: "No firm sees this intake, so there is nothing to end." } });
+    await expect(endFirmAccess("s1")).rejects.toMatchObject({ code: "22023", message: "No firm sees this intake, so there is nothing to end." });
+  });
+});
+
+describe("listMyIntakeFirms", () => {
+  // Break caught: the profile can't name the firm that sees an intake (an employer can't read a firm's name), names a company wrongly, or takes an answer of
+  // another shape for the list.
+  it("reads the firm that sees each of the employer's intakes, by company", async () => {
+    rpc.mockResolvedValue({
+      data: [{ session_id: "s1", firm_name: "Acme Brokers", company: "Acme Co" }, { session_id: "s2", firm_name: "Zenith Benefits", company: null }],
+      error: null,
+    });
+    expect(await listMyIntakeFirms()).toEqual([
+      { id: "s1", firm: "Acme Brokers", company: "Acme Co" },
+      { id: "s2", firm: "Zenith Benefits", company: "Your company" },
+    ]);
+    expect(rpc).toHaveBeenLastCalledWith("my_intake_firms");
+    rpc.mockResolvedValue({ data: [{ session_id: "s1" }], error: null });
+    await expect(listMyIntakeFirms()).rejects.toThrow();
+    rpc.mockResolvedValue({ data: null, error: { code: "57014", message: "canceled" } });
+    await expect(listMyIntakeFirms()).rejects.toMatchObject({ code: "57014" });
   });
 });

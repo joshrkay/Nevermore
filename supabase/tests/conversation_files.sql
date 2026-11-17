@@ -197,6 +197,7 @@
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
