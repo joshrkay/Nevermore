@@ -867,3 +867,5 @@ lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clea
 9. QuotePage.test: the quote is recorded first, then its file is uploaded for the new quote | red: Unable to find a label with the text of: Quote document | green
 10. QuotePage.test: a blocked document is reported and the form still closes once the quote is recorded | red: expected "spy" to be called with arguments (toast.error never called) | green
 11. QuotePage.test: a stored file from this quote request email is named as the document for the new quote, not uploaded | red: Unable to find a label with the text of: Use a file from the emails | green
+12. RecordQuoteForm.test: a draft in recordQuote shape fills the form and nothing is recorded until Save (the seam for slice 7.6) | red: expected element toHaveValue estimate (initial not read) | green
+13. QuotePage.test: no Record the quote or decline in a support session, on an archived account or for someone who may not change the account | NOT red first (canAct reused); seen red with canRecordQuote ignoring canAct: expected element not.toBeInTheDocument | green

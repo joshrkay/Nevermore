@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { QuoteLinesField, type LineColumn } from "@/components/quotes/QuoteLinesField";
 import { DID_NOT_GO_THROUGH, failureWords, SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_KIND_LABELS, QUOTE_NOTE_MAX, QUOTE_TIERS, type QuoteTier, type QuoteAdminFeeBasis, type QuoteKind } from "@/data/quoteRequests";
-import { attachQuoteDocument, recordQuote, uploadQuoteDocument, type QuoteRequestRow } from "@/lib/advisorApi";
+import { attachQuoteDocument, recordQuote, uploadQuoteDocument, type QuoteOffer, type QuoteRequestRow } from "@/lib/advisorApi";
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 const FEE_BASIS_LABELS: Record<QuoteAdminFeeBasis, string> = { per_employee_per_month: "Per employee per month ($)", percent_of_payroll: "Percent of payroll (%)" };
@@ -27,25 +27,31 @@ const MEDICAL_COLUMNS: LineColumn[] = [
   { key: "monthly", label: "Monthly rate per employee", type: "number" },
 ];
 
+/** A list of lines as the boxes hold them: every value as text. */
+const asLines = (lines: readonly object[] | null | undefined): Lines => (lines ?? []).map((l) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k, String(v)])));
+
 /** The form that records what a PEO quoted (CRM-Q3.3, screen 12). Nothing is saved until the agent saves. */
-export function RecordQuoteForm({ request, mailFiles, onRecorded, onCancel }: {
+export function RecordQuoteForm({ request, mailFiles, initial, onRecorded, onCancel }: {
   request: QuoteRequestRow;
   /** The stored, scanned files on this quote request's own emails: the quote's document can be one without uploading it again (D-730). */
-  mailFiles: readonly { id: number; file_name: string }[]; onRecorded: () => void;
+  mailFiles: readonly { id: number; file_name: string }[];
+  /** What to start from, in recordQuote's own shape: a draft read from the quote document (N-2.3) fills the form, and nothing is recorded until the agent saves. */
+  initial?: QuoteOffer;
+  onRecorded: () => void;
   onCancel: () => void;
 }) {
   const id = `record-quote-${request.id}`;
-  const [kind, setKind] = useState<QuoteKind | "">("");
-  const [fee, setFee] = useState("");
-  const [basis, setBasis] = useState<QuoteAdminFeeBasis | "">("");
-  const [receivedOn, setReceivedOn] = useState("");
-  const [expiresOn, setExpiresOn] = useState("");
-  const [startOn, setStartOn] = useState("");
-  const [oneOff, setOneOff] = useState<Lines>([]);
-  const [workersComp, setWorkersComp] = useState<Lines>([]);
-  const [unemployment, setUnemployment] = useState<Lines>([]);
-  const [medical, setMedical] = useState<Lines>([]);
-  const [note, setNote] = useState("");
+  const [kind, setKind] = useState<QuoteKind | "">(initial?.kind ?? "");
+  const [fee, setFee] = useState(initial?.adminFee != null ? String(initial.adminFee) : "");
+  const [basis, setBasis] = useState<QuoteAdminFeeBasis | "">(initial?.adminFeeBasis ?? "");
+  const [receivedOn, setReceivedOn] = useState(initial?.receivedOn ?? "");
+  const [expiresOn, setExpiresOn] = useState(initial?.expiresOn ?? "");
+  const [startOn, setStartOn] = useState(initial?.startOn ?? "");
+  const [oneOff, setOneOff] = useState<Lines>(asLines(initial?.oneOffFees));
+  const [workersComp, setWorkersComp] = useState<Lines>(asLines(initial?.workersComp));
+  const [unemployment, setUnemployment] = useState<Lines>(asLines(initial?.unemployment));
+  const [medical, setMedical] = useState<Lines>(asLines(initial?.medical));
+  const [note, setNote] = useState(initial?.note ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [mailFile, setMailFile] = useState("");
   const [missing, setMissing] = useState(false);

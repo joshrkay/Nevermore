@@ -420,6 +420,27 @@ describe("QuotePage: Record the quote, cost areas", () => {
   // END cost areas
 });
 
+describe("QuotePage: who sees Record the quote and Record a decline", () => {
+  // Catches: record buttons in a Nevermore support session (ADR 0024), on an archived account (D-432) or for someone the level rule keeps from changing the account (D-209): dead buttons the database refuses.
+  it("offers neither in a support session, on an archived account or to someone who may not change the account", async () => {
+    const none = () => expect(screen.queryByRole("button", { name: /record (the|a) (quote|decline)/i })).not.toBeInTheDocument();
+    quotes.getQuotePage.mockResolvedValue(quotePage());
+    renderPage("/quotes/7", workspace({ isSupport: true }));
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    none();
+    cleanup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({ opportunity: { account: { id: "a1", name: "Harborview Dental Group", archived: true } } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    none();
+    cleanup();
+    quotes.getQuotePage.mockResolvedValue(quotePage({ opportunity: { canChange: false } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    none();
+  });
+});
+
 describe("QuotePage: Send again", () => {
   beforeEach(() => {
     peoCatalogRows = [profileRow(1, "TriNet")];
