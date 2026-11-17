@@ -502,7 +502,8 @@ BEGIN
   PERFORM pg_temp.is((SELECT string_agg(p.oid::regprocedure::text, ' ' ORDER BY p.oid::regprocedure::text) FROM pg_proc p
     WHERE p.pronamespace = 'public'::regnamespace AND (p.proname LIKE 'export%' OR p.proname IN ('signed_in_within', 'caller_last_sign_in_at'))),
     'caller_last_sign_in_at() export_limits() export_rows(uuid,text,jsonb,jsonb) export_source_accounts(uuid,jsonb,jsonb,integer) export_source_firm_activity(uuid,jsonb,jsonb,integer) '
-    'export_source_leads(uuid,jsonb,jsonb,integer) export_source_referral_partners(uuid,jsonb,jsonb,integer) export_table_registry()', 'only Epic 3''s export functions are left (and the leads'' reader, CRM-L1.1b)');
+    'export_source_leads(uuid,jsonb,jsonb,integer) export_source_quotes(uuid,jsonb,jsonb,integer) export_source_referral_partners(uuid,jsonb,jsonb,integer) export_table_registry()',
+    'only Epic 3''s export functions are left (and the leads'' reader, CRM-L1.1b, and the quotes'', CRM-Q4.1)');
 END $$;
 
 -- Break caught: the carried entries can't be read or exported the way Epic 3's own are (the count not returned, or not exported).
