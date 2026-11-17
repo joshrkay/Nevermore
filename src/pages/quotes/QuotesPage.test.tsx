@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { QuoteRow } from "@/lib/quotesApi";
+import { blobText } from "@/test/blob";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
 
 // The Quotes page on the workspace's table frame (story CRM-Q4.1, slice 5.11, screen 2). The database cuts the pages and runs the filters
@@ -24,12 +25,21 @@ vi.mock("@/lib/accountsApi", async (original) => ({
   browserTimeZone: () => "America/Los_Angeles",
   listFirmMembers: (...a: unknown[]) => listFirmMembers(...a),
 }));
+const saveView = vi.fn();
 vi.mock("@/lib/tableSettingsApi", () => ({
   listSavedViews: async () => [],
-  saveView: vi.fn(),
+  saveView: (...a: unknown[]) => saveView(...a),
   fetchMyColumns: async () => ({ columns: null, source: "none" }),
   setMyColumns: vi.fn(),
 }));
+
+const exportRows = vi.fn();
+vi.mock("@/lib/exportApi", async () => ({ ...(await vi.importActual<object>("@/lib/exportApi")), exportRows: (...a: unknown[]) => exportRows(...a) }));
+const downloadBlob = vi.fn();
+vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...a: unknown[]) => downloadBlob(...a) }));
+
+const applyQuotesBulk = vi.fn();
+vi.mock("@/lib/quotesBulkApi", async (original) => ({ ...(await original<typeof import("@/lib/quotesBulkApi")>()), applyQuotesBulk: (...a: unknown[]) => applyQuotesBulk(...a) }));
 
 const { default: QuotesPage } = await import("./QuotesPage");
 
@@ -59,10 +69,11 @@ const renderAt = (url = "/quotes", ws: Workspace = workspace()) =>
 const headers = () => within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent?.trim()).filter((h) => h && h !== "Actions");
 
 beforeEach(() => {
-  for (const fn of [listQuotes, countQuoteViews, listFirmMembers]) fn.mockReset();
+  for (const fn of [saveView, listQuotes, countQuoteViews, listFirmMembers, exportRows, downloadBlob, applyQuotesBulk]) fn.mockReset();
   listQuotes.mockResolvedValue({ rows: [row()], total: 1 });
   countQuoteViews.mockImplementation(async (_f: string, views: { name: string }[]) => views.map((v, i) => ({ name: v.name, total: [12, 1, 4, 5, 3, 2][i] ?? 0 })));
-  listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }]);
+  saveView.mockResolvedValue("v1");
+  listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
 });
 afterEach(() => cleanup());
 
@@ -194,5 +205,120 @@ describe("the Quotes page (CRM-Q4.1)", () => {
     const menu = await screen.findByLabelText("Columns", { selector: "[role=dialog]" });
     for (const name of ["Opportunity", "Version sent", "Proposed start", "Target start", "File ID", "Days waiting", "Emails"]) expect(within(menu).getByLabelText(name)).not.toBeChecked();
     expect(within(menu).getByLabelText("PEO")).toBeChecked();
+  });
+
+  // Catches: an export of something other than what is on screen: the filters in force, the search, the time zone, and the columns shown, worded as the page words them.
+  it("exports the quotes that match the view and search in force, as a file of the columns shown", async () => {
+    const columns = ["account", "opportunity", "peo", "status", "sent_on", "sent_version", "admin_fee_pepm", "expires_on", "proposed_start", "target_start", "emails", "new_mail", "last_message_at", "file_id", "owner"].map((id) => ({ id, label: id }));
+    const exported = { account: "Reyes Bakery", opportunity: "PEO search 2026", peo: "TriNet", status: "Quoted", sent_on: "2026-11-01", sent_version: 1, admin_fee_pepm: 32.5, expires_on: "2026-12-01",
+      proposed_start: null, target_start: "2027-01-01", emails: 2, new_mail: false, last_message_at: null, file_id: "EAA-2026-0001", owner: "Dana Reyes" };
+    exportRows.mockResolvedValue({ table: "quotes", label: "Quotes", columns, rows: [exported], count: 1, skipped: 0, exportedAt: "2026-11-19T10:00:00+00:00" });
+    renderAt("/quotes?view=quoted&q=trinet");
+    await userEvent.click(await screen.findByRole("button", { name: "Export" }));
+    expect(await screen.findByText("Exported 1 quote.")).toBeInTheDocument();
+    expect(exportRows).toHaveBeenCalledWith({
+      firmId: "f1", table: "quotes", filters: { filters: [{ field: "status", op: "any_of", value: ["quoted"] }], search: "trinet", time_zone: "America/Los_Angeles" },
+    });
+    const [blob, name] = downloadBlob.mock.calls[0] as [Blob, string];
+    expect(name).toBe("quotes-2026-11-19.csv");
+    expect(await blobText(blob)).toBe("Account,PEO,Status,Sent,Admin fee PEPM,Expires,Owner\r\nReyes Bakery,TriNet,Quoted,2026-11-01,32.5,2026-12-01,Dana Reyes\r\n");
+  });
+
+  // Catches: the story's bulk actions missing from the bar, or one it rules out offered (a quote's status, figures and dates are never bulk-edited).
+  it("offers Change owner, Close and Export once rows are selected, and no edit of a status, figure or date", async () => {
+    renderAt();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Reyes Bakery, TriNet" }));
+    const bar = screen.getByRole("region", { name: "Selected rows" });
+    expect(within(bar).getAllByRole("button").map((b) => b.textContent)).toEqual(["Change owner", "Close", "Export", "Clear"]);
+  });
+
+  // Catches: the owner chosen but never sent, the rows sent as something other than their keys, or a result the person is never told (D-1704: the opportunity's owner is what changes).
+  it("changes the owner of the selected quotes' opportunities and says what it did", async () => {
+    applyQuotesBulk.mockResolvedValue({ selected: 1, requested: 1, unavailable: 0, changed: 1, unchanged: 0, skipped: [] });
+    renderAt();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Reyes Bakery, TriNet" }));
+    await userEvent.click(within(screen.getByRole("region", { name: "Selected rows" })).getByRole("button", { name: "Change owner" }));
+    const dialog = await screen.findByRole("dialog", { name: "Change owner: 1 quote" });
+    await userEvent.selectOptions(await within(dialog).findByLabelText("New owner"), "u2");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Change owner" }));
+    expect(applyQuotesBulk).toHaveBeenCalledWith("f1", { action: "owner", ownerId: "u2" }, { ids: ["q5"] });
+    expect(await screen.findByText("Gave 1 opportunity to Marcus Hale.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // Catches: Close sent without its one reason, or the reason sent in words instead of the database's code, or a result that says nothing of what was closed.
+  it("closes the selected quotes with one reason and says what it did", async () => {
+    applyQuotesBulk.mockResolvedValue({ selected: 1, requested: 1, unavailable: 0, changed: 1, unchanged: 0, skipped: [] });
+    renderAt();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Reyes Bakery, TriNet" }));
+    await userEvent.click(within(screen.getByRole("region", { name: "Selected rows" })).getByRole("button", { name: "Close" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close: 1 quote" });
+    expect(within(dialog).getByRole("button", { name: "Close quotes" })).toBeDisabled();
+    await userEvent.selectOptions(within(dialog).getByLabelText("Why they close"), "peo_not_a_fit");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close quotes" }));
+    expect(applyQuotesBulk).toHaveBeenCalledWith("f1", { action: "close", reason: "peo_not_a_fit" }, { ids: ["q5"] });
+    expect(await screen.findByText("Closed 1 quote request.")).toBeInTheDocument();
+  });
+
+  // Catches: rows the person may not change skipped without a word (the level rule, a won or lost opportunity, an archived account), or keys that were no row said nowhere.
+  it("names every quote that was skipped, with the database's reason, and those that were no row to see", async () => {
+    applyQuotesBulk.mockResolvedValue({
+      selected: 2, requested: 3, unavailable: 1, changed: 1, unchanged: 0,
+      skipped: [{ key: "o9", name: "Kim Dental", code: "finished", reason: "This opportunity is won or lost, so it is finished." }],
+    });
+    renderAt();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Reyes Bakery, TriNet" }));
+    await userEvent.click(within(screen.getByRole("region", { name: "Selected rows" })).getByRole("button", { name: "Close" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close: 1 quote" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("Why they close"), "other");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close quotes" }));
+    const result = await screen.findByRole("region", { name: "What the change did" });
+    expect(within(result).getByText("Kim Dental: This opportunity is won or lost, so it is finished.")).toBeInTheDocument();
+    expect(within(result).getByText("1 quote you can no longer see was left out.")).toBeInTheDocument();
+  });
+
+  // Catches (CRM-S3.6): "Select all N that match" sent as the page's keys, so the change misses every quote on the other pages.
+  it("sends the table's filters, not keys, for all that match", async () => {
+    listQuotes.mockResolvedValue({ rows: [row()], total: 120 });
+    applyQuotesBulk.mockResolvedValue({ selected: 120, requested: 120, unavailable: 0, changed: 120, unchanged: 0, skipped: [] });
+    renderAt("/quotes?q=reyes");
+    await screen.findByText("Reyes Bakery");
+    await userEvent.click(screen.getByRole("checkbox", { name: /Select all|select the page/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Select all 120 that match" }));
+    await userEvent.click(within(screen.getByRole("region", { name: "Selected rows" })).getByRole("button", { name: "Close" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close: 120 quotes" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("Why they close"), "other");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close quotes" }));
+    expect(applyQuotesBulk.mock.lastCall![2]).toEqual({ filters: { filters: [], search: "reyes", time_zone: "America/Los_Angeles" } });
+  });
+
+  // Catches (ADR 0024): Nevermore support offered a change of anything; it keeps Export's line and Clear.
+  it("offers Nevermore support none of the changes", async () => {
+    renderAt("/quotes", workspace({ isSupport: true }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Reyes Bakery, TriNet" }));
+    const bar = screen.getByRole("region", { name: "Selected rows" });
+    for (const name of ["Change owner", "Close"]) expect(within(bar).queryByRole("button", { name })).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Clear" })).toBeInTheDocument();
+  });
+
+  // Catches: no way to ask again for the quotes without leaving the page (new mail and answers arrive while it is open).
+  it("asks the database again when Refresh is pressed", async () => {
+    renderAt();
+    await screen.findByText("Reyes Bakery");
+    const before = listQuotes.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await vi.waitFor(() => expect(listQuotes.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  // Catches: a view saved from the default layout keeping no columns (it would then show whatever the person has later, not what they saw).
+  it("saves a view from the default layout with the seven columns on screen", async () => {
+    renderAt();
+    await screen.findByText("Reyes Bakery");
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save this as a view" })).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(screen.getByRole("button", { name: "Save this as a view" }));
+    await userEvent.type(await screen.findByLabelText("Name"), "My view");
+    await userEvent.click(screen.getByRole("button", { name: "Save view" }));
+    await vi.waitFor(() => expect(saveView).toHaveBeenCalled());
+    expect(saveView.mock.calls[0][0]).toMatchObject({ table: "quotes", name: "My view", columns: ["account", "peo", "status", "sent", "admin_fee", "expires", "owner"] });
   });
 });

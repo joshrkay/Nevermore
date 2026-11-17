@@ -7,6 +7,8 @@ import { daysWaiting, quoteIsExpired, quoteRowStatusWords } from "@/data/quotes"
 import { useFirmReady, useSavedViewList, withSavedViews, type ColumnDefinition, type FieldChoice, type FieldDefinitions, type TableDefinition, type TableQuery, type TableView } from "@/components/workspace/table";
 import { listFirmMembers, type FirmMemberChoice } from "@/lib/accountsApi";
 import { countQuoteViews, listQuotes, QUOTE_FIELDS, QUOTE_ROW_STATUSES, type QuoteField, type QuoteFilter, type QuoteRow, type QuotesPage } from "@/lib/quotesApi";
+import type { ExportValue } from "@/lib/exportApi";
+import type { ShownColumn } from "@/lib/exportFile";
 import type { ViewCount } from "@/lib/tableQuery";
 
 // The quotes table (story CRM-Q4.1, slice 5.11, screen 2) as a workspace table: its columns, views, filters and the two calls to the database. The frame
@@ -198,3 +200,26 @@ export const fetchQuotesPage = (firmId: string | null) => (query: TableQuery<Fie
 export const countQuotesViews = (firmId: string | null) =>
   (views: { name: string; filters: TableQuery<Fields>["filters"] }[], opts: { search: string }): Promise<ViewCount[]> =>
     countQuoteViews(firmId, views as { name: string; filters: QuoteFilter[] }[], opts);
+
+/**
+ * The export's columns for the ones the page shows, in its order, each as the page words it (the database gives a column of its own for each:
+ * export_source_quotes). A column that isn't here has no export.
+ */
+export const quoteExportColumnsFor = (shown: readonly { id: string; header: string }[]): ShownColumn[] => {
+  const known: Record<string, { id: string; text?: (row: Record<string, ExportValue>) => string }> = {
+    account: { id: "account" },
+    peo: { id: "peo" },
+    status: { id: "status" },
+    sent: { id: "sent_on" },
+    admin_fee: { id: "admin_fee_pepm" },
+    expires: { id: "expires_on" },
+    owner: { id: "owner" },
+    opportunity: { id: "opportunity" },
+    version: { id: "sent_version" },
+    proposed_start: { id: "proposed_start" },
+    target_start: { id: "target_start" },
+    file_id: { id: "file_id" },
+    emails: { id: "emails" },
+  };
+  return shown.filter((c) => known[c.id]).map((c) => ({ id: known[c.id].id, heading: c.header, ...(known[c.id].text ? { text: known[c.id].text } : {}) }));
+};
