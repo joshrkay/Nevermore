@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { quotePath } from "@/data/quotePage";
 import type { ActivityRow, ContactRow, OpportunityRow, QuoteRow } from "@/lib/accountPageApi";
 import { contactName, formatDay, formatWhen, KIND_LABELS, NOT_GIVEN, quoteStatusLabel, STAGE_LABELS } from "@/data/accountPage";
 import { ActivityActions, ActivityWhat, ContactActions } from "./ActivityEntry";
@@ -56,7 +57,7 @@ export const opportunityColumns: Column<OpportunityRow>[] = [
 
 const notYet = muted("Not yet");
 export const quoteColumns: Column<QuoteRow>[] = [
-  { header: "PEO", cell: (q) => <Link to={submissionPath(q.submissionId)} className={linkClass}>{q.peoName}</Link> },
+  { header: "PEO", cell: (q) => <Link to={quotePath(q.id)} className={linkClass}>{q.peoName}</Link> },
   { header: "Opportunity", cell: (q) => q.opportunityName },
   { header: "Status", cell: (q) => <Pill>{quoteStatusLabel(q.status)}</Pill> },
   { header: "Sent", cell: (q) => (q.sentOn ? formatDay(q.sentOn) : notYet), className: "whitespace-nowrap" },

@@ -130,6 +130,7 @@ describe("the workspace menu", () => {
     ["/advisor", "Quotes"],
     ["/advisor?status=under_review", "Quotes"],
     ["/advisor/submissions/abc", "Quotes"],
+    ["/quotes/7", "Quotes"],
     ["/inbox", "Inbox"],
     ["/inbox?view=new", "Inbox"],
     ["/advisor?mail=new", "Quotes"],

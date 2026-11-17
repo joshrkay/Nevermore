@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BellRing, Loader2, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { actorName, formatDateTime } from "./format";
@@ -24,6 +24,10 @@ interface PeoThreadPanelProps {
   reads: readonly QuoteRequestThreadReadRow[];
   /** After a thread is marked opened, so the page can reload the marks the rest of the console shows. */
   onOpened?: () => void;
+  /** A quote's own page (CRM-Q3.2): the one quote request this panel is about. Its thread is open at once (and marked read), with no chooser. */
+  ofRequest?: number;
+  /** Under the thread: what a quote's page says of the wait (CRM-Q3.2). */
+  footer?: React.ReactNode;
 }
 
 const badge = "text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -198,12 +202,10 @@ const Entry = ({ entry, showPeo, prospectUserId, corrected, onMoved }: { entry: 
  * timeline, newest first (story M-3.4). Choosing a thread opens it, which clears its "new PEO mail" mark for the
  * whole team, through the latest message this page showed. The prospect never sees any of it.
  */
-const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes, events, reads, onOpened }: PeoThreadPanelProps) => {
-  const [selected, setSelected] = useState<number | "all" | null>(null);
+const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes, events, reads, onOpened, ofRequest, footer }: PeoThreadPanelProps) => {
+  const [selected, setSelected] = useState<number | "all" | null>(ofRequest ?? null);
   // Threads opened since the page loaded, through the time shown: the mark clears at once, not on the next load.
   const [opened, setOpened] = useState<Record<number, string>>({});
-
-  if (requests.length === 0) return null;
 
   const effectiveReads = [
     ...reads.filter((r) => !(r.quote_request_id in opened)),
@@ -228,6 +230,17 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
     }
   };
 
+  // A quote's own page shows its thread at once, so showing it is opening it: mail that arrives while it is on screen is marked read when the page next reads it.
+  const throughNow = ofRequest === undefined ? null : latestRecordedAt(ofRequest, messages);
+  const askedThrough = useRef<string | null>(null);
+  useEffect(() => {
+    if (ofRequest === undefined || throughNow === null || askedThrough.current === throughNow) return;
+    askedThrough.current = throughNow;
+    void choose(ofRequest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- choose is rebuilt every render; what it reads is named here.
+  }, [ofRequest, throughNow]);
+  if (requests.length === 0) return null;
+
   const shown = selected === null ? [] : selected === "all" ? requests : requests.filter((r) => r.id === selected);
   const entries = buildTimeline({ requests: shown, messages, attachments, notes, events });
   const correctedNotes = new Set(events.filter((e) => e.note_id !== null).map((e) => e.note_id));
@@ -237,12 +250,12 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
   return (
     <section aria-labelledby="peo-threads-heading" className="border border-border rounded-xl p-5 space-y-4">
       <div>
-        <h2 id="peo-threads-heading" className="font-display text-lg font-bold">PEO threads</h2>
+        <h2 id="peo-threads-heading" className="font-display text-lg font-bold">{ofRequest === undefined ? "PEO threads" : "Emails"}</h2>
         <p className="text-xs text-muted-foreground">
-          Mail sent to each quote request's reply address, with your notes, sends and status changes, newest first. The prospect never sees it.
+          {ofRequest === undefined ? "Mail sent to each quote request's reply address" : "Mail sent to this quote request's reply address"}, with your notes, sends and status changes, newest first. The prospect never sees it.
         </p>
       </div>
-      <div role="group" aria-label="Choose a thread" className="flex flex-wrap gap-2">
+      {ofRequest === undefined && <div role="group" aria-label="Choose a thread" className="flex flex-wrap gap-2">
         {requests.map((r) => (
           <button
             key={r.id}
@@ -268,7 +281,7 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
             All PEOs
           </button>
         )}
-      </div>
+      </div>}
 
       {selected === null ? (
         <p className="text-sm text-muted-foreground">Choose a PEO to read its thread.</p>
@@ -283,6 +296,7 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
           ))}
         </ol>
       )}
+      {footer}
 
       {changeLog.length > 0 && (
         <details className="text-xs text-muted-foreground">

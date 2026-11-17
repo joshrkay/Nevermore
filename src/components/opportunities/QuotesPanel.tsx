@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { EmptyLine, ListPanel, Pill, Rows, type Column } from "@/components/accounts/accountLists";
-import { submissionPath } from "@/components/accounts/accountColumns";
+import { quotePath } from "@/data/quotePage";
 import { PanelFailed, PlaceholderLine } from "@/components/workspace/states";
 import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
 import { quoteCloseWords } from "@/data/opportunityClose";
@@ -8,8 +8,8 @@ import { adminFeeWords, quoteStatusWords } from "@/data/opportunityPage";
 import type { OpportunityPage, OpportunityQuote } from "@/lib/opportunityPageApi";
 import type { useStillNeeds } from "./useStillNeeds";
 
-// The quotes panel (screen 19, D-424): one row per quote request of the opportunity's intake. Each PEO opens the submission's page until the quote's own page
-// (Epic 5, D-403). The Emails column, Compare and Send to another PEO are off (D-402). What a PEO still needs loads as the panel's own read, not inside the
+// The quotes panel (screen 19, D-424): one row per quote request of the opportunity's intake. Each PEO opens the quote's own page (CRM-Q3.2, D-1796)
+// The Emails column, Compare and Send to another PEO are off (D-402). What a PEO still needs loads as the panel's own read, not inside the
 // opportunity's page, which stays a summary; a failure of it keeps the rows and says so with its own Try again.
 
 const muted = (words: string) => <span className="text-muted-foreground">{words}</span>;
@@ -28,7 +28,7 @@ export function QuotesPanel({ page, needs, action, closeReasons = {} }: {
   const { quotes, intake } = page;
   const day = today();
   const columns: Column<OpportunityQuote>[] = [
-    { header: "PEO", cell: (q) => (intake ? <Link to={submissionPath(intake.submissionId)} className={linkClass}>{q.peoName}</Link> : q.peoName) },
+    { header: "PEO", cell: (q) => <Link to={quotePath(q.id)} className={linkClass}>{q.peoName}</Link> },
     {
       header: "Status",
       cell: (q) => {

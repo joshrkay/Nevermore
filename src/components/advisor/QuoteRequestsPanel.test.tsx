@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import type { QuoteRequestAddressRow, QuoteRequestEventRow, QuoteRequestNoteRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
 import { goOffline, goOnline, restoreConnection } from "@/test/connection";
@@ -79,7 +80,7 @@ const panel = (
   const shell = { firm: { id: "f1", name: "Acme Benefits", address: "acme" }, role: "Nevermore support" as const, isOwner: false, isSupport: true, supportEndsAt: null, supportSessionId: null, isPlatformAdmin: true, person: "Sam" };
   const Shell = ({ children }: { children: React.ReactNode }) => (over.support ? <WorkspaceContext.Provider value={shell}>{children}</WorkspaceContext.Provider> : <>{children}</>);
   render(
-    <Shell><QuoteRequestsPanel
+    <MemoryRouter><Shell><QuoteRequestsPanel
       sessionId="s1"
       prospectUserId="p1"
       status={over.status ?? "sent_to_carrier"}
@@ -93,7 +94,7 @@ const panel = (
       catalog={over.catalog ?? CATALOG}
       onAskProspect={over.onAskProspect ?? vi.fn()}
       onChanged={onChanged}
-    /></Shell>,
+    /></Shell></MemoryRouter>,
   );
   return onChanged;
 };
@@ -531,17 +532,24 @@ describe("QuoteRequestsPanel", () => {
       body_text: "Hi", body_truncated: false, headers: {}, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null,  sent_at: null, recorded_at: "2026-11-10T15:00:05+00:00", ...over,
     });
     const { unmount } = render(
-      <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
-        addresses={[]} mail={[mail()]} threadReads={[]} data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+      <MemoryRouter><QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
+        addresses={[]} mail={[mail()]} threadReads={[]} data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} /></MemoryRouter>,
     );
     expect(within(screen.getByTestId("quote-request-7")).getByText("New PEO mail")).toBeInTheDocument();
     unmount();
     render(
-      <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
+      <MemoryRouter><QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
         addresses={[]} mail={[mail()]} threadReads={[{ quote_request_id: 7, last_opened_at: "2026-11-10T15:00:05+00:00", last_opened_by: null, last_opened_by_email: null }]}
-        data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+        data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} /></MemoryRouter>,
     );
     expect(within(screen.getByTestId("quote-request-7")).queryByText("New PEO mail")).not.toBeInTheDocument();
+  });
+
+  // Catches: a quote request on the submission's page with no way to its own page (CRM-Q3.2: the thread, the figures and what was sent are there), or one to another's.
+  it("links each quote request to its own page", () => {
+    panel({ requests: [request(), request({ id: 8, peo_name: "Justworks" })] });
+    expect(within(screen.getByTestId("quote-request-7")).getByRole("link", { name: "Open TriNet's quote page" })).toHaveAttribute("href", "/quotes/7");
+    expect(within(screen.getByTestId("quote-request-8")).getByRole("link", { name: "Open Justworks's quote page" })).toHaveAttribute("href", "/quotes/8");
   });
 
   it("shows each quote request's reply address to copy, on the receiving subdomain", async () => {
