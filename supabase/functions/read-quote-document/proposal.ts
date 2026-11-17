@@ -46,7 +46,7 @@ const stateOf = (v: unknown): string | null => {
   const code = typeof v === "string" ? v.trim().toUpperCase() : "";
   return STATES.has(code) ? code : null;
 };
-const num =(v: unknown, min: number, max: number): v is number => typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
+const num = (v: unknown, min: number, max: number): v is number => typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
 const text = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim().length >= 1 && v.trim().length <= max ? v.trim() : null);
 
 /** The lines of a cost area the database would accept, each cleaned to its fixed keys, a repeated line (by `keyOf`) dropped; an area with no line left is left out (null), never an empty list (D-721). */

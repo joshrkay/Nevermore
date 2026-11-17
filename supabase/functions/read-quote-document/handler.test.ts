@@ -172,7 +172,8 @@ describe("read-quote-document: the quote's document", () => {
 describe("read-quote-document: a file that was not kept", () => {
   it("reads only a file that is stored (scanned clean): a pending, blocked or not-kept file is 409 not_readable, never downloaded or sent to the model", async () => {
     for (const status of ["pending", "blocked", "not_kept"]) {
-      const t = setup({ file: { id: 51, file_name: "quote.pdf", status, storage_bucket: null, storage_path: null, size_bytes: 1000 } });
+      // Even a row that still carries a path (a pending file's, or one blocked after it was written) is not read.
+      const t = setup({ file: { id: 51, file_name: "quote.pdf", status, storage_bucket: "peo-mail", storage_path: "intake/9/51-quote.pdf", size_bytes: 1000 } });
       const { status: http, body } = await read(await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps));
       expect(http, status).toBe(409);
       expect(body.code).toBe("not_readable");

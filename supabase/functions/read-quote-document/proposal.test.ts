@@ -126,6 +126,16 @@ describe("shapeQuoteProposal: medical", () => {
   });
 });
 
+describe("shapeQuoteProposal: lengths the database holds", () => {
+  it("drops a name or plan longer than 80 characters and keeps no more than 20 one-off fee lines", () => {
+    const long = "x".repeat(81);
+    expect(shapeQuoteProposal({ one_off_fees: { value: [{ name: long, amount: 1 }, { name: "x".repeat(80), amount: 1 }], source: 1 } }, PAGES).draft.oneOffFees).toHaveLength(1);
+    expect(shapeQuoteProposal({ medical: { value: [{ plan: long, tier: "family", monthly: 1 }], source: 1 } }, PAGES).draft).toEqual({});
+    const many = Array.from({ length: 25 }, (_, i) => ({ name: `Fee ${i}`, amount: i }));
+    expect(shapeQuoteProposal({ one_off_fees: { value: many, source: 1 } }, PAGES).draft.oneOffFees).toHaveLength(20);
+  });
+});
+
 describe("shapeQuoteProposal: what the model makes up", () => {
   it("names only a page the document has (an invented page is not shown), and an answer that is not the fixed shape proposes nothing", () => {
     expect(shapeQuoteProposal({ received_on: { value: "2026-11-03", source: "Page 99" } }, PAGES)).toEqual({ draft: { receivedOn: "2026-11-03" }, sources: {} });

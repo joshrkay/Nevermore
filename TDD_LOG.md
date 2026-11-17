@@ -886,3 +886,9 @@ No migration: a proposal is returned, never stored (D-760). Tests run under vite
 25. supabase-setup.test: the setup deploys read-quote-document (19 functions); index.ts wires the handler | red: expected [ [ '--version' ], ...(21) ] to deeply equal [ ...(22) ] | green
 26. advisorApi.test: readQuoteDocument asks read-quote-document for the quote and returns status, message, a draft in recordQuote shape and each figure page, or the refusal words | red: readQuoteDocument is not a function | green
 27. advisorApi.test: a read draft plus the broker's kind goes through recordQuote with every proposed figure | NOT red first: characterisation of the shape contract (green on first run, no code change); kept as a regression test | green
+28. proposal.test and handler.test strengthened after mutants survived (line caps, name and plan length, a pending file that still has a path) | NOT red first: the code existed; the four mutants survived, the tests were added, the mutants then killed | green
+
+Notes: cycles 8, 24, 27 and 28 are the lines not seen red first (8: red seen by removing the page check; 24 and 27: characterisation, no code added; 28: tests added for surviving mutants). In cycle 13 the code was written together with the test; the line was removed, red seen, restored.
+
+### Mutation (7.6)
+mut.py in the scratchpad: 44 mutants of proposal.ts, handler.ts and readQuoteDocument (every bound, dedupe, caps, state and class rules, tiers, name and plan length, empty list kept, section citation, no sign-in, quote missing, no document, pending file read, budget refusal ignored or not spent, fence tag kept, too_large, nothing_found, model failure ignored, method, error message logged, reader words dropped, body cap, no-key check, wrong quote asked, pages dropped). 40 killed at first; 4 survived (line cap, name length, plan length, a pending file with a path), tests strengthened (cycle 28), 44 of 44 killed.
