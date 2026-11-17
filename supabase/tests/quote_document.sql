@@ -539,3 +539,42 @@ BEGIN
   DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_request_messages), n, 'no message was left behind');
 END $$;
+
+-- ---------- 10. A hand-uploaded document goes the whole way: started, scanned clean, named as the quote's document ----------
+-- Characterisation (green on its first run, no code added): the three steps quote-document-upload takes, with finish_inbound_attachment as the service role, all existing functions.
+-- Catches: the upload's attachment refused by attach_quote_document (it must sit on the quote request's own thread) or by finish_inbound_attachment (it must be pending).
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); r jsonb; a bigint;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  r := public.start_quote_document_upload(q, 'hand.pdf', 'application/pdf', 900);
+  a := (r ->> 'attachment_id')::bigint;
+  PERFORM pg_temp.is(pg_temp.refusal(format('SELECT public.attach_quote_document(%s, %s)', q, a)), '22023: That file isn''t stored: it was blocked, not kept, or is still being checked', 'a pending upload can''t be the document yet');
+  PERFORM pg_temp.as_service();
+  PERFORM public.finish_inbound_attachment(a, 'clean', NULL, 'peo-mail', (r ->> 'folder') || '/' || a || '-hand.pdf', repeat('a', 64));
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.attach_quote_document(q, a);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.doc_of(q), a, 'the uploaded file is the quote''s document');
+END $$;
+
+-- ---------- 11. A revised quote keeps the earlier quote and its document; the newest is current (N-2.4) ----------
+-- Characterisation (green on its first run: record_quote already inserts a row each time, D-720). Catches: a revision that overwrites the earlier quote or moves its document.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); first_doc bigint := pg_temp.doc_of(pg_temp.qid('Insperity')); n2 jsonb; f bigint;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  n2 := public.record_quote(p_quote_request_id => pg_temp.qr('Insperity'), p_kind => 'firm_offer', p_admin_fee => 39, p_admin_fee_basis => 'per_employee_per_month');
+  PERFORM pg_temp.as_owner();
+  f := pg_temp.mail_file('Insperity', 'stored', 'revised.pdf');
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  PERFORM public.attach_quote_document((n2 ->> 'id')::bigint, f);
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is(pg_temp.doc_of(q), first_doc, 'the earlier quote keeps its own document');
+  PERFORM pg_temp.is(pg_temp.doc_of((n2 ->> 'id')::bigint), f, 'the revised quote has its own');
+  PERFORM pg_temp.is(pg_temp.qid('Insperity'), (n2 ->> 'id')::bigint, 'the newest recorded quote is the highest id');
+  -- Deleting a file (an intake's mail goes with the intake) leaves the quote, with no document, never a quote pointing at nothing.
+  DELETE FROM public.quote_request_message_attachments WHERE id = f;
+  PERFORM pg_temp.is(pg_temp.doc_of((n2 ->> 'id')::bigint) IS NULL, true, 'a deleted file leaves its quote with no document');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quotes WHERE quote_request_id = pg_temp.qr('Insperity')), 2::bigint, 'and both quotes are still there');
+END $$;
