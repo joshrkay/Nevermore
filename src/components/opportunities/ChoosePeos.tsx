@@ -10,14 +10,16 @@ const BELOW_THE_HEADING = "basis-full";
  * (it is read for the quotes anyway, or now) and opens the component once it is here, and once the PEOs have been read too: drawn sooner, it would say nobody can be
  * chosen for as long as the PEOs were loading, and would start with none ticked (which PEOs are ready is worked out once, when it is drawn).
  */
-export function ChoosePeos({ needs, onChoose, returnTo, onSent }: {
+export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = false }: {
   needs: ReturnType<typeof useStillNeeds>;
   /** Asks the page to read the submission now, when it was not read for the quotes. */
   onChoose: () => void;
   returnTo: string;
   onSent: () => void;
+  /** Already chosen when drawn (New quote's step 4 opens at the choosing, D-1763). */
+  startChosen?: boolean;
 }) {
-  const [chosen, setChosen] = useState(false);
+  const [chosen, setChosen] = useState(startChosen);
   if (!chosen) {
     return (
       <button type="button" onClick={() => { setChosen(true); onChoose(); }} className="min-h-11 px-4 rounded-md border border-primary text-primary text-sm font-medium">

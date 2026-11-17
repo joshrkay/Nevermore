@@ -54,3 +54,11 @@ export const FIRM_SEES_ANSWERS_HEADING = "Who will see your answers";
 export function firmSeesAnswersText(firm: string): string {
   return `${firm} invited you, so ${firm} will see everything you enter in this intake: your answers, your employees' personal information and the documents you upload.`;
 }
+
+/**
+ * What the employer reads before ending a firm's access to their intake, and the firm's name in it (CRM-P2.5, D-1714, D-1827). Counsel's wording replaces
+ * this one (D-12). DRAFT: NOT LEGALLY REVIEWED.
+ */
+export function endFirmAccessText(firm: string): string {
+  return `${firm} will no longer see your answers, your employees' personal information or your documents, and nothing more will be sent to a PEO for this intake. ${firm} keeps its own records of your company and of what it already sent, and can't undo this. You can invite a firm again later.`;
+}

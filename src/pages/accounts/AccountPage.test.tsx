@@ -307,7 +307,7 @@ describe("AccountPage: the Overview", () => {
     expect(within(opportunities).getByText("Jan 1, 2027")).toBeInTheDocument();
     const quotes = screen.getByRole("region", { name: /Quotes/ });
     expect(within(quotes).getAllByRole("row")).toHaveLength(3);
-    expect(within(quotes).getAllByText("Waiting")).toHaveLength(2);
+    expect(within(quotes).getAllByRole("cell", { name: "Sent" })).toHaveLength(2);
     const activity = screen.getByRole("region", { name: /Recent activity/ });
     expect(within(activity).getByText("Employees changed from 40 to 45")).toBeInTheDocument();
     expect(within(activity).getByText("Account created")).toBeInTheDocument();
@@ -333,12 +333,12 @@ describe("AccountPage: the Overview", () => {
 
 describe("AccountPage: every name opens its record", () => {
   // Catches: an opportunity's name still opening its submission (D-187, replaced by D-430), or one with no intake opening nothing; and a quote's PEO losing its link.
-  it("opens an opportunity's own page from its name, with an intake or without, and a quote's submission from its PEO", async () => {
+  it("opens an opportunity's own page from its name, with an intake or without, and a quote's own page from its PEO (CRM-Q3.2)", async () => {
     renderPage();
     const opportunities = await screen.findByRole("region", { name: /Opportunities/ });
     expect(within(opportunities).getByRole("link", { name: "Search 1" })).toHaveAttribute("href", "/opportunities/o1");
     expect(within(opportunities).getByRole("link", { name: "A search with no intake" })).toHaveAttribute("href", "/opportunities/o2");
-    expect(within(screen.getByRole("region", { name: /Quotes/ })).getByRole("link", { name: "PEO 1" })).toHaveAttribute("href", "/advisor/submissions/i1");
+    expect(within(screen.getByRole("region", { name: /Quotes/ })).getByRole("link", { name: "PEO 1" })).toHaveAttribute("href", "/quotes/1");
   });
 
   // Catches: a contact's name that opens nothing, or still opens the Contacts tab instead of the contact's own page (CRM-C1.1).

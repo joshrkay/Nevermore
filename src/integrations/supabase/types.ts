@@ -150,7 +150,10 @@ export type Database = {
           submission: Json | null
           transcript: Json
           updated_at: string
-          user_id: string
+          // The employer; empty for a broker-started intake until its invitee accepts (20261123120000, D-1703).
+          user_id: string | null
+          // The member of the firm who started the intake, for a broker-started one; set by the database (20261123120000).
+          started_by: string | null
         }
         Insert: {
           chamber_data?: Json
@@ -166,6 +169,7 @@ export type Database = {
           last_activity_at?: never
           referral_code?: string | null
           schema_version?: never
+          started_by?: never
           status?: string
           submission?: Json | null
           transcript?: Json
@@ -190,6 +194,7 @@ export type Database = {
           // The source is fixed when the intake is created: the database keeps it whatever an update sends.
           referral_code?: never
           schema_version?: never
+          started_by?: never
           status?: string
           submission?: Json | null
           transcript?: Json
@@ -887,6 +892,24 @@ export type Database = {
         Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
         Returns: { view_name: string; total: number }[]
       }
+      // The quotes table's query (20261123180000, CRM-Q4.1): {rows, total, page, page_size}, one row for each PEO of each opportunity and one for each New quote
+      // left half done; src/lib/quotesApi.ts reads it.
+      quotes_list: {
+        Args: {
+          p_firm_id: string | null
+          p_filters?: Json
+          p_sort?: string | null
+          p_direction?: string
+          p_page?: number
+          p_search?: string | null
+          p_time_zone?: string
+        }
+        Returns: Json
+      }
+      quotes_view_counts: {
+        Args: { p_firm_id: string | null; p_views: Json; p_search?: string | null; p_time_zone?: string }
+        Returns: { view_name: string; total: number }[]
+      }
       // The inbox (20261122150000, CRM-E1.4): {rows, total, page, page_size}, every message on the threads the caller may see, newest first;
       // src/lib/inboxApi.ts reads it.
       inbox_list: {
@@ -913,6 +936,11 @@ export type Database = {
       // An account's page (20261119140000): {account, can_change, tabs: {contacts, opportunities, quotes, activity, files}}, each tab {count, rows} with its first five
       // rows; null, the same as for an account that is not there, for anyone who may not see the account. src/lib/accountPageApi.ts reads it.
       account_page: {
+        Args: { p_firm_id: string; p_account_id: string }
+        Returns: Json
+      }
+      // What the account's latest certified intake says where the account differs (20261123190000): {field: value}, only for those fields; null for anyone who may not see the account.
+      account_intake_says: {
         Args: { p_firm_id: string; p_account_id: string }
         Returns: Json
       }
@@ -1345,6 +1373,11 @@ export type Database = {
         Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
         Returns: Json
       }
+      // Change the owner of the opportunities of quotes, or close their quote requests (20261123180000, CRM-Q4.1): {action, selected, requested, unavailable, changed, unchanged, skipped}.
+      bulk_quotes_change: {
+        Args: { p_firm_id: string; p_action: string; p_params?: Json; p_filters?: Json | null; p_ids?: Json | null }
+        Returns: Json
+      }
       bulk_leads_undo: { Args: { p_change_id: string; p_firm_id?: string | null }; Returns: Json }
       leads_bin: { Args: { p_firm_id: string; p_page?: number }; Returns: Json }
       restore_leads: { Args: { p_firm_id: string; p_ids: Json }; Returns: Json }
@@ -1673,6 +1706,28 @@ export type Database = {
         Args: { p_address: string }
         Returns: boolean
       }
+      // A broker starts an intake for a client, enters answers, invites the client and reminds them (20261123120000, slice 5.3: P-2.2, P-2.4).
+      start_broker_intake: {
+        Args: { p_opportunity_id: string; p_firm_id?: string }
+        Returns: Json
+      }
+      broker_may_enter_intake: {
+        Args: { p_intake_id: string }
+        Returns: boolean
+      }
+      intake_invite_status: {
+        Args: { p_intake_id: string }
+        Returns: Json
+      }
+      // The employer opens the link the firm sent: what the page shows before sign-in, and taking the intake over (20261123120000).
+      peek_intake_invite: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: { firm_name: string; contact_name: string | null; expires_at: string }[]
+      }
+      accept_intake_invite: {
+        Args: { p_token_hash: string; p_firm_address: string }
+        Returns: Json
+      }
       // Signing up a firm and its approval (20261116170000).
       sign_up_firm: {
         Args: { p_name: string; p_address: string }
@@ -1909,6 +1964,15 @@ export type Database = {
       peo_authorization_version: {
         Args: Record<PropertyKey, never>
         Returns: string
+      }
+      // CRM-P2.5 (20261123200000): the employer ends a firm's access to their own intake; the firm that sees each of the caller's own intakes.
+      employer_end_firm_access: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      my_intake_firms: {
+        Args: Record<PropertyKey, never>
+        Returns: { session_id: string; firm_name: string; company: string | null }[]
       }
       prospect_submission_status: {
         Args: { p_session_id: string }

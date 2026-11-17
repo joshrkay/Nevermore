@@ -150,7 +150,55 @@
 \i supabase/migrations/20261119100000_crm_records.sql
 \i supabase/migrations/20261119110000_chain_at_certification.sql
 \i supabase/migrations/20261119120000_bring_submissions_in.sql
+\i supabase/migrations/20261119130000_accounts_table_query.sql
 \i supabase/migrations/20261119140000_account_page.sql
+\i supabase/migrations/20261119145000_account_tab.sql
+\i supabase/migrations/20261119150000_create_account.sql
+\i supabase/migrations/20261119160000_account_archive_delete_owner.sql
+\i supabase/migrations/20261119170000_add_contact.sql
+\i supabase/migrations/20261119180000_calls_notes_tasks.sql
+\i supabase/migrations/20261119210000_bulk_changes.sql
+\i supabase/migrations/20261119230000_search_everywhere.sql
+\i supabase/migrations/20261119240000_contact_page.sql
+\i supabase/migrations/20261120090000_opportunity_stage.sql
+\i supabase/migrations/20261120110000_placements_renewals.sql
+\i supabase/migrations/20261120111000_accounts_status_one_read.sql
+\i supabase/migrations/20261120120000_opportunity_page.sql
+\i supabase/migrations/20261120121000_won_lost_commission.sql
+\i supabase/migrations/20261120130000_opportunity_create.sql
+\i supabase/migrations/20261121085500_leads.sql
+\i supabase/migrations/20261121090000_spot_a_duplicate.sql
+\i supabase/migrations/20261121095500_create_lead.sql
+\i supabase/migrations/20261121100000_merge_records.sql
+\i supabase/migrations/20261121110000_account_page_duplicate_mark.sql
+\i supabase/migrations/20261121110500_leads_table_query.sql
+\i supabase/migrations/20261121140000_leads_keep_commission_history.sql
+\i supabase/migrations/20261121150000_epic4_after_merge_records.sql
+\i supabase/migrations/20261121160000_start_the_renewal.sql
+\i supabase/migrations/20261121170000_opportunity_outcome.sql
+\i supabase/migrations/20261122090000_conversations.sql
+\i supabase/migrations/20261122100000_peo_authorizations.sql
+\i supabase/migrations/20261122100500_conversations_closing.sql
+\i supabase/migrations/20261122110000_bundle_links.sql
+\i supabase/migrations/20261122130000_conversation_replies.sql
+\i supabase/migrations/20261122130500_closing_list_merged.sql
+\i supabase/migrations/20261122140000_peo_send.sql
+\i supabase/migrations/20261122150000_inbox.sql
+\i supabase/migrations/20261122160000_conversation_files.sql
+\i supabase/migrations/20261122180000_peo_update.sql
+\i supabase/migrations/20261122190000_follow_up_and_withdraw.sql
+\i supabase/migrations/20261122200000_peo_registrations.sql
+\i supabase/migrations/20261122200500_main_merged.sql
+\i supabase/migrations/20261122210000_leads_bulk_and_bin.sql
+\i supabase/migrations/20261122220000_lead_page.sql
+\i supabase/migrations/20261122230000_request_contact.sql
+\i supabase/migrations/20261122240000_lead_alert_and_captcha.sql
+\i supabase/migrations/20261122250000_convert_lead.sql
+\i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
+\i supabase/migrations/20261123100000_quote_statuses.sql
+\i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -384,7 +432,7 @@ BEGIN
 END $$;
 
 -- ---------- an intake that already sits on an opportunity gets no second chain; a draft and a missing intake have none ----------
--- Break caught: the step makes an account for an intake an agent started (New quote, Epic 5) that already belongs to an opportunity; or it makes a chain for
+-- Break caught: the step makes an account for an intake an agent started (New quote, Epic 5) that already belongs to an opportunity (it teaches that account instead, slice 5.12); or it makes a chain for
 -- a draft that was never certified.
 DO $$
 DECLARE sid uuid; a uuid; o uuid; r jsonb; before_accounts bigint;
@@ -397,7 +445,7 @@ BEGIN
   SELECT count(*) INTO before_accounts FROM public.accounts;
   PERFORM pg_temp.is(pg_temp.certify('i_agent', 'agent_made'), 'ok', 'the employer certifies an intake an agent started');
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts), before_accounts, 'no account was added');
-  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = a), 0::bigint, 'nor a contact on the agent''s account');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.contacts WHERE account_id = a AND prospect_user_id = pg_temp.id('agent_made') AND is_main), 1::bigint, 'the certifier is the agent''s account''s one contact, as the main one (CRM-Q1.2, D-1715)');
   PERFORM pg_temp.is((SELECT account_id FROM public.opportunities WHERE intake_id = sid), a, 'the intake stays on the agent''s opportunity');
   PERFORM pg_temp.is((SELECT name FROM public.opportunities WHERE id = o), 'Agent''s search', 'whose name is not changed');
 

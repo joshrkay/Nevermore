@@ -32,6 +32,11 @@ vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<obj
 const checkAccountDuplicates = vi.fn();
 vi.mock("@/lib/duplicateApi", async () => ({ ...(await vi.importActual<object>("@/lib/duplicateApi")), checkAccountDuplicates: (...a: unknown[]) => checkAccountDuplicates(...a) }));
 
+// The submission page is tested on its own (AdvisorSubmissionPage.test.tsx); here it is a stand-in that shows what the dialog gave it.
+vi.mock("@/pages/advisor/AdvisorSubmissionPage", () => ({
+  default: ({ submissionId, embedded }: { submissionId?: string; embedded?: boolean }) => <div data-testid="submission-page">{`${submissionId ?? "none"}|${embedded ? "embedded" : "page"}`}</div>,
+}));
+
 const { NewQuoteDialog } = await import("./NewQuoteDialog");
 
 const onClose = vi.fn();
@@ -73,6 +78,15 @@ beforeEach(() => {
 });
 
 describe("New quote is step 1 only (founder's direction, D-1763)", () => {
+  // Break caught (D-1831): New quote fills the whole window (a full-width, full-height grid whose rows stretch, leaving a blank gap between the title and the first field) instead of a dialog of sensible width that is as tall as its content, over the page it was opened from.
+  it("is a dialog of a sensible width, as tall as its content, not the whole window", async () => {
+    const { dialog } = await open();
+    expect(dialog).toHaveClass("max-w-2xl");
+    expect(dialog).not.toHaveClass("w-screen");
+    expect(dialog).not.toHaveClass("h-[100dvh]");
+    expect(dialog).toHaveClass("max-h-[90vh]", "overflow-y-auto");
+  });
+
   // Catches: a steps bar or step 2 to 4 screens of New quote's own (the intake is the existing /start chamber, opened later for the opportunity), or a Continue that leads nowhere (D-402).
   it("shows the account step and Save and close, with no steps bar and no Continue", async () => {
     const { dialog } = await open();
@@ -283,5 +297,67 @@ describe("New quote step 1, the account (CRM-Q2.1)", () => {
     expect(createOpportunity).toHaveBeenCalledWith("f1", "a1", expect.objectContaining({ name: "PEO search 2028", mainContactId: "c2", employees: 45, ownerId: null, renewalId: null }));
     expect(createAccount).not.toHaveBeenCalled();
     expect(addContact).not.toHaveBeenCalled();
+  });
+});
+
+const certifiedIntake = (over: Record<string, unknown> = {}) => ({
+  submissionId: "s1", fileId: "NV-0001", pipelineStatus: "ready_to_send", certifiedBy: "Lucia Torres", certifiedAt: "2026-11-10T15:00:00Z", version: 1, censusSize: 45,
+  answered: null, prospectName: null, openItems: { count: 0, firstLabel: null, firstField: null }, ...over,
+});
+
+describe("New quote step 3, certified (CRM-Q2.4, D-1770)", () => {
+  // Catches: step 3 rebuilt as a new screen, or the certified intake not opened from the opportunity at all (the founder's rule: reuse the submission page's certified view).
+  it("opens the existing certified view of the opportunity's certified intake, the submission page itself, from Certified answers", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: certifiedIntake() }));
+    const { user, dialog } = await open({ opportunityId: "o1" });
+    // A certified intake opens at step 4, choosing PEOs (D-1702, D-1780); its certified answers are one click away (D-1776).
+    await user.click(await within(dialog).findByRole("button", { name: "Certified answers" }));
+    expect(within(dialog).getByTestId("submission-page")).toHaveTextContent("s1|embedded");
+  });
+});
+
+describe("New quote step 3 keeps Save and close (CRM-Q2.4, D-1772)", () => {
+  // Catches: the certified view taking over the dialog with no way to leave it by New quote's own Save and close, which hands the opportunity back to the page beneath.
+  it("shows Save and close beside the certified view, and it closes on the opportunity", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: certifiedIntake() }));
+    const { user, dialog } = await open({ opportunityId: "o1" });
+    await user.click(await within(dialog).findByRole("button", { name: "Certified answers" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save and close" }));
+    expect(onClose).toHaveBeenCalledWith({ opportunityId: "o1" });
+  });
+});
+
+describe("New quote step 3 has a way back to the flow (CRM-Q2.4, D-1773)", () => {
+  // Catches: the certified view being a dead end inside New quote: no way back to the flow's own saved account, contact and opportunity.
+  it("goes back to the saved account, contact and opportunity from the certified view", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: certifiedIntake() }));
+    const { user, dialog } = await open({ opportunityId: "o1" });
+    await user.click(await within(dialog).findByRole("button", { name: "Certified answers" }));
+    await user.click(within(dialog).getByRole("button", { name: "Back to New quote" }));
+    expect(within(dialog).getByText("Harborview Dental Group")).toBeInTheDocument();
+    expect(within(dialog).queryByTestId("submission-page")).not.toBeInTheDocument();
+  });
+});
+
+describe("New quote step 3 can be reopened from the flow (CRM-Q2.4, D-1773)", () => {
+  // Catches: going back leaving no way to the certified view again (a one-way door).
+  it("reopens the certified view from the saved summary of a certified opportunity", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: certifiedIntake() }));
+    const { user, dialog } = await open({ opportunityId: "o1" });
+    await user.click(await within(dialog).findByRole("button", { name: "Certified answers" }));
+    await user.click(within(dialog).getByRole("button", { name: "Back to New quote" }));
+    await user.click(within(dialog).getByRole("button", { name: "Certified answers" }));
+    expect(within(dialog).getByTestId("submission-page")).toHaveTextContent("s1|embedded");
+  });
+});
+
+describe("New quote step 3 before the employer certifies (D-1771)", () => {
+  // Catches: the certified view opened for a draft intake (it would show a half-answered submission as if it were certified).
+  it("does not open the certified view for an intake that is not certified, and keeps the saved summary with Save and close", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: certifiedIntake({ certifiedAt: null, certifiedBy: null, version: null, fileId: null, answered: 12, prospectName: "Lucia Torres" }) }));
+    const { dialog } = await open({ opportunityId: "o1" });
+    expect(await within(dialog).findByText("Harborview Dental Group")).toBeInTheDocument();
+    expect(within(dialog).queryByTestId("submission-page")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save and close" })).toBeInTheDocument();
   });
 });

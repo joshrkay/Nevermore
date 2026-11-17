@@ -14,6 +14,7 @@ import LegalLinks from "@/components/LegalLinks";
 import DraftReminderToggle from "@/components/DraftReminderToggle";
 import SignOutButton from "@/components/SignOutButton";
 import MyPacketRecipients from "@/components/MyPacketRecipients";
+import MyFirmAccess from "@/components/MyFirmAccess";
 
 const ProfilePage = () => {
   const { user } = useAuth();
@@ -204,6 +205,11 @@ const ProfilePage = () => {
               {/* M-1.1, D-608: which PEOs may receive each certified packet; each change is saved as it is made. */}
               <div className="pt-4 border-t border-border">
                 <MyPacketRecipients />
+              </div>
+
+              {/* CRM-P2.5, D-1714: which firm can see each intake, and the employer's way to end it. */}
+              <div className="pt-4 border-t border-border">
+                <MyFirmAccess />
               </div>
             </CardContent>
           </Card>

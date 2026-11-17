@@ -113,7 +113,7 @@ describe("the menu's search box: typing", () => {
     expect(link("Harborview Dental Group")).toBe("/accounts/a1");
     expect(link("Elena Marsh")).toBe("/contacts/c1");
     expect(link("Harborview 2027 search")).toBe("/opportunities/o1");
-    expect(link("Paychex Prime")).toBe("/advisor/submissions/i1");
+    expect(link("Paychex Prime")).toBe("/quotes/7");
   });
 
   it("waits for a pause in typing, and asks once for the words", async () => {

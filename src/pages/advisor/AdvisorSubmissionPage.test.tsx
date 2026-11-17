@@ -232,6 +232,54 @@ describe("AdvisorSubmissionPage", () => {
     intakeNow = null;
   });
 
+  // Catches: New quote's step 3 not being able to draw this page for the intake of an opportunity (CRM-Q2.4, D-1770): the page reading only its address's id, so it cannot be placed in the overlay.
+  it("shows the submission it is given by prop, with no address naming one", async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/new-quote/o1"]}>
+          <AdvisorSubmissionPage submissionId="s7" embedded />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("heading", { name: "Signed Co" });
+    expect(api.loadSubmission).toHaveBeenCalledWith("s7", true);
+  });
+
+  // Catches: an address that names another submission (the route's :id) winning over the one New quote asked for, so the overlay shows the wrong intake. Found by mutation, not by a red test.
+  it("shows the submission it is given even when the address names another", async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/advisor/submissions/s1"]}>
+          <Routes><Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage submissionId="s7" embedded />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("heading", { name: "Signed Co" });
+    expect(api.loadSubmission).toHaveBeenCalledWith("s7", true);
+    expect(api.loadSubmission).not.toHaveBeenCalledWith("s1", expect.anything());
+  });
+
+  // Catches: the overlay showing a link to the all-submissions queue inside New quote, which would leave the flow (its own Back and Save and close are the way out).
+  it("embedded in New quote, shows no link back to all submissions, while loading and loaded", async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/new-quote/o1"]}>
+          <AdvisorSubmissionPage submissionId="s7" embedded />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole("link", { name: /All submissions/ })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    expect(screen.queryByRole("link", { name: /All submissions/ })).not.toBeInTheDocument();
+  });
+
+  // Catches: the certified line naming who and when but not which version, so a later certification (version 2) cannot be told from the first (CRM-Q2.4: "the version").
+  it("names the certified version on the certified line", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ currentVersion: 2 }));
+    renderPage();
+    expect(await screen.findByText(/Certified by Jo Doe, CEO · .* · version 2/)).toBeInTheDocument();
+  });
+
   // CRM-P2.3: a submission opened is written by the database when it hands the submission over, so the page asks for it
   // as an opening once per submission on screen and never reports a view itself.
   it("opens the submission as an opening once, and never reports a view itself", async () => {
@@ -2273,6 +2321,10 @@ describe("AdvisorSubmissionPage", () => {
         api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
         api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
         peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        // The employer's say is read now, and an unauthorized PEO isn't ticked (5.8, D-1784): both are authorized, so ticked or not follows readiness alone.
+        loadPeoAuthorizations.mockResolvedValue([
+          { peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }, { peo: "TriNet", state: "authorized", signedAt: null, wordingVersion: null },
+        ]);
         renderPage();
         await within(await panel()).findByRole("heading", { name: "Justworks" });
         fireEvent.click(within(await panel()).getByRole("button", { name: "Send to several PEOs" }));

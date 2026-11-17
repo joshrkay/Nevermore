@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
-import { FIT_WORDS, NOT_MET_NOTE, peoFit, type PeoRecord } from "@/data/peoCatalog";
+import { FIT_WORDS, NOT_MET_NOTE, fitOutcome, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 import { groupByCompleteness, type CertifiedVersion, type PeoCompletenessEntry } from "@/data/peoCompleteness";
 import { localToday } from "@/data/peoProfiles";
 import { peoGreeting, peoSendSubject } from "@/data/peoSend";
@@ -14,6 +14,8 @@ import { loadPeoSendContext, sendToPeo, type PeoSendContext } from "@/lib/peoSen
 import { loadPeoAuthorizations, type PeoAuthorizationState } from "@/lib/peoAuthorizationsApi";
 import { loadRegisteredElsewhere, type RegisteredElsewhere } from "@/lib/peoRegistrationsApi";
 import { registeredElsewhereWords } from "@/data/peoRegistrations";
+import { STATE_WORDS, askToAddAnyPeo, askToAddPeo } from "@/data/peoAuthorizationWords";
+import { requestInformation } from "@/lib/advisorApi";
 
 export interface SendToSeveralPeosProps {
   sessionId: string;
@@ -41,6 +43,8 @@ interface Choice {
   missing: string[];
   notMet: string[];
   ready: boolean;
+  /** Where the PEO stands across its eligibility checks, and the first check that says so (CRM-Q2.5). */
+  fit: { outcome: FitStatus; reason: string | null };
 }
 
 type Step = "choose" | "review" | "done";
@@ -50,6 +54,8 @@ interface Outcome {
   peo: string;
   sent: boolean;
   words: string;
+  /** The send itself failed, so it can be tried again (a PEO stopped before the send can't). */
+  retry?: boolean;
 }
 
 /**
@@ -70,6 +76,18 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   const [elsewhere, setElsewhere] = useState<RegisteredElsewhere[]>([]);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [busy, setBusy] = useState(false);
+  // The PEOs the employer was asked to add from here (CRM-Q2.5), so the ask isn't made twice.
+  const [asked, setAsked] = useState<string[]>([]);
+  const [askFailed, setAskFailed] = useState<Record<string, string>>({});
+  const ask = async (peo: string, message = askToAddPeo(peo)) => {
+    try {
+      await requestInformation(p.sessionId, message, []);
+      setAsked((now) => [...now, peo]);
+      setAskFailed(({ [peo]: _gone, ...rest }) => rest);
+    } catch (err) {
+      setAskFailed((now) => ({ ...now, [peo]: failureWords(err, "The request didn't go through. Check your connection and try again.") }));
+    }
+  };
   // No "Send from your own mail" here: each PEO has its own reply address to put in CC, so that is done one PEO at a time, on its card (D-1604).
   const { beforeSend, choice } = useFirstSend({ returnTo: p.returnTo });
   const today = localToday();
@@ -77,8 +95,10 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   const choices: Choice[] = [...groups.complete, ...groups.missing]
     .map((entry) => {
       const missing = entry.completeness.toQuote.map((i) => i.label);
-      const notMet = peoFit(p.certified.intake.data, entry.peo, today).filter((c) => c.status === "does_not_meet").map((c) => `${FIT_WORDS[c.status]} · ${c.label}`);
-      return { peo: entry.peo.name, entry, missing, notMet, ready: missing.length + notMet.length === 0 };
+      const checks = peoFit(p.certified.intake.data, entry.peo, today);
+      const notMet = checks.filter((c) => c.status === "does_not_meet").map((c) => `${FIT_WORDS[c.status]} · ${c.label}`);
+      const outcome = fitOutcome(checks);
+      return { peo: entry.peo.name, entry, missing, notMet, ready: missing.length + notMet.length === 0, fit: { outcome, reason: checks.find((c) => c.status === outcome)?.sentence ?? null } };
     })
     .sort((a, b) => a.peo.localeCompare(b.peo));
   const [ticked, setTicked] = useState<string[]>(() => choices.filter((c) => c.ready).map((c) => c.peo));
@@ -90,7 +110,12 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     if (!open) return;
     let cancelled = false;
     // The employer's say for each PEO (M-1.1). Unread, the database still refuses a send without it, and the result says so.
-    loadPeoAuthorizations(p.sessionId).then((rows) => !cancelled && setAuthorizations(rows), () => undefined);
+    loadPeoAuthorizations(p.sessionId).then((rows) => {
+      if (cancelled) return;
+      setAuthorizations(rows);
+      // A PEO the employer hasn't authorized can't be ticked (CRM-Q2.5): any tick it started with goes.
+      setTicked((now) => now.filter((peo) => rows.find((a) => a.peo.toLowerCase() === peo.toLowerCase())?.state === "authorized"));
+    }, () => undefined);
     // Unread, there is simply no warning: no send waits on it.
     loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(rows), () => undefined);
     for (const peo of peoNames.split("\n").filter(Boolean)) {
@@ -124,34 +149,47 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     if (contexts[c.peo] && peopleOf(c).length === 0) return `${c.peo}'s profile has no contact with an email, so there is nobody to send it to.`;
     return null;
   };
+  // The employer as the agent says them: the certifier's first name.
+  const employer = p.submission.signer_name?.trim().split(/\s+/)[0] || "the employer";
+  const stateOf =(c: Choice) => authorizations?.find((a) => a.peo.toLowerCase() === c.peo.toLowerCase())?.state;
+  // CRM-Q2.5: the employer's say is read and none of the listed PEOs is authorized, so there is nothing to continue with.
+  const noneAuthorized = !!authorizations && choices.every((c) => stateOf(c) !== "authorized");
   const going = chosen.filter((c) => stopOf(c) === null);
+
+  // One PEO's send, one at a time as each locks the submission's pipeline row; a refusal stops this PEO alone. `retry`: it failed in the send itself, so it may be tried again.
+  const sendOne = async (c: Choice): Promise<Outcome> => {
+    const stop = stopOf(c);
+    if (stop) return { peo: c.peo, sent: false, words: stop };
+    try {
+      await sendToPeo({
+        sessionId: p.sessionId,
+        peo: c.peo,
+        to: peopleOf(c).map((x) => x.email),
+        subject,
+        note: `${greetingOf(c)}\n\n${note}`,
+        issueLink: peoLinkIssuer(sourceOf(c)),
+      });
+      return { peo: c.peo, sent: true, words: `It is on the ${c.peo} thread.` };
+    } catch (err) {
+      return { peo: c.peo, sent: false, retry: true, words: failureWords(err, "The send didn't go through. Check your connection and try again.") };
+    }
+  };
 
   const send = async () => {
     const done: Outcome[] = [];
-    for (const c of chosen) {
-      const stop = stopOf(c);
-      if (stop) {
-        done.push({ peo: c.peo, sent: false, words: stop });
-        continue;
-      }
-      // One at a time, as each send locks the submission's pipeline row; a refusal stops this PEO alone.
-      try {
-        await sendToPeo({
-          sessionId: p.sessionId,
-          peo: c.peo,
-          to: peopleOf(c).map((x) => x.email),
-          subject,
-          note: `${greetingOf(c)}\n\n${note}`,
-          issueLink: peoLinkIssuer(sourceOf(c)),
-        });
-        done.push({ peo: c.peo, sent: true, words: `It is on the ${c.peo} thread.` });
-      } catch (err) {
-        done.push({ peo: c.peo, sent: false, words: failureWords(err, "The send didn't go through. Check your connection and try again.") });
-      }
-    }
+    for (const c of chosen) done.push(await sendOne(c));
     setOutcomes(done);
     setStep("done");
     if (done.some((o) => o.sent)) p.onSent();
+  };
+
+  // Try again (CRM-Q2.6): that PEO alone, through the same mailbox check as the first send.
+  const retry = async (peo: string) => {
+    const c = chosen.find((x) => x.peo === peo);
+    if (!c) return;
+    const again = await sendOne(c);
+    setOutcomes((now) => now.map((o) => (o.peo === peo ? again : o)));
+    if (again.sent) p.onSent();
   };
 
   // Opening again starts over: the choosing step, and each PEO's contacts and the employer's say read afresh.
@@ -172,21 +210,32 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     );
   }
   return (
-    // basis-full: where this sits in a wrapping row (Choose PEOs, beside a panel's heading) it takes the row under the heading, not a column beside it. Anywhere else the class does nothing.
-    <section aria-label="Send to several PEOs" className="basis-full border border-border rounded-md p-3 space-y-3 text-sm">
-      {step !== "done" && choices.length > 0 && <MailboxForWriting returnTo={p.returnTo} />}
+    <section aria-label="Send to several PEOs" className="border border-border rounded-md p-3 space-y-3 text-sm">
+      {step !== "done" && <MailboxForWriting returnTo={p.returnTo} />}
       {step === "choose" && choices.length === 0 ? (
-        // No PEO has a published profile (a PEO starts as an empty draft until an admin publishes it): say so, rather than a note box and a Review with nothing to choose.
-        <p role="status" className="text-muted-foreground">No PEO can be chosen yet: none has a published profile.</p>
+        <p className="text-sm">No PEOs are listed yet. Ask Nevermore to list the PEOs you quote with.</p>
       ) : step === "choose" ? (
         <>
           <ul className="space-y-2">
             {choices.map((c) => (
               <li key={c.peo} className="space-y-0.5">
                 <label className="flex items-center gap-2 min-h-11">
-                  <input type="checkbox" checked={ticked.includes(c.peo)} onChange={() => toggle(c.peo)} />
+                  <input type="checkbox" checked={ticked.includes(c.peo)} disabled={!!authorizations && stateOf(c) !== "authorized"} onChange={() => toggle(c.peo)} />
                   <span className="font-medium">{c.peo}</span>
                 </label>
+                <p className="text-xs">{`${FIT_WORDS[c.fit.outcome]}${c.fit.reason ? ` · ${c.fit.reason}` : ""}`}</p>
+                {stateOf(c) && <p className="text-xs">{STATE_WORDS[stateOf(c)!]}</p>}
+                {peopleOf(c).length > 0 && <p className="text-xs">{`Contact: ${peopleOf(c).map((x) => `${x.name}${x.role ? ` (${x.role})` : ""}`).join(", ")}`}</p>}
+                {authorizations && stateOf(c) !== "authorized" && (asked.includes(c.peo) ? (
+                  <p className="text-xs">{`Asked ${employer} to add ${c.peo}.`}</p>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => void ask(c.peo)} className="text-xs text-primary underline underline-offset-2">
+                      {`Ask ${employer} to add ${c.peo}`}
+                    </button>
+                    {askFailed[c.peo] && <p role="alert" className="text-xs text-destructive">{askFailed[c.peo]}</p>}
+                  </>
+                ))}
                 <p className="text-xs text-muted-foreground">{c.ready ? "Ready" : `Not ready: ${[...c.missing, ...c.notMet].join("; ")}`}</p>
               </li>
             ))}
@@ -199,12 +248,21 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
             <span className="text-xs text-muted-foreground">Your note</span>
             <textarea value={note} maxLength={50000} rows={5} onChange={(e) => setNote(e.target.value)} className="w-full bg-muted border border-border rounded-md px-3 py-2" />
           </label>
-          <button type="button" onClick={() => setStep("review")} className="min-h-11 px-4 rounded-md bg-primary text-primary-foreground font-medium">Review</button>
+          {noneAuthorized && (
+            <p className="text-sm">
+              {`${employer} hasn't authorized a PEO yet.`}{" "}
+              <button type="button" onClick={() => void ask("", askToAddAnyPeo(choices.map((c) => c.peo)))} className="text-primary underline underline-offset-2">{`Ask ${employer}`}</button>
+            </p>
+          )}
+          <button type="button" disabled={noneAuthorized} onClick={() => setStep("review")} className="min-h-11 px-4 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-60">Review</button>
         </>
       ) : step === "done" ? (
         <ul aria-label="What was sent" className="space-y-1">
           {outcomes.map((o) => (
-            <li key={o.peo} className={o.sent ? "" : "text-destructive"}>{`${o.peo}: ${o.sent ? "Sent" : "Not sent"}. ${o.words}`}</li>
+            <li key={o.peo} className={o.sent ? "" : "text-destructive"}>
+              {`${o.peo}: ${o.sent ? "Sent" : "Not sent"}. ${o.words}`}
+              {o.retry && <button type="button" onClick={() => void beforeSend(() => retry(o.peo))} className="ml-2 underline underline-offset-2">{`Try again with ${o.peo}`}</button>}
+            </li>
           ))}
         </ul>
       ) : (

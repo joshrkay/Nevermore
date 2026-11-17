@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   escapeHtml,
+  firmAddressUrl,
   lines,
   oneLine,
   parseAdvisorNotification,
   parseDraftExpiryReminder,
   parseExportAlert,
+  parseFirmDecision,
+  parseFirmWaiting,
   parseInformationRequest,
   parseLeadFromLink,
   parsePeoMailArrived,
@@ -13,6 +16,8 @@ import {
   renderAdvisorNotification,
   renderDraftExpiryReminder,
   renderInformationRequest,
+  renderFirmDecision,
+  renderFirmWaiting,
   renderLeadFromLink,
   renderPeoMailArrived,
   renderProspectConfirmation,
@@ -565,5 +570,135 @@ describe("lead from the firm's link: the email", () => {
     const m = renderLeadFromLink({ ...n, visitorName: "<b>Evil</b>" }, { leadUrl: url });
     expect(m.html).not.toContain("<b>Evil</b>");
     expect(m.html).toContain("&lt;b&gt;Evil&lt;/b&gt;");
+  });
+});
+
+// The platform admins' email when a firm signs up and waits for a decision (D-1860 on): the firm's name and address and who signed it up.
+const waitingPayload = { firm_name: "Fresh Benefits", address: "fresh-benefits", signed_up_by_email: "founder@example.test" };
+
+describe("a firm waiting for a decision: reading the payload", () => {
+  // Catches: the parser lets anything else the row carries through (it would be rendered), or reads a field wrongly.
+  it("reads the firm's name, its address and who signed it up, and nothing else", () => {
+    expect(parseFirmWaiting({ ...waitingPayload, note: "secret", phone: "555-0100" })).toEqual({
+      firmName: "Fresh Benefits", address: "fresh-benefits", signedUpByEmail: "founder@example.test",
+    });
+  });
+});
+
+describe("a firm waiting for a decision: a payload it cannot read", () => {
+  // Catches: a payload missing the name, address or signer (or holding a signer that is not an address) is rendered anyway instead of given up on.
+  it.each([
+    ["no name", { ...waitingPayload, firm_name: " " }],
+    ["no address", { ...waitingPayload, address: undefined }],
+    ["no signer", { ...waitingPayload, signed_up_by_email: null }],
+    ["a signer that is not an address", { ...waitingPayload, signed_up_by_email: "not an address" }],
+    ["not an object", "nope"],
+  ])("gives up on %s", (_why, payload) => {
+    expect(parseFirmWaiting(payload)).toBeNull();
+  });
+});
+
+describe("a firm waiting for a decision: the email", () => {
+  const url = "https://nevermorepeo.com/advisor/firms";
+  const n = { firmName: "Fresh Benefits", address: "fresh-benefits", signedUpByEmail: "founder@example.test" };
+
+  // Catches: the admins' email leaves out the firm, its address, who signed it up or the link to the Firms page, so an admin cannot act on it.
+  it("names the firm, its address and who signed it up, and links to the admin Firms page", () => {
+    const m = renderFirmWaiting(n, { firmsUrl: url });
+    expect(m.subject).toBe("Fresh Benefits is waiting for approval");
+    expect(m.text).toContain("Fresh Benefits signed up and is waiting for approval.");
+    expect(m.text).toContain("Address: fresh-benefits");
+    expect(m.text).toContain("Signed up by: founder@example.test");
+    expect(m.text).toContain(url);
+    expect(m.html).toContain(`href="${url}"`);
+  });
+
+  // Catches: a firm name typed with markup runs in the admins' html.
+  it("escapes what the founder typed", () => {
+    const m = renderFirmWaiting({ ...n, firmName: "<b>Evil</b> Co" }, { firmsUrl: url });
+    expect(m.html).not.toContain("<b>Evil</b>");
+    expect(m.html).toContain("&lt;b&gt;Evil&lt;/b&gt;");
+  });
+});
+
+// The email to the person who signed a firm up when an admin approved or refused it (D-1861 on).
+const decisionPayload = { recipient_email: "founder@example.test", firm_name: "Fresh Benefits", address: "fresh-benefits", approved: true, note: null };
+
+describe("a firm's decision: reading the payload", () => {
+  // Catches: the parser lets anything else the row carries through (it would be rendered), or reads the way the decision went wrongly.
+  it("reads who it goes to, the firm, its address, the way it went and the note, and nothing else", () => {
+    expect(parseFirmDecision({ ...decisionPayload, decided_by: "an admin", phone: "555-0100" })).toEqual({
+      recipientEmail: "founder@example.test", firmName: "Fresh Benefits", address: "fresh-benefits", approved: true, note: null,
+    });
+    expect(parseFirmDecision({ ...decisionPayload, approved: false, note: "Not a licensed agency" })).toMatchObject({ approved: false, note: "Not a licensed agency" });
+  });
+});
+
+describe("a firm's decision: a payload it cannot read", () => {
+  // Catches: a payload with nobody to send to, no firm, or no clear decision (a decision that is a word, not a yes or no) is rendered anyway instead of given up on.
+  it.each([
+    ["no recipient", { ...decisionPayload, recipient_email: null }],
+    ["a recipient that is not an address", { ...decisionPayload, recipient_email: "not an address" }],
+    ["no firm", { ...decisionPayload, firm_name: "" }],
+    ["no address", { ...decisionPayload, address: undefined }],
+    ["no decision", { ...decisionPayload, approved: undefined }],
+    ["a decision that is not a yes or no", { ...decisionPayload, approved: "yes" }],
+    ["not an object", "nope"],
+  ])("gives up on %s", (_why, payload) => {
+    expect(parseFirmDecision(payload)).toBeNull();
+  });
+});
+
+describe("a firm's decision: the approval email", () => {
+  const firmUrl = "https://fresh-benefits.nevermorepeo.com";
+  const n = { recipientEmail: "founder@example.test", firmName: "Fresh Benefits", address: "fresh-benefits", approved: true, note: null };
+  const ctx = { firmUrl, supportEmail: "help@nevermorepeo.com" };
+
+  // Catches: the approval does not say it is approved, leaves out the link to the firm's own address, or leaves the new owner without the next step (invite the team).
+  it("says the firm is approved, links to its address and says to invite the team", () => {
+    const m = renderFirmDecision(n, ctx);
+    expect(m.subject).toBe("Fresh Benefits is approved on Nevermore");
+    expect(m.text).toContain("Fresh Benefits has been approved.");
+    expect(m.text).toContain(firmUrl);
+    expect(m.html).toContain(`href="${firmUrl}"`);
+    expect(m.text).toContain("Invitations");
+    expect(m.text).toContain("invite your team");
+    expect(m.text).not.toContain("refused");
+  });
+
+  // Catches: a refusal reads as an approval, drops the admin's note, or leaves the founder with nowhere to ask (the support address), or shows a link into a firm they do not have.
+  it("says the firm was refused, gives the admin's note and the support address, and links to nothing", () => {
+    const m = renderFirmDecision({ ...n, approved: false, note: "We could not match this to a licensed agency." }, ctx);
+    expect(m.subject).toBe("Your request for Fresh Benefits on Nevermore");
+    expect(m.text).toContain("Fresh Benefits was not approved.");
+    expect(m.text).toContain("We could not match this to a licensed agency.");
+    expect(m.text).toContain("help@nevermorepeo.com");
+    expect(m.text).not.toContain(firmUrl);
+    expect(m.html).not.toContain("href=");
+    expect(m.text).not.toContain("approved on");
+  });
+
+  // Catches: a refusal with no note prints an empty or "null" reason.
+  it("leaves out the reason when the admin gave none", () => {
+    const m = renderFirmDecision({ ...n, approved: false, note: null }, ctx);
+    expect(m.text).not.toContain("What we noted");
+    expect(m.text).not.toContain("null");
+    expect(m.text).toContain("help@nevermorepeo.com");
+  });
+
+  // Catches: the admin's note, typed freely, runs as markup in the html.
+  it("escapes the admin's note", () => {
+    const m = renderFirmDecision({ ...n, approved: false, note: "<script>x</script>" }, ctx);
+    expect(m.html).not.toContain("<script>");
+    expect(m.html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("a firm's link in an email", () => {
+  // Catches: the link names the bare domain (or a path of it) instead of the firm's own address, so the new owner lands on the wrong site.
+  it("is the firm's address in front of the app's own host", () => {
+    expect(firmAddressUrl("https://nevermorepeo.com", "fresh-benefits")).toBe("https://fresh-benefits.nevermorepeo.com");
+    expect(firmAddressUrl("https://nevermorepeo.com/", "fresh-benefits")).toBe("https://fresh-benefits.nevermorepeo.com");
+    expect(firmAddressUrl("http://localhost:8080", "fresh-benefits")).toBe("http://fresh-benefits.localhost:8080");
   });
 });

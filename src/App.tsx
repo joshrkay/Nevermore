@@ -36,10 +36,12 @@ const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissi
 const AccountsPage = lazy(() => import("./pages/accounts/AccountsPage"));
 const LeadsPage = lazy(() => import("./pages/leads/LeadsPage"));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
+const QuotesPage = lazy(() => import("./pages/quotes/QuotesPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
 const LeadPage = lazy(() => import("./pages/leads/LeadPage"));
 const OpportunityPage = lazy(() => import("./pages/opportunities/OpportunityPage"));
+const QuotePage = lazy(() => import("./pages/quotes/QuotePage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
 const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPage"));
@@ -52,6 +54,7 @@ const AdvisorMembersPage = lazy(() => import("./pages/advisor/AdvisorMembersPage
 const AdvisorFirmsPage = lazy(() => import("./pages/advisor/AdvisorFirmsPage"));
 const SignUpFirmPage = lazy(() => import("./pages/SignUpFirmPage"));
 const JoinFirmPage = lazy(() => import("./pages/JoinFirmPage"));
+const IntakeInvitePage = lazy(() => import("./pages/IntakeInvitePage"));
 const FirmInvitationsPage = lazy(() => import("./pages/FirmInvitationsPage"));
 const ChooseFirmPage = lazy(() => import("./pages/ChooseFirmPage"));
 // Read rarely, so kept out of the main bundle too.
@@ -74,6 +77,11 @@ const AppRoutes = () => (
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/firms/new" element={<SignUpFirmPage />} />
                 <Route path="/join" element={<JoinFirmPage />} />
+                {/* The link in a broker's invitation to finish and certify an intake (slice 5.3): the secret is after the #, and the database decides who may take the intake over. */}
+                <Route path="/intake-invite" element={<IntakeInvitePage />} />
+                {/* The existing intake (Lenore and the tabs) opened by a member of the firm on an intake the firm started (slice 5.3, D-1751): New quote's step 2 (slice 5.5) is this chamber, and it has
+                    no menu to put around it. The employer's agreement is the employer's, so no consent gate; the database decides who may enter answers there. */}
+                <Route path="/client-intake/:intakeId" element={<RequireFirm><ChamberPage /></RequireFirm>} />
                 <Route path="/choose-firm" element={<ChooseFirmPage />} />
                 <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
                 <Route path="/broker/callback" element={<BrokerCallbackPage />} />
@@ -96,12 +104,15 @@ const AppRoutes = () => (
                   <Route path="/advisor" element={<AdvisorDashboardPage />} />
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
                   <Route path="/inbox" element={<InboxPage />} />
+                  <Route path="/quotes" element={<QuotesPage />} />
                   <Route path="/leads" element={<LeadsPage />} />
                   <Route path="/leads/:id" element={<LeadPage />} />
                   <Route path="/accounts" element={<AccountsPage />} />
                   <Route path="/accounts/:id" element={<AccountPage />} />
                   <Route path="/contacts/:id" element={<ContactPage />} />
                   <Route path="/opportunities/:id" element={<OpportunityPage />} />
+                  {/* A quote is a quote request (D-185): its page, from the quotes panel, the submission and the menu search (CRM-Q3.2). */}
+                  <Route path="/quotes/:quoteRequestId" element={<QuotePage />} />
                   {/* New quote is drawn by the shell (NewQuoteHost), over the page it was opened from or, opened alone, by itself (D-1709): these routes draw nothing. */}
                   <Route path="/new-quote" element={null} />
                   <Route path="/new-quote/:opportunityId" element={null} />

@@ -1,17 +1,6 @@
 import { useEffect, useState } from "react";
-import { PEO_AUTHORIZATION_PROFILE_HEADING } from "@/data/legalWording";
-import { loadPeoAuthorizations, type PeoAuthorizationState, type PeoAuthorizationStateName } from "@/lib/peoAuthorizationsApi";
-
-const STATE_WORDS: Record<PeoAuthorizationStateName, string> = {
-  authorized: "May receive it",
-  withdrawn: "Withdrawn by the employer",
-  not_asked: "Not authorized",
-};
-
-/** The draft an advisor sends through Ask the prospect, naming no answers: the employer adds the PEO themselves. */
-const askToAddPeo = (peo: string) =>
-  `We'd like to send your packet to ${peo}. If you agree, tick ${peo} under "${PEO_AUTHORIZATION_PROFILE_HEADING}" on your profile. Nothing goes to ${peo} until you do.`;
-
+import { STATE_WORDS, askToAddPeo } from "@/data/peoAuthorizationWords";
+import { loadPeoAuthorizations, type PeoAuthorizationState } from "@/lib/peoAuthorizationsApi";
 /**
  * Who may receive the packet (M-1.1, D-608): each PEO's state as the employer left it. A send to a PEO not authorized is refused by the database
  * (advisor_record_quote_send); only the employer can add one.

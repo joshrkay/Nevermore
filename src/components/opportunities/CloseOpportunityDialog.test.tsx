@@ -41,6 +41,17 @@ beforeEach(() => {
   markOpportunityLost.mockResolvedValue({ conflict: false, stage: "lost", version: 5 });
 });
 
+describe("the dialog fits the window (D-1832)", () => {
+  // Break caught: with the withdrawal offered the dialog is taller than a 900px window and its whole content scrolls as one, so Cancel and Mark lost sit below the fold. The body scrolls inside the viewport and the buttons stay in view.
+  it("scrolls its body inside the window and keeps Cancel and Mark lost outside what scrolls", async () => {
+    const { dialog } = await open();
+    expect(dialog).toHaveClass("max-h-[90vh]", "overflow-hidden");
+    const scroller = within(dialog).getByLabelText("The withdrawal").closest(".overflow-y-auto");
+    expect(scroller).not.toBeNull();
+    for (const name of ["Cancel", "Mark lost"]) expect(within(dialog).getByRole("button", { name }).closest(".overflow-y-auto")).toBeNull();
+  });
+});
+
 describe("the withdrawal offered on Lost", () => {
   // Catches: a loss that closes the PEOs and tells none of them, so each learns from a link that no longer opens.
   it("offers the PEOs still open ticked, and a loss sent with it is one call that carries the subject and the note", async () => {

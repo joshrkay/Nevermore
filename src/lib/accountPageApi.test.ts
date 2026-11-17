@@ -352,3 +352,13 @@ describe("getSubmissionAccount", () => {
     expect(await caught(() => getSubmissionAccount("f1", "i1"))).toMatchObject({ kind: "failed" });
   });
 });
+
+describe("getIntakeSays", () => {
+  // Catches: the list of states the intake certified dropped on the way to the page, so "The intake says TX, CA" never shows.
+  it("hands the page the certified states, provider and employees under its own names, and nothing it was not given", async () => {
+    const { getIntakeSays } = await import("./accountPageApi");
+    rpc.mockResolvedValue({ data: { states_of_operation: ["TX", "CA"], current_provider: "Paychex PEO", employees: 23, fein: "123456789" }, error: null });
+    expect(await getIntakeSays("f1", "a1")).toEqual({ statesOfOperation: ["TX", "CA"], currentProvider: "Paychex PEO", employees: 23 });
+    expect(rpc).toHaveBeenCalledWith("account_intake_says", { p_firm_id: "f1", p_account_id: "a1" });
+  });
+});

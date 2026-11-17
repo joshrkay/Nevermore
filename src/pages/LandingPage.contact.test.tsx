@@ -1,11 +1,14 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: null }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const firm = { current: { status: "none" } as { status: string; address?: string; name?: string } };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current }));
+
+const takes = vi.fn();
+vi.mock("@/lib/firmApi", async () => ({ ...(await vi.importActual<object>("@/lib/firmApi")), fetchFirmTakesIntakes: (a: string) => takes(a) }));
 
 const { default: LandingPage } = await import("./LandingPage");
 
@@ -24,6 +27,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   firm.current = { status: "none" };
+  takes.mockReset();
+  takes.mockResolvedValue(true);
   vi.stubEnv("VITE_TURNSTILE_SITE_KEY", "site-key-123");
   document.head.querySelectorAll("script").forEach((s) => s.remove());
 });
@@ -61,5 +66,41 @@ describe("the landing page, asking a firm to make contact", () => {
     renderLanding();
     expect(screen.getByText("Asking to be contacted isn't available right now")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /to contact me/ })).toBeNull();
+  });
+});
+
+// The firm's public page has two actions (D-1713, D-1830): "Get a quote" (slice 5.2's GetAQuote) and "Ask to be contacted".
+describe("the landing page, getting a quote from a firm", () => {
+  // Break caught: slice 5.2's "Get a quote" is built but never placed, so a firm's public page offers no way to start a quote.
+  it("offers Get a quote at a firm's address, starting an intake there", async () => {
+    firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
+    renderLanding();
+    const links = await screen.findAllByRole("link", { name: "Get a quote" });
+    expect(links.length).toBeGreaterThan(0);
+    expect(links[0]).toHaveAttribute("href", "/start");
+  });
+
+  // Break caught: a firm's page still carries the generic "Start chatting" (the second call to action), so a visitor has two different ways in, one of them bypassing the firm's switch for intakes.
+  it("replaces every generic Start chatting with Get a quote at a firm's address, and keeps Start chatting on the bare domain", async () => {
+    renderLanding();
+    expect(screen.getAllByRole("link", { name: /Start chatting/ }).length).toBe(2);
+    cleanup();
+    firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
+    renderLanding();
+    await screen.findAllByRole("link", { name: "Get a quote" });
+    expect(screen.queryByRole("link", { name: /Start chatting/ })).toBeNull();
+  });
+});
+
+// A brokerage firm finds its way in from the page itself, not only from the header (decision D-1848).
+describe("the landing page, signing a firm up", () => {
+  // Break caught: the page body has no way for a brokerage to sign up, or offers it at a firm's address, where a firm is already named.
+  it("links Sign up your firm to /firms/new on the bare domain, and not at a firm's address", () => {
+    renderLanding();
+    expect(screen.getByRole("link", { name: "Sign up your firm" })).toHaveAttribute("href", "/firms/new");
+    cleanup();
+    firm.current = { status: "known", address: "acme-brokers", name: "Acme Brokers" };
+    renderLanding();
+    expect(screen.queryByRole("link", { name: "Sign up your firm" })).toBeNull();
   });
 });

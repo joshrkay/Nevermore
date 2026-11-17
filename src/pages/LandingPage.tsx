@@ -5,7 +5,10 @@ import { Check, MessageCircle, PenLine, Send } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import ContactMeForm from "@/components/ContactMeForm";
+import GetAQuote from "@/components/GetAQuote";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
+
+const CTA_CLASS = "inline-flex items-center justify-center min-h-[52px] px-7 rounded-full bg-primary text-primary-foreground font-bold text-[17px] hover:bg-primary/90 transition-colors";
 
 const fadeUp = (delay: number) => ({
   initial: { opacity: 0, y: 24 },
@@ -162,12 +165,13 @@ const LandingPage = () => {
             you choose. Skip the long forms and the <span className="whitespace-nowrap">three-email</span> threads.
           </motion.p>
           <motion.div {...fadeUp(0.3)} className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 mt-9">
-            <Link
-              to="/start"
-              className="inline-flex items-center justify-center min-h-[52px] px-7 rounded-full bg-primary text-primary-foreground font-bold text-[17px] hover:bg-primary/90 transition-colors"
-            >
-              Start chatting →
-            </Link>
+            {firm.status === "known" ? (
+              <GetAQuote className={CTA_CLASS} />
+            ) : (
+              <Link to="/start" className={CTA_CLASS}>
+                Start chatting →
+              </Link>
+            )}
             <a href="#how-it-works" className="font-bold underline underline-offset-4 decoration-2 hover:text-primary transition-colors">
               See how it works
             </a>
@@ -334,12 +338,13 @@ const LandingPage = () => {
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl md:text-4xl font-extrabold mb-3">Ready when your census is.</h2>
           <p className="text-lg text-muted-foreground mb-8">Start as a guest. You verify your email when you're ready to sign.</p>
-          <Link
-            to="/start"
-            className="inline-flex items-center justify-center min-h-[52px] px-7 rounded-full bg-primary text-primary-foreground font-bold text-[17px] hover:bg-primary/90 transition-colors"
-          >
-            Start chatting →
-          </Link>
+          {firm.status === "known" ? (
+            <GetAQuote className={CTA_CLASS} />
+          ) : (
+            <Link to="/start" className={CTA_CLASS}>
+              Start chatting →
+            </Link>
+          )}
         </div>
       </section>
 
@@ -355,6 +360,9 @@ const LandingPage = () => {
             <a href="#how-it-works" className="whitespace-nowrap hover:text-foreground transition-colors">How It Works</a>
             <a href="#peo-partners" className="whitespace-nowrap hover:text-foreground transition-colors">For PEO Partners</a>
             <Link to="/start" className="whitespace-nowrap hover:text-foreground transition-colors">Start your intake</Link>
+            {firm.status === "none" && (
+              <Link to="/firms/new" className="whitespace-nowrap hover:text-foreground transition-colors">Sign up your firm</Link>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">Nevermore is a service of Edgar Allan Advisory.</p>
           <LegalLinks copyright />

@@ -1,0 +1,42 @@
+{
+  "about": "A broker's entry as a provenance source (D-1710, migration 20261123120000). Each case is a stored intake and the state of each required item, as in requiredItems.cases.json; src/data/requiredItems.test.ts reads them as the browser loads them and supabase/tests/broker_intake.sql runs them through public.intake_required_items. A source the browser would drop (a member id that is not a user id, a quote over 200 characters) is dropped by the database too, which leaves the answer with no provenance: the employer's own.",
+  "cases": [
+    {
+      "name": "an answer a broker entered is unconfirmed until the employer certifies",
+      "data": { "company_name": "Acme Robotics", "states": ["TX"], "pay_frequency": "Weekly" },
+      "provenance": {
+        "company_name": { "status": "inferred", "source": { "kind": "broker_entry", "member_id": "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11" }, "updated_at": "2026-11-20T10:00:00.000Z" },
+        "states": { "status": "inferred", "source": { "kind": "broker_entry", "member_id": "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11", "message_id": "m4", "quote": "we operate in Texas" }, "updated_at": "2026-11-20T10:00:00.000Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "unconfirmed", "states": "unconfirmed", "pay_frequency": "settled", "census": "missing" }
+    },
+    {
+      "name": "a broker's entry the employer's certification confirmed is settled, and still says who entered it",
+      "data": { "company_name": "Acme Robotics", "states": ["TX"], "pay_frequency": "Weekly" },
+      "provenance": {
+        "company_name": { "status": "confirmed", "source": { "kind": "broker_entry", "member_id": "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11" }, "updated_at": "2026-11-20T10:00:00.000Z", "employer_confirmed_at": "2026-11-21T10:00:00.000Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "settled", "census": "missing" }
+    },
+    {
+      "name": "a broker's entry whose member is not a user id is no provenance at all, on both sides",
+      "data": { "company_name": "Acme Robotics", "states": ["TX"], "pay_frequency": "Weekly" },
+      "provenance": {
+        "company_name": { "status": "inferred", "source": { "kind": "broker_entry", "member_id": "not-a-user" }, "updated_at": "2026-11-20T10:00:00.000Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "settled", "census": "missing" }
+    },
+    {
+      "name": "a broker's entry with a quote past 200 characters is dropped on both sides",
+      "data": { "company_name": "Acme Robotics", "states": ["TX"], "pay_frequency": "Weekly" },
+      "provenance": {
+        "company_name": { "status": "inferred", "source": { "kind": "broker_entry", "member_id": "7b1f0c52-3c43-4d5e-9a58-0e6a2b9f4c11", "quote": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, "updated_at": "2026-11-20T10:00:00.000Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "settled", "census": "missing" }
+    }
+  ]
+}

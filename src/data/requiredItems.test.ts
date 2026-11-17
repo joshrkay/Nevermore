@@ -114,3 +114,14 @@ describe("certificationBlockingItems", () => {
     expect(blocking(data, { census: conflicting }, new Set(["census"]))).toEqual([]);
   });
 });
+
+// A broker's entry as a source (D-1710, 20261123120000): the same stored intakes go through public.intake_required_items in supabase/tests/broker_intake.sql, so the browser and the database
+// read a broker's entry alike. They live apart from the shared cases because the database's side needs the migration that teaches it the source.
+const { cases: brokerCases } = JSON.parse(readFileSync("src/data/requiredItems.brokerCases.json", "utf8")) as { cases: Case[] };
+
+describe("requiredItems, against the broker-entry cases", () => {
+  it.each(brokerCases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
+    const items = requiredItems(parseChamberData(c.data), parseProvenance(c.provenance), new Set(c.verified));
+    expect(Object.fromEntries(items.map((i) => [i.field, i.state]))).toEqual(c.expected);
+  });
+});

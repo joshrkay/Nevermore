@@ -198,7 +198,13 @@
 \i supabase/migrations/20261123090000_opportunity_close_withdraw.sql
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
+\i supabase/migrations/20261123120000_broker_intake.sql
+\i supabase/migrations/20261123120100_broker_intake_columns.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123180000_quotes_table.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
+\i supabase/migrations/20261123200000_employer_ends_access.sql
+\i supabase/migrations/20261124090000_firm_signup_emails.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -601,6 +607,7 @@ BEGIN
     ('preview a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_preview(%L, 'archive', '{}', NULL, '["00000000-0000-4000-8000-0000000000a1"]')$q$, fa), closing_msg),
     ('undo a bulk change', 'agent_a', format($q$SELECT public.bulk_accounts_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
     ('change leads in bulk', 'agent_a', format($q$SELECT public.bulk_leads_change(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), closing_msg),
+    ('change quotes in bulk', 'agent_a', format($q$SELECT public.bulk_quotes_change(%L, 'close', '{"reason":"other"}', NULL, '["q1"]')$q$, fa), closing_msg),
     ('preview a bulk change of leads', 'agent_a', format($q$SELECT public.bulk_leads_preview(%L, 'delete', '{}', NULL, '["00000000-0000-4000-8000-0000000000b1"]')$q$, fa), closing_msg),
     ('undo a bulk change of leads', 'agent_a', format($q$SELECT public.bulk_leads_undo(%L, %L)$q$, '00000000-0000-4000-8000-0000000000a7'::uuid, fa), closing_msg),
     ('log a call', 'agent_a', format($q$SELECT public.log_activity('call', %L, NULL, NULL, NULL, 'spoke', 'Hello', NULL, NULL, NULL, NULL, NULL, NULL, %L)$q$, '00000000-0000-4000-8000-0000000000a1'::uuid, fa), closing_msg),
@@ -1165,7 +1172,7 @@ BEGIN
   PERFORM pg_temp.is(c.asked_by, pg_temp.id('owner_a'), 'it still says who asked');
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
-    'firm_invitations', 1, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 8, 'recent_records', 0, 'referral_partners', 1,
+    'firm_invitations', 1, 'intake_invitations', 0, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 8, 'recent_records', 0, 'referral_partners', 1,
     'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
@@ -1401,7 +1408,9 @@ DECLARE
     'issue_bundle_link', 'revoke_bundle_link', 'send_to_peo', 'attach_peo_link', 'send_peo_update', 'follow_up_peo', 'withdraw_from_peo', 'close_submission_and_withdraw', 'opportunity_mark_won_and_withdraw', 'opportunity_mark_lost_and_withdraw', 'request_contact',
     -- Epic 4 (opportunities, won/lost, commission): each asks assert_firm_writable first thing
     'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission',
-    'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads'];
+    'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads',
+    -- Slice 5.3 (a broker-started intake, P-2.2, P-2.4): a member's writes, each asking assert_firm_writable
+    'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'bulk_quotes_change'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_add_peo', 'a platform admin''s: the PEO list is the same for every firm',
@@ -1418,12 +1427,15 @@ DECLARE
     'advisor_open_quote_request_thread', 'marks a thread read, which is what reading is; allowed while a firm is closing',
     'open_conversation', 'marks a conversation read for the firm (CRM-E1.3), which is what reading is; allowed while a firm is closing',
     'archive_chamber_session', 'the employer''s own intake: not the firm''s to freeze',
+    'accept_intake_invite', 'the employer taking over an intake the firm started (D-1703): the employer''s own act, not a member''s change to the firm''s data, so it works while the firm is closing, as the employer''s certification does (D-226)',
+    'peek_intake_invite', 'a visitor opening the link the firm sent them: it marks the invitation opened, which is what reading is (as open_conversation does); allowed while a firm is closing',
     'consume_ai_quota', 'the caller''s own allowance',
     'export_rows', 'a read that records itself in the firm''s record, which stays writable (ADR 0023): a closing firm''s members are offered their tables to take out (CRM-P1.7), so an export is the way out and not a change to the firm''s data; a support session is refused first (supabase/tests/export.sql)',
     'end_support_session', 'a platform admin''s own support session (CRM-P2.4): no member''s change to the firm''s data, and a support session itself is refused every guarded write',
     'leave_firm', 'a member''s way out, allowed while a firm is closing (CRM-P1.6)',
     'record_intake_consent', 'the employer''s own agreement',
     'set_peo_authorization', 'the employer''s own say over which PEOs may receive their packet (M-1.1, D-623): not the firm''s to freeze; a withdrawal must close that PEO''s quote request even while the firm is closing',
+    'employer_end_firm_access', 'the employer''s own say to take an intake out of a firm (CRM-P2.5, D-1714): not the firm''s to freeze; an employer must be able to leave a firm that is closing',
     'record_history_capture', 'the trigger that writes a record''s history (CRM-S5.2): it runs inside a write that already asked the guard (referral partners are written only by the two guarded partner functions) and no API role can run it or write the table; the history table has no write grant or policy for an API role at all',
         'report_client_event', 'the platform''s monitoring',
     'request_firm_closure', 'the closing''s own door',
@@ -1460,6 +1472,7 @@ DECLARE
   exempt jsonb := jsonb_build_object(
     'public.chamber_sessions | Users can insert their own sessions', 'the employer''s own intake (user_id is the caller), not a member''s',
     'public.chamber_sessions | Users can update their own sessions', 'the employer''s own intake',
+    'public.chamber_sessions | Firm members can work an intake their firm started', 'a member''s work on an intake their firm started (D-1751): the trigger work_broker_started_intake asks assert_firm_writable first, so a closing firm''s member is refused (PT423, supabase/tests/broker_intake.sql)',
     'public.documents | Users can insert documents into their own sessions', 'the employer''s own documents in their own intake',
     'public.documents | Users can update documents in their own sessions', 'the employer''s own documents',
     'public.documents | Users can delete documents in their own sessions', 'the employer''s own documents',

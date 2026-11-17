@@ -111,7 +111,7 @@ describe("PeoThreadPanel", () => {
     const thread = screen.getByRole("list", { name: "TriNet thread, newest first" });
     const items = within(thread).getAllByRole("listitem").map((li) => li.textContent ?? "");
     expect(items).toHaveLength(5);
-    expect(items[0]).toContain("Waiting → Quoted");
+    expect(items[0]).toContain("Sent → Quoted");
     expect(items[1]).toContain("Second message");
     expect(items[2]).toContain("Proposal attached.");
     expect(items[3]).toContain("Dana called about loss runs.");
@@ -120,6 +120,32 @@ describe("PeoThreadPanel", () => {
     await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalledWith(7, "2026-11-10T16:30:00.654321+00:00"));
     await waitFor(() => expect(within(screen.getByRole("button", { name: /TriNet/ })).queryByText("New PEO mail")).not.toBeInTheDocument());
     expect(onOpened).toHaveBeenCalledTimes(1);
+  });
+
+  // Catches: a quote's own page (CRM-Q3.2) showing a chooser and "Choose a PEO" for the one thread it is about, or leaving its new-mail mark on after it is read.
+  it("for one named quote request (a quote's page) opens that thread at once, with no chooser, and marks it read", async () => {
+    const onOpened = vi.fn();
+    render(
+      <PeoThreadPanel
+        prospectUserId="p1" requests={[request(), request({ id: 8, peo_name: "Justworks" })]} ofRequest={7}
+        messages={[message({ id: 1 }), message({ id: 2, quote_request_id: 8, body_text: "Justworks only" })]} attachments={[]} notes={[]} events={[]} reads={[]} onOpened={onOpened}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "Choose a thread" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Choose a PEO to read its thread.")).not.toBeInTheDocument();
+    const thread = screen.getByRole("list", { name: "TriNet thread, newest first" });
+    expect(thread).toHaveTextContent("Proposal attached.");
+    expect(thread).not.toHaveTextContent("Justworks only");
+    await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalledWith(7, "2026-11-10T15:00:05.123456+00:00"));
+    expect(api.openQuoteRequestThread).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+  });
+
+  // Catches: a quote's page with no mail yet showing "Choose a PEO to read its thread" instead of its own (empty) thread.
+  it("for one named quote request with no mail yet, shows its empty thread rather than asking to choose", () => {
+    render(<PeoThreadPanel prospectUserId="p1" requests={[request()]} ofRequest={7} messages={[]} attachments={[]} notes={[]} events={[]} reads={[]} />);
+    expect(screen.queryByText("Choose a PEO to read its thread.")).not.toBeInTheDocument();
+    expect(screen.getByText(/Nothing here yet/)).toBeInTheDocument();
   });
 
   it("doesn't mark a thread read that has no new mail", () => {

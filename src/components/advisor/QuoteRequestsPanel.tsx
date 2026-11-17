@@ -1,4 +1,6 @@
 import { useContext, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { quotePath } from "@/data/quotePage";
 import { quoteStatusWords } from "@/data/opportunityPage";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -133,7 +135,7 @@ const MARKS: { value: OpenQuoteStatus; label: string; words: string }[] = [
 ];
 
 /** What a PEO has said short of a quote or a decline (CRM-Q3.1): one click records Acknowledged, Question open, or back to Sent. */
-const OpenStatusButtons = ({ request, onChanged }: { request: QuoteRequestRow; onChanged: () => void }) => {
+export const OpenStatusButtons = ({ request, onChanged }: { request: QuoteRequestRow; onChanged: () => void }) => {
   const [saving, setSaving] = useState(false);
   const offlineSave = useOfflineSave();
   // A support session reads the firm's data and changes none of it (ADR 0024).
@@ -167,7 +169,7 @@ const OpenStatusButtons = ({ request, onChanged }: { request: QuoteRequestRow; o
  * The address to put in CC when emailing a PEO from one's own mail, so the message and the PEO's replies reach
  * this quote request. An advisor can revoke it and issue a new one, after which the old one stops working.
  */
-const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRow; address: string; onChanged: () => void }) => {
+export const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRow; address: string; onChanged: () => void }) => {
   const id = `reply-address-${request.id}`;
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -370,6 +372,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
               {quotedOn && <p className="text-xs text-muted-foreground">{quotedOn}</p>}
               {local && replyDomain && <ReplyAddress request={r} address={replyAddress(local, replyDomain)} onChanged={onChanged} />}
               {r.note && <p className="text-xs text-muted-foreground italic">{r.note}</p>}
+              <Link to={quotePath(r.id)} className="inline-block text-xs text-primary underline underline-offset-2 py-1">{`Open ${r.peo_name}'s quote page`}</Link>
               {answering === r.id ? (
                 <AnswerForm
                   request={r}

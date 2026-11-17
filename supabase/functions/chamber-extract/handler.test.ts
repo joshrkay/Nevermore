@@ -32,6 +32,9 @@ interface Setup {
   intakes?: Record<string, string>;
   intakeLookupFails?: boolean;
   eventWriteFails?: boolean;
+  /** Intakes a member of a firm started (P-2.2): which member, and whether the database lets the caller enter answers as the broker (broker_may_enter_intake). */
+  brokerStarted?: Record<string, string>;
+  brokerMay?: boolean;
 }
 
 // Everything the handler touches is faked: Supabase, the AI provider, the clock and the log.
@@ -60,6 +63,7 @@ const setup = (opts: Setup = {}) => {
     rpc: async (fn, args) => {
       steps.push(fn);
       rpcCalls.push({ key, fn, args });
+      if (fn === "broker_may_enter_intake") return { data: opts.brokerMay ?? false, error: null };
       return { data: allowed[fn], error: null };
     },
     from: (table) => ({
@@ -68,7 +72,7 @@ const setup = (opts: Setup = {}) => {
           maybeSingle: async () => {
             steps.push(`lookup:${table}`);
             if (opts.intakeLookupFails) return { data: null, error: { message: "boom" } };
-            return { data: intakes[id] ? { id, user_id: intakes[id] } : null, error: null };
+            return { data: id in intakes ? { id, user_id: intakes[id], started_by: opts.brokerStarted?.[id] ?? null } : null, error: null };
           },
         }),
       }),
@@ -767,5 +771,38 @@ describe("guardReply", () => {
       .toBe("Thanks, that's everything I need to ask. Still to enter in the workspace: FEIN, on the Company tab; Legal entities, on the Company tab. You can look over your intake on the Review tab.");
     expect(guardReply(null, null, false, [])).toEqual({ reply: WRAP_UP_REPLY, reason: null });
     expect(guardReply(null, NEXT, true)).toEqual({ reply: STOPPING_REPLY, reason: null });
+  });
+});
+
+// P-2.4: a broker talks to Lenore in an intake the firm started. The caller isn't the intake's owner (there may be no owner yet), so the database is asked whether they may enter answers as
+// the broker, and the answer tells the browser that what was heard is the broker's, so it is saved with the broker's source and never as the employer's.
+describe("chamber-extract handler: a broker talking to Lenore (P-2.4)", () => {
+  const BROKER_INTAKE = "99999999-9999-4999-8999-999999999999";
+  const starter = { [BROKER_INTAKE]: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+
+  // Break caught: a member of the firm is refused as "not found" in the intake their firm started, so a broker can never talk to Lenore for a client.
+  it("answers a member of the firm in an intake the firm started", async () => {
+    const t = setup({ intakes: { [BROKER_INTAKE]: null as unknown as string }, brokerStarted: starter, brokerMay: true });
+    const { status, body } = await read(await handleRequest(post({ message: "They have about 40 employees in Texas", session_id: BROKER_INTAKE }), t.deps));
+    expect(status).toBe(200);
+    expect(t.rpcCalls.find((c) => c.fn === "broker_may_enter_intake")?.args).toEqual({ p_intake_id: BROKER_INTAKE });
+    expect(t.event()).toMatchObject({ session_id: BROKER_INTAKE, outcome: "ok" });
+  });
+
+  // Break caught: anyone who can read an intake of the firm talks to Lenore for it, whether or not the database lets them enter answers there.
+  it("refuses as not found when the database says the caller may not enter answers there, and spends nothing", async () => {
+    const t = setup({ intakes: { [BROKER_INTAKE]: null as unknown as string }, brokerStarted: starter, brokerMay: false });
+    const { status, body } = await read(await handleRequest(post({ message: "hi", session_id: BROKER_INTAKE }), t.deps));
+    expect(status).toBe(404);
+    expect(body.code).toBe("not_found");
+    expect(t.fetchFn).not.toHaveBeenCalled();
+  });
+
+  // Break caught: the employer's own words are marked as a broker's, so what they say is never counted as theirs.
+  it("doesn't ask the database whether the intake owner may enter answers as the broker", async () => {
+    const t = setup({ intakes: { [BROKER_INTAKE]: USER }, brokerStarted: starter, brokerMay: true });
+    const { status, body } = await read(await handleRequest(post({ message: "hi", session_id: BROKER_INTAKE }), t.deps));
+    expect(status).toBe(200);
+    expect(t.rpcCalls.map((c) => c.fn)).not.toContain("broker_may_enter_intake");
   });
 });

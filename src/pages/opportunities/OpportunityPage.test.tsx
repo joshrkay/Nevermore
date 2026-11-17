@@ -357,11 +357,13 @@ describe("OpportunityPage: the quotes", () => {
     expect(rows.map((r) => cell(r, "Status").textContent)).toEqual(["Sent · 6 days", "Sent · 1 day", "Sent · today", "Quoted"]);
   });
 
-  // Catches: a PEO that opens nothing (D-424: each opens the submission's page until the quote's own page, Epic 5).
-  it("opens the submission's page from each PEO", async () => {
-    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quoted] }));
+  // Catches: a PEO that opens the whole submission (D-424 did, until the quote's own page; CRM-Q3.2 is that page, D-1796) or the wrong quote.
+  it("opens the quote's page from each PEO", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quoted, quote(2)] }));
     renderPage();
-    expect(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("link", { name: "PEO A" })).toHaveAttribute("href", "/advisor/submissions/i1");
+    const panel = await screen.findByRole("region", { name: /^Quotes/ });
+    expect(await within(panel).findByRole("link", { name: "PEO A" })).toHaveAttribute("href", "/quotes/1");
+    expect(within(panel).getByRole("link", { name: "PEO B" })).toHaveAttribute("href", "/quotes/2");
   });
 
   // Catches: Still needs read from the wrong place: the same reads as the submission's page (the last certified version and the PEOs' profiles), matched by name
@@ -2074,6 +2076,8 @@ describe("OpportunityPage: Choose PEOs (D-1727)", () => {
   // Catches: a certified search with no way to send its packet to several PEOs from its own page, or a button that opens nothing.
   it("opens Send to several PEOs on the quotes panel, from the certified answers, when the person chooses PEOs", async () => {
     client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1)] }));
+    // An unauthorized PEO isn't ticked (5.8, D-1784): the employer has authorized Justworks.
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([{ peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null }]);
     renderPage();
     await userEvent.click(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("button", { name: "Choose PEOs" }));
     const sending = await screen.findByRole("region", { name: "Send to several PEOs" });

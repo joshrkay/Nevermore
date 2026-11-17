@@ -37,11 +37,23 @@ describe("page meta table", () => {
     expect(pageMetaFor("/advisor/funnel").title).toBe("Funnel | Nevermore");
   });
 
+  // Catches: the quotes table titled as "Advisor Console" or "Page not found", or listed for search.
+  it("titles the quotes table and keeps it private (CRM-Q4.1)", () => {
+    expect(pageMetaFor("/quotes")).toMatchObject({ title: "Quotes | Nevermore", index: false });
+  });
+
   it("indexes the landing page and the sample packet, and the legal pages only once counsel has approved them", () => {
     expect(pageMetaFor("/").index).toBe(true);
     expect(pageMetaFor("/manuscript/demo").index).toBe(true);
     expect(pageMetaFor("/privacy").index).toBe(LEGAL_COPY_APPROVED);
     expect(pageMetaFor("/terms/").index).toBe(LEGAL_COPY_APPROVED);
+  });
+
+  // Catches: a page with a title, a robots rule and a menu link that the router doesn't answer (the address would show "not found").
+  it("routes the quotes table (CRM-Q4.1)", () => {
+    const app = readFileSync("src/App.tsx", "utf8");
+    expect(app).toMatch(/<Route\s+path="\/quotes"\s+element=\{<QuotesPage \/>\}/);
+    expect(app).toMatch(/lazy\(\(\) => import\("\.\/pages\/quotes\/QuotesPage"\)\)/);
   });
 
   it("covers every route in src/App.tsx", () => {
@@ -67,6 +79,12 @@ describe("the title of each workspace page", () => {
   });
   it("is private: never indexed", () => {
     for (const path of PAGES) expect(pageMetaFor(path).index, path).toBe(false);
+  });
+  // Catches: a quote's page (CRM-Q3.2, /quotes/:quoteRequestId) taken for an address the app doesn't route (a "Page not found" title in the tab), or indexed.
+  it("names a quote's page, privately", () => {
+    expect(pageMetaFor("/quotes/123").title).toBe("Quote | Nevermore");
+    expect(pageMetaFor("/quotes/123").index).toBe(false);
+    expect(PRIVATE_PATH_EXAMPLES).toContain("/quotes/123");
   });
 });
 

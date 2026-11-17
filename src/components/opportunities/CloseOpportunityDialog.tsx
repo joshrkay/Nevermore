@@ -161,7 +161,7 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
       if (conflict) onClose();
       else api.cancel?.();
     }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Close this opportunity</DialogTitle>
           <DialogDescription>{target.name} · {accountName}</DialogDescription>
@@ -183,95 +183,98 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
           <WorkspaceForm
             api={api}
             aria-label="Close this opportunity"
+            className="flex min-h-0 flex-1 flex-col gap-4 space-y-0"
             actions={<FormActions submitLabel={outcome === "won" ? "Mark won" : outcome === "lost" ? "Mark lost" : "Close opportunity"} savingLabel="Saving…" />}
           >
-            <Field name="outcome" label="Outcome" required group>
-              {(field) => (
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <label className={`flex items-center gap-2 rounded-md border p-3 text-sm ${canWin ? "" : "opacity-60"}`}>
-                    <input
-                      type="radio" name="outcome" value="won" ref={canWin ? field.ref : undefined} checked={field.value === "won"} disabled={!canWin}
-                      aria-describedby={canWin ? undefined : "won-needs-a-quote"} onChange={() => field.onChange("won")}
-                    />
-                    <span><strong className="font-medium">Won</strong> · the employer took a quote</span>
-                  </label>
-                  <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
-                    <input type="radio" name="outcome" value="lost" ref={canWin ? undefined : field.ref} checked={field.value === "lost"} onChange={() => field.onChange("lost")} />
-                    <span><strong className="font-medium">Lost</strong> · the search ended without one</span>
-                  </label>
-                </div>
-              )}
-            </Field>
-            {!canWin && <p id="won-needs-a-quote" className="text-sm text-muted-foreground">{noQuote}</p>}
-
-            {outcome === "won" && (
-              <>
-                <Field name="quote" label="Which quote did they take?" required group>
-                  {(field) => (
-                    <div className="space-y-2">
-                      {quoted.map((q, i) => (
-                        <label key={q.id} className="flex items-center gap-2 rounded-md border p-3 text-sm">
-                          <input type="radio" name="quote" value={q.id} ref={i === 0 ? field.ref : undefined} checked={field.value === String(q.id)} onChange={() => field.onChange(String(q.id))} />
-                          <span className="flex-1"><strong className="font-medium">{q.peoName}</strong>{q.adminFeePepm !== null && <> · {adminFeeWords(q.adminFeePepm)}</>}</span>
-                          <span className="rounded bg-primary/10 px-2 py-0.5 text-xs">Quoted</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </Field>
-                <h3 className="pt-1 text-sm font-medium text-muted-foreground">The placement</h3>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field name="start_date" label="Start date" required>
-                    {(field) => <Input {...field} type="date" onChange={(e) => { typed.current.start = true; field.onChange(e); }} />}
-                  </Field>
-                  <Field name="renewal_date" label="Renewal date" required>
-                    {(field) => <Input {...field} type="date" onChange={(e) => { typed.current.renewal = true; field.onChange(e); }} />}
-                  </Field>
-                  <Field name="broker" label="Broker of record" required>{(field) => <Input {...field} maxLength={120} />}</Field>
-                </div>
-                <h3 className="pt-1 text-sm font-medium text-muted-foreground">Commission (optional)</h3>
-                <CommissionFields form={form} adminFeePepm={chosen?.adminFeePepm ?? null} employees={target.employees} />
-                <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground" aria-label="What marking it won does">
-                  {chosen && <li>{accountName} becomes a client.</li>}
-                  {closing.map((q) => <li key={q.id}>{q.peoName}'s open quote is closed.</li>)}
-                  {chosen && renewal !== "" && <li>A renewal for {formatDay(renewal)} is added to the account.</li>}
-                </ul>
-              </>
-            )}
-
-            {outcome === "lost" && (
-              <>
-                <Field name="reason" label="Reason" required>
-                  {(field) => (
-                    <SelectInput {...field}>
-                      <option value="">Choose a reason</option>
-                      {LOST_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </SelectInput>
-                  )}
-                </Field>
-                <Field name="note" label="Note" help="Up to 500 characters. Other needs a note.">{(field) => <Textarea {...field} rows={3} />}</Field>
-              </>
-            )}
-            {mail.status === "failed" && outcome !== "" && (
-              <p role="status" className="text-sm text-muted-foreground">We couldn't check which PEOs are still open, so no withdrawal is offered. Their links stop working either way.</p>
-            )}
-            {told.length > 0 && (
-              <fieldset className="space-y-2 rounded-md border border-border p-3">
-                    <legend className="px-1 text-xs font-medium">Tell the PEOs still open</legend>
-                    <label className="flex items-start gap-2 text-sm">
-                      <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} className="mt-1" />
-                      <span>{`Send a withdrawal to ${peoNames(told.map((q) => q.peo_name))}`}</span>
+            <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-1">
+              <Field name="outcome" label="Outcome" required group>
+                {(field) => (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className={`flex items-center gap-2 rounded-md border p-3 text-sm ${canWin ? "" : "opacity-60"}`}>
+                      <input
+                        type="radio" name="outcome" value="won" ref={canWin ? field.ref : undefined} checked={field.value === "won"} disabled={!canWin}
+                        aria-describedby={canWin ? undefined : "won-needs-a-quote"} onChange={() => field.onChange("won")}
+                      />
+                      <span><strong className="font-medium">Won</strong> · the employer took a quote</span>
                     </label>
-                    {tell && (
-                      <>
-                        <label htmlFor="withdrawal-subject" className="block text-xs text-muted-foreground">Subject</label>
-                        <Input id="withdrawal-subject" value={withdrawal.subject} maxLength={300} onChange={(e) => setSubjectText(e.target.value)} />
-                        <label htmlFor="withdrawal-body" className="block text-xs text-muted-foreground">The withdrawal</label>
-                        <Textarea id="withdrawal-body" value={withdrawal.body} maxLength={50000} rows={5} onChange={(e) => setBodyText(e.target.value)} />
-                      </>
+                    <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
+                      <input type="radio" name="outcome" value="lost" ref={canWin ? undefined : field.ref} checked={field.value === "lost"} onChange={() => field.onChange("lost")} />
+                      <span><strong className="font-medium">Lost</strong> · the search ended without one</span>
+                    </label>
+                  </div>
+                )}
+              </Field>
+              {!canWin && <p id="won-needs-a-quote" className="text-sm text-muted-foreground">{noQuote}</p>}
+
+              {outcome === "won" && (
+                <>
+                  <Field name="quote" label="Which quote did they take?" required group>
+                    {(field) => (
+                      <div className="space-y-2">
+                        {quoted.map((q, i) => (
+                          <label key={q.id} className="flex items-center gap-2 rounded-md border p-3 text-sm">
+                            <input type="radio" name="quote" value={q.id} ref={i === 0 ? field.ref : undefined} checked={field.value === String(q.id)} onChange={() => field.onChange(String(q.id))} />
+                            <span className="flex-1"><strong className="font-medium">{q.peoName}</strong>{q.adminFeePepm !== null && <> · {adminFeeWords(q.adminFeePepm)}</>}</span>
+                            <span className="rounded bg-primary/10 px-2 py-0.5 text-xs">Quoted</span>
+                          </label>
+                        ))}
+                      </div>
                     )}
-              </fieldset>
-            )}
+                  </Field>
+                  <h3 className="pt-1 text-sm font-medium text-muted-foreground">The placement</h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field name="start_date" label="Start date" required>
+                      {(field) => <Input {...field} type="date" onChange={(e) => { typed.current.start = true; field.onChange(e); }} />}
+                    </Field>
+                    <Field name="renewal_date" label="Renewal date" required>
+                      {(field) => <Input {...field} type="date" onChange={(e) => { typed.current.renewal = true; field.onChange(e); }} />}
+                    </Field>
+                    <Field name="broker" label="Broker of record" required>{(field) => <Input {...field} maxLength={120} />}</Field>
+                  </div>
+                  <h3 className="pt-1 text-sm font-medium text-muted-foreground">Commission (optional)</h3>
+                  <CommissionFields form={form} adminFeePepm={chosen?.adminFeePepm ?? null} employees={target.employees} />
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground" aria-label="What marking it won does">
+                    {chosen && <li>{accountName} becomes a client.</li>}
+                    {closing.map((q) => <li key={q.id}>{q.peoName}'s open quote is closed.</li>)}
+                    {chosen && renewal !== "" && <li>A renewal for {formatDay(renewal)} is added to the account.</li>}
+                  </ul>
+                </>
+              )}
+
+              {outcome === "lost" && (
+                <>
+                  <Field name="reason" label="Reason" required>
+                    {(field) => (
+                      <SelectInput {...field}>
+                        <option value="">Choose a reason</option>
+                        {LOST_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                      </SelectInput>
+                    )}
+                  </Field>
+                  <Field name="note" label="Note" help="Up to 500 characters. Other needs a note.">{(field) => <Textarea {...field} rows={3} />}</Field>
+                </>
+              )}
+              {mail.status === "failed" && outcome !== "" && (
+                <p role="status" className="text-sm text-muted-foreground">We couldn't check which PEOs are still open, so no withdrawal is offered. Their links stop working either way.</p>
+              )}
+              {told.length > 0 && (
+                <fieldset className="space-y-2 rounded-md border border-border p-3">
+                      <legend className="px-1 text-xs font-medium">Tell the PEOs still open</legend>
+                      <label className="flex items-start gap-2 text-sm">
+                        <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} className="mt-1" />
+                        <span>{`Send a withdrawal to ${peoNames(told.map((q) => q.peo_name))}`}</span>
+                      </label>
+                      {tell && (
+                        <>
+                          <label htmlFor="withdrawal-subject" className="block text-xs text-muted-foreground">Subject</label>
+                          <Input id="withdrawal-subject" value={withdrawal.subject} maxLength={300} onChange={(e) => setSubjectText(e.target.value)} />
+                          <label htmlFor="withdrawal-body" className="block text-xs text-muted-foreground">The withdrawal</label>
+                          <Textarea id="withdrawal-body" value={withdrawal.body} maxLength={50000} rows={5} onChange={(e) => setBodyText(e.target.value)} />
+                        </>
+                      )}
+                </fieldset>
+              )}
+            </div>
           </WorkspaceForm>
         )}
       </DialogContent>

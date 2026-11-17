@@ -9,7 +9,7 @@ export const QUOTE_REQUEST_STATUSES = ["sent", "acknowledged", "question_open", 
 export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
 
 export const QUOTE_REQUEST_LABELS: Record<QuoteRequestStatus, string> = {
-  sent: "Waiting",
+  sent: "Sent",
   acknowledged: "Acknowledged",
   question_open: "Question open",
   quoted: "Quoted",
@@ -197,6 +197,7 @@ const BUNDLE_LINK_REVOKED: Record<string, string> = {
   submission_closed: "the submission was closed",
   authorization_withdrawn: "the employer withdrew this PEO",
   revoked_by_advisor: "revoked by an advisor",
+  access_ended: "the employer ended the firm's access",
 };
 
 /** "Issued for version 3" or "Revoked: <reason>", as the database logs a bundle link (slice 6.6b). */

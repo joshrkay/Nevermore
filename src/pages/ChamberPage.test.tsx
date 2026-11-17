@@ -8,7 +8,9 @@ import { READY_MESSAGE } from "@/data/followUp";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import type { VoiceState } from "@/data/voiceSession";
 
+const opened = { id: undefined as string | null | undefined };
 const session = {
+  brokerEntry: false,
   sessionId: null as string | null,
   fileId: null as string | null,
   resumeFailed: false,
@@ -47,7 +49,7 @@ vi.mock("@/hooks/usePeoCatalog", () => ({ usePeoCatalog: () => ({ peos: peoCatal
 
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
-  workspace: null as null | { verified?: ReadonlySet<string>; requested?: ReadonlySet<string> },
+  workspace: null as null | { verified?: ReadonlySet<string>; requested?: ReadonlySet<string>; brokerEntry?: boolean },
   voice: null as null | { onSpokenMessage: (message: ChatMessage) => unknown; context: string },
   chat: null as null | {
     onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
@@ -75,7 +77,7 @@ let storageWorks = true;
 
 // The page's own behavior is under test; the session, chat and voice hooks are stand-ins.
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
-vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
+vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: (id?: string | null) => { opened.id = id; return session; } }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let informationRequest: null | { message: string; fields: string[]; requestedAt: string; extraQuestions: unknown[] } = null;
 vi.mock("@/hooks/useInformationRequest", () => ({ useInformationRequest: () => informationRequest }));
@@ -701,5 +703,36 @@ describe("ChamberPage", () => {
       expect(screen.queryByText(/Your advisor asked/)).not.toBeInTheDocument();
       expect(hooks.workspace?.requested?.size).toBe(0);
     });
+  });
+});
+
+describe("ChamberPage for a member of the firm working the firm's intake (D-1751)", () => {
+  afterEach(() => {
+    session.brokerEntry = false;
+    session.sessionId = null;
+    opened.id = undefined;
+  });
+
+  // Break caught: the existing chamber can only open the intake of the signed-in person, so a broker needs a screen of their own, or the address of the intake (?session=) is rewritten under them.
+  it("opens the intake it is given, and leaves the address alone", async () => {
+    session.sessionId = "firm-intake";
+    let seen = "";
+    const Where = () => {
+      seen = useLocation().search;
+      return null;
+    };
+    render(<MemoryRouter initialEntries={["/client-intake/firm-intake"]}><ChamberPage intakeId="firm-intake" /><Where /></MemoryRouter>);
+    expect(opened.id).toBe("firm-intake");
+    expect(seen).toBe("");
+  });
+
+  // Break caught: the broker's chamber offers the employer's own steps (starting over their intake, certifying) or says "Your intake".
+  it("is the client's intake, with nothing of the employer's own to do", () => {
+    session.sessionId = "firm-intake";
+    session.brokerEntry = true;
+    render(<MemoryRouter initialEntries={["/client-intake/firm-intake"]}><ChamberPage intakeId="firm-intake" /></MemoryRouter>);
+    expect(screen.getByText("Your client's intake")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start over" })).not.toBeInTheDocument();
+    expect((hooks.workspace as unknown as { brokerEntry?: boolean }).brokerEntry).toBe(true);
   });
 });

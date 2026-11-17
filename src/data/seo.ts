@@ -68,6 +68,8 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/broker\/callback$/, "Signing you in"],
   [/^\/firms\/new$/, "Sign up your firm"],
   [/^\/join$/, "Join a firm"],
+  [/^\/intake-invite$/, "Your invitation"],
+  [/^\/client-intake\/[^/]+$/, "Client intake"],
   [/^\/choose-firm$/, "Choose a firm"],
   [/^\/firm\/invitations$/, "Invitations"],
   [/^\/start$/, "Your intake"],
@@ -86,6 +88,7 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/leads$/, "Leads"],
   [/^\/leads\/[^/]+$/, "Lead"],
   [/^\/inbox$/, "Inbox"],
+  [/^\/quotes$/, "Quotes"],
   [/^\/accounts$/, "Accounts"],
   [/^\/accounts\/[^/]+$/, "Account"],
   [/^\/contacts\/[^/]+$/, "Contact"],
@@ -93,6 +96,7 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/f$/, "A file"],
   [/^\/opportunities\/[^/]+$/, "Opportunity"],
   [/^\/new-quote(\/[^/]+)?$/, "New quote"],
+  [/^\/quotes\/[^/]+$/, "Quote"],
   [/^\/advisor\/held$/, "Held mail"],
   [/^\/advisor\/firms$/, "Firm approvals"],
   [/^\/advisor(\/.*)?$/, "Advisor Console"],
@@ -106,6 +110,8 @@ export const PRIVATE_PATH_EXAMPLES = [
   "/broker/callback",
   "/firms/new",
   "/join",
+  "/intake-invite",
+  "/client-intake/123",
   "/choose-firm",
   "/firm/invitations",
   "/start",
@@ -127,6 +133,8 @@ export const PRIVATE_PATH_EXAMPLES = [
   "/opportunities/123",
   "/new-quote",
   "/new-quote/123",
+  "/quotes",
+  "/quotes/123",
 ];
 
 /**
