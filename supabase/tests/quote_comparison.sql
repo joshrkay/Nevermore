@@ -404,6 +404,22 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.quotes WHERE id = first_id), 1::bigint, 'the earlier quote is kept');
 END $$;
 
+-- ---------- 2b. "Current" is the highest quote id, as the quote's own page reads it (D-733), never the received date ----------
+-- Catches: the comparison and the quote's page (src/data/quoteRevisions.ts) disagreeing about which quote is current when a PEO backdates its revision: the page says the revision is
+-- current while the comparison still shows the older figure.
+DO $$
+DECLARE r jsonb; first_id bigint; second_id bigint;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  first_id := (public.record_quote(p_quote_request_id => pg_temp.qr('TriNet'), p_kind => 'estimate', p_received_on => current_date, p_admin_fee => 45, p_admin_fee_basis => 'per_employee_per_month') ->> 'id')::bigint;
+  second_id := (public.record_quote(p_quote_request_id => pg_temp.qr('TriNet'), p_kind => 'firm_offer', p_received_on => current_date - 20, p_admin_fee => 38, p_admin_fee_basis => 'per_employee_per_month') ->> 'id')::bigint;
+  r := public.opportunity_quote_comparison(pg_temp.id('acme'), pg_temp.opp('reyes'));
+  PERFORM pg_temp.as_owner();
+  PERFORM pg_temp.is((SELECT (c -> 'quote' ->> 'id')::bigint FROM jsonb_array_elements(r -> 'columns') c WHERE c ->> 'peo_name' = 'TriNet'), second_id, 'the later recording is current though its received date is older');
+  PERFORM pg_temp.is((SELECT count(*) FROM public.quotes WHERE id = first_id), 1::bigint, 'and the other is kept');
+  DELETE FROM public.quotes WHERE id IN (first_id, second_id);
+END $$;
+
 -- ---------- 3. The column carries the quote's administrative fee with its basis, its dates and its note ----------
 -- Catches: a fee shown with no basis ($40 a month and 40% of payroll look alike), or a quote with no expiry, so the broker can't tell it has lapsed.
 DO $$

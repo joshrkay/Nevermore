@@ -875,3 +875,4 @@ lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clea
 17. QuoteComparison.test: No quotes are back yet while every PEO is waiting, statuses still in columns | red: Unable to find an element with the text: No quotes are back yet. | green
 18. QuoteComparison.test: a lone quote says there is nothing to compare it with yet, and not when two are back | red: Unable to find an element with the text: Only one quote is back, so there is nothing to compare it with yet. | green
 19. OpportunityPage.test: no Add note in a support session, with the reason | red: expected element not.toBeInTheDocument (Add note button) | green
+20. quote_comparison.sql 2b: the comparison and the quote page agree on current = highest quote id even when a revision is backdated (D-733) | NOT red first (the 7.7 read already orders by id); seen red by ordering on received_on: FAIL: the later recording is current though its received date is older gave 3, expected 4 | green
