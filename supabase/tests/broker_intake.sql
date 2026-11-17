@@ -959,3 +959,18 @@ SELECT pg_temp.is((SELECT count(*)::text FROM public.outbox_events WHERE kind = 
 INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data, expires_at) VALUES (NULL, pg_temp.id('alpha'), '{}', now() - interval '1 day') RETURNING id AS orphan_session \gset
 SELECT public.expire_idle_intakes() AS moved \gset
 SELECT pg_temp.is((SELECT status FROM public.chamber_sessions WHERE id = :'orphan_session'::uuid), 'in_progress', '72: an idle intake with no user and no starter is left alone, and the job still runs');
+
+-- 73. The send panel reads whether its firm is approved to send (D-1910) with a plain read of the firm's own row as the signed-in member: an agent, not only an owner, sees whether their firm is approved, and
+-- sees nothing of another firm's. Break caught: a panel that cannot read it (the column not granted, or the row hidden from an agent) and so never says the firm isn't approved, or one that reads another firm's.
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE((SELECT (approved_at IS NOT NULL)::text FROM public.firms WHERE id = pg_temp.id('alpha')), 'unreadable') AS own_firm \gset
+SELECT COALESCE((SELECT (approved_at IS NOT NULL)::text FROM public.firms WHERE id = pg_temp.id('bravo')), 'hidden') AS other_firm \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'own_firm'::text, 'true', '73: an agent reads that their own, approved, firm is approved to send');
+SELECT pg_temp.is(:'other_firm'::text, 'hidden', 'and reads nothing of another firm');
+UPDATE public.firms SET approved_at = NULL WHERE id = pg_temp.id('alpha');
+SELECT pg_temp.as_user('a_agent', 'alpha-advisory');
+SELECT COALESCE((SELECT (approved_at IS NOT NULL)::text FROM public.firms WHERE id = pg_temp.id('alpha')), 'unreadable') AS own_firm_waiting \gset
+SELECT pg_temp.as_owner();
+SELECT pg_temp.is(:'own_firm_waiting'::text, 'false', 'and reads that a firm still waiting for approval is not');
+UPDATE public.firms SET approved_at = now() WHERE id = pg_temp.id('alpha');
