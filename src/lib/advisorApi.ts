@@ -654,6 +654,30 @@ export async function loadQuotes(quoteRequestId: number): Promise<QuoteRecord[]>
   return (data ?? []) as unknown as QuoteRecord[];
 }
 
+/** What became of an uploaded quote document: `stored` and named as the quote's document, or `blocked` by the virus check (kept nowhere, named nowhere). */
+export interface UploadedQuoteDocument {
+  attachmentId: number;
+  fileName: string;
+  status: "stored" | "blocked";
+}
+
+/**
+ * Uploads a quote document recorded by hand through quote-document-upload (N-2.2, D-731), which checks and scans the file, keeps it with the quote request's mail and names it
+ * as the quote's document. A refusal comes back in the function's words (a file that isn't what its name says, an upload paused, a quote that isn't theirs).
+ */
+export async function uploadQuoteDocument(quoteId: number, file: File): Promise<UploadedQuoteDocument> {
+  const form = new FormData();
+  form.append("quote_id", String(quoteId));
+  form.append("file", file, file.name);
+  const { data, error } = await supabase.functions.invoke("quote-document-upload", { body: form });
+  if (error) {
+    const { reason } = await functionErrorReply(error as { context?: unknown });
+    throw new AdvisorApiError(reason ?? "Couldn't upload the quote document. Try again.");
+  }
+  const d = (data as { document?: { attachment_id: number; file_name: string; status: "stored" | "blocked" } }).document!;
+  return { attachmentId: d.attachment_id, fileName: d.file_name, status: d.status };
+}
+
 /** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */
 export type OpenQuoteStatus = "sent" | "acknowledged" | "question_open";
 

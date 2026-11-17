@@ -7,6 +7,7 @@ const remove = vi.fn();
 const download = vi.fn();
 const buckets: string[] = [];
 const createSignedUrl = vi.fn();
+const invoke = vi.fn();
 /** Rows each table returns to the detail page's queries, which are all select/eq/order chains. */
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
@@ -57,6 +58,7 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => query(table),
     rpc: (...args: unknown[]) => rpc(...args),
+    functions: { invoke: (...a: unknown[]) => invoke(...a) },
     storage: { from: (bucket: string) => {
       buckets.push(bucket);
       return {
@@ -102,6 +104,7 @@ const {
   mailAttachmentUrl,
   attachQuoteDocument,
   loadQuotes,
+  uploadQuoteDocument,
   recordActivity,
   fetchOwnedFirms,
   listMyFirms,
@@ -639,6 +642,19 @@ describe("quote requests", () => {
     expect(String(selects.filter((s) => s.table === "quotes").at(-1)?.columns)).toMatch(/document:quote_request_message_attachments\(id, file_name, size_bytes, storage_path\)/);
     expect(quotes.map((q) => q.id)).toEqual([3, 2]);
     expect(quotes[0].document?.file_name).toBe("proposal.pdf");
+  });
+
+  // N-2.2. Break caught: the file sent to another function or without its quote, the function's answer (stored, or blocked by the virus check) lost, or its refusal shown as a generic failure.
+  it("uploads a quote document to quote-document-upload with its quote, and says what became of it or why it was refused", async () => {
+    invoke.mockResolvedValueOnce({ data: { document: { attachment_id: 51, file_name: "quote.pdf", status: "stored" } }, error: null });
+    const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+    await expect(uploadQuoteDocument(3, file)).resolves.toEqual({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    const [name, options] = invoke.mock.calls.at(-1)!;
+    expect(name).toBe("quote-document-upload");
+    expect((options.body as FormData).get("quote_id")).toBe("3");
+    expect(((options.body as FormData).get("file") as File).name).toBe("quote.pdf");
+    invoke.mockResolvedValueOnce({ data: null, error: { context: new Response(JSON.stringify({ error: "This file isn't what its name says.", code: "mismatch" }), { status: 415 }) } });
+    await expect(uploadQuoteDocument(3, file)).rejects.toThrow("This file isn't what its name says.");
   });
 
   // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.
