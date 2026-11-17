@@ -37,6 +37,9 @@ vi.mock("@/pages/advisor/AdvisorSubmissionPage", () => ({
   default: ({ submissionId, embedded }: { submissionId?: string; embedded?: boolean }) => <div data-testid="submission-page">{`${submissionId ?? "none"}|${embedded ? "embedded" : "page"}`}</div>,
 }));
 
+// The chamber is the existing intake (step 2, slice 5.5), tested on its own; a stand-in here.
+vi.mock("@/pages/ChamberPage", () => ({ default: ({ intakeId }: { intakeId?: string }) => <div data-testid="chamber">{intakeId}</div> }));
+
 const { NewQuoteDialog } = await import("./NewQuoteDialog");
 
 const onClose = vi.fn();

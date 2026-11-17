@@ -13,7 +13,7 @@ import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type Dr
 import { parsePeoCatalog } from "@/data/peoProfiles";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
-import type { QuoteNoteKind } from "@/data/quoteRequests";
+import type { QuoteAdminFeeBasis, QuoteKind, QuoteNoteKind, QuoteTier } from "@/data/quoteRequests";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -552,6 +552,9 @@ export interface QuoteAnswer {
   startOn: string | null;
   adminFeePepm: number | null;
   note: string | null;
+  /** A decline's reason, one of DECLINE_REASONS (N-1.4), and the PEO's own words; only a decline has them. */
+  declineReason?: string | null;
+  declineWords?: string | null;
 }
 
 /** Records a PEO's answer on a quote request, replacing what was recorded before. Every change is logged. */
@@ -564,8 +567,57 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
     p_start_on: answer.startOn,
     p_admin_fee_pepm: answer.adminFeePepm,
     p_note: answer.note,
+    p_decline_reason: answer.declineReason ?? null,
+    p_decline_words: answer.declineWords ?? null,
   });
   if (error) fail(error, "Couldn't record the answer.");
+}
+
+/** One-off fees, workers' comp, unemployment tax and medical: each line of a quote's cost areas (N-2.1), exactly as record_quote checks them. */
+export type QuoteOneOffFee = { name: string; amount: number };
+export type QuoteWorkersCompRate = { state: string; class_code: string; rate: number };
+export type QuoteUnemploymentCharge = { state: string; charge: "employer_rate" } | { state: string; charge: "peo_rate"; rate: number };
+export type QuoteMedicalRate = { plan: string; tier: QuoteTier; monthly: number };
+
+/**
+ * A quote's whole offer (N-2.1). A cost area left out (undefined) is sent as null, which the database keeps as "Not quoted"; it is never sent as an empty list or zero.
+ * Dates are YYYY-MM-DD; the fee is in dollars per employee per month, or in percent of payroll, whichever its basis says.
+ */
+export interface QuoteOffer {
+  kind: QuoteKind;
+  receivedOn?: string | null;
+  expiresOn?: string | null;
+  startOn?: string | null;
+  adminFee?: number | null;
+  adminFeeBasis?: QuoteAdminFeeBasis | null;
+  oneOffFees?: QuoteOneOffFee[] | null;
+  workersComp?: QuoteWorkersCompRate[] | null;
+  unemployment?: QuoteUnemploymentCharge[] | null;
+  medical?: QuoteMedicalRate[] | null;
+  note?: string | null;
+}
+
+/** A cost area's lines, or null when there are none: an empty list would read as quoted, and the database refuses it. */
+const lines = <T extends Json>(l: T[] | null | undefined): Json | null => (l && l.length > 0 ? l : null);
+
+/** Records a quote a PEO returned, the whole offer, on its quote request; the quote request becomes Quoted. A later quote on the same request is kept beside the first. */
+export async function recordQuote(quoteRequestId: number, offer: QuoteOffer): Promise<Json> {
+  const { data, error } = await supabase.rpc("record_quote", {
+    p_quote_request_id: quoteRequestId,
+    p_kind: offer.kind,
+    p_received_on: offer.receivedOn ?? null,
+    p_expires_on: offer.expiresOn ?? null,
+    p_start_on: offer.startOn ?? null,
+    p_admin_fee: offer.adminFee ?? null,
+    p_admin_fee_basis: offer.adminFeeBasis ?? null,
+    p_one_off_fees: lines(offer.oneOffFees),
+    p_workers_comp: lines(offer.workersComp),
+    p_unemployment: lines(offer.unemployment),
+    p_medical: lines(offer.medical),
+    p_note: offer.note ?? null,
+  });
+  if (error) fail(error, "Couldn't record the quote.");
+  return data;
 }
 
 /** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */

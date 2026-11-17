@@ -331,6 +331,23 @@ describe("QuotePage: the PEO's status", () => {
   });
 });
 
+describe("QuotePage: declined", () => {
+  // N-1.4. Break caught: a declined quote's own page that says Declined in the header and nothing of why, though the card on the submission says it.
+  it("says why the PEO declined and in what words, and nothing on a quote that is not declined", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "declined", decline_reason: "claims_history", decline_words: "Three open claims" } }));
+    renderPage();
+    expect(await screen.findByText("Declined: Claims history")).toBeInTheDocument();
+    expect(screen.getByText("\u201cThree open claims\u201d")).toBeInTheDocument();
+  });
+
+  it("says nothing of a decline on a quote that has moved on, though the reason is kept", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted", decline_reason: "claims_history" } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByText(/^Declined:/)).not.toBeInTheDocument();
+  });
+});
+
 describe("QuotePage: closed", () => {
   // Catches: a closed quote that looks like any other (no word of why it closed, so the agent cannot tell a withdrawal from a loss).
   it("shows a banner that it is closed, with why: the withdrawal's reason and the note the agent gave", async () => {

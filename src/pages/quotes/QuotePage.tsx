@@ -4,6 +4,7 @@ import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import { QuoteHeader } from "@/components/quotes/QuoteHeader";
 import { OpenStatusButtons, ReplyAddress } from "@/components/advisor/QuoteRequestsPanel";
 import { ClosedBanner } from "@/components/quotes/ClosedBanner";
+import { DeclineReason } from "@/components/quotes/DeclineReason";
 import { CloseQuote } from "@/components/quotes/CloseQuote";
 import { WhatWasSent } from "@/components/quotes/WhatWasSent";
 import { QuoteFigures } from "@/components/quotes/QuoteFigures";
@@ -57,6 +58,7 @@ const QuotePage = () => {
         <span aria-current="page">{request.peo_name}</span>
       </nav>
       {request.status === "closed" && <ClosedBanner request={request} closeReason={outcome.data?.quotes[request.id]?.closeReason} />}
+      <DeclineReason request={request} className="mb-6 rounded-xl border border-border bg-muted/40 p-4" />
       <QuoteHeader request={request} actions={canClose ? (
         <>
           <OpenStatusButtons request={request} onChanged={() => void query.refetch()} />

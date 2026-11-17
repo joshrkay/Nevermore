@@ -85,6 +85,7 @@ const {
   recordQuoteSend,
   setQuoteRequestStatus,
   updateQuoteRequest,
+  recordQuote,
   fetchIsAdmin,
   loadPeoDirectory,
   loadPeoCatalogDirectory,
@@ -584,7 +585,7 @@ describe("quote requests", () => {
     await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null });
     expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
       p_quote_request_id: 7, p_status: "quoted", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: null,
-      p_admin_fee_pepm: 145.5, p_note: null,
+      p_admin_fee_pepm: 145.5, p_note: null, p_decline_reason: null, p_decline_words: null,
     });
     await addQuoteRequestNote(7, { kind: "underwriter_question", notedOn: "2026-11-12", body: "  Loss runs?  " });
     expect(rpc).toHaveBeenLastCalledWith("advisor_add_quote_request_note", {
@@ -597,6 +598,34 @@ describe("quote requests", () => {
     await correctQuoteRequestNote(21, { kind: "call", notedOn: "2026-11-11", body: "Loss runs, three years." });
     expect(rpc).toHaveBeenLastCalledWith("advisor_correct_quote_request_note", {
       p_note_id: 21, p_kind: "call", p_noted_on: "2026-11-11", p_body: "Loss runs, three years.",
+    });
+  });
+
+  // N-2.1. Break caught: a cost area sent as an empty list or zero instead of left out (which would read as quoted, not "Not quoted"), or under the wrong parameter names.
+  it("records a whole quote through record_quote, leaving out each cost area it doesn't hold", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 3, kind: "firm_offer" }, error: null });
+    await recordQuote(7, { kind: "firm_offer", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: "2027-01-01", adminFee: 42.5, adminFeeBasis: "per_employee_per_month", note: "By phone" });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", {
+      p_quote_request_id: 7, p_kind: "firm_offer", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: "2027-01-01",
+      p_admin_fee: 42.5, p_admin_fee_basis: "per_employee_per_month", p_one_off_fees: null, p_workers_comp: null, p_unemployment: null, p_medical: null, p_note: "By phone",
+    });
+  });
+
+  // N-2.1. Break caught: a form that has no one-off fees sending [] (the database refuses it, so the agent can't save), or a quote with no workers' comp stored as quoted.
+  it("sends an empty cost area as left out, not as an empty list", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 4, kind: "estimate" }, error: null });
+    await recordQuote(7, { kind: "estimate", oneOffFees: [], workersComp: [], unemployment: [], medical: [{ plan: "Gold PPO", tier: "family", monthly: 1840 }] });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", expect.objectContaining({
+      p_one_off_fees: null, p_workers_comp: null, p_unemployment: null, p_medical: [{ plan: "Gold PPO", tier: "family", monthly: 1840 }],
+    }));
+  });
+
+  // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.
+  it("records a decline with its reason and the PEO's words", async () => {
+    await updateQuoteRequest(7, { status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: null, declineReason: "pricing", declineWords: "Below our floor" });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
+      p_quote_request_id: 7, p_status: "declined", p_received_on: null, p_expires_on: null, p_start_on: null,
+      p_admin_fee_pepm: null, p_note: null, p_decline_reason: "pricing", p_decline_words: "Below our floor",
     });
   });
 

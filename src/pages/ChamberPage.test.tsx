@@ -110,6 +110,7 @@ vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
     return null;
   },
 }));
+vi.mock("@/components/chamber/FirmSeesBanner", () => ({ default: ({ sessionId }: { sessionId: string }) => <p>What the firm sees, for {sessionId}</p> }));
 const extractSpoken = vi.fn();
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
@@ -734,5 +735,58 @@ describe("ChamberPage for a member of the firm working the firm's intake (D-1751
     expect(screen.getByText("Your client's intake")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start over" })).not.toBeInTheDocument();
     expect((hooks.workspace as unknown as { brokerEntry?: boolean }).brokerEntry).toBe(true);
+  });
+
+  // Break caught (CRM-Q2.2, D-1871): the broker works the intake with no sight of how far it is: how many answers are in, who entered them, and what still holds certification back.
+  it("tells the firm how many answers are in, who entered them and what is still needed", () => {
+    session.sessionId = "firm-intake";
+    session.brokerEntry = true;
+    session.chamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail" };
+    session.provenance = { company_name: { status: "inferred", source: { kind: "broker_entry", member_id: "11111111-1111-4111-8111-111111111111" }, updated_at: "2026-11-17T10:00:00.000Z" } };
+    render(<MemoryRouter initialEntries={["/client-intake/firm-intake"]}><ChamberPage intakeId="firm-intake" /></MemoryRouter>);
+    expect(screen.getByRole("status", { name: "Intake progress" })).toHaveTextContent("2 answers in · 1 entered by the firm · 1 by the contact · Still needed: States of operation, Pay frequency");
+    session.chamberData = { ...EMPTY_CHAMBER_DATA };
+    session.provenance = {};
+  });
+
+  // Break caught (CRM-Q2.2, D-1871): the employer's own chamber shows them the firm's "entered by the firm" counts, which are the firm's working view and not theirs.
+  it("shows the employer no firm progress line in their own intake", () => {
+    session.sessionId = "own-intake";
+    session.brokerEntry = false;
+    session.chamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Acme" };
+    render(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+    expect(screen.queryByRole("status", { name: "Intake progress" })).not.toBeInTheDocument();
+    session.chamberData = { ...EMPTY_CHAMBER_DATA };
+  });
+
+  // Break caught (CRM-Q2.2): inside New quote the chamber takes the height of the window, not of the dialog's room, so its tabs and chat spill out of the dialog.
+  it("fills the room it is given when embedded, instead of the window", () => {
+    session.sessionId = "firm-intake";
+    session.brokerEntry = true;
+    const { container } = render(<MemoryRouter><ChamberPage intakeId="firm-intake" embedded /></MemoryRouter>);
+    expect(container.firstElementChild).toHaveClass("h-full");
+    expect(container.firstElementChild).not.toHaveClass("h-screen");
+  });
+});
+
+describe("ChamberPage for the employer a firm invited (CRM-Q2.3, D-1880)", () => {
+  afterEach(() => {
+    session.brokerEntry = false;
+    session.sessionId = null;
+  });
+
+  // Break caught: the employer works an intake a firm can see without being told which firm and who invited them, or that it sees their answers.
+  it("tells the employer which firm sees their intake, above the chamber", () => {
+    session.sessionId = "s1";
+    renderPage();
+    expect(screen.getByText("What the firm sees, for s1")).toBeInTheDocument();
+  });
+
+  // Break caught: the broker, working the client's intake, is shown the employer's notice ("you were invited by ...") about their own firm.
+  it("shows the firm's own member no such notice", () => {
+    session.sessionId = "firm-intake";
+    session.brokerEntry = true;
+    render(<MemoryRouter initialEntries={["/client-intake/firm-intake"]}><ChamberPage intakeId="firm-intake" /></MemoryRouter>);
+    expect(screen.queryByText(/What the firm sees/)).not.toBeInTheDocument();
   });
 });

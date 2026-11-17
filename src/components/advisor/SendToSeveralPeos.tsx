@@ -6,7 +6,8 @@ import { failureWords } from "@/components/workspace/form";
 import { FIT_WORDS, NOT_MET_NOTE, fitOutcome, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 import { groupByCompleteness, type CertifiedVersion, type PeoCompletenessEntry } from "@/data/peoCompleteness";
 import { localToday } from "@/data/peoProfiles";
-import { peoGreeting, peoSendSubject } from "@/data/peoSend";
+import { alreadySentWords, peoGreeting, peoSendSubject } from "@/data/peoSend";
+import { formatDay } from "@/data/accountPage";
 import type { ChamberSubmission } from "@/data/manuscript";
 import { bundleSummary, planBundle, type BundleSource } from "@/data/submissionBundle";
 import { peoLinkIssuer } from "@/lib/peoLinkIssuer";
@@ -34,6 +35,8 @@ export interface SendToSeveralPeosProps {
   openLabel?: string;
   /** After the sends, once any went. */
   onSent: () => void;
+  /** The PEOs the opportunity was already sent to, by name (any case), with the day each was sent (CRM-Q3.4, D-1891). Marked in the choosing step; a second send continues that quote. */
+  alreadySent?: Readonly<Record<string, string>>;
 }
 
 /** A PEO as the choosing step lists it: what it still needs to quote and the eligibility checks it doesn't meet, either of which makes it not ready. */
@@ -102,6 +105,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     })
     .sort((a, b) => a.peo.localeCompare(b.peo));
   const [ticked, setTicked] = useState<string[]>(() => choices.filter((c) => c.ready).map((c) => c.peo));
+  const sentOn = (peo: string): string | undefined => Object.entries(p.alreadySent ?? {}).find(([name]) => name.toLowerCase() === peo.toLowerCase())?.[1];
   const toggle = (peo: string) => setTicked((now) => (now.includes(peo) ? now.filter((x) => x !== peo) : [...now, peo]));
   const chosen = choices.filter((c) => ticked.includes(c.peo));
   const peoNames = choices.map((c) => c.peo).join("\n");
@@ -225,6 +229,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
                   <input type="checkbox" checked={ticked.includes(c.peo)} disabled={!!authorizations && stateOf(c) !== "authorized"} onChange={() => toggle(c.peo)} />
                   <span className="font-medium">{c.peo}</span>
                 </label>
+                {sentOn(c.peo) && <p className="text-xs">{alreadySentWords(formatDay(sentOn(c.peo)!))}</p>}
                 <p className="text-xs">{`${FIT_WORDS[c.fit.outcome]}${c.fit.reason ? ` · ${c.fit.reason}` : ""}`}</p>
                 {stateOf(c) && <p className="text-xs">{STATE_WORDS[stateOf(c)!]}</p>}
                 {peopleOf(c).length > 0 && <p className="text-xs">{`Contact: ${peopleOf(c).map((x) => `${x.name}${x.role ? ` (${x.role})` : ""}`).join(", ")}`}</p>}
