@@ -293,3 +293,12 @@ describe("read-quote-document: an unexpected error", () => {
     expect(t.logs).toEqual([`AI_UNEXPECTED_ERROR request=${REQUEST} error=TypeError`]);
   });
 });
+
+describe("read-quote-document: only a proposal", () => {
+  it("stores nothing: the only calls to the database are the budget's, never record_quote or any other writer, and the log holds none of the document", async () => {
+    const t = setup();
+    await handleReadQuoteDocument(post({ quote_id: 7 }), t.deps);
+    expect(t.steps.filter((s) => /^(anon|service)-key:/.test(s)).map((s) => s.split(":")[1])).toEqual(["consume_ai_quota", "consume_ip_quota", "consume_global_ai_budget"]);
+    expect(t.logs.join("\n")).not.toContain("Pinnacle");
+  });
+});
