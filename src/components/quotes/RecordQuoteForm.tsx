@@ -2,9 +2,9 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { QuoteLinesField, type LineColumn } from "@/components/quotes/QuoteLinesField";
-import { SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
+import { DID_NOT_GO_THROUGH, failureWords, SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_KIND_LABELS, QUOTE_NOTE_MAX, QUOTE_TIERS, type QuoteTier, type QuoteAdminFeeBasis, type QuoteKind } from "@/data/quoteRequests";
-import { recordQuote, type QuoteRequestRow } from "@/lib/advisorApi";
+import { attachQuoteDocument, recordQuote, uploadQuoteDocument, type QuoteRequestRow } from "@/lib/advisorApi";
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 const FEE_BASIS_LABELS: Record<QuoteAdminFeeBasis, string> = { per_employee_per_month: "Per employee per month ($)", percent_of_payroll: "Percent of payroll (%)" };
@@ -28,7 +28,12 @@ const MEDICAL_COLUMNS: LineColumn[] = [
 ];
 
 /** The form that records what a PEO quoted (CRM-Q3.3, screen 12). Nothing is saved until the agent saves. */
-export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: QuoteRequestRow; onRecorded: () => void; onCancel: () => void }) {
+export function RecordQuoteForm({ request, mailFiles, onRecorded, onCancel }: {
+  request: QuoteRequestRow;
+  /** The stored, scanned files on this quote request's own emails: the quote's document can be one without uploading it again (D-730). */
+  mailFiles: readonly { id: number; file_name: string }[]; onRecorded: () => void;
+  onCancel: () => void;
+}) {
   const id = `record-quote-${request.id}`;
   const [kind, setKind] = useState<QuoteKind | "">("");
   const [fee, setFee] = useState("");
@@ -41,6 +46,8 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
   const [unemployment, setUnemployment] = useState<Lines>([]);
   const [medical, setMedical] = useState<Lines>([]);
   const [note, setNote] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [mailFile, setMailFile] = useState("");
   const [missing, setMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   const failure = useSaveFailure("The quote wasn't recorded. Check your connection and try again. What you typed is still here.");
@@ -54,7 +61,7 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
     setSaving(true);
     failure.clear();
     try {
-      await recordQuote(request.id, {
+      const recorded = await recordQuote(request.id, {
         kind,
         receivedOn: receivedOn || null,
         expiresOn: expiresOn || null,
@@ -68,6 +75,21 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
         note: note.trim() || null,
       });
       toast.success(`Recorded ${request.peo_name}'s quote.`);
+      // The quote exists now, so its document can be named (D-738): the form saves first and uploads with the new quote's id.
+      if (mailFile !== "") {
+        try {
+          await attachQuoteDocument((recorded as { id: number }).id, Number(mailFile));
+        } catch (err) {
+          toast.error(`The quote was recorded, but its document was not kept: ${failureWords(err, DID_NOT_GO_THROUGH)}`);
+        }
+      } else if (file) {
+        try {
+          const kept = await uploadQuoteDocument((recorded as { id: number }).id, file);
+          if (kept.status === "blocked") toast.error("The quote was recorded, but the virus check blocked its document, so it was not kept.");
+        } catch (err) {
+          toast.error(`The quote was recorded, but its document was not kept: ${failureWords(err, DID_NOT_GO_THROUGH)}`);
+        }
+      }
       onRecorded();
     } catch (err) {
       failure.failed(err);
@@ -109,6 +131,17 @@ export function RecordQuoteForm({ request, onRecorded, onCancel }: { request: Qu
       <input id={`${id}-start`} type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} className={inputClass} />
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
       <textarea id={`${id}-note`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={QUOTE_NOTE_MAX} rows={2} className={inputClass} />
+      {mailFiles.length > 0 && (
+        <>
+          <label htmlFor={`${id}-mail-file`} className="block text-xs text-muted-foreground">Use a file from the emails</label>
+          <select id={`${id}-mail-file`} value={mailFile} onChange={(e) => setMailFile(e.target.value)} className={inputClass}>
+            <option value="">No file from the emails</option>
+            {mailFiles.map((f) => <option key={f.id} value={f.id}>{f.file_name}</option>)}
+          </select>
+        </>
+      )}
+      <label htmlFor={`${id}-document`} className="block text-xs text-muted-foreground">Quote document</label>
+      <input id={`${id}-document`} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block text-sm" />
       <SaveFailed message={failure.message} className="text-xs" />
       {offlineSave.reason}
       <div className="flex gap-2">

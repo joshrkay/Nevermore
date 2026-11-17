@@ -864,3 +864,6 @@ lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clea
 6. QuotePage.test: unemployment tax per state, employer rate or the PEO rate with its percent | red: Unable to find an accessible element with the role "button" and name "Add an unemployment line" | green
 7. QuotePage.test: a medical rate is recorded as plan, tier code and monthly number | red: Unable to find an accessible element with the role "button" and name "Add a medical rate" | green
 8. QuotePage.test: a refused quote says why, keeps what was typed, does not close | NOT red first (failure handling was written with cycle 3); seen red by removing failure.failed(err): Unable to find an element with the text: /administrative fee comes with its basis/ | green
+9. QuotePage.test: the quote is recorded first, then its file is uploaded for the new quote | red: Unable to find a label with the text of: Quote document | green
+10. QuotePage.test: a blocked document is reported and the form still closes once the quote is recorded | red: expected "spy" to be called with arguments (toast.error never called) | green
+11. QuotePage.test: a stored file from this quote request email is named as the document for the new quote, not uploaded | red: Unable to find a label with the text of: Use a file from the emails | green

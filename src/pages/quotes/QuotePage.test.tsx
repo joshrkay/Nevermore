@@ -371,6 +371,52 @@ describe("QuotePage: Record the quote, cost areas", () => {
     expect(within(form).getByLabelText("Estimate or firm offer")).toHaveValue("firm_offer");
     expect(quotes.getQuotePage).toHaveBeenCalledTimes(1);
   });
+  // Catches: a document uploaded before the quote exists (it would have no quote to name it), or for the wrong quote (D-738: the form saves first, then uploads with the new quote's id).
+  it("records the quote first and then names the chosen file as its document, for the new quote", async () => {
+    const form = await fill();
+    const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    await userEvent.upload(within(form).getByLabelText("Quote document"), file);
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.uploadQuoteDocument).toHaveBeenCalledWith(3, file));
+    expect(advisor.recordQuote.mock.invocationCallOrder[0]).toBeLessThan(advisor.uploadQuoteDocument.mock.invocationCallOrder[0]);
+  });
+  // Catches: a document the virus check blocked, or an upload that failed, leaving the form open on a quote that is already recorded (saving again would record it twice) or saying nothing of the file.
+  it("closes the form once the quote is recorded and says so when its document was blocked or not kept", async () => {
+    const { toast } = await import("sonner");
+    const form = await fill();
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "blocked" });
+    await userEvent.upload(within(form).getByLabelText("Quote document"), new File(["x"], "quote.pdf", { type: "application/pdf" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The quote was recorded, but the virus check blocked its document, so it was not kept."));
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Record the quote from TriNet" })).not.toBeInTheDocument());
+    expect(advisor.recordQuote).toHaveBeenCalledTimes(1);
+  });
+  // Catches: making the agent upload again a proposal that already arrived on this quote request's emails, or offering a blocked file or another PEO's file as the document.
+  it("names a stored file from this quote request's emails as the document, for the new quote, without uploading it", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({
+      detail: threadOf({
+        quoteRequestMessages: [message({ id: 1 }), message({ id: 2, quote_request_id: 8 })],
+        quoteRequestMailAttachments: [
+          { id: 61, message_id: 1, file_name: "Insperity proposal.pdf", size_bytes: 412000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/1/61-p.pdf" },
+          { id: 62, message_id: 1, file_name: "infected.pdf", size_bytes: 1000, status: "blocked", not_kept_reason: null, scan_signature: "Eicar", storage_path: null },
+          { id: 63, message_id: 2, file_name: "Other PEO.pdf", size_bytes: 1000, status: "stored", not_kept_reason: null, scan_signature: null, storage_path: "s1/2/63-o.pdf" },
+        ],
+      }),
+    }));
+    advisor.recordQuote.mockResolvedValue({ id: 3 });
+    advisor.attachQuoteDocument.mockResolvedValue({});
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Record the quote" }));
+    const form = screen.getByRole("form", { name: "Record the quote from TriNet" });
+    await userEvent.selectOptions(within(form).getByLabelText("Estimate or firm offer"), "estimate");
+    const choose = within(form).getByLabelText("Use a file from the emails");
+    expect(within(choose).getAllByRole("option").map((o) => o.textContent)).toEqual(["No file from the emails", "Insperity proposal.pdf"]);
+    await userEvent.selectOptions(choose, "61");
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.attachQuoteDocument).toHaveBeenCalledWith(3, 61));
+    expect(advisor.uploadQuoteDocument).not.toHaveBeenCalled();
+  });
   // END cost areas
 });
 
