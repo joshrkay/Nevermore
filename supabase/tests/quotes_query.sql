@@ -429,12 +429,16 @@ SELECT pg_temp.account('lost', 'acme', 'acme_agent1', 'Lost Cause Co');
 SELECT pg_temp.intake('s_lost', 'acme');
 SELECT pg_temp.opportunity('o_lost', 'lost', 'acme_agent1', 's_lost');
 UPDATE public.submission_workflow SET status = 'archived' WHERE session_id = pg_temp.id('s_lost');  -- lost with nothing sent: finished, not half done
+SELECT pg_temp.account('arch', 'acme', 'acme_agent1', 'Archived Co');
+SELECT pg_temp.intake('s_arch', 'acme');
+SELECT pg_temp.opportunity('o_arch', 'arch', 'acme_agent1', 's_arch');
+UPDATE public.accounts SET archived_at = now() WHERE id = pg_temp.id('arch');   -- an archived account: nothing on it is worked on, so no row
 DO $$
 DECLARE p jsonb; r jsonb;
 BEGIN
   PERFORM pg_temp.as_user('acme_owner', 'acme-brokers');
   p := public.quotes_list(NULL);
-  PERFORM pg_temp.is((p ->> 'total')::int, 3, 'two quote requests and one opportunity left half done; one with no intake and one lost are none');
+  PERFORM pg_temp.is((p ->> 'total')::int, 3, 'two quote requests and one opportunity left half done; one with no intake, one lost and one on an archived account are none');
   SELECT e INTO r FROM jsonb_array_elements(p -> 'rows') e WHERE e ->> 'account_name' = 'Kim Dental';
   PERFORM pg_temp.is(r ->> 'status', 'not_sent', 'it reads Not sent yet');
   PERFORM pg_temp.is(r ->> 'peo', NULL, 'no PEO yet');
