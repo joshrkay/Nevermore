@@ -630,6 +630,30 @@ export async function attachQuoteDocument(quoteId: number, attachmentId: number)
   return data;
 }
 
+/** The file a quote names as its document: a mail attachment stored and scanned on the quote request's thread (D-730). `storage_path` is what a signed link is made from (mailAttachmentUrl). */
+export interface QuoteDocumentFile {
+  id: number;
+  file_name: string;
+  size_bytes: number;
+  storage_path: string | null;
+}
+
+/** A quote as stored (N-2.1), with its document when it has one. */
+export type QuoteRecord = Database["public"]["Tables"]["quotes"]["Row"] & { document: QuoteDocumentFile | null };
+
+/**
+ * The quotes recorded on a quote request, each with its document. Row security shows a member of the firm their own; another firm's quote request answers nothing. The order is
+ * not promised: quoteRevisions (src/data/quoteRevisions.ts) says which is current.
+ */
+export async function loadQuotes(quoteRequestId: number): Promise<QuoteRecord[]> {
+  const { data, error } = await supabase
+    .from("quotes")
+    .select("*, document:quote_request_message_attachments(id, file_name, size_bytes, storage_path)")
+    .eq("quote_request_id", quoteRequestId);
+  if (error) fail(error, "Couldn't load the quotes.");
+  return (data ?? []) as unknown as QuoteRecord[];
+}
+
 /** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */
 export type OpenQuoteStatus = "sent" | "acknowledged" | "question_open";
 

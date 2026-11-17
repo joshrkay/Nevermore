@@ -101,6 +101,7 @@ const {
   openQuoteRequestThread,
   mailAttachmentUrl,
   attachQuoteDocument,
+  loadQuotes,
   recordActivity,
   fetchOwnedFirms,
   listMyFirms,
@@ -628,6 +629,16 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("attach_quote_document", { p_quote_id: 3, p_attachment_id: 51 });
     rpc.mockResolvedValueOnce({ data: null, error: { code: "22023", message: "That file isn't stored: it was blocked, not kept, or is still being checked" } });
     await expect(attachQuoteDocument(3, 52)).rejects.toThrow(/blocked, not kept, or is still being checked/);
+  });
+
+  // N-2.2, N-2.4. Break caught: the quotes read for another quote request, or the document left out so the page can't show or open it, or a quote's document row reshaped so a signed link can't be made from it.
+  it("reads the quotes of one quote request, each with its document's name, size and place", async () => {
+    tables.quotes = [{ id: 3, quote_request_id: 7, kind: "estimate", document: { id: 51, file_name: "proposal.pdf", size_bytes: 412000, storage_path: "s1/41/51-proposal.pdf" } }, { id: 2, quote_request_id: 7, kind: "estimate", document: null }];
+    const quotes = await loadQuotes(7);
+    expect(eqFilters).toContainEqual({ table: "quotes", column: "quote_request_id", value: 7 });
+    expect(String(selects.filter((s) => s.table === "quotes").at(-1)?.columns)).toMatch(/document:quote_request_message_attachments\(id, file_name, size_bytes, storage_path\)/);
+    expect(quotes.map((q) => q.id)).toEqual([3, 2]);
+    expect(quotes[0].document?.file_name).toBe("proposal.pdf");
   });
 
   // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.
