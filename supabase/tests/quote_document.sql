@@ -481,3 +481,23 @@ BEGIN
   DELETE FROM public.firm_closures WHERE firm_id = pg_temp.id('acme');
   PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM f, true, 'and the quote kept its own document');
 END $$;
+
+-- ---------- 7. An agent starts an upload of a quote document recorded by hand ----------
+-- Catches: an uploaded file kept nowhere the thread, the scan and the signed links already know (a second store), or a file that is readable before it is scanned.
+DO $$
+DECLARE q bigint := pg_temp.qid('Insperity'); r jsonb; a public.quote_request_message_attachments; m public.quote_request_messages;
+BEGIN
+  PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
+  r := public.start_quote_document_upload(q, 'insperity-quote.pdf', 'application/pdf', 52000);
+  PERFORM pg_temp.as_owner();
+  SELECT * INTO a FROM public.quote_request_message_attachments WHERE id = (r ->> 'attachment_id')::bigint;
+  PERFORM pg_temp.is(a.status, 'pending', 'the file waits for its scan, unreadable');
+  PERFORM pg_temp.is(a.file_name, 'insperity-quote.pdf', 'its name');
+  PERFORM pg_temp.is(a.size_bytes, 52000::bigint, 'and size');
+  SELECT * INTO m FROM public.quote_request_messages WHERE id = a.message_id;
+  PERFORM pg_temp.is(m.quote_request_id, pg_temp.qr('Insperity'), 'on the quote request''s own thread');
+  PERFORM pg_temp.is(m.direction, 'sent_by_hand', 'as a message recorded by hand');
+  PERFORM pg_temp.is(m.from_address, 'acme_agent@example.test', 'by the agent');
+  PERFORM pg_temp.is(r ->> 'folder', m.session_id || '/' || m.id, 'stored under the intake and message, as mail files are');
+  PERFORM pg_temp.is(pg_temp.doc_of(q) IS DISTINCT FROM a.id, true, 'not yet the quote''s document');
+END $$;
