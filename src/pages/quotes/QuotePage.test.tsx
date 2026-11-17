@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), fetchMyMailbox: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -92,6 +92,7 @@ beforeEach(() => {
   peoRegistrations.loadRegisteredElsewhere.mockResolvedValue([]);
   peoCatalogRows = [];
   advisor.openQuoteRequestThread.mockResolvedValue(undefined);
+  advisor.loadQuotes.mockResolvedValue([]);
   quotes.getQuotePage.mockReset();
 });
 afterEach(() => {
@@ -557,5 +558,30 @@ describe("QuotePage: the trail and the header", () => {
     const header = (await screen.findByRole("heading", { level: 1, name: "TriNet" })).closest("header") as HTMLElement;
     expect(within(header).getByText("Sent · 5 days")).toBeInTheDocument();
     expect(within(header).getByText("Sent Nov 7, 2026 from version 3")).toBeInTheDocument();
+  });
+});
+
+/** A quote as the quotes table holds it (N-2.1), with its document when it has one. */
+const storedQuote = (over: Record<string, unknown> = {}) => ({
+  id: 3, quote_request_id: 7, session_id: "s1", kind: "firm_offer", received_on: "2026-11-14", expires_on: null, proposed_start_on: null, admin_fee: null, admin_fee_basis: null,
+  one_off_fees: null, workers_comp: null, unemployment: null, medical: null, note: null, document_attachment_id: null, document: null, ...over,
+});
+const document = (over: Record<string, unknown> = {}) => ({ id: 51, file_name: "proposal.pdf", size_bytes: 412000, storage_path: "s1/41/51-proposal.pdf", ...over });
+
+describe("QuotePage: the quote document (N-2.2)", () => {
+  // Catches: a quote that holds its document but gives the agent no way to open it, or a link made from someone else's file, or one that skips the 60-second signed link.
+  it("names the quote's document and opens it through a signed link", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    advisor.mailAttachmentUrl.mockResolvedValue("https://files.example/signed");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", { value: { assign }, configurable: true });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote document" });
+    expect(within(panel).getByText("proposal.pdf")).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Open proposal.pdf" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://files.example/signed"));
+    expect(advisor.mailAttachmentUrl).toHaveBeenCalledWith(expect.objectContaining({ storage_path: "s1/41/51-proposal.pdf", file_name: "proposal.pdf" }));
+    expect(advisor.loadQuotes).toHaveBeenCalledWith(7);
   });
 });
