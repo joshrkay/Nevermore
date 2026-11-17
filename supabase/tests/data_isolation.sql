@@ -250,6 +250,7 @@
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1556,6 +1557,8 @@ INSERT INTO callable VALUES
 INSERT INTO callable VALUES
   ('account_page(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'a current member of the firm (or a support session at its address) who may see the account, by level, reads its details and each tab''s count and first five rows; NULL, the same as for an account that is not there, for anyone else: another firm''s member, a platform admin, a former member, an agent whose level does not reach it'),
+  ('account_intake_says(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
+   'a current member of the firm (or a support session at its address) who may see the account, by level, reads what its latest certification (not withdrawn) says of the eight fields the account holds differently, never the FEIN, the census or anything about an employee; NULL, the same as for an account that is not there, for anyone else'),
   ('account_files(p_firm_id uuid, p_account_id uuid, p_limit integer, p_offset integer)', 'own', NULL,
    'the same for an account''s files that passed the virus check: names and places, never what was read out of one; the link to a file is Storage''s own, under its own access rule'),
   ('account_tab(p_firm_id uuid, p_account_id uuid, p_tab text, p_limit integer, p_offset integer)', 'own', NULL,
@@ -2317,6 +2320,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
 -- names {acct} is not tried as that member; the submission's call names it in a condition for that reason: the submission's account is that one).
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('account_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_page({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
+  ('account_intake_says', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_intake_says({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('account_files', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_files({firm}, {acct}))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('account_tab', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.account_tab({firm}, {acct}, 'contacts'))$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
   ('submission_account', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.submission_account({firm}, {sid})) WHERE {acct} IS NOT NULL$$, ARRAY['42501', 'PT404', 'P0002', 'ok:<null>'], '^ok:object$'),
@@ -4428,6 +4432,8 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('opportunity_outcome', 'firm_scoped', 'a current member of the firm who may see the opportunity''s account (by level) reads how it ended: the lost reason, the placement, its renewal and payments and each quote''s close reason; the one refusal, PT404, for another firm''s opportunity as for one that is not there (4e)');
 INSERT INTO fn_class (fn, class, why) VALUES
   ('account_page', 'firm_scoped', 'a current member of the firm who may see the account (by level) reads its page; the same nothing for another firm''s account as for one that is not there (4e)'),
+  ('account_intake_says', 'firm_scoped', 'the same for what the account''s latest certification says where the account differs: the eight fields only, for someone who may see the account; nothing for anyone else (4e)'),
+  ('teach_account_from_intake', 'service_only', 'after a certification fills the empty fields of the account its intake sits on and makes the certifier a contact; runs for any intake by id, so no API role can call it: the certification''s trigger does'),
   ('account_files', 'firm_scoped', 'the same for the files of an account''s intakes that passed the virus check: names and places, the link being Storage''s own under its file rule (4e)'),
   ('account_tab', 'firm_scoped', 'the same for a page of one tab of an account: the rows of its contacts, opportunities, quotes, history or files that passed, for someone who may see the account, and nothing for anyone else (4e)'),
   ('submission_account', 'firm_scoped', 'the id and name of the account that holds a submission, for someone who may see that account; nothing for anyone else (4e)'),

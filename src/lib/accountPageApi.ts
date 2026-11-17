@@ -408,6 +408,24 @@ export async function getAccountPage(firmId: string, accountId: string): Promise
   };
 }
 
+/** What the intake says of an account's fields where the account holds something else (D-1715); a field the intake agrees on, or says nothing of, is absent. */
+export interface IntakeSays { name?: string; website?: string; street?: string; state?: string; statesOfOperation?: string[]; industry?: string; currentProvider?: string; employees?: number }
+
+const intakeSaysSchema = z.object({
+  name: z.string().optional(), website: z.string().optional(), street: z.string().optional(), state: z.string().optional(), states_of_operation: z.array(z.string()).optional(), industry: z.string().optional(), current_provider: z.string().optional(), employees: z.number().int().optional(),
+}).strip();
+
+/** What the account's latest certified intake says where the account differs (CRM-Q1.2). Nothing when the person may not see the account or there is no difference. */
+export async function getIntakeSays(firmId: string, accountId: string): Promise<IntakeSays> {
+  const { data, error } = await supabase.rpc("account_intake_says", { p_firm_id: firmId, p_account_id: accountId });
+  if (error) throw refusal(error, FALLBACK);
+  if (data === null) return {};
+  const parsed = intakeSaysSchema.safeParse(data);
+  if (!parsed.success) throw new AccountError("failed", FALLBACK);
+  const { current_provider: currentProvider, states_of_operation: statesOfOperation, ...rest } = parsed.data;
+  return { ...rest, ...(currentProvider === undefined ? {} : { currentProvider }), ...(statesOfOperation === undefined ? {} : { statesOfOperation }) };
+}
+
 /** How many files a page of the Files list holds when the caller does not say. The database allows 100 at most. */
 export const ACCOUNT_FILES_PAGE_SIZE = 50;
 /** How many rows a page of a tab holds when the caller does not say. The database allows 100 at most. */

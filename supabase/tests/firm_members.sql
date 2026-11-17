@@ -1095,6 +1095,7 @@ $$;
 \i supabase/migrations/20261123100000_quote_statuses.sql
 \i supabase/migrations/20261123110000_firm_link.sql
 \i supabase/migrations/20261123130000_new_quote_account.sql
+\i supabase/migrations/20261123190000_intake_teaches_account.sql
 DO $$
 DECLARE job cron.job;
 BEGIN

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
@@ -7,6 +7,7 @@ import { US_STATE_CODES } from "@/data/chamberValidation";
 import { accountFieldsSchemaFor } from "@/data/accountFields";
 import { addressLines, editOf, formOf, NOT_GIVEN, sourceWords, valueWords, type AccountForm } from "@/data/accountPage";
 import { listFirmMembers } from "@/lib/accountsApi";
+import { accountKey, useIntakeSaysQuery } from "./useAccountQueries";
 import { AccountError, updateAccount, type AccountDetails as Details, type AccountFields } from "@/lib/accountPageApi";
 
 // The account's own fields, down one side of the Overview (story CRM-A2.1b): shown as they are, and edited in place (CRM-S4.1) from the version the person
@@ -46,6 +47,17 @@ const Row = ({ label, children }: { label: string; children: React.ReactNode }) 
     <dt className="text-muted-foreground">{label}</dt>
     <dd className="min-w-0 break-words">{children}</dd>
   </div>
+);
+/** "The intake says 23" under a field, with "Use it" for someone who may change the account (D-1715, D-1812). */
+const IntakeSays = ({ words, label, canUse, busy, onUse }: { words: string; label: string; canUse: boolean; busy: boolean; onUse: () => void }) => (
+  <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-muted-foreground">
+    <span>The intake says {words}</span>
+    {canUse && (
+      <button type="button" disabled={busy} onClick={onUse} className="text-primary underline underline-offset-2 hover:text-primary/90 disabled:opacity-50">
+        Use it<span className="sr-only"> for {label}</span>
+      </button>
+    )}
+  </span>
 );
 const Given = ({ value }: { value: string | null }) => (value ? <>{value}</> : <span className="text-muted-foreground">{NOT_GIVEN}</span>);
 
@@ -113,6 +125,31 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
     setEditing(true);
   };
 
+  const says = useIntakeSaysQuery(firmId, account.id).data ?? {};
+  const queryClient = useQueryClient();
+  const [using, setUsing] = useState(false);
+  // "Use it" is an edit of the account like any other: every field sent from the version on the page, one of them the intake's (the database's save, history and rules).
+  const takeIntakeValue = async (change: Partial<AccountForm>) => {
+    setUsing(true);
+    try {
+      const answer = await updateAccount(firmId, account.id, editOf({ ...formOf(account), ...change }), account.version);
+      if (!("account" in answer)) {
+        toast.error("The account changed since this page was loaded. Reload the page and try again.");
+        return;
+      }
+      toast.success("Account saved");
+      onSaved(answer.account);
+      await queryClient.invalidateQueries({ queryKey: [...accountKey(firmId, account.id), "intake-says"] });
+    } catch (e) {
+      toast.error(e instanceof AccountError ? e.message : "Couldn't save the account. Check your connection and try again.");
+    } finally {
+      setUsing(false);
+    }
+  };
+  // The line under a field where the intake says something else; each one's Use it changes that field alone.
+  const suggest = (value: string | number | undefined, label: string, change: Partial<AccountForm>) => value !== undefined && (
+    <IntakeSays words={String(value)} label={label} canUse={canChange} busy={using} onUse={() => void takeIntakeValue(change)} />
+  );
   const address = addressLines(account);
   return (
     <section aria-labelledby="account-details-heading" className="border border-border rounded-xl p-5">
@@ -150,15 +187,15 @@ export function AccountDetailsPanel({ firmId, account, canChange, onSaved }: {
         </WorkspaceForm>
       ) : (
         <dl>
-          <Row label="Account name">{account.name}</Row>
+          <Row label="Account name">{account.name}{suggest(says.name, "the account name", { name: says.name })}</Row>
           <Row label="Trade name"><Given value={account.tradeName} /></Row>
-          <Row label="Website"><Given value={account.website} /></Row>
+          <Row label="Website"><Given value={account.website} />{suggest(says.website, "the website", { website: says.website })}</Row>
           <Row label="Phone"><Given value={account.phone} /></Row>
-          <Row label="Address">{address.length > 0 ? address.map((line) => <span key={line} className="block">{line}</span>) : <Given value={null} />}</Row>
-          <Row label="Industry"><Given value={account.industry} /></Row>
-          <Row label="Employees"><Given value={account.employees === null ? null : account.employees.toLocaleString("en-US")} /></Row>
-          <Row label="States"><Given value={account.statesOfOperation.length > 0 ? account.statesOfOperation.join(", ") : null} /></Row>
-          <Row label="Current provider"><Given value={account.currentProvider} /></Row>
+          <Row label="Address">{address.length > 0 ? address.map((line) => <span key={line} className="block">{line}</span>) : <Given value={null} />}{suggest(says.street, "the street", { street: says.street })}{suggest(says.state, "the state", { state: says.state })}</Row>
+          <Row label="Industry"><Given value={account.industry} />{suggest(says.industry, "the industry", { industry: says.industry })}</Row>
+          <Row label="Employees"><Given value={account.employees === null ? null : account.employees.toLocaleString("en-US")} />{suggest(says.employees, "employees", { employees: String(says.employees) })}</Row>
+          <Row label="States"><Given value={account.statesOfOperation.length > 0 ? account.statesOfOperation.join(", ") : null} />{suggest(says.statesOfOperation?.join(", "), "the states of operation", { states_of_operation: says.statesOfOperation?.join(", ") })}</Row>
+          <Row label="Current provider"><Given value={account.currentProvider} />{suggest(says.currentProvider, "the current provider", { current_provider: says.currentProvider })}</Row>
           <Row label="Source">{sourceWords(account.source, account.sourcePartner)}</Row>
           <Row label="Owner"><Given value={account.owner?.name ?? null} /></Row>
         </dl>
