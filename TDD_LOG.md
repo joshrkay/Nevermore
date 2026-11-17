@@ -564,3 +564,24 @@ Each rule broken, one at a time, the tests of the file run, the rule put back (s
 ## Gate
 
 lint 0 errors (19 existing warnings, none in 5.11 files); typecheck:functions and typecheck:app clean; `vitest run --maxWorkers=2` 334 files, 6693 tests: three failed in the first run, one mine (AdvisorActivityPage used quotes as its unknown table: cycle 84) and two 5 s timeouts in AccountsPage.test.tsx and AccountsPage.bulk.test.tsx on a shared machine (a different test each time; both files rerun alone: 104 passed); build green; SQL 116 tests on 5460: 114 passed, accounts_query and export_supersedes failed on things 5.11 changed (cycles 83, 85), both fixed and rerun green.
+
+# TDD log, lane 5.10 (CRM-Q3.4, Send to another PEO)
+
+Skill `mattpocock-skills:tdd` invoked first. No migration, no function restated: the database already does what the story asks, so the SQL cycles pin it (cycles 1 and 2 are not red-first, and say why).
+
+1. peo_send.sql 25: with a quote out (Sent to PEOs), a send to another PEO makes its own quote request, the first untouched, the stage staying Sent to PEOs. NOT red-first: existing behaviour (send_to_peo, 20261122200000), pinned. Green on first run; mutation instead: `'sent_to_carrier'` taken out of the stage list gave `ERROR: Move this submission to Ready for market first. It is sent to carrier` (peo_send.sql:516, and 25 itself), `ON CONFLICT ... DO NOTHING` broke it too | green
+2. peo_send.sql 26: another PEO can be added at Quoted, and a send is refused once the opportunity is Lost. NOT red-first, same reason; mutants: `'quoted'` out of the list gave `Move this submission to Ready for market first. It is quoted` (peo_send.sql:868); `'lost','won'` added to the list gave `FAIL: refused once Lost gave ok, expected 22023: ...` | green
+3. OpportunityPage.test: "offers Send to another PEO on the quotes panel once a quote was sent, leading to New quote on this opportunity". Red: `Unable to find role="link" and name "Send to another PEO"` | green (SendToAnotherPeo link beside Choose PEOs; the old D-402 test's regex lost "Send to another PEO", the intent changed on purpose)
+4. OpportunityPage.test: no Send to another PEO once won or lost (2 cases). Red: `expected <a …(2)></a> to be null` | green (`!isClosed`)
+5. NewQuoteChoosePeos.test: step 4 marks the PEOs already sent to, with the day, and no other. Red: `Unable to find an element with the text: Already sent on Nov 6, 2026. Sending again continues its quote.` | green (`alreadySent` on SendToSeveralPeos, ChoosePeos and OpportunitySaved)
+6. OpportunityPage.test: the page's own Choose PEOs marks them too. Red: first run failed for a wrong reason (`Unable to find role="region" and name "Send to several PEOs"`: my fixture lacked the certified submission); fixed the fixture, then red for the right one: `Unable to find an element with the text: Already sent on Nov 6, 2026...` | green (page passes `sentToPeos(page.quotes)`; the helper moved to src/data/peoSend.ts and OpportunitySaved uses it)
+7. NewQuoteChoosePeos.test: no choosing once the opportunity is won or lost (2 cases). Red: `expect(element).not.toBeInTheDocument()` | green (stage check in OpportunitySaved)
+8. OpportunityPage.test: no Send to another PEO for no quote sent / archived account / support session / uncertified intake. NOT red-first: the conditions were already there from cycle 3; mutation proved them (see Mutation) | green
+9. OpportunityPage.test: the link opens New quote over the page (`backgroundLocation`). Red: `toHaveAttribute("data-from", "/opportunities/o1")` (the test's `Where` helper gained a `data-from`) | green
+10. NewQuoteChoosePeos.test: a PEO sent to is marked whatever the case of the quote request's name. Found by mutation (`name === peo`: 228 passed, survived); test added, mutant killed | green
+11. NewQuoteChoosePeos.test: a quote request with no day sent is not marked. NOT red-first (the mutant is equivalent: `sentToPeos` with unsent entries still yields no mark, because the mark needs a day) | green
+
+## Mutation 5.10
+
+- SQL, 4 mutants of the stage list and the conflict clause in send_to_peo (sent_to_carrier out, quoted out, lost and won in, ON CONFLICT DO NOTHING): 4 killed.
+- UI, 11 mutants (closed check, sent check, canAct, page's alreadySent, saved's won and lost checks, saved's alreadySent, case-insensitive match, unsent filter, backgroundLocation): 9 killed at first, 1 survived and cycle 10 killed it (the case), 1 survived as an equivalent mutant (the unsent filter, cycle 11).

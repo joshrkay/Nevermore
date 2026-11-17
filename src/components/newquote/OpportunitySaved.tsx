@@ -5,6 +5,7 @@ import AdvisorSubmissionPage from "@/pages/advisor/AdvisorSubmissionPage";
 import { ChoosePeos } from "@/components/opportunities/ChoosePeos";
 import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
 import { certifiedViewShows, progressOf, stepToOpenAt } from "@/data/newQuote";
+import { sentToPeos } from "@/data/peoSend";
 import { getOpportunityPage } from "@/lib/opportunityPageApi";
 
 // New quote opened on an opportunity (its own address, D-1709): the account, contact and opportunity step 1 made, and Save and close. There is no step 2 to 4 here
@@ -17,7 +18,7 @@ export function OpportunitySaved({ firmId, opportunityId, onClose }: { firmId: s
   const [backToFlow, setBackToFlow] = useState(true);
   const page = found.data;
   // Step 4 (CRM-Q2.5, D-1763): a certified intake opens at the existing choose-and-send, read the way the opportunity's page reads it.
-  const atChoosing = !!page && stepToOpenAt(progressOf(page)) === 4;
+  const atChoosing = !!page && stepToOpenAt(progressOf(page)) === 4 && page.opportunity.stage !== "won" && page.opportunity.stage !== "lost";
   const needs = useStillNeeds(firmId, page?.opportunity.submissionId ?? null, atChoosing);
   if (found.isError) return <p role="alert" className="text-sm">Couldn't load the opportunity.</p>;
   if (found.isSuccess && !page) return <p role="alert" className="text-sm">This opportunity isn't available.</p>;
@@ -40,7 +41,7 @@ export function OpportunitySaved({ firmId, opportunityId, onClose }: { firmId: s
         <dt className="text-muted-foreground">Opportunity</dt><dd>{page.opportunity.name}</dd>
         {page.mainContact && <><dt className="text-muted-foreground">Contact</dt><dd>{page.mainContact.name}</dd></>}
       </dl>
-      {atChoosing && <ChoosePeos startChosen needs={needs} onChoose={() => undefined} returnTo={`/new-quote/${opportunityId}`} onSent={() => void found.refetch()} />}
+      {atChoosing && <ChoosePeos startChosen alreadySent={sentToPeos(page.quotes)} needs={needs} onChoose={() => undefined} returnTo={`/new-quote/${opportunityId}`} onSent={() => void found.refetch()} />}
       <div className="flex gap-2">
         {certifiedViewShows(progressOf(page)) && <Button type="button" variant="outline" onClick={() => setBackToFlow(false)}>Certified answers</Button>}
         <Button type="button" onClick={onClose}>Save and close</Button>

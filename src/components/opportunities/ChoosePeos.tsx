@@ -6,7 +6,7 @@ import type { useStillNeeds } from "./useStillNeeds";
  * "Choose PEOs" on the opportunity's quotes panel (D-1727): 6.7's send to several PEOs, given the submission the page has read. Clicking asks the page to read the submission
  * (it is read for the quotes anyway, or now) and opens the component once it is here.
  */
-export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = false }: {
+export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = false, alreadySent }: {
   needs: ReturnType<typeof useStillNeeds>;
   /** Asks the page to read the submission now, when it was not read for the quotes. */
   onChoose: () => void;
@@ -14,6 +14,8 @@ export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = fa
   onSent: () => void;
   /** Already chosen when drawn (New quote's step 4 opens at the choosing, D-1763). */
   startChosen?: boolean;
+  /** The PEOs already sent to and the day (CRM-Q3.4): marked in the choosing step. */
+  alreadySent?: Readonly<Record<string, string>>;
 }) {
   const [chosen, setChosen] = useState(startChosen);
   if (!chosen) {
@@ -45,6 +47,7 @@ export function ChoosePeos({ needs, onChoose, returnTo, onSent, startChosen = fa
       returnTo={returnTo}
       onSent={onSent}
       startOpen
+      alreadySent={alreadySent}
       openLabel="Choose PEOs"
     />
   );
