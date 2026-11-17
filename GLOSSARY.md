@@ -218,6 +218,8 @@ _Avoid_: open item, flag
 
 **Information request**:
 An advisor's message asking the prospect for more, naming the answers it is about (or none, for something no answer holds, such as a document) and any PEO's **Extra questions** it asks, each by its PEO and wording. Sending one emails the prospect (the email names no PEO and no extra question), shows it in The Chamber with "Your advisor asked about this" on each answer and extra question it names (that PEO's questions are shown too), has Lenore ask about those answers first, and moves the pipeline stage to information requested. Certifying again answers it, as does the advisor moving the stage on. The record of each is kept with the intake and never changed.
+
+When it is about a PEO's open question (N-1.3, slice 7.5), the agent opens it from the quote request at Question open (the submission's card or the quote page), writes it in their own words (the PEO's message is never copied in), and it is tied to that quote request in the quote request's log; the PEO's thread then says what was asked and whether the employer has answered. Answering the PEO is the existing Follow up, which returns the quote request to Sent.
 _Avoid_: follow-up, RFI, query
 
 **Quote request**:
