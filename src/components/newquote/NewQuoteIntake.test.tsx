@@ -84,7 +84,7 @@ describe("A certified intake is past step 2 (CRM-Q2.2, D-1872)", () => {
     const { dialog } = await open();
     await within(dialog).findByText("Harborview Dental Group");
     expect(within(dialog).queryByTestId("chamber")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Invite the contact to finish and certify" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Invite/ })).not.toBeInTheDocument();
     expect(brokerIntake.fetchIntakeInviteStatus).not.toHaveBeenCalled();
     expect(dialog).not.toHaveClass("max-w-[95vw]");
   });
@@ -106,32 +106,43 @@ describe("The room the intake gets (CRM-Q2.2, D-1872)", () => {
   });
 });
 
-describe("Invite the contact to finish and certify (CRM-Q2.2, D-1873)", () => {
+describe("Invite the contact (CRM-Q2.2, D-1873, D-1909)", () => {
   // Break caught: the agent can type answers but has no way to hand the intake to the contact from New quote, or the invitation goes to an address typed nowhere (the contact's own is the default).
   it("sends the invitation to the contact's email, which the form offers", async () => {
     getOpportunityPage.mockResolvedValue(page({ intake: draftIntake() }));
     brokerIntake.inviteClient.mockResolvedValue({ invitationId: "inv1", delivery: "sent" });
     const { user, dialog } = await open();
-    await user.click(await within(dialog).findByRole("button", { name: "Invite the contact to finish and certify" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Invite Lucia" }));
     expect(within(dialog).getByLabelText("Contact's email")).toHaveValue("lucia@harborview.example");
     await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
     expect(brokerIntake.inviteClient).toHaveBeenCalledWith({ intakeId: "i1", email: "lucia@harborview.example", name: "Lucia Torres" });
   });
 
-  // Break caught: "The contact does it all" asks for entries first, or sends nothing until a form is filled; it is the same link, sent at once to the contact, with nothing typed (D-1755).
-  it("The contact does it all sends the same invitation at once, with nothing entered", async () => {
+  // Break caught: two buttons for one invitation (D-1909): "The contact does it all" promised a hand-over where the broker steps back, but sent the same link as the other, so the agent could not tell what
+  // either would do. One button, named for the person it invites, that shows where the invitation goes and sends nothing until Send invitation.
+  it("has one invitation button, named for the contact, and sends nothing until Send invitation is pressed", async () => {
     getOpportunityPage.mockResolvedValue(page({ intake: draftIntake({ answered: 0 }) }));
     brokerIntake.inviteClient.mockResolvedValue({ invitationId: "inv1", delivery: "sent" });
     const { user, dialog } = await open();
-    await user.click(await within(dialog).findByRole("button", { name: "The contact does it all" }));
-    expect(brokerIntake.inviteClient).toHaveBeenCalledWith({ intakeId: "i1", email: "lucia@harborview.example", name: "Lucia Torres" });
+    expect(await within(dialog).findAllByRole("button", { name: /^Invite/ })).toHaveLength(1);
+    expect(within(dialog).queryByRole("button", { name: "The contact does it all" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Invite Lucia" }));
+    expect(brokerIntake.inviteClient).not.toHaveBeenCalled();
+    expect(within(dialog).getByLabelText("Contact's email")).toHaveValue("lucia@harborview.example");
   });
 
-  // Break caught: "The contact does it all" for a contact with no email sends to a blank address (the database refuses it in words the agent never sees) instead of asking for the address.
+  // Break caught: a contact with no name leaves the button reading "Invite undefined", or no button at all.
+  it("is named Invite the contact when the main contact has no name to use", async () => {
+    getOpportunityPage.mockResolvedValue(page({ intake: draftIntake(), mainContact: null, contacts: [] }));
+    const { dialog } = await open();
+    expect(await within(dialog).findByRole("button", { name: "Invite the contact" })).toBeInTheDocument();
+  });
+
+  // Break caught: an invitation for a contact with no email sends to a blank address (the database refuses it in words the agent never sees) instead of asking for the address.
   it("asks for the email first when the main contact has none", async () => {
     getOpportunityPage.mockResolvedValue(page({ intake: draftIntake(), contacts: [{ id: "c1", name: "Lucia Torres", title: null, email: null, phone: "555-0100", main: true, fillsInIntake: false }] }));
     const { user, dialog } = await open();
-    await user.click(await within(dialog).findByRole("button", { name: "The contact does it all" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Invite Lucia" }));
     expect(brokerIntake.inviteClient).not.toHaveBeenCalled();
     expect(within(dialog).getByLabelText("Contact's email")).toHaveValue("");
   });
@@ -152,7 +163,7 @@ describe("Step 3 before the employer certifies: waiting (CRM-Q2.4, D-1771, D-187
     expect(within(dialog).getByText(/Invited Nov 1[34], 2026/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Not opened yet/)).toBeInTheDocument();
     expect(brokerIntake.fetchIntakeInviteStatus).toHaveBeenCalledWith("i1");
-    expect(within(dialog).queryByRole("button", { name: "The contact does it all" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Invite/ })).not.toBeInTheDocument();
   });
 
   // Break caught: the line always says "Not opened yet", so an agent chases a contact who has already opened the link.
@@ -170,7 +181,7 @@ describe("Step 3 before the employer certifies: waiting (CRM-Q2.4, D-1771, D-187
     brokerIntake.fetchIntakeInviteStatus.mockReturnValue(new Promise(() => undefined));
     const { dialog } = await open();
     await within(dialog).findByTestId("chamber");
-    expect(within(dialog).queryByRole("button", { name: "The contact does it all" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Invite/ })).not.toBeInTheDocument();
   });
 });
 
@@ -181,7 +192,8 @@ describe("After the invitation is sent (CRM-Q2.2, CRM-Q2.4, D-1874)", () => {
     brokerIntake.fetchIntakeInviteStatus.mockResolvedValueOnce({ state: "none" }).mockResolvedValue(waiting());
     brokerIntake.inviteClient.mockResolvedValue({ invitationId: "inv1", delivery: "sent" });
     const { user, dialog } = await open();
-    await user.click(await within(dialog).findByRole("button", { name: "The contact does it all" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Invite Lucia" }));
+    await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
     expect(await within(dialog).findByText("Waiting for Lucia to certify")).toBeInTheDocument();
   });
 });
@@ -192,7 +204,7 @@ describe("When the invitation is refused (CRM-Q2.2, D-1874)", () => {
     getOpportunityPage.mockResolvedValue(page({ intake: draftIntake() }));
     brokerIntake.inviteClient.mockRejectedValue(new Error("Check the email address"));
     const { user, dialog } = await open();
-    await user.click(await within(dialog).findByRole("button", { name: "Invite the contact to finish and certify" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Invite Lucia" }));
     await user.click(within(dialog).getByRole("button", { name: "Send invitation" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Check the email address");
     expect(within(dialog).getByLabelText("Contact's email")).toBeInTheDocument();
