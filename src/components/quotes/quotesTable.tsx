@@ -134,13 +134,13 @@ const quoteColumns: ColumnDefinition<QuoteRow, keyof Fields>[] = [
 const USUAL_COLUMNS = ["account", "peo", "status", "sent", "admin_fee", "expires", "owner"] as const;
 
 /**
- * The story's views (CRM-Q4.1). Open is what is still to be answered, by the PEO or by the broker (D-1736: sent, acknowledged, question open: the menu's count);
- * Waiting on a PEO is the part of it the PEO owes (sent, acknowledged); Not sent yet is a New quote left half done (D-1702).
+ * The story's views (CRM-Q4.1). Waiting on a PEO is 5.1's open statuses (D-1736: sent, acknowledged, question open: the menu's count, the glossary's "open");
+ * Open is everything not finished: those, the New quotes not sent yet (D-1702) and the quotes that are back and not yet closed; Declined and Closed are finished.
  */
 export const QUOTE_VIEWS: TableView<Fields>[] = [
-  { id: "open", label: "Open", filters: [{ field: "status", op: "any_of", value: ["sent", "acknowledged", "question_open"] }] },
+  { id: "open", label: "Open", filters: [{ field: "status", op: "any_of", value: ["not_sent", "sent", "acknowledged", "question_open", "quoted"] }] },
   { id: "not_sent", label: "Not sent yet", filters: [{ field: "status", op: "any_of", value: ["not_sent"] }] },
-  { id: "waiting", label: "Waiting on a PEO", filters: [{ field: "status", op: "any_of", value: ["sent", "acknowledged"] }] },
+  { id: "waiting", label: "Waiting on a PEO", filters: [{ field: "status", op: "any_of", value: ["sent", "acknowledged", "question_open"] }] },
   { id: "quoted", label: "Quoted", filters: [{ field: "status", op: "any_of", value: ["quoted"] }] },
   { id: "declined", label: "Declined", filters: [{ field: "status", op: "any_of", value: ["declined"] }] },
   { id: "closed", label: "Closed", filters: [{ field: "status", op: "any_of", value: ["closed"] }] },

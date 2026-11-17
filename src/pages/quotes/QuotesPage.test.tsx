@@ -90,14 +90,15 @@ describe("the Quotes page (CRM-Q4.1)", () => {
     expect(within(cells).getByText("$32.50")).toBeInTheDocument();
   });
 
-  // Catches: a view the story names left out, or a tab that counts the wrong question (Open follows 5.1's statuses: sent, acknowledged, question open).
+  // Catches: a view the story names left out, or a tab that counts the wrong question. Waiting on a PEO is 5.1's open statuses (sent, acknowledged, question open: the
+  // menu's count, the glossary's "open"); Open is everything not finished, those and the New quotes not sent yet and the quotes that are back.
   it("offers the story's views, each with its count", async () => {
     renderAt();
     await screen.findByText("Reyes Bakery");
     for (const name of ["Open", "Not sent yet", "Waiting on a PEO", "Quoted", "Declined", "Closed"]) expect(await screen.findByRole("link", { name: new RegExp(`^${name}`) })).toBeInTheDocument();
     const asked = countQuoteViews.mock.lastCall![1] as { name: string; filters: unknown[] }[];
-    expect(asked.find((v) => v.name === "open")?.filters).toEqual([{ field: "status", op: "any_of", value: ["sent", "acknowledged", "question_open"] }]);
-    expect(asked.find((v) => v.name === "waiting")?.filters).toEqual([{ field: "status", op: "any_of", value: ["sent", "acknowledged"] }]);
+    expect(asked.find((v) => v.name === "open")?.filters).toEqual([{ field: "status", op: "any_of", value: ["not_sent", "sent", "acknowledged", "question_open", "quoted"] }]);
+    expect(asked.find((v) => v.name === "waiting")?.filters).toEqual([{ field: "status", op: "any_of", value: ["sent", "acknowledged", "question_open"] }]);
   });
 
   // Catches: an empty firm told nothing matches, or no way to start the first quote.
