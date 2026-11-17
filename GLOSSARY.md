@@ -907,7 +907,7 @@ When something last happened on an account: the newest of its creation, a call, 
 _Avoid_: last modified, updated
 
 **Broker-started intake**:
-An intake a member of a firm starts on one of the firm's opportunities (New quote, step 2), with its account and opportunity made first (ADR 0025): it is in the firm, linked to the opportunity from the start, and has no employer user until the client accepts the **Intake invitation**. The firm's members read it as they read every intake of the firm and enter answers as **Broker entries**; only the employer certifies, and the database refuses a certification from a member of the firm.
+An intake a member of a firm starts on one of the firm's opportunities (New quote, step 2), with its account and opportunity made first (ADR 0025): it is in the firm, linked to the opportunity from the start, and has no employer user until the client accepts the **Intake invitation**. The firm's members read it as they read every intake of the firm and enter answers as **Broker entries**; only the employer certifies, and the database refuses a certification from a member of the firm. A member comes back to one that is not yet certified with **Continue the intake** on the opportunity (D-1908). It does not expire from sitting idle, as an employer's own draft does after 30 days (D-1911), and the client adds the files (D-1912, D-1879): a member's Upload tab says so.
 _Avoid_: draft intake, agent intake
 
 **Intake invitation**:

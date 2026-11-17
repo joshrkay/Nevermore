@@ -398,7 +398,7 @@ As an agent, I want anything that is quoted to be in the CRM without my filing i
 - AC: the step is the intake as it is built: Lenore's conversation and voice on one side, the ten tabs on the other.
 - AC: what the account holds is written in as the agent's entry before the agent types anything.
 - AC: the agent can tell Lenore what they know, paste it, upload the census and documents, and type on any tab but FEIN and Certify & sign. Each answer is recorded as the agent's, never as the employer's confirmed answer.
-- AC: "Invite the contact to finish and certify" emails the contact a link to the firm's address. "The contact does it all" sends the same link with nothing entered.
+- AC: one button, "Invite <first name>" ("Invite the contact" when no name is known), opens a form with the contact's email filled in; "Send invitation" emails the contact a link to the firm's address (D-1909; there were two buttons that sent the same link).
 - AC: the step shows how many answers are in, who entered them, and what is still needed before it can be certified.
 
 **CRM-Q2.3 What the employer sees.** M · FS (screen 6) · needs P-2.1, M-1.1
