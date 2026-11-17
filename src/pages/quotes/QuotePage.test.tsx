@@ -302,6 +302,20 @@ describe("QuotePage: where Follow up or Withdraw is not offered", () => {
   });
 });
 
+describe("QuotePage: a certified version that cannot say what it held", () => {
+  // Catches: Follow up or Withdraw built from a version certified before each answer's status was kept (the link's plan would be a guess).
+  it("offers no Follow up or Withdraw, as the submission's PEO card offers none", async () => {
+    peoCatalogRows = [profileRow(1, "TriNet")];
+    advisor.loadSubmission.mockResolvedValue(certified({ certificationLacksSnapshot: true, submission: { signer_name: "Elena Marsh" }, fileId: "EAA-2026-0117" }));
+    quotes.getQuotePage.mockResolvedValue(quotePage({ detail: { currentVersion: 3, ...threadOf({ quoteRequestMessages: [message({ id: 5, direction: "sent", status: "sent", to_addresses: ["dana@trinet.example"] })] }) } }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "TriNet" });
+    await waitFor(() => expect(advisor.loadSubmission).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByRole("button", { name: "Withdraw from TriNet" })).not.toBeInTheDocument();
+  });
+});
+
 describe("QuotePage: the PEO's status", () => {
   // Catches: statuses an agent cannot set from the quote's own page (they would have to go back to the submission), or set for another quote request, or never shown after.
   it("sets Acknowledged, Question open or Back to Sent with the submission page's own buttons, then reads the page again", async () => {

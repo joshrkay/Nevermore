@@ -141,6 +141,13 @@ describe("PeoThreadPanel", () => {
     await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
   });
 
+  // Catches: a quote's page with no mail yet showing "Choose a PEO to read its thread" instead of its own (empty) thread.
+  it("for one named quote request with no mail yet, shows its empty thread rather than asking to choose", () => {
+    render(<PeoThreadPanel prospectUserId="p1" requests={[request()]} ofRequest={7} messages={[]} attachments={[]} notes={[]} events={[]} reads={[]} />);
+    expect(screen.queryByText("Choose a PEO to read its thread.")).not.toBeInTheDocument();
+    expect(screen.getByText(/Nothing here yet/)).toBeInTheDocument();
+  });
+
   it("doesn't mark a thread read that has no new mail", () => {
     panel({ messages: [message()], reads: [read("2026-11-11T00:00:00+00:00")] });
     fireEvent.click(screen.getByRole("button", { name: /TriNet/ }));

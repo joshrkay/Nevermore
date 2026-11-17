@@ -19,3 +19,6 @@ export function noReplyWords(request: { status: string; sent_on: string | null }
   if (hasReply || !isOpenQuoteRequest(request.status) || !request.sent_on) return null;
   return `No reply yet · ${waitingLabel(request.sent_on, now).toLowerCase()}`;
 }
+
+/** A quote's own page. Kept here, free of components, so a panel can link to it without loading the account list's. */
+export const quotePath = (quoteRequestId: number) => `/quotes/${quoteRequestId}`;

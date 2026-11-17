@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { quotePath } from "@/data/quotePage";
 import type { ActivityRow, ContactRow, OpportunityRow, QuoteRow } from "@/lib/accountPageApi";
 import { contactName, formatDay, formatWhen, KIND_LABELS, NOT_GIVEN, quoteStatusLabel, STAGE_LABELS } from "@/data/accountPage";
 import { ActivityActions, ActivityWhat, ContactActions } from "./ActivityEntry";
@@ -12,7 +13,6 @@ export const submissionPath = (submissionId: string) => `/advisor/submissions/${
 
 /** An account's own page. */
 export const accountPath = (accountId: string) => `/accounts/${encodeURIComponent(accountId)}`;
-export const quotePath = (quoteRequestId: number) => `/quotes/${quoteRequestId}`;
 
 /** An opportunity's own page (CRM-O1.1b). */
 export const opportunityPath = (opportunityId: string) => `/opportunities/${encodeURIComponent(opportunityId)}`;

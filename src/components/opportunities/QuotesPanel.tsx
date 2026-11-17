@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { EmptyLine, ListPanel, Pill, Rows, type Column } from "@/components/accounts/accountLists";
-import { quotePath } from "@/components/accounts/accountColumns";
+import { quotePath } from "@/data/quotePage";
 import { PanelFailed, PlaceholderLine } from "@/components/workspace/states";
 import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
 import { quoteCloseWords } from "@/data/opportunityClose";

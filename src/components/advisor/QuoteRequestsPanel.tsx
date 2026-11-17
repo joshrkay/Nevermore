@@ -1,6 +1,6 @@
 import { useContext, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { quotePath } from "@/components/accounts/accountColumns";
+import { quotePath } from "@/data/quotePage";
 import { quoteStatusWords } from "@/data/opportunityPage";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { AlertTriangle, Loader2 } from "lucide-react";
