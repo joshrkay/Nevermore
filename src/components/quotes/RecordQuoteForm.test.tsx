@@ -43,3 +43,48 @@ describe("RecordQuoteForm: a draft to start from", () => {
     });
   });
 });
+
+describe("RecordQuoteForm: figures read from the document (slice 7.9, D-790)", () => {
+  // Catches: a figure filled from a reading that is not marked as a suggestion with the page it came from, so the broker cannot tell what to check.
+  it("marks each figure that came from the document Suggested, with its page", () => {
+    render(<RecordQuoteForm request={request} mailFiles={[]} onRecorded={() => {}} onCancel={() => {}} initial={{ adminFee: 3.5 }} sources={{ adminFee: "Page 2" }} />);
+    expect(screen.getByLabelText("Admin fee")).toHaveAccessibleDescription("Suggested, from Page 2");
+  });
+
+  // Catches: a list of figures (one-off fees) read from the document with no Suggested mark or page, while the single figures have one.
+  it("marks a list of lines read from the document Suggested, with its page", () => {
+    render(<RecordQuoteForm request={request} mailFiles={[]} onRecorded={() => {}} onCancel={() => {}} initial={{ oneOffFees: [{ name: "Setup", amount: 500 }] }} sources={{ oneOffFees: "Page 3" }} />);
+    expect(screen.getByRole("group", { name: "One-off fees" })).toHaveAccessibleDescription("Suggested, from Page 3");
+  });
+
+  // Catches: kind and the three dates filled from the document without the Suggested mark and page.
+  it("marks kind and the dates read from the document Suggested, with their pages", () => {
+    render(<RecordQuoteForm request={request} mailFiles={[]} onRecorded={() => {}} onCancel={() => {}} initial={{ kind: "firm_offer", receivedOn: "2026-11-10", expiresOn: "2026-12-05", startOn: "2027-01-01" }}
+      sources={{ kind: "Page 1", receivedOn: "Page 1", expiresOn: "Page 4", startOn: "Page 5" }} />);
+    expect(screen.getByLabelText("Estimate or firm offer")).toHaveAccessibleDescription("Suggested, from Page 1");
+    expect(screen.getByLabelText("Received on")).toHaveAccessibleDescription("Suggested, from Page 1");
+    expect(screen.getByLabelText("Expires on")).toHaveAccessibleDescription("Suggested, from Page 4");
+    expect(screen.getByLabelText("Proposed start")).toHaveAccessibleDescription("Suggested, from Page 5");
+  });
+});
+
+describe("RecordQuoteForm: the rest of the marks (slice 7.9, D-790)", () => {
+  // Catches: a cost area wired to the wrong figure's page, or one with no mark, and a figure the document did not state wearing a mark anyway.
+  it("marks workers' comp, unemployment and medical each with its own page, and nothing the document did not state", () => {
+    render(<RecordQuoteForm request={request} mailFiles={[]} onRecorded={() => {}} onCancel={() => {}}
+      initial={{ workersComp: [{ state: "OR", class_code: "8810", rate: 0.45 }], unemployment: [{ state: "OR", charge: "employer_rate" }], medical: [{ plan: "Gold", tier: "family", monthly: 1200 }] }}
+      sources={{ workersComp: "Page 6", unemployment: "Page 7", medical: "Page 8", oneOffFees: "Page 9" }} />);
+    expect(screen.getByRole("group", { name: "Workers' comp rates" })).toHaveAccessibleDescription("Suggested, from Page 6");
+    expect(screen.getByRole("group", { name: "Unemployment tax" })).toHaveAccessibleDescription("Suggested, from Page 7");
+    expect(screen.getByRole("group", { name: "Medical rates" })).toHaveAccessibleDescription("Suggested, from Page 8");
+    expect(screen.getByRole("group", { name: "One-off fees" })).not.toHaveAccessibleDescription();
+    expect(screen.getByLabelText("Admin fee")).not.toHaveAccessibleDescription();
+    expect(screen.getByLabelText("Estimate or firm offer")).toHaveValue("");
+  });
+
+  // Catches: a figure read with no page (the reader gave none) shown with a dangling "from".
+  it("says only Suggested when the reader gave no page", () => {
+    render(<RecordQuoteForm request={request} mailFiles={[]} onRecorded={() => {}} onCancel={() => {}} initial={{ adminFee: 3 }} sources={{}} />);
+    expect(screen.getByLabelText("Admin fee")).toHaveAccessibleDescription("Suggested");
+  });
+});

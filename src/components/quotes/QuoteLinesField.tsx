@@ -15,7 +15,7 @@ export interface LineColumn {
  * The lines of one cost area of a quote (N-2.1): a line is added with the button and each box is labelled with its line's number. A cost area with no lines is "Not quoted"
  * (D-721), so nothing is drawn but the button until a line is added.
  */
-export function QuoteLinesField({ title, noun, article = "a", columns, lines, onChange }: {
+export function QuoteLinesField({ title, noun, article = "a", columns, lines, onChange, hint }: {
   title: string;
   /** "one-off fee": the add button reads "Add a one-off fee", each box "One-off fee 1 name". */
   noun: string;
@@ -23,12 +23,16 @@ export function QuoteLinesField({ title, noun, article = "a", columns, lines, on
   columns: readonly LineColumn[];
   lines: readonly Record<string, string>[];
   onChange: (lines: Record<string, string>[]) => void;
+  /** Words about where the lines came from ("Suggested, from Page 3"), described to the group. */
+  hint?: string | null;
 }) {
   const heading = noun.charAt(0).toUpperCase() + noun.slice(1);
+  const hintId = `lines-hint-${noun.replace(/\W+/g, "-")}`;
   const set = (at: number, key: string, value: string) => onChange(lines.map((l, i) => (i === at ? { ...l, [key]: value } : l)));
   return (
-    <fieldset className="space-y-2">
+    <fieldset className="space-y-2" aria-describedby={hint ? hintId : undefined}>
       <legend className="text-xs text-muted-foreground">{title}</legend>
+      {hint && <p id={hintId} className="text-xs text-muted-foreground">{hint}</p>}
       {lines.length === 0 && <p className="text-xs text-muted-foreground">Not quoted</p>}
       {lines.map((line, at) => (
         <div key={at} className="flex flex-wrap items-end gap-2">

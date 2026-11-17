@@ -24,7 +24,7 @@ const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
 const outcomes = { getOpportunityOutcome: vi.fn() };
 vi.mock("@/lib/opportunityPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/opportunityPageApi")), ...outcomes }));
-const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn(), askAboutQuestion: vi.fn(), recordQuote: vi.fn() };
+const advisor = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn(), recordActivity: vi.fn(), loadSubmission: vi.fn(), updateQuoteRequest: vi.fn(), setQuoteRequestStatus: vi.fn(), decideReplySuggestion: vi.fn(), fetchMyMailbox: vi.fn(), loadQuotes: vi.fn(), attachQuoteDocument: vi.fn(), uploadQuoteDocument: vi.fn(), askAboutQuestion: vi.fn(), recordQuote: vi.fn(), readQuoteDocument: vi.fn() };
 vi.mock("@/lib/advisorApi", async () => ({ ...(await vi.importActual<object>("@/lib/advisorApi")), ...advisor }));
 // What "Still needs" reads, as the submission's and the opportunity's pages read it: the submission (its last certified version) and the PEOs' requirement profiles.
 let peoCatalogRows: unknown = [];
@@ -968,5 +968,148 @@ describe("QuotePage: the quote document (N-2.2)", () => {
     renderPage();
     const archived = await screen.findByRole("region", { name: "Quote document" });
     expect(within(archived).queryByLabelText("Upload the quote document")).not.toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: Read the document (slice 7.9, D-790)", () => {
+  const reading = (over: Record<string, unknown> = {}) => ({ status: "proposed", message: null, draft: { adminFee: 40, adminFeeBasis: "per_employee_per_month", expiresOn: "2026-12-05" }, sources: { adminFee: "Page 2", expiresOn: "Page 4" }, ...over });
+  const quotedWithDocument = async (status = "quoted") => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    renderPage();
+    return screen.findByRole("button", { name: "Read the document" });
+  };
+
+  // Catches: the document read on page load (each call spends AI budget), or a reading that does not open the form filled, with each figure Suggested and its page, and kind left for the broker.
+  it("reads only on a click, then opens the form with the figures marked Suggested and kind still to choose", async () => {
+    const read = await quotedWithDocument();
+    expect(advisor.readQuoteDocument).not.toHaveBeenCalled();
+    advisor.readQuoteDocument.mockResolvedValue(reading());
+    await userEvent.click(read);
+    const form = await screen.findByRole("form", { name: "Record the quote from TriNet" });
+    expect(advisor.readQuoteDocument).toHaveBeenCalledExactlyOnceWith(3);
+    expect(within(form).getByLabelText("Admin fee")).toHaveValue(40);
+    expect(within(form).getByLabelText("Admin fee")).toHaveAccessibleDescription("Suggested, from Page 2");
+    expect(within(form).getByLabelText("Expires on")).toHaveAccessibleDescription("Suggested, from Page 4");
+    expect(within(form).getByLabelText("Estimate or firm offer")).toHaveValue("");
+    expect(advisor.recordQuote).not.toHaveBeenCalled();
+  });
+});
+
+describe("QuotePage: Read the document, when nothing is proposed (slice 7.9, D-791)", () => {
+  const quotedWithDocument = async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    renderPage();
+    return screen.findByRole("button", { name: "Read the document" });
+  };
+
+  // Catches: a reading that found nothing (or could not run) that fails silently, or that opens an empty form as if it had proposed something.
+  it.each([
+    ["nothing_found", null, "Nothing could be read from this document, so nothing is suggested. You can still record the quote by hand."],
+    ["unavailable", null, "Reading documents is not set up, so nothing is suggested. You can still record the quote by hand."],
+    ["too_large", "The file is too large to read.", "The file is too large to read."],
+  ])("says in words that %s and leaves the form shut", async (status, message, words) => {
+    const read = await quotedWithDocument();
+    advisor.readQuoteDocument.mockResolvedValue({ status, message, draft: {}, sources: {} });
+    await userEvent.click(read);
+    expect(await screen.findByRole("status")).toHaveTextContent(words);
+    expect(screen.queryByRole("form", { name: "Record the quote from TriNet" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Read the document" })).toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: Read the document, when it is refused (slice 7.9, D-791)", () => {
+  // Catches: a refusal (the day's AI use spent, a file that was not kept) that is swallowed or thrown unhandled, instead of said in the function's own words with the form untouched.
+  it("says the refusal in its own words and leaves the form shut", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    renderPage();
+    const { AdvisorApiError } = await import("@/lib/advisorApi");
+    advisor.readQuoteDocument.mockRejectedValue(new AdvisorApiError("Today's document reading is used up. Try again tomorrow."));
+    await userEvent.click(await screen.findByRole("button", { name: "Read the document" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Today's document reading is used up. Try again tomorrow.");
+    expect(screen.queryByRole("form", { name: "Record the quote from TriNet" })).not.toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: Read the document, while it reads (slice 7.9, D-792)", () => {
+  // Catches: a second click while the first reading is still out, which spends a second unit of the day's AI budget on the same document.
+  it("asks once however many times the button is pressed, and holds the button until the answer comes", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    let answer: (r: unknown) => void = () => {};
+    advisor.readQuoteDocument.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderPage();
+    const read = await screen.findByRole("button", { name: "Read the document" });
+    await userEvent.dblClick(read);
+    expect(advisor.readQuoteDocument).toHaveBeenCalledTimes(1);
+    expect(read).toBeDisabled();
+    answer({ status: "nothing_found", message: null, draft: {}, sources: {} });
+    await waitFor(() => expect(read).toBeEnabled());
+  });
+});
+
+describe("QuotePage: where Read the document is not offered (slice 7.9, D-793)", () => {
+  const hasDocument = () => advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+
+  // Catches: a button to read a document where the quote names none (the function refuses it: a dead control).
+  it("is not offered on a quote with no document", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote()]);
+    renderPage();
+    await screen.findByRole("button", { name: "Record the quote" });
+    expect(screen.queryByRole("button", { name: "Read the document" })).not.toBeInTheDocument();
+  });
+
+  // Catches: a read offered where the record controls are not: a closed quote, a support session, an archived account, or someone without the right to change it.
+  it.each([
+    ["a closed quote", quotePage({ request: { status: "closed" } }), workspace()],
+    ["a support session", quotePage({ request: { status: "quoted" } }), workspace({ isSupport: true })],
+    ["an archived account", quotePage({ request: { status: "quoted" }, opportunity: { account: { id: "a1", name: "Harborview Dental Group", archived: true } } }), workspace()],
+    ["someone who may not change the account", quotePage({ request: { status: "quoted" }, opportunity: { canChange: false } }), workspace()],
+  ])("is not offered on %s", async (_name, page, ws) => {
+    quotes.getQuotePage.mockResolvedValue(page);
+    hasDocument();
+    renderPage("/quotes/7", ws);
+    await screen.findByRole("region", { name: "Quote document" });
+    expect(screen.queryByRole("button", { name: "Read the document" })).not.toBeInTheDocument();
+  });
+});
+
+describe("QuotePage: Read the document, then save (slice 7.9, D-794)", () => {
+  // Catches: a figure the document did not state saved as 0 or an empty list instead of Not quoted (D-721), a kind guessed for the broker, or a save that bypasses recordQuote.
+  it("leaves unread figures as Not quoted, asks for kind, and records through recordQuote as a new quote", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    advisor.readQuoteDocument.mockResolvedValue({ status: "proposed", message: null, draft: { adminFee: 40, adminFeeBasis: "per_employee_per_month" }, sources: { adminFee: "Page 2" } });
+    advisor.recordQuote.mockResolvedValue({ id: 4 });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Read the document" }));
+    const form = await screen.findByRole("form", { name: "Record the quote from TriNet" });
+    expect(within(form).getAllByText("Not quoted", { selector: "p" })).toHaveLength(4);
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Say whether this is an estimate or a firm offer.");
+    expect(advisor.recordQuote).not.toHaveBeenCalled();
+    await userEvent.selectOptions(within(form).getByLabelText("Estimate or firm offer"), "estimate");
+    await userEvent.click(within(form).getByRole("button", { name: "Save the quote" }));
+    await waitFor(() => expect(advisor.recordQuote).toHaveBeenCalledTimes(1));
+    expect(advisor.recordQuote).toHaveBeenCalledWith(7, {
+      kind: "estimate", receivedOn: null, expiresOn: null, startOn: null, adminFee: 40, adminFeeBasis: "per_employee_per_month",
+      oneOffFees: null, workersComp: null, unemployment: null, medical: null, note: null,
+    });
+  });
+
+  // Catches: a Cancel after a reading that keeps the suggestions, so the next plain "Record the quote" opens pre-filled with figures the broker walked away from.
+  it("forgets the reading when the form is cancelled, so Record the quote opens empty", async () => {
+    quotes.getQuotePage.mockResolvedValue(quotePage({ request: { status: "quoted" } }));
+    advisor.loadQuotes.mockResolvedValue([storedQuote({ document_attachment_id: 51, document: document() })]);
+    advisor.readQuoteDocument.mockResolvedValue({ status: "proposed", message: null, draft: { adminFee: 40 }, sources: { adminFee: "Page 2" } });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Read the document" }));
+    await userEvent.click(within(await screen.findByRole("form", { name: "Record the quote from TriNet" })).getByRole("button", { name: "Cancel" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Record the quote" }));
+    expect(screen.getByLabelText("Admin fee")).toHaveValue(null);
+    expect(screen.queryByText(/Suggested/)).not.toBeInTheDocument();
   });
 });

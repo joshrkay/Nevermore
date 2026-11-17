@@ -74,7 +74,7 @@ const QuotePage = () => {
       <DeclineReason request={request} className="mb-6 rounded-xl border border-border bg-muted/40 p-4" />
       <QuoteHeader request={request} actions={canRecordQuote || canClose ? (
         <>
-          {canRecordQuote && <RecordQuote request={request} mailFiles={mailFiles} onRecorded={() => { void query.refetch(); void quoted.refetch(); }} />}
+          {canRecordQuote && <RecordQuote request={request} mailFiles={mailFiles} documentOf={current?.document ? current.id : undefined} onRecorded={() => { void query.refetch(); void quoted.refetch(); }} />}
           {canClose && <RecordDecline request={request} onRecorded={() => void query.refetch()} />}
           {canClose && <OpenStatusButtons request={request} onChanged={() => void query.refetch()} />}
           {canClose && <CloseQuote request={request} onClosed={() => void query.refetch()} />}

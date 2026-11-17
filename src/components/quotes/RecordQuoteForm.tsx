@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { QuoteLinesField, type LineColumn } from "@/components/quotes/QuoteLinesField";
 import { DID_NOT_GO_THROUGH, failureWords, SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
 import { QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_KIND_LABELS, QUOTE_NOTE_MAX, QUOTE_TIERS, type QuoteTier, type QuoteAdminFeeBasis, type QuoteKind } from "@/data/quoteRequests";
-import { attachQuoteDocument, recordQuote, uploadQuoteDocument, type QuoteOffer, type QuoteRequestRow } from "@/lib/advisorApi";
+import { attachQuoteDocument, recordQuote, uploadQuoteDocument, type QuoteFigure, type QuoteOffer, type QuoteRequestRow } from "@/lib/advisorApi";
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 const FEE_BASIS_LABELS: Record<QuoteAdminFeeBasis, string> = { per_employee_per_month: "Per employee per month ($)", percent_of_payroll: "Percent of payroll (%)" };
@@ -31,16 +31,30 @@ const MEDICAL_COLUMNS: LineColumn[] = [
 const asLines = (lines: readonly object[] | null | undefined): Lines => (lines ?? []).map((l) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k, String(v)])));
 
 /** The form that records what a PEO quoted (CRM-Q3.3, screen 12). Nothing is saved until the agent saves. */
-export function RecordQuoteForm({ request, mailFiles, initial, onRecorded, onCancel }: {
+export function RecordQuoteForm({ request, mailFiles, initial, sources, onRecorded, onCancel }: {
   request: QuoteRequestRow;
   /** The stored, scanned files on this quote request's own emails: the quote's document can be one without uploading it again (D-730). */
   mailFiles: readonly { id: number; file_name: string }[];
   /** What to start from, in recordQuote's own shape: a draft read from the quote document (N-2.3) fills the form, and nothing is recorded until the agent saves. */
-  initial?: QuoteOffer;
+  initial?: Partial<QuoteOffer>;
+  /** Where each figure of `initial` was read, as the reader says it ("Page 2"): a figure in `initial` is marked Suggested, with this beside it (D-790). */
+  sources?: Partial<Record<QuoteFigure, string>>;
   onRecorded: () => void;
   onCancel: () => void;
 }) {
   const id = `record-quote-${request.id}`;
+  /** The words beside a figure that was read from the document, or null when the broker typed it. */
+  const suggestion = (figure: QuoteFigure) => (initial?.[figure] != null ? `Suggested${sources?.[figure] ? `, from ${sources[figure]}` : ""}` : null);
+  /** The mark under a single box (its id is what the box is described by) and the box's `aria-describedby`. */
+  const mark = (figure: QuoteFigure, box: string) => ({
+    describedBy: suggestion(figure) ? `${id}-${box}-suggested` : undefined,
+    note: suggestion(figure) && <p id={`${id}-${box}-suggested`} className="text-xs text-muted-foreground">{suggestion(figure)}</p>,
+  });
+  const kindMark = mark("kind", "kind");
+  const feeMark = mark("adminFee", "fee");
+  const receivedMark = mark("receivedOn", "received");
+  const expiresMark = mark("expiresOn", "expires");
+  const startMark = mark("startOn", "start");
   const [kind, setKind] = useState<QuoteKind | "">(initial?.kind ?? "");
   const [fee, setFee] = useState(initial?.adminFee != null ? String(initial.adminFee) : "");
   const [basis, setBasis] = useState<QuoteAdminFeeBasis | "">(initial?.adminFeeBasis ?? "");
@@ -113,28 +127,33 @@ export function RecordQuoteForm({ request, mailFiles, initial, onRecorded, onCan
       }}
     >
       <label htmlFor={`${id}-kind`} className="block text-xs text-muted-foreground">Estimate or firm offer</label>
-      <select id={`${id}-kind`} value={kind} onChange={(e) => setKind(e.target.value as QuoteKind | "")} className={inputClass}>
+      <select id={`${id}-kind`} value={kind} onChange={(e) => setKind(e.target.value as QuoteKind | "")} aria-describedby={kindMark.describedBy} className={inputClass}>
         <option value="">Choose one</option>
         {QUOTE_KINDS.map((k) => <option key={k} value={k}>{QUOTE_KIND_LABELS[k]}</option>)}
       </select>
+      {kindMark.note}
       {missing && kind === "" && <p role="alert" className="text-xs text-destructive">Say whether this is an estimate or a firm offer.</p>}
       <label htmlFor={`${id}-fee`} className="block text-xs text-muted-foreground">Admin fee</label>
-      <input id={`${id}-fee`} type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} className={inputClass} />
+      <input id={`${id}-fee`} type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} aria-describedby={feeMark.describedBy} className={inputClass} />
+      {feeMark.note}
       <label htmlFor={`${id}-basis`} className="block text-xs text-muted-foreground">Admin fee basis</label>
       <select id={`${id}-basis`} value={basis} onChange={(e) => setBasis(e.target.value as QuoteAdminFeeBasis | "")} className={inputClass}>
         <option value="">Not quoted</option>
         {QUOTE_ADMIN_FEE_BASES.map((b) => <option key={b} value={b}>{FEE_BASIS_LABELS[b]}</option>)}
       </select>
-      <QuoteLinesField title="One-off fees" noun="one-off fee" columns={ONE_OFF_COLUMNS} lines={oneOff} onChange={setOneOff} />
-      <QuoteLinesField title="Workers' comp rates" noun="workers' comp rate" columns={WORKERS_COMP_COLUMNS} lines={workersComp} onChange={setWorkersComp} />
-      <QuoteLinesField title="Unemployment tax" noun="unemployment line" article="an" columns={UNEMPLOYMENT_COLUMNS} lines={unemployment} onChange={setUnemployment} />
-      <QuoteLinesField title="Medical rates" noun="medical rate" columns={MEDICAL_COLUMNS} lines={medical} onChange={setMedical} />
+      <QuoteLinesField hint={suggestion("oneOffFees")} title="One-off fees" noun="one-off fee" columns={ONE_OFF_COLUMNS} lines={oneOff} onChange={setOneOff} />
+      <QuoteLinesField hint={suggestion("workersComp")} title="Workers' comp rates" noun="workers' comp rate" columns={WORKERS_COMP_COLUMNS} lines={workersComp} onChange={setWorkersComp} />
+      <QuoteLinesField hint={suggestion("unemployment")} title="Unemployment tax" noun="unemployment line" article="an" columns={UNEMPLOYMENT_COLUMNS} lines={unemployment} onChange={setUnemployment} />
+      <QuoteLinesField hint={suggestion("medical")} title="Medical rates" noun="medical rate" columns={MEDICAL_COLUMNS} lines={medical} onChange={setMedical} />
       <label htmlFor={`${id}-received`} className="block text-xs text-muted-foreground">Received on</label>
-      <input id={`${id}-received`} type="date" value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} className={inputClass} />
+      <input id={`${id}-received`} type="date" value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} aria-describedby={receivedMark.describedBy} className={inputClass} />
+      {receivedMark.note}
       <label htmlFor={`${id}-expires`} className="block text-xs text-muted-foreground">Expires on</label>
-      <input id={`${id}-expires`} type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} className={inputClass} />
+      <input id={`${id}-expires`} type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} aria-describedby={expiresMark.describedBy} className={inputClass} />
+      {expiresMark.note}
       <label htmlFor={`${id}-start`} className="block text-xs text-muted-foreground">Proposed start</label>
-      <input id={`${id}-start`} type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} className={inputClass} />
+      <input id={`${id}-start`} type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} aria-describedby={startMark.describedBy} className={inputClass} />
+      {startMark.note}
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
       <textarea id={`${id}-note`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={QUOTE_NOTE_MAX} rows={2} className={inputClass} />
       {mailFiles.length > 0 && (

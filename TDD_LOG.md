@@ -947,3 +947,22 @@ mut.py in the scratchpad: 44 mutants of proposal.ts, handler.ts and readQuoteDoc
 ### Mutation and gate (7.8)
 TypeScript: 20 of 21 mutants killed on first run, 2 survived (empty fee sent as 0, state not upper-cased), tests strengthened, both killed; 1 not applied (string no longer in code; upload-after-record is held by invocationCallOrder in cycle 9). SQL: ordering the comparison on received_on is killed by quote_comparison.sql 2b.
 Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 352 files, 7145 tests passed; build green; SQL: only quote_comparison.sql run on port 5780 (no migration or function changed).
+
+## 7.9
+
+Read the document fills Record the quote (D-790..D-794). Seam: component tests of the form and of the quote page (D-13 seam 2), the reader faked at `readQuoteDocument`. tdd skill invoked first; one test per cycle except where noted.
+
+1. RecordQuoteForm: marks a figure from the document Suggested with its page (admin fee) | `expect(element).toHaveAccessibleDescription()` (no description) | green
+2. RecordQuoteForm: marks a list of lines Suggested with its page (one-off fees; `QuoteLinesField` `hint`) | `expect(element).toHaveAccessibleDescription()` on the "One-off fees" group | green. Note: the hint was wired to all four cost areas in this one step; the other three are pinned in cycle 11 and by mutation
+3. RecordQuoteForm: kind and the three dates marked Suggested with their pages | `expect(element).toHaveAccessibleDescription()` on "Estimate or firm offer" | green
+4. QuotePage: Read the document reads only on a click, opens the form filled, figures marked, kind still to choose | `Unable to find role="button" and name "Read the document"` | green
+5. QuotePage: nothing_found / unavailable / too_large say so in words, form stays shut (3 cases, one test) | `Unable to find role="status"` (3 failed) | green
+6. QuotePage: a refusal (AdvisorApiError) is said in its own words, form stays shut | `Unable to find role="status"` plus an unhandled `Today's document reading is used up...` | green
+7. QuotePage: a double click reads once and the button is held while reading | `expected "spy" to be called 1 times, but got 2 times` | green
+8. QuotePage: not offered with no document, and not on a closed quote, in a support session, on an archived account, or without the right to change | NOT red first (the condition is `RecordQuote`'s existing one); killed by mutation instead | green
+9. QuotePage: unread figures stay Not quoted, kind is asked for, save goes through recordQuote as a new quote | NOT red first (behaviour of the form already built); first run failed only on my own count of "Not quoted" (the basis option also says it), test fixed | green
+10. QuotePage: Cancel forgets the reading | NOT red first (state already cleared in `close`) | green
+11. RecordQuoteForm: workers' comp, unemployment, medical each marked with their own page, nothing marked that was not read; "Suggested" alone when no page | NOT red first (wiring done in cycle 2) | green
+
+### Mutation and gate (7.9)
+20 mutants of RecordQuoteForm, RecordQuote, QuoteLinesField use and QuotePage (each cost area wired to another's page or unmarked, kind or dates unmarked, separator changed, mark with no figure, kind defaulted, fee defaulted to 0, no busy guard, status words dropped, form opened on any status, reading kept after cancel, refusal words dropped, button without a document, wrong quote id read, page offers read with no document, record controls without the right, closed quote offered): 20 of 20 killed on first run, 0 not applied.
