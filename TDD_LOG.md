@@ -885,3 +885,40 @@ Mutation: SQL 7 (open-question check, firm scope, log event, log value, log acto
 21. Page QuotePage "offers no way to ask the employer during a support session" - added after the mutant `canAct` dropped from the panel's condition survived; red under that mutant (`Unable`-style: the panel heading was found), green on the real code.
 22. Component PeoThreadPanel "names the latest request when the employer was asked more than once" - added after the mutant taking the oldest `asked_employer` event survived; red under the mutant, green on the real code.
 23. API advisorApi "asks the employer about a question through advisor_ask_about_question" - added after the mutant dropping fields and PEO questions survived; red under the mutant, green on the real code.
+## 7.6 N-2.3 read the quote document (read-quote-document function, readQuoteDocument), one test per cycle
+
+No migration: a proposal is returned, never stored (D-760). Tests run under vitest with the model and the file reader faked (seam 4).
+
+1. proposal.test: a real date keeps its page, an impossible date (2026-02-30) is dropped | red: Failed to resolve import "./proposal" (module not there) | green
+2. proposal.test: kind is estimate or firm_offer only when the document says so, never filled in, anything else dropped | red: expected {} to deeply equal { kind: 'estimate' } | green
+3. proposal.test: the fee comes only with its basis, inside 0..100000 (0..100 percent), 0 is real, no basis or out of bounds left out | red: expected { draft: {}, sources: {} } to deeply equal { draft: { adminFee: 40, ... } } | green
+4. proposal.test: one-off fees keep only valid lines (trimmed name 1..80, amount 0..10000000, each name once), none left means the area is left out, never [] | red: expected { draft: {}, sources: {} } to deeply equal { draft: { oneOffFees: [...] } } | green
+5. proposal.test: workers comp keeps lines with a real state, a class code of letters digits hyphens (1..10) and a rate 0..1000, each state and class once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { workersComp: [...] } } | green
+6. proposal.test: unemployment keeps one line per state, employer_rate alone or peo_rate with a 0..100 percent; a peo_rate with no rate, a bad charge, a repeated state are dropped | red: expected { draft: {}, sources: {} } to deeply equal { draft: { unemployment: [...] } } | green
+7. proposal.test: medical keeps lines of a trimmed plan (1..80), one of four tiers and a monthly 0..100000, each plan and tier once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { medical: [...] } } | green
+8. proposal.test: only a page the document has is named; a non-shape answer proposes nothing | NOT red first: green on first run (the page check and shape guard were written in cycle 1); seen red by removing the page check (expected { ... } to deeply equal { ... }), then restored | green
+9. proposal.test: a cited section number becomes that section label, an unknown number names no page | red: expected {} to deeply equal { receivedOn: 'Page 1', ... } | green
+10. handler.test: reads the quote's own document and answers the figures with the page of each | red: Failed to resolve import "./handler" (function not there) | green
+11. handler.test: no Authorization header or no signed-in user is refused 401 before anything is touched | red: expected 200 to be 401 | green
+12. handler.test: preflight, non-POST 405, body not JSON or no positive whole quote_id 400, over 4 KB 413, nothing read | red: expected 401 to be 200 (the preflight reached the sign-in check) | green
+13. handler.test: a quote row security does not show is 404 not_found, nothing read or asked | red (seen after removing the line I had written together with the test): expected 200 to be 404 | green
+14. handler.test: a quote with no document is 422 no_document, nothing downloaded or asked | red: expected 200 to be 422 | green
+15. handler.test: a pending, blocked or not-kept file is 409 not_readable, never downloaded or sent to the model | red: expected 200 to be 409 | green
+16. handler.test: no model key proposes nothing (200 unavailable, empty proposal), file not fetched, no model call, one config log | red: expected { status: 'proposed', ... } to match object { status: 'unavailable' } | green
+17. handler.test: one call of the shared AI budget (user, address, day) is spent before the model is asked | red: expected [ 'model' ] to deeply equal [ 'anon-key:consume_ai_quota', ... ] | green
+18. handler.test: a refused budget never reaches the model (rate limit 429 rate_limited, day ceiling 503 daily_cap) | red: expected 200 to be 429 | green
+19. handler.test: a failing model is 502 provider_error, nothing proposed, log has the failure kind and none of the document | red: expected 200 to be 502 | green
+20. handler.test: the document is data: system prompt says untrusted, one fence the document cannot close (its tag removed), one forced tool | red: expected [ '<quote_document', ... ] to have a length of 2 but got 5 | green
+21. handler.test: no figure the model may propose, or no text to read, is status nothing_found with an empty proposal, no model call when there is no text | red: expected { status: 'proposed', ... } to match object { status: 'nothing_found' } | green
+22. handler.test: encrypted/unreadable/unsupported answer the reader's status and words, too_large is answered without downloading | red: expected undefined to be 'This PDF couldn't be opened...' then expected { status: 'proposed' } to match { status: 'too_large' } | green
+23. handler.test: an unexpected error is 500 internal and logs the error class only | red: the reader error escaped, its message quoting the document | green
+24. handler.test: only a proposal: the only database calls are the budget, never record_quote; the log holds none of the document | NOT red first: characterisation of cycles 10-23 (the fake client has no writer to call); kept as a regression test | green
+25. supabase-setup.test: the setup deploys read-quote-document (19 functions); index.ts wires the handler | red: expected [ [ '--version' ], ...(21) ] to deeply equal [ ...(22) ] | green
+26. advisorApi.test: readQuoteDocument asks read-quote-document for the quote and returns status, message, a draft in recordQuote shape and each figure page, or the refusal words | red: readQuoteDocument is not a function | green
+27. advisorApi.test: a read draft plus the broker's kind goes through recordQuote with every proposed figure | NOT red first: characterisation of the shape contract (green on first run, no code change); kept as a regression test | green
+28. proposal.test and handler.test strengthened after mutants survived (line caps, name and plan length, a pending file that still has a path) | NOT red first: the code existed; the four mutants survived, the tests were added, the mutants then killed | green
+
+Notes: cycles 8, 24, 27 and 28 are the lines not seen red first (8: red seen by removing the page check; 24 and 27: characterisation, no code added; 28: tests added for surviving mutants). In cycle 13 the code was written together with the test; the line was removed, red seen, restored.
+
+### Mutation (7.6)
+mut.py in the scratchpad: 44 mutants of proposal.ts, handler.ts and readQuoteDocument (every bound, dedupe, caps, state and class rules, tiers, name and plan length, empty list kept, section citation, no sign-in, quote missing, no document, pending file read, budget refusal ignored or not spent, fence tag kept, too_large, nothing_found, model failure ignored, method, error message logged, reader words dropped, body cap, no-key check, wrong quote asked, pages dropped). 40 killed at first; 4 survived (line cap, name length, plan length, a pending file with a path), tests strengthened (cycle 28), 44 of 44 killed.
