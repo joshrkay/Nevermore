@@ -256,6 +256,10 @@
 \i supabase/migrations/20261123190000_intake_teaches_account.sql
 \i supabase/migrations/20261123200000_employer_ends_access.sql
 \i supabase/migrations/20261124090000_firm_signup_emails.sql
+\i supabase/migrations/20261124100000_new_quote_intake.sql
+\i supabase/migrations/20261124110000_employer_sees_firm.sql
+\i supabase/migrations/20261124130000_quote_decline_reason.sql
+\i supabase/migrations/20261124140000_quote_offer.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -578,6 +582,12 @@ BEGIN
   -- A note on it (20261111090000), so the notes have a row to protect.
   PERFORM public.advisor_add_quote_request_note(
     (SELECT id FROM public.quote_requests WHERE session_id = pa_cert), 'call', current_date, 'Their rep called');
+  -- A quote held on it (7.2, N-2.1), so the quotes have a row to protect. Placed as the table's owner rather than through record_quote, which moves the quote request to Quoted
+  -- and the counts below (open quotes on the menu, the submission's history) with it; record_quote has its own test (supabase/tests/quote_offer.sql).
+  RESET ROLE;
+  INSERT INTO public.quotes (quote_request_id, session_id, kind, admin_fee, admin_fee_basis)
+  SELECT id, session_id, 'firm_offer', 40, 'per_employee_per_month' FROM public.quote_requests WHERE session_id = pa_cert;
+  PERFORM pg_temp.become('advisor');
   -- A referral partner (20261106100000), so its table has a row to protect.
   PERFORM public.advisor_add_referral_partner('acme-cfo', 'Acme CFO Partners', 'accounting');
 
@@ -605,6 +615,10 @@ BEGIN
   PERFORM public.advisor_record_quote_send(pb_cert, 'Justworks', NULL);
   PERFORM public.advisor_add_quote_request_note(
     (SELECT id FROM public.quote_requests WHERE session_id = pb_cert), 'call', current_date, 'Their rep emailed');
+  RESET ROLE;
+  INSERT INTO public.quotes (quote_request_id, session_id, kind, admin_fee, admin_fee_basis)
+  SELECT id, session_id, 'estimate', 3.5, 'percent_of_payroll' FROM public.quote_requests WHERE session_id = pb_cert;
+  PERFORM pg_temp.become('agent_b');
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pb_cert;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pb_cert || '/v1-matrix.pdf');
   PERFORM public.record_manuscript_version(pb_cert, 1, pb_cert || '/v1-matrix.pdf', repeat('d', 64), latest, 0, false,
@@ -903,6 +917,8 @@ INSERT INTO matrix VALUES
   ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
   ('public.quote_request_events',                       '{}', '{"A":7,"B":7}'),
   ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
+  -- What a PEO quoted on a quote request (7.2, N-2.1, 20261124140000): the firm's members' alone, one quote each here. The prospect never sees a quote.
+  ('public.quotes',                                     '{}', '{"A":1,"B":1}'),
   ('public.quote_request_addresses',                    '{}', '{"A":2,"B":2}'),
   -- Mail on a quote request reaches the firm's members, and so does held mail addressed to their firm (CRM-P2.1c): one of each for
   -- each firm here. Held mail that matches no firm (one here) is read by nobody, platform admins included (D-16); they see only a
@@ -1455,8 +1471,10 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true, true, ''oldest_waiting'')', 'the queue: one page, searched, filtered, sorted'),
   ('advisor_record_quote_send(p_session_id uuid, p_peo text, p_sent_on date)', 'advisor',
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
-  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
+  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text, p_decline_reason text, p_decline_words text)', 'advisor',
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
+  ('record_quote(p_quote_request_id bigint, p_kind text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee numeric, p_admin_fee_basis text, p_one_off_fees jsonb, p_workers_comp jsonb, p_unemployment jsonb, p_medical jsonb, p_note text)', 'advisor',
+                                                                     'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO returned, with its whole offer'),
   ('advisor_set_quote_request_status(p_quote_request_id bigint, p_status text)', 'advisor',
                                                                      'SELECT public.advisor_set_quote_request_status(0, ''acknowledged'')', 'recording that a PEO acknowledged, or has a question open (N-1.2)'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
@@ -2214,6 +2232,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   ('advisor_record_quote_send', 'advisor', 'by_id', $$SELECT public.advisor_record_quote_send({sid}, 'Probe PEO', NULL)::text$$),
   ('peo_authorization_states', 'advisor', 'by_id', $$SELECT count(*)::text FROM public.peo_authorization_states({sid})$$),
   ('advisor_update_quote_request', 'advisor', 'by_id', $$SELECT public.advisor_update_quote_request({qr}, 'declined')::text$$),
+  ('record_quote', 'advisor', 'by_id', $$SELECT public.record_quote(p_quote_request_id => {qr}, p_kind => 'estimate')::text$$),
   ('advisor_set_quote_request_status', 'advisor', 'by_id', $$SELECT public.advisor_set_quote_request_status({qr}, 'acknowledged')::text$$),
   ('advisor_note_underwriter_question', 'advisor', 'by_id', $$SELECT public.advisor_note_underwriter_question({qr}, 'probe')::text$$),
   ('advisor_open_quote_request_thread', 'advisor', 'by_id', $$SELECT public.advisor_open_quote_request_thread({qr})::text$$),
@@ -3557,6 +3576,8 @@ INSERT INTO registry (src, scope, why, make_row) VALUES
    $m$SELECT ctid::text FROM public.quote_request_messages WHERE id = {msg}$m$),
   ('public.quote_request_notes', 'firm', 'by quote request',
    $m$INSERT INTO public.quote_request_notes (quote_request_id, session_id, kind, noted_on, body) VALUES ({qr}, {intake}, 'call', current_date, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.quotes', 'firm', 'by quote request',
+   $m$INSERT INTO public.quotes (quote_request_id, session_id, kind) VALUES ({qr}, {intake}, 'estimate') RETURNING ctid::text$m$),
   ('public.quote_request_thread_reads', 'firm', 'by quote request',
    $m$INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at) VALUES ({qr}, now()) RETURNING ctid::text$m$),
   ('public.quote_requests', 'firm', 'by intake',
@@ -3763,7 +3784,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.peo_authorizations');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
   'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.intake_invitations', 'public.firm_suspensions', 'public.firm_member_suspensions', 'public.firm_organisations', 'public.join_requests', 'public.firm_closures', 'public.support_sessions');
-UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
+UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes', 'public.quotes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
 UPDATE registry SET move_to = 'message_id = {msg}' WHERE src = 'public.quote_request_message_attachments';
@@ -4347,7 +4368,7 @@ SELECT unnest(ARRAY[
   'advisor_intake_sources', 'advisor_list_outbox_events', 'advisor_list_submissions', 'advisor_note_underwriter_question',
   'advisor_add_referral_partner', 'advisor_update_referral_partner',
   'advisor_open_quote_request_thread', 'advisor_outbox_summary', 'advisor_record_quote_send', 'advisor_reissue_quote_request_address',
-  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request', 'record_manuscript_version',
+  'advisor_request_information', 'advisor_requeue_outbox_event', 'advisor_set_quote_request_status', 'advisor_update_quote_request', 'record_quote', 'record_manuscript_version',
   'request_intake_deletion', 'retention_review_due', 'retry_intake_deletion', 'review_submission_field', 'revoke_chamber_session',
   'session_verified_fields', 'set_submission_needs_action', 'set_submission_status'
 ]), 'firm_scoped', 'an advisor''s or admin''s read or change of a firm''s submissions, quote requests, outbox or records: the caller''s own firm only (4e)';
@@ -4933,6 +4954,8 @@ INSERT INTO secret_readers VALUES
   ('peek_intake_invite(p_token_hash text, p_firm_address text)',
    $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.peek_intake_invite(repeat('a', 64), 'acme-advisory') f$$),
   ('accept_intake_invite(p_token_hash text, p_firm_address text)', $$SELECT public.accept_intake_invite(repeat('a', 64), 'acme-advisory')::text$$),
+  -- 5.6 (D-1881): the employer's view reads the invitation for who sent it; never the link's hash.
+  ('my_intake_firms()', $$SELECT COALESCE(string_agg(f::text, ','), '') FROM public.my_intake_firms() f$$),
   ('intake_invite_status(p_intake_id uuid)',
    $$SELECT public.intake_invite_status((SELECT s.id FROM public.chamber_sessions s WHERE s.firm_id = {firm_a} ORDER BY s.created_at, s.id LIMIT 1))::text$$),
   ('issue_bundle_link(p_quote_request_id bigint, p_version integer, p_folder uuid, p_files jsonb, p_open_items jsonb)',

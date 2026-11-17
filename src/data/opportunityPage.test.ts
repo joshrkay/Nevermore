@@ -3,7 +3,7 @@ import type { OpportunityIntakeEvent, OpportunityQuoteEvent } from "@/lib/opport
 import { intakeEventWords, quoteEventWords, quoteStatusWords } from "./opportunityPage";
 
 const event = (e: OpportunityQuoteEvent["event"]): OpportunityQuoteEvent => ({
-  type: "quote", entryKey: "quote_request_event:1", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 1, peoName: "Insperity", event: e, who: "dana@x.example", whoKind: "member",
+  type: "quote", entryKey: "quote_request_event:1", at: "2026-11-06T10:00:00+00:00", quoteRequestId: 1, peoName: "Insperity", event: e, who: "dana@x.example", whoKind: "member", declineReason: null, declineWords: null,
 });
 
 // N-1.2. Break caught: an acknowledgement or a question drawn on the opportunity's activity as "Insperity's quote closed" (the sentence every unknown event fell to).

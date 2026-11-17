@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { AccountStep } from "./AccountStep";
 import { OpportunitySaved } from "./OpportunitySaved";
@@ -11,13 +12,15 @@ export interface NewQuoteClosed {
 }
 
 export function NewQuoteDialog({ firmId, opportunityId, onClose }: { firmId: string; person: string; opportunityId?: string; onClose: (closed?: NewQuoteClosed) => void }) {
+  // The intake (step 2) needs the room for Lenore and the tabs side by side; the other views keep the narrow dialog.
+  const [wide, setWide] = useState(false);
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className={wide ? "h-[90vh] max-w-[95vw] overflow-y-auto" : "max-h-[90vh] max-w-2xl overflow-y-auto"}>
         <DialogTitle className="font-display text-xl font-bold">New quote</DialogTitle>
         <DialogDescription className="sr-only">Start a quote for a business.</DialogDescription>
         {opportunityId ? (
-          <OpportunitySaved firmId={firmId} opportunityId={opportunityId} onClose={() => onClose({ opportunityId })} />
+          <OpportunitySaved firmId={firmId} opportunityId={opportunityId} onClose={() => onClose({ opportunityId })} onWide={setWide} />
         ) : (
           <AccountStep firmId={firmId} onSaved={(done) => onClose(done)} />
         )}

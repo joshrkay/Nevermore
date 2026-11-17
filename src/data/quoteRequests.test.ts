@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, olderVersionNote, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
+import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, olderVersionNote, quoteKindLabel, quoteNoteKindLabel, quoteReplyDomain, replyAddress, updateFrom } from "./quoteRequests";
 
 describe("the receiving subdomain for reply addresses", () => {
   it("is off unless a subdomain is set", () => {
@@ -122,5 +122,23 @@ describe("the change log's new statuses", () => {
   it("names Acknowledged and Question open in words", () => {
     expect(describeQuoteRequestEvent({ field: "status", old_value: "sent", new_value: "acknowledged" })).toBe("Status: Sent → Acknowledged");
     expect(describeQuoteRequestEvent({ field: "status", old_value: "acknowledged", new_value: "question_open" })).toBe("Status: Acknowledged → Question open");
+  });
+});
+
+describe("how a quote says whether it is an estimate or a firm offer", () => {
+  // The comparison never shows one as the other (N-2.1), so a quote with no mark, or a word this build doesn't know, reads as neither.
+  it("names each mark, and reads anything else as not marked rather than as either", () => {
+    expect(quoteKindLabel("estimate")).toBe("Estimate");
+    expect(quoteKindLabel("firm_offer")).toBe("Firm offer");
+    expect(quoteKindLabel(null)).toBe("Not marked");
+    expect(quoteKindLabel("binding")).toBe("Not marked");
+  });
+});
+
+describe("the change log's decline reason", () => {
+  // N-1.4. Break caught: the log shows the code ("claims_history") and the field's raw name, which no broker reads.
+  it("names the reason and the PEO's words in words", () => {
+    expect(describeQuoteRequestEvent({ field: "decline_reason", old_value: null, new_value: "claims_history" })).toBe("Why declined: — → Claims history");
+    expect(describeQuoteRequestEvent({ field: "decline_words", old_value: "Too small", new_value: "Not in Oregon" })).toBe("The PEO's words: Too small → Not in Oregon");
   });
 });

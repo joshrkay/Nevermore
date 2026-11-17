@@ -28,6 +28,9 @@ vi.mock("@/lib/peoCatalog", async () => {
   return { readPeoCatalog: async () => parsePeoCatalog(await peoCatalogRows) };
 });
 
+// An intake the employer has not certified now opens the chamber (step 2, slice 5.5), tested on its own; a stand-in here.
+vi.mock("@/pages/ChamberPage", () => ({ default: () => <div data-testid="chamber" /> }));
+
 const { NewQuoteDialog } = await import("./NewQuoteDialog");
 
 const sourced = { kind: "document", name: "Broker guide", checked_on: "2026-11-02" };
@@ -97,6 +100,56 @@ describe("New quote step 4: choose PEOs (CRM-Q2.5, D-1763)", () => {
     ["an intake the employer has not certified", intake({ certifiedAt: null, certifiedBy: null, version: null })],
   ])("draws no choosing for %s", async (_what, held) => {
     getOpportunityPage.mockResolvedValue(page({ intake: held }));
+    const dialog = await open();
+    await within(dialog).findByText("Harborview Dental Group");
+    expect(within(dialog).queryByRole("region", { name: "Send to several PEOs" })).not.toBeInTheDocument();
+    expect(advisor.loadSubmission).not.toHaveBeenCalled();
+  });
+});
+
+// "Send to another PEO" (CRM-Q3.4, 5.10): the same step 4, opened on an opportunity that already has quotes out.
+describe("New quote step 4 with quotes already sent (CRM-Q3.4)", () => {
+  const insperity = { id: 4, name: "Insperity", profile: { version: 2, needed_to_quote: ["company_name"], sources: { answers: sourced } } };
+  const sentQuote = { id: 7, peoName: "Justworks", status: "sent", sentOn: "2026-11-06", quoteReceivedOn: null, quoteExpiresOn: null, adminFeePepm: null };
+  beforeEach(() => {
+    peoCatalogRows = [justworks, insperity];
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([
+      { peo: "Justworks", state: "authorized", signedAt: null, wordingVersion: null },
+      { peo: "Insperity", state: "authorized", signedAt: null, wordingVersion: null },
+    ]);
+    getOpportunityPage.mockResolvedValue(page({ quotes: [sentQuote], opportunity: { id: "o1", name: "January 2028 PEO search", stage: "in_market", submissionId: "i1" } }));
+  });
+
+  // Catches: a choosing step that lists a PEO already sent to as if it were new, so the agent can't tell which PEOs are already out.
+  it("marks the PEOs already sent to, with the day, and no other", async () => {
+    const dialog = await open();
+    const sending = await within(dialog).findByRole("region", { name: "Send to several PEOs" });
+    const sent = (await within(sending).findByRole("checkbox", { name: "Justworks" })).closest("li") as HTMLElement;
+    expect(within(sent).getByText("Already sent on Nov 6, 2026. Sending again continues its quote.")).toBeInTheDocument();
+    const other = within(sending).getByRole("checkbox", { name: "Insperity" }).closest("li") as HTMLElement;
+    expect(within(other).queryByText(/Already sent/)).toBeNull();
+  });
+
+  // Catches: a PEO sent to under another capitalisation (the quote request keeps the name as typed) left unmarked, so it looks new.
+  it("marks a PEO sent to whatever the case of its name on the quote request", async () => {
+    getOpportunityPage.mockResolvedValue(page({ quotes: [{ ...sentQuote, peoName: "justworks" }] }));
+    const dialog = await open();
+    const sending = await within(dialog).findByRole("region", { name: "Send to several PEOs" });
+    expect(await within(sending).findByText(/^Already sent on Nov 6, 2026/)).toBeInTheDocument();
+  });
+
+  // Catches: a quote request that was never sent (no day sent) marked as sent, with a day that isn't there.
+  it("does not mark a PEO whose quote request was not sent", async () => {
+    getOpportunityPage.mockResolvedValue(page({ quotes: [{ ...sentQuote, sentOn: null }] }));
+    const dialog = await open();
+    const sending = await within(dialog).findByRole("region", { name: "Send to several PEOs" });
+    await within(sending).findByRole("checkbox", { name: "Justworks" });
+    expect(within(sending).queryByText(/Already sent/)).toBeNull();
+  });
+
+  // Catches: New quote's address opened on a won or lost opportunity offering to send, where the database refuses every send and a PEO can be added only before Won or Lost.
+  it.each(["won", "lost"])("draws no choosing once the opportunity is %s", async (stage) => {
+    getOpportunityPage.mockResolvedValue(page({ quotes: [sentQuote], opportunity: { id: "o1", name: "January 2028 PEO search", stage, submissionId: "i1" } }));
     const dialog = await open();
     await within(dialog).findByText("Harborview Dental Group");
     expect(within(dialog).queryByRole("region", { name: "Send to several PEOs" })).not.toBeInTheDocument();

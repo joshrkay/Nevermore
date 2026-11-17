@@ -4,6 +4,7 @@ import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
+import { DRAFT_WORDING_NOTICE, FIRM_SEES_ANSWERS_HEADING, firmSeesAnswersText } from "@/data/legalWording";
 import { acceptIntakeInvite, peekIntakeInvite } from "@/lib/brokerIntake";
 import { forgetInvitationToken, takeInvitationToken } from "@/lib/invitationLink";
 
@@ -13,7 +14,7 @@ const button = "min-h-11 px-4 rounded-md border border-primary bg-primary text-p
 const IntakeInvitePage = () => {
   const [token] = useState(takeInvitationToken);
   const firm = useFirmAddress();
-  const [invite, setInvite] = useState<{ firmName: string; contactName: string | null } | null>(null);
+  const [invite, setInvite] = useState<{ firmName: string; contactName: string | null; invitedBy: string | null } | null>(null);
   const { user, loading, isAnonymous, signOut } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -51,8 +52,13 @@ const IntakeInvitePage = () => {
       <>
         <h1 className="font-display text-2xl font-bold">You were invited by {invite.firmName}</h1>
         <p className="text-sm text-muted-foreground">
-          {invite.firmName} started this PEO intake{invite.contactName ? ` for ${invite.contactName}` : ""} and asks you to review it, finish it and certify it.
+          {invite.invitedBy ? `${invite.invitedBy} of ${invite.firmName}` : invite.firmName} started this PEO intake{invite.contactName ? ` for ${invite.contactName}` : ""} and asks you to review it, finish it and certify it.
         </p>
+        <section aria-labelledby="firm-sees-answers" className="space-y-1">
+          <h2 id="firm-sees-answers" className="text-sm font-semibold">{FIRM_SEES_ANSWERS_HEADING}</h2>
+          <p className="text-sm text-muted-foreground">{firmSeesAnswersText(invite.firmName)}</p>
+          <p className="text-xs text-muted-foreground">{DRAFT_WORDING_NOTICE}</p>
+        </section>
         {user && !isAnonymous ? (
           <>
             <p className="text-sm text-muted-foreground">You're signed in as <span className="font-medium text-foreground">{user.email}</span>. The invitation works only for the email address it was sent to.</p>

@@ -326,6 +326,9 @@ export type Database = {
           quoted_version?: number | null
           // Why it was withdrawn (M-2.4), one of WITHDRAWAL_REASONS, for advisors only; cleared when a send reopens it.
           withdrawn_reason?: string | null
+          // N-1.4: why the PEO declined, one of DECLINE_REASONS, and its own words; kept when the request moves on, replaced by a later decline.
+          decline_reason?: string | null
+          decline_words?: string | null
         }
         Insert: never
         Update: never
@@ -519,6 +522,36 @@ export type Database = {
           noted_on: string
           quote_request_id: number
           session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // What a PEO quoted on a quote request, the whole offer (20261124140000). Firm members read it; it is written only through record_quote. A cost area that is null
+      // was not quoted (it is never an empty list or 0). The newest row of a quote request is its current quote.
+      quotes: {
+        Row: {
+          // The fee in dollars per employee per month, or in percent of payroll, as admin_fee_basis says; null with its basis.
+          admin_fee: number | null
+          // One of QUOTE_ADMIN_FEE_BASES (src/data/quoteRequests.ts).
+          admin_fee_basis: string | null
+          expires_on: string | null
+          id: number
+          // One of QUOTE_KINDS: an estimate or a firm offer.
+          kind: string
+          // Each { plan, tier, monthly }, or null.
+          medical: Json | null
+          note: string | null
+          // Each { name, amount }, or null.
+          one_off_fees: Json | null
+          proposed_start_on: string | null
+          quote_request_id: number
+          received_on: string | null
+          session_id: string
+          // Each { state, charge: 'employer_rate' } or { state, charge: 'peo_rate', rate }, or null.
+          unemployment: Json | null
+          // Each { state, class_code, rate per 100 dollars of payroll }, or null.
+          workers_comp: Json | null
         }
         Insert: never
         Update: never
@@ -1525,9 +1558,29 @@ export type Database = {
         Args: { p_quote_request_id: number; p_status: string }
         Returns: Json
       }
+      // A quote a PEO returned, the whole offer (20261124140000). Leave a cost area out and it stays "Not quoted"; an empty list or 0 is refused.
+      record_quote: {
+        Args: {
+          p_admin_fee?: number | null
+          p_admin_fee_basis?: string | null
+          p_expires_on?: string | null
+          p_kind: string
+          p_medical?: Json | null
+          p_note?: string | null
+          p_one_off_fees?: Json | null
+          p_quote_request_id: number
+          p_received_on?: string | null
+          p_start_on?: string | null
+          p_unemployment?: Json | null
+          p_workers_comp?: Json | null
+        }
+        Returns: Json
+      }
       advisor_update_quote_request: {
         Args: {
           p_admin_fee_pepm?: number | null
+          p_decline_reason?: string | null
+          p_decline_words?: string | null
           p_expires_on?: string | null
           p_note?: string | null
           p_quote_request_id: number
@@ -1723,7 +1776,7 @@ export type Database = {
       // The employer opens the link the firm sent: what the page shows before sign-in, and taking the intake over (20261123120000).
       peek_intake_invite: {
         Args: { p_token_hash: string; p_firm_address: string }
-        Returns: { firm_name: string; contact_name: string | null; expires_at: string }[]
+        Returns: { firm_name: string; contact_name: string | null; expires_at: string; invited_by_name: string | null }[]
       }
       accept_intake_invite: {
         Args: { p_token_hash: string; p_firm_address: string }
@@ -1973,7 +2026,7 @@ export type Database = {
       }
       my_intake_firms: {
         Args: Record<PropertyKey, never>
-        Returns: { session_id: string; firm_name: string; company: string | null }[]
+        Returns: { session_id: string; firm_name: string; company: string | null; invited_by_name: string | null; invited_at: string | null }[]
       }
       prospect_submission_status: {
         Args: { p_session_id: string }

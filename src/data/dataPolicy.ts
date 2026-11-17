@@ -300,9 +300,9 @@ export const DATA_CLASSES: DataClass[] = [
     id: "advisor_work",
     label: "Advisor review and notes",
     sensitivity: "confidential",
-    examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, the requests for information sent to the prospect, the PEOs each submission went to with what each quoted and every change to that, and who changed each uploaded document and when.",
+    examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, the requests for information sent to the prospect, the PEOs each submission went to with what each quoted (the whole offer: its fee and basis, one-off fees, workers' comp, unemployment tax and medical rates, marked an estimate or a firm offer) and every change to that, and who changed each uploaded document and when.",
     stored: {
-      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "quote_request_notes", "quote_request_addresses", "quote_request_thread_reads", "document_events"],
+      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quotes", "quote_request_events", "quote_request_notes", "quote_request_addresses", "quote_request_thread_reads", "document_events"],
       buckets: [],
       elsewhere: [],
     },

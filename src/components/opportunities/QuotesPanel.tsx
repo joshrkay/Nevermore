@@ -9,7 +9,7 @@ import type { OpportunityPage, OpportunityQuote } from "@/lib/opportunityPageApi
 import type { useStillNeeds } from "./useStillNeeds";
 
 // The quotes panel (screen 19, D-424): one row per quote request of the opportunity's intake. Each PEO opens the quote's own page (CRM-Q3.2, D-1796)
-// The Emails column, Compare and Send to another PEO are off (D-402). What a PEO still needs loads as the panel's own read, not inside the
+// The Emails column and Compare are off (D-402); Send to another PEO sits beside Choose PEOs, drawn by the page (CRM-Q3.4, D-1890). What a PEO still needs loads as the panel's own read, not inside the
 // opportunity's page, which stays a summary; a failure of it keeps the rows and says so with its own Try again.
 
 const muted = (words: string) => <span className="text-muted-foreground">{words}</span>;

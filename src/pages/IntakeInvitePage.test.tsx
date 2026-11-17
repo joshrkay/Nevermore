@@ -9,6 +9,7 @@ vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firm.current })
 const api = { peekIntakeInvite: vi.fn(), acceptIntakeInvite: vi.fn() };
 vi.mock("@/lib/brokerIntake", () => api);
 
+import { DRAFT_WORDING_NOTICE, FIRM_SEES_ANSWERS_HEADING, firmSeesAnswersText } from "@/data/legalWording";
 const { default: IntakeInvitePage } = await import("./IntakeInvitePage");
 
 // Where the sign-in page would be, showing where it was asked to come back to.
@@ -59,6 +60,21 @@ describe("IntakeInvitePage", () => {
   it("says who the invitation is for", async () => {
     renderAt();
     expect(await screen.findByText(/started this PEO intake for Lucia/)).toBeInTheDocument();
+  });
+
+  // Break caught: the page names the firm but not the person in it who invited them, so a client can't tell the invitation is from someone they know (CRM-Q2.3, D-1881).
+  it("says which person in the firm invited them", async () => {
+    api.peekIntakeInvite.mockResolvedValue({ firmName: "Acme Brokers", contactName: "Lucia", invitedBy: "Ana Agent" });
+    renderAt();
+    expect(await screen.findByText(/Ana Agent of Acme Brokers started this PEO intake for Lucia/)).toBeInTheDocument();
+  });
+
+  // Break caught: the client opens the broker's invitation without being told the firm will see their answers, or the wording is shown as if counsel had approved it (D-12).
+  it("says the firm can see their answers, in the draft wording", async () => {
+    renderAt();
+    expect(await screen.findByRole("heading", { name: FIRM_SEES_ANSWERS_HEADING })).toBeInTheDocument();
+    expect(screen.getByText(firmSeesAnswersText("Acme Brokers"))).toBeInTheDocument();
+    expect(screen.getByText(DRAFT_WORDING_NOTICE)).toBeInTheDocument();
   });
 
   // Break caught: a signed-out visitor is shown nothing to do, or is offered to take the intake before they have an account.
