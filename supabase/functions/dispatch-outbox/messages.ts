@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert" | "lead_from_link";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert" | "lead_from_link" | "firm_waiting" | "firm_decision";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -89,6 +89,26 @@ export interface LeadFromLink {
   leadId: string;
   /** When the lead was made, as `YYYY-MM-DDTHH:MM:SSZ` (UTC). */
   requestedAt: string;
+}
+
+/** The notice to the platform admins that a firm signed up and waits for a decision (public.queue_firm_signup_emails): which firm, at which address, signed up by whom. */
+export interface FirmWaiting {
+  firmName: string;
+  /** The address the firm asked for, as the database holds it (lower case). */
+  address: string;
+  signedUpByEmail: string;
+}
+
+/** The notice to the person who signed a firm up that an admin approved or refused it (public.queue_firm_decision_email). */
+export interface FirmDecision {
+  /** Who signed the firm up, fixed when the decision was made: the only address it goes to. */
+  recipientEmail: string;
+  firmName: string;
+  /** The firm's address, as the database holds it (lower case). */
+  address: string;
+  approved: boolean;
+  /** The admin's note, as one line, when they gave one. */
+  note: string | null;
 }
 
 export interface ProspectConfirmation {
@@ -267,6 +287,25 @@ export function parseLeadFromLink(raw: unknown): LeadFromLink | null {
   if (!p || !visitorName || !firmName || !leadId || !LEAD_ID_SHAPE.test(leadId)) return null;
   if (requestedAt === null || !CERTIFIED_AT.test(requestedAt) || !Number.isFinite(Date.parse(requestedAt))) return null;
   return { visitorName, business: oneLine(p.business, 200), firmName, leadId, requestedAt };
+}
+
+/** The firm-waiting notice's fields, or null without the firm's name, its address and who signed it up. Only these are ever read. */
+export function parseFirmWaiting(raw: unknown): FirmWaiting | null {
+  const p = asObject(raw);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const address = p && oneLine(p.address, 100);
+  const signedUpByEmail = p && asEmail(p.signed_up_by_email);
+  return firmName && address && signedUpByEmail ? { firmName, address, signedUpByEmail } : null;
+}
+
+/** The decision notice's fields, or null without the address to send to, the firm's name and address, and which way it went. Only these are ever read. */
+export function parseFirmDecision(raw: unknown): FirmDecision | null {
+  const p = asObject(raw);
+  const recipientEmail = p && asEmail(p.recipient_email);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const address = p && oneLine(p.address, 100);
+  if (!p || !recipientEmail || !firmName || !address || typeof p.approved !== "boolean") return null;
+  return { recipientEmail, firmName, address, approved: p.approved, note: oneLine(p.note, 500) };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -568,6 +607,81 @@ export function renderLeadFromLink(n: LeadFromLink, ctx: LeadContext): RenderedE
 <table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
 ${button(ctx.leadUrl, "Open the lead")}
 ${small(footnote)}`,
+  );
+  return { subject, text, html };
+}
+
+export interface FirmWaitingContext {
+  /** Where an admin decides on the firm (/advisor/firms), behind sign-in. */
+  firmsUrl: string;
+}
+
+/** The email to every platform admin when a firm signs up: which firm, at which address, who signed it up, and a link to the Firms page where it is approved or refused. */
+export function renderFirmWaiting(n: FirmWaiting, ctx: FirmWaitingContext): RenderedEmail {
+  const headline = `${n.firmName} signed up and is waiting for approval.`;
+  const subject = `${n.firmName} is waiting for approval`;
+  const details: [string, string][] = [
+    ["Firm", n.firmName],
+    ["Address", n.address],
+    ["Signed up by", n.signedUpByEmail],
+  ];
+  const footnote = "Opening the page needs your admin sign-in. Until you decide, the firm cannot send anything.";
+  const text = [headline, "", ...details.map(([label, value]) => `${label}: ${value}`), "", "Approve or refuse it:", ctx.firmsUrl, "", footnote, "", SIGN_OFF].join("\n");
+  const html = layout(
+    subject,
+    headline,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
+<table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
+${button(ctx.firmsUrl, "Open the Firms page")}
+${small(footnote)}`,
+  );
+  return { subject, text, html };
+}
+
+/** Where a firm is reached: its address in front of the app's own host (`https://nevermorepeo.com` makes `https://<address>.nevermorepeo.com`). */
+export function firmAddressUrl(appBaseUrl: string, address: string): string {
+  const base = new URL(appBaseUrl);
+  return `${base.protocol}//${address}.${base.host}`;
+}
+
+export interface FirmDecisionContext {
+  /** Where the firm is reached: https://<address>.<the site's domain>. */
+  firmUrl: string;
+  supportEmail: string;
+}
+
+/**
+ * The email to the person who signed a firm up when an admin decided on it. Approved: the link to the firm's address and the next step, inviting the team.
+ * Refused: the admin's note if there is one and the support address, and no link (the address is not theirs to use).
+ */
+export function renderFirmDecision(n: FirmDecision, ctx: FirmDecisionContext): RenderedEmail {
+  const support = `Questions? Write to ${ctx.supportEmail}.`;
+  if (!n.approved) {
+    const subject = `Your request for ${n.firmName} on ${BRAND}`;
+    const headline = `${n.firmName} was not approved.`;
+    const reason = n.note ? `What we noted: ${n.note}` : null;
+    const help = `If you think this is a mistake, or you would like to try again, write to ${ctx.supportEmail}.`;
+    const text = [headline, "", ...(reason ? [reason, ""] : []), help, "", SIGN_OFF].join("\n");
+    const html = layout(
+      subject,
+      headline,
+      `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>${reason ? `<p style="margin:0 0 16px;">${escapeHtml(reason)}</p>` : ""}
+<p style="margin:0;">${escapeHtml(help)}</p>`,
+    );
+    return { subject, text, html };
+  }
+  const subject = `${n.firmName} is approved on ${BRAND}`;
+  const headline = `${n.firmName} has been approved.`;
+  const next = "Sign in at your firm's address, open Invitations and invite your team. Each person you invite gets an email with a link to join.";
+  const text = [headline, "", "Your firm's address:", ctx.firmUrl, "", "What happens next", next, "", support, "", SIGN_OFF].join("\n");
+  const html = layout(
+    subject,
+    headline,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
+${button(ctx.firmUrl, "Open your firm")}
+<p style="margin:0 0 4px;font-weight:bold;">What happens next</p>
+<p style="margin:0 0 16px;">${escapeHtml(next)}</p>
+${small(support)}`,
   );
   return { subject, text, html };
 }

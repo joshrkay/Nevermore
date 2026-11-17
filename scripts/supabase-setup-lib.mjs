@@ -472,13 +472,26 @@ export const REMINDER_SCHEDULE_SQL = "select cron.schedule('remind-idle-intakes'
  */
 export const RETENTION_SCHEDULE_SQL = "select cron.schedule('run-retention', '41 3 * * *', 'select public.run_retention();');";
 
-/** Grants the advisor role to an existing account, and reports whether that account exists. */
-export function advisorSql(email) {
+/** The statement that grants one role to an existing account, and reports whether that account exists. The role is ours, never the caller's. */
+function roleGrantSql(email, role) {
   return [
     "with target as (select id from auth.users where lower(email) = lower(" + sqlLiteral(email) + "))",
-    ", granted as (insert into public.user_roles (user_id, role) select id, 'advisor' from target on conflict do nothing returning user_id)",
+    ", granted as (insert into public.user_roles (user_id, role) select id, '" + role + "' from target on conflict do nothing returning user_id)",
     "select (select count(*) from target)::int as accounts, (select count(*) from granted)::int as newly_granted;",
   ].join("\n");
+}
+
+/** Grants the advisor role to an existing account, and reports whether that account exists. */
+export function advisorSql(email) {
+  return roleGrantSql(email, "advisor");
+}
+
+/**
+ * Grants the platform admin role to an existing account, and reports whether that account exists: the first admin, who then
+ * approves or refuses the firms that sign up (/advisor/firms), without anyone touching the database.
+ */
+export function adminSql(email) {
+  return roleGrantSql(email, "admin");
 }
 
 /**

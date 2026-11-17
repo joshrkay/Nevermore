@@ -277,7 +277,13 @@ Other modes:
 ```sh
 npm run setup:supabase -- --project-ref <ref> --check                          # read only
 npm run setup:supabase -- --project-ref <ref> --grant-advisor you@example.com  # after signing up
+npm run setup:supabase -- --project-ref <ref> --grant-admin you@example.com    # the first platform admin, after signing up
 ```
+
+`--grant-admin` mirrors `--grant-advisor`: it gives an existing account the platform admin role (`admin` in
+`public.user_roles`; an admin has the advisor role's access too), needs only the access token (no secrets file and no Docker) and is safe to
+repeat. It says "No account has that email yet" when nobody has signed up with it, and "They already had it" on a repeat. Both
+options can be given in one run.
 
 `--secrets-file <path>` uses another secrets file; `--yes` skips the confirmation. `--check` reads the
 secrets file too when it exists, to compare the Site URL with `APP_BASE_URL`; without it, the check
@@ -287,6 +293,13 @@ only rejects a localhost or non-https Site URL.
 
 1. **Advisor access.** Sign up at `/login` with the advisor's email and confirm it, then run the
    `--grant-advisor` command above. `docs/ADVISOR_ACCESS.md` has the details.
+   **The first platform admin.** Someone has to approve the firms that sign up at `/firms/new`. Sign up at `/login` with that
+   person's email and confirm it, then run the `--grant-admin` command above and have them sign in again: they see
+   the firms waiting at `/advisor/firms`. From then on every platform admin gets an email when a firm signs up (kind `firm_waiting`,
+   with a link to that page), and the person who signed a firm up gets one when it is approved or refused (kind `firm_decision`, with
+   a link to their firm's address on the app's domain and the support address). Both need `EMAIL_FROM`, the admins' also `APP_BASE_URL`, the founder's also
+   `APP_BASE_URL` and `SUPPORT_EMAIL`; with a setting missing they wait on the Outbox page and go out once it is set. With no platform
+   admin the admins' email has nobody to go to and is retried, then marked dead: grant the first admin before the first firm signs up.
 2. **Try a real intake** on the site: start as a guest, chat, upload a document, verify an email
    with the code, certify, and check the advisor alert and prospect confirmation arrive.
 3. **Don't turn on Supabase CAPTCHA yet.** Only guest sign-in sends a Turnstile token. With

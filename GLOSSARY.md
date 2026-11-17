@@ -460,6 +460,14 @@ _Avoid_: pending email, soft failure
 A person who runs Nevermore itself: keeps the PEO list and its profiles, reads monitoring, and approves firms. Not thereby a member of any firm (D-16), so the role opens no firm's intakes, notes, quote requests, profiles or files, through a table or through a function; held mail, which belongs to no firm until one is assigned, is theirs to read.
 _Avoid_: admin (on its own, where a firm's owner could be meant), super user
 
+**Firm waiting notice** (code: the outbox kind `firm_waiting`, `outbox_admin_recipients`; D-1860 on):
+The email every **Platform admin** gets when a firm signs up and waits for a decision: the firm's name and address, who signed it up, and a link to the admin Firms page (`/advisor/firms`). Queued in the same step as the sign-up, by the database; the `dispatch-outbox` function sends it to the platform admins as they are at each send, so an admin whose role was taken away stops receiving it. Not a firm's alert: a firm that waits has no owners to tell, and a suspension or refusal does not hold it back.
+_Avoid_: signup alert, admin alert
+
+**Firm decision notice** (code: the outbox kind `firm_decision`; D-1861 on):
+The email the person who signed a firm up gets when a **Platform admin** approves or refuses it. Approved: the link to the firm's own address and the next step, inviting the team. Refused: the admin's note if one was given and the support address, and no link. It goes to the email the signer had when the decision was made, and none is sent when their account has gone.
+_Avoid_: approval email
+
 **Record owner**:
 The member a firm's record (a lead, an account, an opportunity, a quote) belongs to, and so who sees it by level. An intake has none in Epic 1 (D-15): every current member of its firm reads it. Who may change a record also follows level, whatever the firm's visibility: an agent their own, a lead their team's, an owner the firm's, and a record with no owner only an owner. That covers its fields, its owner, archiving, deleting and moving a contact. Adding to a record (a contact, a call, a note, a task) is open to anyone who may see it (D-209).
 _Avoid_: assignee, creator

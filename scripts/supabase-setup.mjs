@@ -7,6 +7,7 @@
 //   SUPABASE_ACCESS_TOKEN=... node scripts/supabase-setup.mjs --project-ref <ref>
 //   SUPABASE_ACCESS_TOKEN=... node scripts/supabase-setup.mjs --project-ref <ref> --check
 //   SUPABASE_ACCESS_TOKEN=... node scripts/supabase-setup.mjs --project-ref <ref> --grant-advisor you@example.com
+//   SUPABASE_ACCESS_TOKEN=... node scripts/supabase-setup.mjs --project-ref <ref> --grant-admin you@example.com
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -17,7 +18,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, APPLIED_MIGRATIONS_SQL, authConfigPatch, checkSecrets, cliCommands, DOCKER_NEEDED, envFileLine, EXPIRY_SCHEDULE_SQL, REMINDER_SCHEDULE_SQL,
+  adminSql, advisorSql, APPLIED_MIGRATIONS_SQL, authConfigPatch, checkSecrets, cliCommands, DOCKER_NEEDED, envFileLine, EXPIRY_SCHEDULE_SQL, REMINDER_SCHEDULE_SQL,
   EXTENSIONS_SQL, FUNCTIONS, functionScheduleSql, interpretChecks, isProjectRef, migrationVersions, newMigrations, parseCliVersion,
   parseEnvFile, publicKeyFrom, resendKeyVerdict, RETENTION_SCHEDULE_SQL, rowsFrom, SCHEDULED_FUNCTIONS, serviceRoleKeyFrom,
   setupComplete, smtpKeyNote, STATUS_QUERIES, summaryLines, vaultSecretSql,
@@ -34,6 +35,7 @@ const USAGE = `Usage: SUPABASE_ACCESS_TOKEN=... node scripts/supabase-setup.mjs 
 
   --check                 Only check the project; change nothing
   --grant-advisor <email> Give an existing account the advisor role, then check
+  --grant-admin <email>   Give an existing account the platform admin role (the first admin, who approves new firms at /advisor/firms), then check
   --secrets-file <path>   Function secrets (default supabase/.env.production; see supabase/env.production.example)
   --yes                   Don't ask before changing the project
 
@@ -53,6 +55,7 @@ function parseCli() {
         "project-ref": { type: "string" },
         check: { type: "boolean", default: false },
         "grant-advisor": { type: "string" },
+        "grant-admin": { type: "string" },
         "secrets-file": { type: "string", default: "supabase/.env.production" },
         yes: { type: "boolean", default: false },
         help: { type: "boolean", default: false },
@@ -270,6 +273,16 @@ async function grantAdvisor(call, ref, email) {
   else say("  They already had it.");
 }
 
+async function grantAdmin(call, ref, email) {
+  step(`Granting the platform admin role to ${email}`);
+  const res = await runSql(call, ref, adminSql(email));
+  if (!res.ok) fail(`The grant failed (${res.status}): ${res.message}`);
+  const row = rowsFrom(res.body)[0] ?? {};
+  if (!row.accounts) say("  No account has that email yet: sign up on the site's /login page, confirm the email, then run this again.");
+  else if (row.newly_granted) say("  Granted. They see the Firms waiting for approval at /advisor/firms after signing in again.");
+  else say("  They already had it.");
+}
+
 async function check(call, ref, appBaseUrl, resend) {
   step("Checking the project");
   const status = {};
@@ -345,15 +358,17 @@ async function main() {
   if (project.body?.status && project.body.status !== "ACTIVE_HEALTHY") say("Warning: the project isn't ACTIVE_HEALTHY. A paused project has to be restored in the dashboard first.");
 
   const writes = !opts.check;
+  // Granting a role needs neither the secrets file nor Docker: only the project.
+  const granting = Boolean(opts["grant-advisor"] || opts["grant-admin"]);
   const secretsFile = path.resolve(ROOT, opts["secrets-file"]);
   // --check reads the file too when it is there, to compare the auth Site URL with APP_BASE_URL.
   const env = existsSync(secretsFile) ? parseEnvFile(readFileSync(secretsFile, "utf8")) : null;
   // Tried once, before anything changes, and reported again with the checks. Not with whitespace in it: checkSecrets
   // stops the setup on that, and the check would only say Resend refused it.
   const resendKey = env?.RESEND_API_KEY ?? "";
-  const resend = resendKey.trim() && !/\s/.test(resendKey) && !opts["grant-advisor"] ? await tryResendKey(resendKey) : undefined;
+  const resend = resendKey.trim() && !/\s/.test(resendKey) && !granting ? await tryResendKey(resendKey) : undefined;
   let version = null;
-  if (writes && !opts["grant-advisor"]) {
+  if (writes && !granting) {
     if (!env) {
       console.error(`No secrets file at ${path.relative(ROOT, secretsFile)}. Copy supabase/env.production.example there and fill it in.`);
       return 2;
@@ -387,7 +402,8 @@ async function main() {
     }
     await setup(call, ref, secretsFile, env, cliCommands(version, ref));
   } else if (writes) {
-    await grantAdvisor(call, ref, opts["grant-advisor"]);
+    if (opts["grant-advisor"]) await grantAdvisor(call, ref, opts["grant-advisor"]);
+    if (opts["grant-admin"]) await grantAdmin(call, ref, opts["grant-admin"]);
   }
 
   const checks = await check(call, ref, env?.APP_BASE_URL?.trim() || null, resend);

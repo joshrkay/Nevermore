@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cliCommands, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
+  adminSql, advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cliCommands, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
   MIN_AUTH_EMAILS_PER_HOUR, migrationVersions, newMigrations, parseCliVersion, REMINDER_SCHEDULE_SQL, resendKeyVerdict, RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete, smtpKeyNote, summaryLines,
   sqlLiteral, vaultSecretSql,
@@ -515,6 +515,15 @@ describe("SQL", () => {
   it("grants the advisor role by email, escaped", () => {
     const sql = advisorSql("o'brien@example.com");
     expect(sql).toContain("lower('o''brien@example.com')");
+    expect(sql).toContain("on conflict do nothing");
+  });
+
+  // Catches: the first platform admin is granted the wrong role (advisor sees no Firms page), an email with a quote breaks the statement or injects SQL, or a repeat grant fails instead of saying they already had it.
+  it("grants the platform admin role by email, escaped, and only that role", () => {
+    const sql = adminSql("o'brien@example.com");
+    expect(sql).toContain("lower('o''brien@example.com')");
+    expect(sql).toContain("select id, 'admin' from target");
+    expect(sql).not.toContain("'advisor'");
     expect(sql).toContain("on conflict do nothing");
   });
 
