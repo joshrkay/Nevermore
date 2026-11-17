@@ -744,3 +744,4 @@ One line per cycle: the test, the failing line seen, then green.
 12. advisorApi.test: loadQuotes reads one quote request's quotes with each document's name, size and place | red: TypeError: loadQuotes is not a function | green
 13. quote-document-upload handler.test: starts as the agent, scans, keeps a clean file in peo-mail under its message, settles it stored and names it as the quote's document | red: Failed to resolve import ./handler (the function was not there) | green
 14. handler.test: a file that isn't what its name says, or an executable, is refused 415 before anything is recorded | red: AssertionError: expected 200 to be 415 | green
+15. handler.test: no scanner set up refuses everything (503) with nothing recorded or stored | red: AssertionError: expected [ { fn: 'start_quote_document_upload', ... } ] to deeply equal [] | green

@@ -64,6 +64,13 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
   const authHeader = req.headers.get("Authorization") as string;
   const agent = deps.createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
 
+  // A scanner, before anything else (ADR 0002): never a file kept, or an upload started, that nothing can scan.
+  const choice = selectScanner(deps.env, deps.scanner);
+  if (!choice.ok) {
+    deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}; uploads are refused until it is fixed (docs/SUPABASE_SETUP.md, "Malware scanning")`);
+    return reply({ error: "Uploads are paused while virus checking is set up. Try again once it is.", code: "scanner_missing" }, 503);
+  }
+
   const body = (await readBodyCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES)) as Uint8Array;
   const form = await new Response(body as Uint8Array<ArrayBuffer>, { headers: { "Content-Type": req.headers.get("Content-Type") ?? "" } }).formData();
   const quoteId = form.get("quote_id") as string;
@@ -82,8 +89,6 @@ export async function handleQuoteDocumentUpload(req: Request, deps: QuoteDocumen
   const { attachment_id: attachmentId, folder } = started as { attachment_id: number; folder: string };
 
   const service = deps.createClient(supabaseUrl, serviceRoleKey);
-  const choice = selectScanner(deps.env, deps.scanner);
-  if (!choice.ok) return reply({ error: "Uploads are paused while virus checking is set up.", code: "scanner_missing" }, 503);
   await choice.scanner.scan(bytes);
   const path = `${folder}/${attachmentId}-${storageKeyName(fileName)}`;
   await service.storage.from("peo-mail").upload(path, bytes, { contentType: STORED_CONTENT_TYPE, upsert: true });

@@ -135,4 +135,15 @@ describe("quote-document-upload: a quote document recorded by hand, an upload li
     expect(t.rpcs).toEqual([]);
     expect(t.stored).toEqual([]);
   });
+
+  // Catches: a file kept with no scan because the scanner isn't set up, or an upload left pending on the thread with nothing able to scan it.
+  it("refuses everything, recording nothing, while no scanner is set up", async () => {
+    const t = setup({ env: { MALWARE_SCANNER: "" , MALWARE_SCANNER_URL: undefined } });
+    const { status, body } = await read(await handleQuoteDocumentUpload(post({ quote_id: "3", file: file(PDF, "quote.pdf") }), t.deps));
+    expect(status).toBe(503);
+    expect(body.code).toBe("scanner_missing");
+    expect(t.rpcs).toEqual([]);
+    expect(t.stored).toEqual([]);
+    expect(t.logs.join("\n")).toContain("SCAN_CONFIG_MISSING");
+  });
 });
