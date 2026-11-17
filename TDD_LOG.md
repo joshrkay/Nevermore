@@ -854,3 +854,115 @@ SQL, 14 of 14 killed (mutsql.py: each of the three checks off in attach_quote_do
 
 ### Gate (7.3)
 lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 348 files, 7070 tests passed; build green; every SQL test on port 5730: 125 passed.
+
+## 7.5 N-1.3 (an underwriter's question becomes an information request), one test per cycle
+
+1. SQL question_requests "the agent asks the employer about an open question" - red: `function public.advisor_ask_about_question(bigint, text, text[]) does not exist` - green (function that finds the quote request's intake and calls advisor_request_information).
+2. SQL question_requests "only an open question is asked about" - red: `FAIL: a quote request that is Sent gave ok, expected 22023: This quote request has no open question to ask about` - green (status check).
+3. SQL "another firm's quote request is not found" - red: `FAIL: another firm's quote request gave PT404: Submission not found, expected PT404: Quote request not found` (a first run failed on my own test, a NULL id read as the other firm; fixed the test) - green (quote_request_in_my_firm).
+4. SQL "the quote request's log says the employer was asked" - red: `FAIL: the log names the request gave <NULL>, expected 2` - green (an `asked_employer` event with the request id, who asked).
+5. SQL "answering the underwriter on the thread returns the quote request to Sent" - GREEN ON FIRST RUN: the existing D-1733 trigger already does it; no code written, the test is a regression guard for the story's second half (honest note: it was not red).
+6. SQL close_a_firm (probe row and guarded-list entry added first) - red: `FAIL: while closing: ask the employer about an underwriter's question gave 22023: ..., expected PT423: This firm is closing and can't be changed` - green (assert_firm_writable, then require_advisor, first in the function).
+7. SQL help_from_nevermore (probe row added, then the lists) - the support-session probe was green at once (the guard of cycle 6 covers it); red on the lists: `FAIL: no function that changes data is left out of the lists ... gave advisor_ask_about_question` - green (the two lists).
+8. SQL data_isolation (function table row, two-firm probe, writes list) - GREEN ON FIRST RUN: the function already meets all three registries; registry rows only, no code. Mutation below checks the rows bite.
+9. Component InformationRequestPanel "sends through the question's own function" - red: `expected "spy" to be called with arguments: [ 7, ... ]` (askAboutQuestion never called) - green (`aboutQuestionOf` prop, `askAboutQuestion` in advisorApi, the RPC in types.ts).
+10. Component QuoteRequestsPanel "offers to ask the prospect about an open question, with an empty draft, and only on a question open" - red: `Unable to find an accessible element with the role "button" and name "Ask the prospect about this question"` - green (the button, `onAskProspect("", id)`).
+11. Page AdvisorSubmissionPage "asks the employer about a PEO's open question in the agent's own words, tied to that quote request" - red: `expected "spy" to be called with arguments: [ 7, ... ] Number of calls: 0` - green (the draft carries `aboutQuestionOf` into the panel).
+12. Page QuotePage "asks the employer from the quote's page, in the agent's own words, tied to this quote request" - red: `Unable to find role="heading" and name "Ask the prospect"` - green (InformationRequestPanel on the quote page, shown on question open; first written for any status, the existing tests' fixture then lacked `informationRequests`, so the fixture gained the submission's fields and the panel its question-open condition in the same step).
+13. Page QuotePage "offers nothing on a quote request with no open question" - GREEN ON FIRST RUN: the condition came in cycle 12's step, so this is a guard, not a red (honest note).
+14. Component PeoThreadPanel "says what the agent asked and that the employer has not answered yet" - red: `Unable to find an accessible element with the role "status"` - green (`informationRequests`, `pipelineStatus` props; the line from the quote request's `asked_employer` event).
+15. Component PeoThreadPanel "says the request is answered once the submission is no longer waiting on the employer" - red: `Expected element to have text content: The employer has answered. Write back to TriNet to answer the question.` - green.
+16. Data quoteRequests "describes asking the employer in words, naming the request" - red: `expected 'asked_employer: — → 5' to be 'The employer was asked about the PEO's question (request 5)'` - green.
+17. Page QuotePage "shows on the PEO's thread what the employer was asked, and that it waits" - red: `Unable to find an element with the text: /You asked the employer/` - green (the page passes the requests and the pipeline stage).
+18. Page AdvisorSubmissionPage "shows on the PEO's thread what the employer was asked about its question" - red: same `Unable to find an element with the text: /You asked the employer/` (I had first written the two pages' props together; the submission page's was undone with git, the test written and seen red, then the prop put back) - green.
+19. Component PeoThreadPanel "says nothing once the PEO has been answered and the quote request is Sent again" - GREEN ON FIRST RUN: the line only shows on Question open, from cycle 14; a guard, not a red (honest note).
+20. Component PeoThreadPanel "tells the agent, on accepting a question, that the employer can be asked about it" - red: `expected "spy" to be called with arguments: [ "Recorded as Question open. You can ask the prospect about it: ..." ]` - green (ReplySuggestion's toast).
+
+## Gate and mutation (7.5)
+
+Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; build green; vitest 347 files, 7089 tests all passed (--maxWorkers=1); SQL 126/126 on port 5750.
+Mutation: SQL 7 (open-question check, firm scope, log event, log value, log actor, closing guard, advisor check): all red (close_a_firm and help_from_nevermore for the guard, data_isolation for the advisor check). App 18 (panel always plain, panel drops the id, button on every status, button copies text, button forgets the quote request, page drops the tie, quote page panel on every status / not tied / offered to a reader, thread always or never waiting, line on every status, oldest event, two pages' props dropped, toast hint, log wording, API drops the answers): 15 red at first, 3 survived. Cycles 21-23 closed them (a support session is offered no panel; the latest of two requests is named; the API call keeps the quote request, words, answers and PEO questions), all 18 red.
+21. Page QuotePage "offers no way to ask the employer during a support session" - added after the mutant `canAct` dropped from the panel's condition survived; red under that mutant (`Unable`-style: the panel heading was found), green on the real code.
+22. Component PeoThreadPanel "names the latest request when the employer was asked more than once" - added after the mutant taking the oldest `asked_employer` event survived; red under the mutant, green on the real code.
+23. API advisorApi "asks the employer about a question through advisor_ask_about_question" - added after the mutant dropping fields and PEO questions survived; red under the mutant, green on the real code.
+## 7.6 N-2.3 read the quote document (read-quote-document function, readQuoteDocument), one test per cycle
+
+No migration: a proposal is returned, never stored (D-760). Tests run under vitest with the model and the file reader faked (seam 4).
+
+1. proposal.test: a real date keeps its page, an impossible date (2026-02-30) is dropped | red: Failed to resolve import "./proposal" (module not there) | green
+2. proposal.test: kind is estimate or firm_offer only when the document says so, never filled in, anything else dropped | red: expected {} to deeply equal { kind: 'estimate' } | green
+3. proposal.test: the fee comes only with its basis, inside 0..100000 (0..100 percent), 0 is real, no basis or out of bounds left out | red: expected { draft: {}, sources: {} } to deeply equal { draft: { adminFee: 40, ... } } | green
+4. proposal.test: one-off fees keep only valid lines (trimmed name 1..80, amount 0..10000000, each name once), none left means the area is left out, never [] | red: expected { draft: {}, sources: {} } to deeply equal { draft: { oneOffFees: [...] } } | green
+5. proposal.test: workers comp keeps lines with a real state, a class code of letters digits hyphens (1..10) and a rate 0..1000, each state and class once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { workersComp: [...] } } | green
+6. proposal.test: unemployment keeps one line per state, employer_rate alone or peo_rate with a 0..100 percent; a peo_rate with no rate, a bad charge, a repeated state are dropped | red: expected { draft: {}, sources: {} } to deeply equal { draft: { unemployment: [...] } } | green
+7. proposal.test: medical keeps lines of a trimmed plan (1..80), one of four tiers and a monthly 0..100000, each plan and tier once | red: expected { draft: {}, sources: {} } to deeply equal { draft: { medical: [...] } } | green
+8. proposal.test: only a page the document has is named; a non-shape answer proposes nothing | NOT red first: green on first run (the page check and shape guard were written in cycle 1); seen red by removing the page check (expected { ... } to deeply equal { ... }), then restored | green
+9. proposal.test: a cited section number becomes that section label, an unknown number names no page | red: expected {} to deeply equal { receivedOn: 'Page 1', ... } | green
+10. handler.test: reads the quote's own document and answers the figures with the page of each | red: Failed to resolve import "./handler" (function not there) | green
+11. handler.test: no Authorization header or no signed-in user is refused 401 before anything is touched | red: expected 200 to be 401 | green
+12. handler.test: preflight, non-POST 405, body not JSON or no positive whole quote_id 400, over 4 KB 413, nothing read | red: expected 401 to be 200 (the preflight reached the sign-in check) | green
+13. handler.test: a quote row security does not show is 404 not_found, nothing read or asked | red (seen after removing the line I had written together with the test): expected 200 to be 404 | green
+14. handler.test: a quote with no document is 422 no_document, nothing downloaded or asked | red: expected 200 to be 422 | green
+15. handler.test: a pending, blocked or not-kept file is 409 not_readable, never downloaded or sent to the model | red: expected 200 to be 409 | green
+16. handler.test: no model key proposes nothing (200 unavailable, empty proposal), file not fetched, no model call, one config log | red: expected { status: 'proposed', ... } to match object { status: 'unavailable' } | green
+17. handler.test: one call of the shared AI budget (user, address, day) is spent before the model is asked | red: expected [ 'model' ] to deeply equal [ 'anon-key:consume_ai_quota', ... ] | green
+18. handler.test: a refused budget never reaches the model (rate limit 429 rate_limited, day ceiling 503 daily_cap) | red: expected 200 to be 429 | green
+19. handler.test: a failing model is 502 provider_error, nothing proposed, log has the failure kind and none of the document | red: expected 200 to be 502 | green
+20. handler.test: the document is data: system prompt says untrusted, one fence the document cannot close (its tag removed), one forced tool | red: expected [ '<quote_document', ... ] to have a length of 2 but got 5 | green
+21. handler.test: no figure the model may propose, or no text to read, is status nothing_found with an empty proposal, no model call when there is no text | red: expected { status: 'proposed', ... } to match object { status: 'nothing_found' } | green
+22. handler.test: encrypted/unreadable/unsupported answer the reader's status and words, too_large is answered without downloading | red: expected undefined to be 'This PDF couldn't be opened...' then expected { status: 'proposed' } to match { status: 'too_large' } | green
+23. handler.test: an unexpected error is 500 internal and logs the error class only | red: the reader error escaped, its message quoting the document | green
+24. handler.test: only a proposal: the only database calls are the budget, never record_quote; the log holds none of the document | NOT red first: characterisation of cycles 10-23 (the fake client has no writer to call); kept as a regression test | green
+25. supabase-setup.test: the setup deploys read-quote-document (19 functions); index.ts wires the handler | red: expected [ [ '--version' ], ...(21) ] to deeply equal [ ...(22) ] | green
+26. advisorApi.test: readQuoteDocument asks read-quote-document for the quote and returns status, message, a draft in recordQuote shape and each figure page, or the refusal words | red: readQuoteDocument is not a function | green
+27. advisorApi.test: a read draft plus the broker's kind goes through recordQuote with every proposed figure | NOT red first: characterisation of the shape contract (green on first run, no code change); kept as a regression test | green
+28. proposal.test and handler.test strengthened after mutants survived (line caps, name and plan length, a pending file that still has a path) | NOT red first: the code existed; the four mutants survived, the tests were added, the mutants then killed | green
+
+Notes: cycles 8, 24, 27 and 28 are the lines not seen red first (8: red seen by removing the page check; 24 and 27: characterisation, no code added; 28: tests added for surviving mutants). In cycle 13 the code was written together with the test; the line was removed, red seen, restored.
+
+### Mutation (7.6)
+mut.py in the scratchpad: 44 mutants of proposal.ts, handler.ts and readQuoteDocument (every bound, dedupe, caps, state and class rules, tiers, name and plan length, empty list kept, section citation, no sign-in, quote missing, no document, pending file read, budget refusal ignored or not spent, fence tag kept, too_large, nothing_found, model failure ignored, method, error message logged, reader words dropped, body cap, no-key check, wrong quote asked, pages dropped). 40 killed at first; 4 survived (line cap, name length, plan length, a pending file with a path), tests strengthened (cycle 28), 44 of 44 killed.
+## 7.8 (CRM-Q3.3 Record a quote, N-1.4 Record a decline on the quote page, CRM-Q4.2 Compare quotes mounted)
+1. QuotePage.test: Record the quote is offered on every status but closed | red: Unable to find an accessible element with the role "button" and name "Record the quote" | green
+2. QuotePage.test: a quote cannot be saved until marked estimate or firm offer | red: Unable to find an accessible element with the role "form" and name "Record the quote from TriNet" | green
+3. QuotePage.test: recordQuote only, empty areas left out as null, page read again, form closes | red: Unable to find a label with the text of: Admin fee | green
+4. QuotePage.test: a one-off fee is recorded as a name and a number | red: Unable to find an accessible element with the role "button" and name "Add a one-off fee" | green
+5. QuotePage.test: a workers' comp rate is recorded as state, class code and number | red: Unable to find an accessible element with the role "button" and name "Add a workers' comp rate" | green
+6. QuotePage.test: unemployment tax per state, employer rate or the PEO rate with its percent | red: Unable to find an accessible element with the role "button" and name "Add an unemployment line" | green
+7. QuotePage.test: a medical rate is recorded as plan, tier code and monthly number | red: Unable to find an accessible element with the role "button" and name "Add a medical rate" | green
+8. QuotePage.test: a refused quote says why, keeps what was typed, does not close | NOT red first (failure handling was written with cycle 3); seen red by removing failure.failed(err): Unable to find an element with the text: /administrative fee comes with its basis/ | green
+9. QuotePage.test: the quote is recorded first, then its file is uploaded for the new quote | red: Unable to find a label with the text of: Quote document | green
+10. QuotePage.test: a blocked document is reported and the form still closes once the quote is recorded | red: expected "spy" to be called with arguments (toast.error never called) | green
+11. QuotePage.test: a stored file from this quote request email is named as the document for the new quote, not uploaded | red: Unable to find a label with the text of: Use a file from the emails | green
+12. RecordQuoteForm.test: a draft in recordQuote shape fills the form and nothing is recorded until Save (the seam for slice 7.6) | red: expected element toHaveValue estimate (initial not read) | green
+13. QuotePage.test: no Record the quote or decline in a support session, on an archived account or for someone who may not change the account | NOT red first (canAct reused); seen red with canRecordQuote ignoring canAct: expected element not.toBeInTheDocument | green
+14. QuotePage.test: Record a decline is offered while the PEO has not answered and opens the reason picker with no other answer | red: Unable to find role button and name Record a decline | green
+15. QuotePage.test: a decline is recorded through updateQuoteRequest with reason and words, and the page is read again | NOT red first (AnswerForm reused as is); seen red by dropping the page refresh from RecordDecline: Unable to find an element with the text: Declined: Too small | green
+16. OpportunityPage.test: the comparison of the opportunity quotes is mounted under the quotes panel, read for this firm and opportunity | red: Unable to find role region and name Compare quotes | green
+17. QuoteComparison.test: No quotes are back yet while every PEO is waiting, statuses still in columns | red: Unable to find an element with the text: No quotes are back yet. | green
+18. QuoteComparison.test: a lone quote says there is nothing to compare it with yet, and not when two are back | red: Unable to find an element with the text: Only one quote is back, so there is nothing to compare it with yet. | green
+19. OpportunityPage.test: no Add note in a support session, with the reason | red: expected element not.toBeInTheDocument (Add note button) | green
+20. quote_comparison.sql 2b: the comparison and the quote page agree on current = highest quote id even when a revision is backdated (D-733) | NOT red first (the 7.7 read already orders by id); seen red by ordering on received_on: FAIL: the later recording is current though its received date is older gave 3, expected 4 | green
+
+### Mutation and gate (7.8)
+TypeScript: 20 of 21 mutants killed on first run, 2 survived (empty fee sent as 0, state not upper-cased), tests strengthened, both killed; 1 not applied (string no longer in code; upload-after-record is held by invocationCallOrder in cycle 9). SQL: ordering the comparison on received_on is killed by quote_comparison.sql 2b.
+Gate: lint 0 errors (19 existing warnings); typecheck:functions and typecheck:app clean; npm test 352 files, 7145 tests passed; build green; SQL: only quote_comparison.sql run on port 5780 (no migration or function changed).
+
+## 7.9
+
+Read the document fills Record the quote (D-790..D-794). Seam: component tests of the form and of the quote page (D-13 seam 2), the reader faked at `readQuoteDocument`. tdd skill invoked first; one test per cycle except where noted.
+
+1. RecordQuoteForm: marks a figure from the document Suggested with its page (admin fee) | `expect(element).toHaveAccessibleDescription()` (no description) | green
+2. RecordQuoteForm: marks a list of lines Suggested with its page (one-off fees; `QuoteLinesField` `hint`) | `expect(element).toHaveAccessibleDescription()` on the "One-off fees" group | green. Note: the hint was wired to all four cost areas in this one step; the other three are pinned in cycle 11 and by mutation
+3. RecordQuoteForm: kind and the three dates marked Suggested with their pages | `expect(element).toHaveAccessibleDescription()` on "Estimate or firm offer" | green
+4. QuotePage: Read the document reads only on a click, opens the form filled, figures marked, kind still to choose | `Unable to find role="button" and name "Read the document"` | green
+5. QuotePage: nothing_found / unavailable / too_large say so in words, form stays shut (3 cases, one test) | `Unable to find role="status"` (3 failed) | green
+6. QuotePage: a refusal (AdvisorApiError) is said in its own words, form stays shut | `Unable to find role="status"` plus an unhandled `Today's document reading is used up...` | green
+7. QuotePage: a double click reads once and the button is held while reading | `expected "spy" to be called 1 times, but got 2 times` | green
+8. QuotePage: not offered with no document, and not on a closed quote, in a support session, on an archived account, or without the right to change | NOT red first (the condition is `RecordQuote`'s existing one); killed by mutation instead | green
+9. QuotePage: unread figures stay Not quoted, kind is asked for, save goes through recordQuote as a new quote | NOT red first (behaviour of the form already built); first run failed only on my own count of "Not quoted" (the basis option also says it), test fixed | green
+10. QuotePage: Cancel forgets the reading | NOT red first (state already cleared in `close`) | green
+11. RecordQuoteForm: workers' comp, unemployment, medical each marked with their own page, nothing marked that was not read; "Suggested" alone when no page | NOT red first (wiring done in cycle 2) | green
+
+### Mutation and gate (7.9)
+20 mutants of RecordQuoteForm, RecordQuote, QuoteLinesField use and QuotePage (each cost area wired to another's page or unmarked, kind or dates unmarked, separator changed, mark with no figure, kind defaulted, fee defaulted to 0, no busy guard, status words dropped, form opened on any status, reading kept after cancel, refusal words dropped, button without a document, wrong quote id read, page offers read with no document, record controls without the right, closed quote offered): 20 of 20 killed on first run, 0 not applied.

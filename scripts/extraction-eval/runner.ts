@@ -8,11 +8,12 @@
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { CHAT_FALLBACK_REPLY, chatRequestBody, createChatMessage, openingMessage, type ChatMessage } from "@/data/chat";
 import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
-import { redactSensitive } from "@/data/sensitive";
+import { redactForModel } from "@/data/sensitive";
 import { callModel, type ModelRequest, type ModelResult } from "../../supabase/functions/_shared/ai/model.ts";
 import { selectAdapter } from "../../supabase/functions/_shared/ai/providers.ts";
-import { shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
-import { buildUserPrompt, unsettledForTurn } from "../../supabase/functions/chamber-extract/prompt.ts";
+import { prepareTurn } from "../../supabase/functions/chamber-extract/prepare.ts";
+import { shapeResponse } from "../../supabase/functions/chamber-extract/response.ts";
+import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { describeCell, diffBaseline, formatBaseline, formatTable, parseBaseline, scoreFixture, type Baseline, type Cells } from "./scoring";
@@ -47,6 +48,8 @@ export interface FixtureRun {
   state: IntakeState;
   /** Lenore's own reply to each turn that got one, null where the model gave none. */
   replies: (string | null)[];
+  /** The guarded replies the prospect sees and subsequent turns receive. */
+  deliveredReplies: string[];
   /** Why the run stopped early, when a model call failed. */
   error: string | null;
 }
@@ -57,38 +60,41 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
   // The conversation so far, as the Chamber keeps it, from Lenore's opening line: each call carries its last few messages.
   const transcript: ChatMessage[] = [openingMessage()];
   const replies: (string | null)[] = [];
+  const deliveredReplies: string[] = [];
   for (const [i, turn] of fixture.turns.entries()) {
     // useLenoreChat.send: the model and the transcript only see the message with sensitive numbers removed.
-    const text = redactSensitive(turn.message);
+    const text = redactForModel(turn.message);
     const message = createChatMessage("user", text);
     transcript.push(message);
     // The request body crosses the network as JSON, and the handler reads it back with req.json(). The handler
     // removes sensitive numbers from the recent conversation again (readRecent), Lenore's lines included.
     const body = JSON.parse(JSON.stringify(chatRequestBody(message, state.data, state.provenance, transcript)));
-    const recent = body.recent.map((m: { sender: "user" | "lenore"; text: string }) => ({ ...m, text: redactSensitive(m.text) }));
+    const recent = body.recent.map((m: { sender: "user" | "lenore"; text: string }) => ({ ...m, text: redactForModel(m.text) }));
     const sent = { context: body.context, statuses: body.statuses, recent, census: { rows: body.census.rows, workStates: body.census.work_states } };
-    const user = buildUserPrompt({ message: body.message, ...sent });
+    const prepared = prepareTurn({ message: body.message, ...sent, requested: turn.requested, extraQuestions: turn.extraQuestions });
+    const user = buildUserPrompt(prepared);
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {
-      return { state, replies, error: `turn ${i + 1}: model call failed (${result.kind}, HTTP ${result.httpStatus ?? "-"})` };
+      return { state, replies, deliveredReplies, error: `turn ${i + 1}: model call failed (${result.kind}, HTTP ${result.httpStatus ?? "-"})` };
     }
     // The tool call is forced, so the handler answers a reply without one as invalid_response (US-2.4a).
-    if (!result.args) return { state, replies, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
+    if (!result.args) return { state, replies, deliveredReplies, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
     // What the handler returns, as the browser parses it.
     // As the handler does: the field Lenore was asking about is the first one not yet settled.
-    const { stopping: _stopping, doubted_unknown: _doubted, ...shaped } = shapeExtraction(result.args, body.message, unsettledForTurn(sent)[0]?.key);
-    const response = JSON.parse(JSON.stringify(shaped));
+    const delivered = shapeResponse(result.args, prepared);
+    const response = JSON.parse(JSON.stringify(delivered.response));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
     // Her own reply is what a reply check scores: the handler's fallback question, asked when there is none, never
     // follows a rule of the prompt's.
-    const reply = typeof response.reply === "string" && response.reply.trim() ? response.reply : null;
+    const reply = delivered.rawReply;
     replies.push(reply);
-    // useLenoreChat: her reply, or the fallback line when the answer has none.
-    transcript.push(createChatMessage("lenore", reply?.trim() || CHAT_FALLBACK_REPLY));
+    deliveredReplies.push(response.reply);
+    // The next turn sees the delivered reply, while scoring retains the raw model reply.
+    transcript.push(createChatMessage("lenore", response.reply || CHAT_FALLBACK_REPLY));
   }
-  return { state, replies, error: null };
+  return { state, replies, deliveredReplies, error: null };
 }
 
 /** Runs the fixtures in order (one at a time, to stay inside provider rate limits) and scores them. */
@@ -123,22 +129,24 @@ export interface MainDeps {
   fixtures?: Fixture[];
 }
 
-const USAGE = "Usage: npm run eval:extraction -- [--only <fixture-id>] [--update-baseline]";
+const USAGE = "Usage: npm run eval:extraction -- [--only <fixture-id>] [--update-baseline] [--strict]";
 
 /**
  * Runs the eval and returns the exit code: 0 clean, 1 no provider, a regression or a failed model
- * call against the baseline, 2 bad usage. With no baseline yet there is nothing to regress from, so
- * the run reports what it found and exits 0.
+ * call, 2 bad usage. Strict mode fails every failed assertion, regardless of the baseline.
+ * Without strict mode, completed runs without a baseline report scores without enforcing them.
  */
 export async function main(deps: MainDeps): Promise<number> {
   const { log, baselinePath } = deps;
   const all = deps.fixtures ?? FIXTURES;
 
   let update = false;
+  let strict = false;
   let only: string | null = null;
   for (let i = 0; i < deps.args.length; i++) {
     const arg = deps.args[i];
-    if (arg === "--update-baseline") update = true;
+    if (arg === "--strict") strict = true;
+    else if (arg === "--update-baseline") update = true;
     else if (arg === "--only" && i + 1 < deps.args.length) only = deps.args[++i];
     else {
       log(`Unknown argument "${arg}". ${USAGE}`);
@@ -185,9 +193,12 @@ export async function main(deps: MainDeps): Promise<number> {
     for (const e of errors) log(`  ${e}`);
   }
 
+  const strictFailure = strict && Object.values(cells).some((cell) => !cell.pass);
+  if (strictFailure) log("Strict evaluation failed: required assertions did not pass.");
+
   if (update) {
-    if (errors.length) {
-      log("Not recording a baseline from an incomplete run.");
+    if (errors.length || strictFailure) {
+      log(errors.length ? "Not recording a baseline from an incomplete run." : "Not recording a baseline with failing assertions.");
       return 1;
     }
     const meta = { prompt_version: PROMPT_VERSION, provider: connection.provider, model: connection.model, recorded_at: deps.now().toISOString() };
@@ -200,7 +211,7 @@ export async function main(deps: MainDeps): Promise<number> {
   if (!baseline) {
     log("");
     log(`No baseline yet. Record one from this provider and model with: ${RECORD}`);
-    return 0;
+    return errors.length || strictFailure ? 1 : 0;
   }
 
   log("");
@@ -231,5 +242,5 @@ export async function main(deps: MainDeps): Promise<number> {
     return 1;
   }
   log(`No regressions against the baseline (${diff.unchanged} unchanged).`);
-  return errors.length ? 1 : 0;
+  return errors.length || strictFailure ? 1 : 0;
 }

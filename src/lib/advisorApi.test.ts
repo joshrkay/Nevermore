@@ -87,6 +87,7 @@ const {
   recordQuoteSend,
   setQuoteRequestStatus,
   decideReplySuggestion,
+  askAboutQuestion,
   updateQuoteRequest,
   recordQuote,
   fetchIsAdmin,
@@ -106,6 +107,7 @@ const {
   attachQuoteDocument,
   loadQuotes,
   uploadQuoteDocument,
+  readQuoteDocument,
   recordActivity,
   fetchOwnedFirms,
   listMyFirms,
@@ -658,6 +660,56 @@ describe("quote requests", () => {
     await expect(uploadQuoteDocument(3, file)).rejects.toThrow("This file isn't what its name says.");
   });
 
+  // N-2.3. Break caught: the proposal asked of the wrong function or quote, its figures or their pages dropped or renamed, or a refusal shown as a generic failure.
+  it("asks read-quote-document to read a quote's document and returns a draft in recordQuote's shape with the page of each figure, or the refusal's words", async () => {
+    invoke.mockResolvedValueOnce({
+      data: {
+        status: "proposed",
+        proposal: { draft: { adminFee: 40, adminFeeBasis: "per_employee_per_month", startOn: "2027-01-01" }, sources: { adminFee: "Page 1", startOn: "Page 2" } },
+        request_id: "r1",
+      },
+      error: null,
+    });
+    await expect(readQuoteDocument(3)).resolves.toEqual({
+      status: "proposed",
+      message: null,
+      draft: { adminFee: 40, adminFeeBasis: "per_employee_per_month", startOn: "2027-01-01" },
+      sources: { adminFee: "Page 1", startOn: "Page 2" },
+    });
+    expect(invoke).toHaveBeenLastCalledWith("read-quote-document", { body: { quote_id: 3 } });
+    invoke.mockResolvedValueOnce({ data: null, error: { context: new Response(JSON.stringify({ error: "This quote has no document to read.", code: "no_document" }), { status: 422 }) } });
+    await expect(readQuoteDocument(3)).rejects.toThrow("This quote has no document to read.");
+  });
+
+  // N-2.3. Break caught: a draft whose keys or line shapes recordQuote does not take, so confirming a proposal loses or renames a figure.
+  it("a read draft is exactly what recordQuote takes: once the broker adds the kind, it is recorded with every proposed figure and nothing else", async () => {
+    invoke.mockResolvedValueOnce({
+      data: {
+        status: "proposed",
+        proposal: {
+          draft: {
+            adminFee: 3.5, adminFeeBasis: "percent_of_payroll", expiresOn: "2026-12-01",
+            oneOffFees: [{ name: "Setup", amount: 500 }],
+            workersComp: [{ state: "TX", class_code: "8810", rate: 0.4 }],
+            unemployment: [{ state: "TX", charge: "peo_rate", rate: 2.7 }],
+            medical: [{ plan: "Gold", tier: "family", monthly: 1800 }],
+          },
+          sources: {},
+        },
+      },
+      error: null,
+    });
+    const reading = await readQuoteDocument(3);
+    rpc.mockResolvedValueOnce({ data: { id: 9 }, error: null });
+    await recordQuote(5, { kind: "firm_offer", ...reading.draft });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", {
+      p_quote_request_id: 5, p_kind: "firm_offer", p_received_on: null, p_expires_on: "2026-12-01", p_start_on: null,
+      p_admin_fee: 3.5, p_admin_fee_basis: "percent_of_payroll",
+      p_one_off_fees: [{ name: "Setup", amount: 500 }], p_workers_comp: [{ state: "TX", class_code: "8810", rate: 0.4 }],
+      p_unemployment: [{ state: "TX", charge: "peo_rate", rate: 2.7 }], p_medical: [{ plan: "Gold", tier: "family", monthly: 1800 }], p_note: null,
+    });
+  });
+
   // N-1.4. Break caught: a decline sent without its reason and the PEO's words, so the database refuses it or keeps nothing.
   it("records a decline with its reason and the PEO's words", async () => {
     await updateQuoteRequest(7, { status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: null, declineReason: "pricing", declineWords: "Below our floor" });
@@ -685,6 +737,15 @@ describe("quote requests", () => {
     rpc.mockResolvedValueOnce({ data: { message_id: 41, suggestion_outcome: "accepted" }, error: null });
     await decideReplySuggestion(41, "accept");
     expect(rpc).toHaveBeenLastCalledWith("advisor_decide_reply_suggestion", { p_message_id: 41, p_decision: "accept" });
+  });
+
+  // N-1.3. Break caught: the quote request, the agent's words or the answers it names lost on the way (a request that asks the employer nothing, or about no question).
+  it("asks the employer about a question through advisor_ask_about_question, with the quote request, the trimmed words, the answers and the PEO's own questions", async () => {
+    rpc.mockResolvedValueOnce({ data: { request_id: 5 }, error: null });
+    await askAboutQuestion(7, "  How many work part time?  ", ["census"], [{ peo_id: 3, key: "k", question: "Q?" }]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_ask_about_question", {
+      p_quote_request_id: 7, p_message: "How many work part time?", p_fields: ["census"], p_extra_questions: [{ peo_id: 3, key: "k", question: "Q?" }],
+    });
   });
 
   it("opens a PEO mail attachment through a signed link from the peo-mail bucket, as a download under its own name", async () => {

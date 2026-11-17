@@ -105,7 +105,7 @@ describe("what Lenore is asked, and what she hears", () => {
       { id: "9.other", value: true },
     ] }, typed, now);
     expect(out).toEqual({ "3": {
-      vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { ...heard("m1", "Yes they drive"), prompt_version: 10 }, updated_at: now.toISOString() },
+      vehicles: { question: drives.text, kind: "yes_no", value: true, status: "inferred", source: { ...heard("m1", "Yes they drive"), prompt_version: 10 }, updated_at: now.toISOString() },
       union: { question: union.text, kind: "choice", value: "Teamsters", status: "inferred", source: { ...heard("m1", "Yes they drive. Teamsters."), prompt_version: 10 }, updated_at: now.toISOString() },
     } });
     // Spoken: at most inferred.

@@ -533,6 +533,20 @@ export async function requestInformation(sessionId: string, message: string, fie
   if (error) fail(error, "Couldn't send the request.");
 }
 
+/**
+ * Asks the employer about a PEO's open question (N-1.3, 20261125120000): the same request `requestInformation` makes, in the agent's own words, tied to the
+ * quote request so its thread can say the employer was asked. Refused unless the quote request is at Question open.
+ */
+export async function askAboutQuestion(quoteRequestId: number, message: string, fields: readonly FieldKey[], questions: readonly ExtraQuestionRef[] = []): Promise<void> {
+  const { error } = await supabase.rpc("advisor_ask_about_question", {
+    p_quote_request_id: quoteRequestId,
+    p_message: message.trim(),
+    p_fields: [...fields],
+    p_extra_questions: questions.map((q) => ({ peo_id: q.peo_id, key: q.key, question: q.question })) as unknown as Json,
+  });
+  if (error) fail(error, "Couldn't send the request.");
+}
+
 // ---------- Quote requests (joshrkay/Nevermore#82) ----------
 
 /**
@@ -676,6 +690,39 @@ export async function uploadQuoteDocument(quoteId: number, file: File): Promise<
   }
   const d = (data as { document?: { attachment_id: number; file_name: string; status: "stored" | "blocked" } }).document!;
   return { attachmentId: d.attachment_id, fileName: d.file_name, status: d.status };
+}
+
+/** Which figure of a quote a page reference is for: a key of QuoteOffer (the administrative fee and its basis are one figure, `adminFee`). */
+export type QuoteFigure = "kind" | "receivedOn" | "expiresOn" | "startOn" | "adminFee" | "oneOffFees" | "workersComp" | "unemployment" | "medical";
+
+/**
+ * What reading a quote's document came to (N-2.3, D-760). `proposed`: `draft` holds the figures found, `sources` the page each was read on. `nothing_found`: it was read and no
+ * figure could be proposed. `unavailable`: no AI is set up, so nothing is proposed. The others say why the file could not be read (`message` has the reader's words, when it has any).
+ */
+export interface QuoteDocumentReading {
+  status: "proposed" | "nothing_found" | "unavailable" | "too_large" | "encrypted" | "unreadable" | "unsupported" | "failed" | "no_data";
+  message: string | null;
+  /**
+   * A proposal only, in the shape recordQuote takes. A figure the document does not state is absent, never 0 (D-721); `kind` is absent unless the document says estimate or firm offer,
+   * so the form must still ask. Nothing is the quote until the broker has checked it and the form calls recordQuote.
+   */
+  draft: Partial<QuoteOffer>;
+  sources: Partial<Record<QuoteFigure, string>>;
+}
+
+/**
+ * Asks read-quote-document to read the document a quote names (N-2.2) and propose its figures, as the signed-in agent (row security shows only their firm's quotes).
+ * Nothing is saved: the broker checks or corrects each figure in the Record a quote form and saves with recordQuote. A refusal comes back in the function's words (no document, a
+ * file that was not kept, a quote that isn't theirs, the day's AI use spent).
+ */
+export async function readQuoteDocument(quoteId: number): Promise<QuoteDocumentReading> {
+  const { data, error } = await supabase.functions.invoke("read-quote-document", { body: { quote_id: quoteId } });
+  if (error) {
+    const { reason } = await functionErrorReply(error as { context?: unknown });
+    throw new AdvisorApiError(reason ?? "Couldn't read the quote document. Try again.");
+  }
+  const d = data as { status: QuoteDocumentReading["status"]; message?: string; proposal: { draft: Partial<QuoteOffer>; sources: QuoteDocumentReading["sources"] } };
+  return { status: d.status, message: d.message ?? null, draft: d.proposal.draft, sources: d.proposal.sources };
 }
 
 /** The statuses an agent records on a PEO that has the packet and has not quoted or declined (N-1.2, CRM-Q3.1). */

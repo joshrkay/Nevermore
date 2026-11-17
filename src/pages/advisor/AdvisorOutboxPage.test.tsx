@@ -320,6 +320,21 @@ describe("AdvisorOutboxPage", () => {
     expect(second.getByText(/^Next attempt/)).toBeInTheDocument();
   });
 
+  // Catches: a company name with no spaces (the intake allows 200 characters) stretching the Notification column, and with it the table, until Status,
+  // Attempts, When, Last error and the Retry send button are out of sight to the right of the card. jsdom does not lay anything out, so this reads
+  // the classes that hold the cell in (max-w-sm caps its width, break-words lets the name wrap inside it); the widths were checked in Chromium.
+  it("keeps a 200-character company name with no spaces inside its cell, whole and still a link to the intake", async () => {
+    const name = "a".repeat(198) + "\u{1F600}" + "b";
+    expect(Array.from(name)).toHaveLength(200);
+    ready([event({ company_name: name })]);
+    renderAt();
+    const link = await screen.findByRole("link", { name });
+    expect(link).toHaveAttribute("href", "/advisor/submissions/s1");
+    const cell = link.closest("td")!;
+    expect(cell).toBe(link.closest("tr")!.firstElementChild);
+    expect(cell).toHaveClass("max-w-sm", "break-words");
+  });
+
   it("shows the counts per status, and which view is selected", async () => {
     ready([event()], summaryOf({ dead: 2, pending: 1, claimed: 0, sent: 40, suppressed: 2 }));
     renderAt();

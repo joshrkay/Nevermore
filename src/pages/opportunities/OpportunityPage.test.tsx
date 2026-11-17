@@ -39,6 +39,8 @@ const peoAuthorizations = { loadPeoAuthorizations: vi.fn() };
 vi.mock("@/lib/peoAuthorizationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoAuthorizationsApi")), ...peoAuthorizations }));
 const peoRegistrations = { loadRegisteredElsewhere: vi.fn() };
 vi.mock("@/lib/peoRegistrationsApi", async () => ({ ...(await vi.importActual<object>("@/lib/peoRegistrationsApi")), ...peoRegistrations }));
+const comparison = { getQuoteComparison: vi.fn(), addComparisonNote: vi.fn() };
+vi.mock("@/lib/quoteComparisonApi", async () => ({ ...(await vi.importActual<object>("@/lib/quoteComparisonApi")), ...comparison }));
 const search = { noteRecentRecord: vi.fn() };
 vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...search }));
 
@@ -109,8 +111,9 @@ const renderPage = (path = "/opportunities/o1", ws: Workspace = workspace()) => 
 beforeEach(() => {
   // The app's identity boundary says who is signed in; this page renders without it.
   setSignedInUser("u1");
-  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(conversations), ...Object.values(peoSend), ...Object.values(peoAuthorizations), ...Object.values(peoRegistrations), ...Object.values(activity), listFirmMembers, listAccountOwners, search.noteRecentRecord, signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(advisor), ...Object.values(conversations), ...Object.values(peoSend), ...Object.values(peoAuthorizations), ...Object.values(peoRegistrations), ...Object.values(activity), ...Object.values(comparison), listFirmMembers, listAccountOwners, search.noteRecentRecord, signOut]) fn.mockReset();
   peoCatalogRows = [];
+  comparison.getQuoteComparison.mockResolvedValue({ canAdd: true, columns: [], notes: [] });
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
@@ -324,6 +327,40 @@ const cell = (row: HTMLElement, column: string) => {
   const at = within(table).getAllByRole("columnheader").findIndex((h) => h.textContent === column);
   return within(row).getAllByRole("cell")[at];
 };
+
+describe("OpportunityPage: Compare quotes", () => {
+  const column = (id: number, peoName: string, status: string, quote: object | null) => ({ quoteRequestId: id, peoName, status, quote });
+  const firm = { id: 3, kind: "firm_offer", receivedOn: "2026-11-03", expiresOn: "2026-12-05", proposedStartOn: null, adminFee: 40, adminFeeBasis: "per_employee_per_month", oneOffFees: null, workersComp: null, unemployment: null, medical: null, note: null };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 12, 12));
+    advisor.loadSubmission.mockResolvedValue(certified());
+  });
+
+  // Catches: the built comparison (7.7) on no screen at all (D-779), or one asked for the wrong firm or opportunity, or left out where the broker has quotes to compare.
+  it("shows the comparison of this opportunity's quotes under the quotes, read for this firm and opportunity", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quoted, quote(2)] }));
+    comparison.getQuoteComparison.mockResolvedValue({ canAdd: true, columns: [column(1, "PEO A", "quoted", firm), column(2, "PEO B", "sent", null)], notes: [] });
+    renderPage();
+    await screen.findByRole("region", { name: "Compare quotes" });
+    // The panel is asked first and drawn when the database answers: look again at the panel that is there then.
+    const table = await screen.findByRole("table", { name: "Quotes side by side" });
+    expect(within(table).getByRole("columnheader", { name: "PEO A" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "PEO B" })).toBeInTheDocument();
+    expect(comparison.getQuoteComparison).toHaveBeenCalledWith("f1", "o1");
+  });
+  // Catches: an Add note form in a Nevermore support session (ADR 0024), which the database refuses (PT423): a form that loses what the support person typed. Reading the comparison stays.
+  it("shows the comparison but no way to add a note in a support session, and says why", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quoted] }));
+    comparison.getQuoteComparison.mockResolvedValue({ canAdd: true, columns: [column(1, "PEO A", "quoted", firm)], notes: [] });
+    renderPage("/opportunities/o1", workspace({ isSupport: true }));
+    const table = await screen.findByRole("table", { name: "Quotes side by side" });
+    expect(within(table).getByRole("columnheader", { name: "PEO A" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add note" })).not.toBeInTheDocument();
+    expect(screen.getByText("Notes can't be added during a Nevermore support session.")).toBeInTheDocument();
+  });
+  // END compare
+});
 
 describe("OpportunityPage: the quotes", () => {
   beforeEach(() => {

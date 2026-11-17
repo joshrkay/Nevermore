@@ -220,8 +220,8 @@ export function extraQuestionsForLenore(asked: readonly AskedPeo[], all: ExtraAn
 
 /**
  * What Lenore heard for the extra questions in one message (chamber-extract's `extra_answers`), merged as a field's
- * answer is (mergeHeard, transcriptExtraction): a value of the question's kind only, inferred unless the model says it
- * was stated, never confirmed from speech, never over the prospect's own answer or "Doesn't apply", a disagreement
+ * answer is (mergeHeard, transcriptExtraction): a value of the question's kind only, inferred until workspace review,
+ * never over the prospect's own answer or "Doesn't apply", a disagreement
  * between two answers from the conversation kept as a conflict. "Unknown" only on a question with no answer as worded.
  * An answer held to other wording isn't this question's, so it is replaced.
  */
@@ -252,10 +252,10 @@ export function applyExtraExtraction(
       continue;
     }
     if (!fitsQuestion(q, h.value)) continue;
-    const stated = h.field_status === "confirmed" && !message.spoken ? "confirmed" : h.field_status === "incomplete" ? "incomplete" : "inferred";
+    const stated = h.field_status === "incomplete" ? "incomplete" : "inferred";
     const source: FieldSource = evidence && meta.source.kind === "transcript" ? { ...meta.source, quote: evidence.slice(0, 200) } : meta.source;
     const { question: _q, kind: _k, value: heldValue, ...heldEntry } = held ?? ({} as Partial<ExtraAnswer>);
-    const merged = mergeHeard(held ? (heldEntry as FieldProvenance) : undefined, held ? heldValue : undefined, h.value, { source, status: stated, corrected: false, updated_at });
+    const merged = mergeHeard(held ? (heldEntry as FieldProvenance) : undefined, held ? heldValue : undefined, h.value, { source, status: stated, corrected: false, reviewRequired: true, updated_at });
     if (!merged) continue;
     next = withAnswer(next, peo.peo.id, q.key, { question: q.text, kind: q.kind, value: merged.value as ExtraValue, ...merged.entry });
   }

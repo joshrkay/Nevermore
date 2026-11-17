@@ -338,6 +338,8 @@ export interface ExtractionOptions {
    * marked unknown only while it has none, and never over the prospect's own edit or "Doesn't apply".
    */
   unknown?: FieldKey[];
+  /** AI proposals require user review; set by transcriptExtraction, never by model metadata. */
+  reviewRequired?: boolean;
   now?: Date;
 }
 
@@ -356,6 +358,7 @@ export function mergeHeard(
     source: FieldSource;
     status: ExtractedStatus;
     corrected: boolean;
+    reviewRequired?: boolean;
     updated_at: string;
     /** The heard value replaces whatever was held (the census roster). */
     replaces?: boolean;
@@ -398,9 +401,15 @@ export function mergeHeard(
   // A broker's later entry replaces their own earlier one (the same source kind, not two voices disagreeing: the firm is correcting itself), whoever the member was.
   if (source.kind === "broker_entry" && prev.source.kind === "broker_entry" && !conflicting) return take(status);
 
-  // The prospect corrected it in chat. A value from another kind of source is noted; one from the same kind is what
-  // they corrected.
-  if (heard.corrected) return take(status, held.filter((c) => c.source.kind !== source.kind));
+  // Trusted import corrections may replace values. AI proposals never receive this authority (ADR 0028).
+  if (heard.corrected && !heard.reviewRequired) return take(status, held.filter((c) => c.source.kind !== source.kind));
+
+  // A proposed chat replacement needs the prospect's choice, even over a document.
+  if (heard.reviewRequired && !extendsList(prevValue, value)) {
+    if (held.some((c) => same(c.value, value))) return null;
+    return { value: prevValue, entry: withNotes({ status: "conflicting", source: prev.source, updated_at,
+      candidates: [...held, { value, source }] }, noteHeard(prev.also_heard, [], prevValue)) };
+  }
 
   // Extended by a lower-ranked source, the prospect confirms the whole list again.
   if (extendsList(prevValue, value)) return take(rank < heldRank ? "inferred" : status, held.filter((c) => !extendsList(c.value, value)));
@@ -439,7 +448,8 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     const quote = opts.evidence?.[field];
     const source: FieldSource =
       quote && opts.source.kind === "transcript" ? { ...opts.source, quote: clip(quote) } : opts.source;
-    const status: ExtractedStatus = opts.statuses?.[field] ?? "inferred";
+    const proposed = opts.statuses?.[field] ?? "inferred";
+    const status: ExtractedStatus = opts.reviewRequired && proposed === "confirmed" ? "inferred" : proposed;
     const prev = provenance[field];
     const prevValue = data[field];
 
@@ -448,10 +458,17 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     // (A table closed as "Doesn't apply" holds no rows, and one the prospect typed outranks every source.)
     const typed = prev?.source.kind === "prospect_edit";
     if (isRowListField(field) && !isEmpty(prevValue)) {
-      // The prospect correcting a row in conversation ("actually Dana owns 55%") changes it too (ADR 0007), unless
-      // they typed the table themselves.
-      const corrected = opts.corrections?.includes(field) === true && !typed;
-      const better = corrected || (prev !== undefined && RANK[source.kind] > fieldRank(prev));
+      // Additive rows still merge (ADR 0007). AI changes to populated cells require a choice (ADR 0028).
+      const better = (!opts.reviewRequired && opts.corrections?.includes(field) === true && !typed) || (prev !== undefined && RANK[source.kind] > fieldRank(prev));
+      if (opts.reviewRequired && !typed) {
+        const proposed = mergeRows(field, prevValue as object[], value as object[], true);
+        const retained = mergeRows(field, prevValue as object[], value as object[], false);
+        if (JSON.stringify(proposed) !== JSON.stringify(retained)) {
+          const merged = mergeHeard(prev, prevValue, proposed, { source, status, corrected: false, reviewRequired: true, updated_at });
+          if (merged) provenance[field] = merged.entry;
+          continue;
+        }
+      }
       const merged = mergeRows(field, prevValue as object[], value as object[], better);
       if (JSON.stringify(merged) === JSON.stringify(prevValue)) continue;
       (data as Record<FieldKey, unknown>)[field] = merged;
@@ -465,6 +482,7 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
       source,
       status,
       corrected: opts.corrections?.includes(field) ?? false,
+      reviewRequired: opts.reviewRequired,
       updated_at,
       // The roster is rebuilt as it grows; documents merge it in documentCandidates.ts.
       replaces: field === "census",
@@ -624,9 +642,13 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
   if (action.type === "resolve" && value === undefined) return state;
   const patch = sanitizeChamberPatch({ [field]: value });
   if (!(field in patch)) return state;
+  const entry = action.type === "resolve"
+    ? withNotes(confirmed(), noteHeard(state.provenance[field]?.also_heard,
+      state.provenance[field]?.candidates ?? [], patch[field]))
+    : confirmed();
   return applyClosingRules(state, {
     data: { ...state.data, [field]: patch[field] },
-    provenance: { ...state.provenance, [field]: confirmed() },
+    provenance: { ...state.provenance, [field]: entry },
   }, now);
 }
 
@@ -777,11 +799,8 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
   const version = promptVersionSchema.safeParse(m.prompt_version);
   const statuses = parseExtractedStatuses(m.field_status);
   const unknown = parseUnknownFields(m.field_status);
-  // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
-  // confirms it in Review or types it (D33).
-  if (message.spoken) {
-    for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
-  }
+  // Neither typed nor spoken AI output establishes confirmation; only workspace review does (ADR 0028).
+  for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
   return {
     source: {
       kind: "transcript",
@@ -791,7 +810,8 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
     },
     statuses,
     evidence: parseEvidence(m.evidence),
-    corrections: parseFieldList(m.corrected_fields),
+    corrections: [],
+    reviewRequired: true,
     unknown,
   };
 }

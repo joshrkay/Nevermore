@@ -119,6 +119,10 @@ _Avoid_: reminder, chaser, nudge
 **Decline reason** (code: `quote_requests.decline_reason`, `decline_words`; N-1.4, slice 7.1, D-710 to D-717):
 Why a PEO turned an employer down, recorded when its quote request is moved to declined: one of eight reasons (outside their appetite, too small, too large, claims history, a state they do not cover, missing information, will not price it competitively, other), required, and the PEO's own words, optional and up to 500 characters. Both are kept when the quote request moves on and replaced by the next decline, are in the quote request's history, and show wherever a declined quote shows its status (its card on the submission, the quote's page, the opportunity's activity). Not a **Withdrawal** reason, which is why the broker closed a PEO.
 
+**Record the quote** (code: `RecordQuoteForm`, `record_quote`; CRM-Q3.3, slice 7.8, D-780 to D-789):
+The form on a quote's page that records what a PEO quoted: an estimate or a firm offer (required), the administrative fee with its basis, the received, expiry and proposed start dates, one-off fees, workers' comp, unemployment tax and medical lines (each optional; a cost area left empty is **Not quoted**, never zero), a note, and the quote document. It saves through `record_quote` only, and the quote document is named only once the quote exists. A revised quote is recorded the same way and is a new quote; the newest recorded is the current one, in the quote's page and in the comparison alike. Offered while the quote request is not closed, to someone who may change the account, never in a support session or on an archived account. **Record a decline** on the same page is the submission page's answer form offering the one answer, with its **Decline reason**.
+_Avoid_: add a quote (that is **Send to another PEO**)
+
 **Withdrawal** (code: `withdraw_from_peo`, `quote_requests.withdrawn_reason`; M-2.4, slice 6.9, D-1620 to D-1629):
 An advisor's email telling one PEO to set the submission aside, on its own thread, carrying no link. Sending it closes that PEO's quote request and revokes its **Bundle link** (reason withdrawn), and records why, for advisors only: the employer went elsewhere, the prospect withdrew this PEO, the PEO is not a fit, or other. Sending to the PEO again reopens the quote request and clears the reason. Not the employer withdrawing a PEO (M-1.1), which sends the PEO nothing.
 _Avoid_: cancellation, decline (a decline is the PEO's answer)
@@ -218,6 +222,8 @@ _Avoid_: open item, flag
 
 **Information request**:
 An advisor's message asking the prospect for more, naming the answers it is about (or none, for something no answer holds, such as a document) and any PEO's **Extra questions** it asks, each by its PEO and wording. Sending one emails the prospect (the email names no PEO and no extra question), shows it in The Chamber with "Your advisor asked about this" on each answer and extra question it names (that PEO's questions are shown too), has Lenore ask about those answers first, and moves the pipeline stage to information requested. Certifying again answers it, as does the advisor moving the stage on. The record of each is kept with the intake and never changed.
+
+When it is about a PEO's open question (N-1.3, slice 7.5), the agent opens it from the quote request at Question open (the submission's card or the quote page), writes it in their own words (the PEO's message is never copied in), and it is tied to that quote request in the quote request's log; the PEO's thread then says what was asked and whether the employer has answered. Answering the PEO is the existing Follow up, which returns the quote request to Sent.
 _Avoid_: follow-up, RFI, query
 
 **Quote request**:
@@ -1078,10 +1084,10 @@ _Avoid_: source quote, citation
 Every captured field has exactly one field status.
 
 **Confirmed**:
-The prospect typed the answer explicitly, or entered, applied or confirmed it in the workspace. A spoken answer is not confirmed until the prospect confirms it or types it.
+The prospect entered, applied or confirmed the answer in the workspace. AI extraction from typed or spoken conversation does not establish confirmation (ADR 0028).
 
 **Inferred**:
-Lenore derived or assumed the answer from what the prospect said, or heard it spoken, and the prospect hasn't confirmed it.
+Lenore proposed the answer from typed or spoken conversation, and the prospect hasn't confirmed it in the workspace (ADR 0028).
 _Avoid_: guessed, low confidence
 
 **Incomplete**:
@@ -1150,8 +1156,12 @@ _Avoid_: status, pipeline stage, quote status
 What the AI made of a PEO's reply on a quote request thread (N-1.1): acknowledged, question open, quoted or declined, or nothing (then there is none). It is only a suggestion, shown under the reply; the agent **accepts** it (the status is recorded as if the agent had set it, and a quote or a decline only once its own form has recorded it) or **dismisses** it, once. What is kept is which suggestion it was, whether it was accepted or dismissed, and who and when: never the reply's words or the model's. The reply is data to the model, never instructions. Not a **Document candidate**, which is an answer read from a document.
 _Avoid_: AI status, auto-status, extraction
 
+**Quote reading**:
+What the AI proposed from a quote's document (N-2.3, `readQuoteDocument`): the figures it found, in the shape the Record a quote form takes, each with the page it was read on, and no figure it did not find (a figure not found is left out, never 0). It is only a proposal: nothing is stored until the broker checks or corrects each figure and records the quote. The document is data to the model, never instructions. Not a **Reply suggestion** (what a PEO's message means) and not a **Document candidate** (a prospect's document read into the intake).
+_Avoid_: auto-quote, extraction, import
+
 **Also heard**:
-An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
+An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field. Resolving a conflict retains the other candidates as notes (ADR 0028).
 _Avoid_: alternative, rejected value
 
 **Review state**:

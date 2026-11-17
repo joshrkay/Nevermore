@@ -262,7 +262,7 @@ const AdvisorOutboxPage = () => {
                     const what = `${outboxKindLabel(e.kind)} for ${e.company_name ?? "a company with no name"}`;
                     return (
                       <TableRow key={e.id}>
-                        <TableCell>
+                        <TableCell className="max-w-sm break-words">
                           <p className="text-sm font-medium">
                             {outboxKindLabel(e.kind)}
                             {e.resubmission && (
