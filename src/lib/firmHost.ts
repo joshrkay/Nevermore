@@ -21,6 +21,21 @@ export function firmAddressFromHost(hostname: string, siteDomain: string = SITE_
   return null;
 }
 
+/**
+ * The address a firm's name suggests: lower case, accents dropped, every run of other characters one hyphen, no hyphen at either end, at most 40 characters
+ * (the database's limit). Only a suggestion for the sign-up page; the database still applies every rule to what is sent (reserved words, taken addresses).
+ */
+export function addressFromName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+}
+
 /** The host a firm is reached at: `<address>.<the site's domain>`. The address is read as the database reads one (lower case, no surrounding spaces). */
 export function firmHostname(address: string, siteDomain: string = SITE_DOMAIN): string {
   return `${address.trim().toLowerCase()}.${siteDomain}`;

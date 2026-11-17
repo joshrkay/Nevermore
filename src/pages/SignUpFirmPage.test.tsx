@@ -68,6 +68,20 @@ describe("SignUpFirmPage", () => {
     expect(screen.getByRole("button", { name: "Sign up your firm" })).toBeDisabled();
   });
 
+  it("suggests the address from the name as it is typed, so the firm's login is <name>.nevermorepeo.com", () => {
+    renderPage();
+    fireEvent.change(screen.getByLabelText("Firm name"), { target: { value: "Fresh Benefits" } });
+    expect(screen.getByLabelText("Firm address")).toHaveValue("fresh-benefits");
+  });
+
+  it("stops following the name once the person has typed their own address", () => {
+    renderPage();
+    fireEvent.change(screen.getByLabelText("Firm name"), { target: { value: "Fresh" } });
+    fireEvent.change(screen.getByLabelText("Firm address"), { target: { value: "fresh-pay" } });
+    fireEvent.change(screen.getByLabelText("Firm name"), { target: { value: "Fresh Benefits" } });
+    expect(screen.getByLabelText("Firm address")).toHaveValue("fresh-pay");
+  });
+
   it("says who the owner will be, and that approval is needed before anything is sent to a PEO", () => {
     renderPage();
     expect(screen.getByText(/You'll be the firm's owner, signed in as founder@example\.test/)).toBeInTheDocument();

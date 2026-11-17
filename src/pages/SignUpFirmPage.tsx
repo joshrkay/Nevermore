@@ -5,7 +5,7 @@ import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { SITE_DOMAIN } from "@/data/site";
 import { useAuth } from "@/hooks/useAuth";
-import { firmUrl } from "@/lib/firmHost";
+import { addressFromName, firmUrl } from "@/lib/firmHost";
 import { signUpFirm } from "@/lib/firmApi";
 
 const input = "w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
@@ -20,6 +20,8 @@ const SignUpFirmPage = () => {
   const location = useLocation();
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
+  // The address follows the name (<name>.nevermorepeo.com is where the firm signs in) until the person types an address of their own.
+  const [addressTyped, setAddressTyped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ name: string; url: string } | null>(null);
@@ -72,16 +74,16 @@ const SignUpFirmPage = () => {
               </div>
               <div>
                 <label htmlFor="firm-name" className="text-xs text-muted-foreground">Firm name</label>
-                <input id="firm-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required className={input} autoComplete="organization" />
+                <input id="firm-name" value={name} onChange={(e) => { setName(e.target.value); if (!addressTyped) setAddress(addressFromName(e.target.value)); }} maxLength={80} required className={input} autoComplete="organization" />
               </div>
               <div>
                 <label htmlFor="firm-address" className="text-xs text-muted-foreground">Firm address</label>
                 <div className="flex items-center gap-2">
-                  <input id="firm-address" value={address} onChange={(e) => setAddress(e.target.value)} required className={`${input} font-mono`}
+                  <input id="firm-address" value={address} onChange={(e) => { setAddress(e.target.value); setAddressTyped(true); }} required className={`${input} font-mono`}
                     autoCapitalize="none" autoCorrect="off" spellCheck={false} aria-describedby="firm-address-rule" />
                   <span className="text-sm text-muted-foreground whitespace-nowrap">.{SITE_DOMAIN}</span>
                 </div>
-                <p id="firm-address-rule" className="text-xs text-muted-foreground mt-1">3 to 40 letters, digits or hyphens.</p>
+                <p id="firm-address-rule" className="text-xs text-muted-foreground mt-1">Filled in from your firm name; change it if you like. This is where your firm signs in. 3 to 40 letters, digits or hyphens.</p>
               </div>
               {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
               <button type="submit" disabled={busy || !name.trim() || !address.trim()}

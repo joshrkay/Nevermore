@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom, getAQuoteUrl } from "./firmHost";
+import { addressFromName, firmAddressFromHost, firmHostname, firmUrl, firmUrlFrom, getAQuoteUrl } from "./firmHost";
 
 // A firm address is <address>.<the site's domain> (story CRM-P1.3a, D-17). The app reads the firm from the host it
 // is served on; the database, never this, decides who gets in (D-18).
@@ -68,5 +68,27 @@ describe("the address that starts an intake for a firm (\"Get a quote\", P-2.1)"
   // Break caught: the quote link points at the bare domain's start, so the database files the intake in the default firm instead of the firm's.
   it("is the intake's start at the firm's own address, so the database files the intake there", () => {
     expect(getAQuoteUrl("  Acme-Brokers ")).toBe("https://acme-brokers.nevermorepeo.com/start");
+  });
+});
+
+// A person types their firm's name; the address it suggests is what they would log in at (<address>.<the site's domain>).
+describe("the address a firm name suggests", () => {
+  it("is the name in lower case with words joined by hyphens", () => {
+    expect(addressFromName("Fresh Benefits")).toBe("fresh-benefits");
+  });
+
+  it("drops accents, punctuation and ampersands, and never leaves a doubled, leading or trailing hyphen", () => {
+    expect(addressFromName("  Café   Brokers & Co., LLC! ")).toBe("cafe-brokers-co-llc");
+    expect(addressFromName("--Acme--")).toBe("acme");
+  });
+
+  it("stops at 40 characters without ending on a hyphen", () => {
+    const address = addressFromName("A very long firm name that keeps going well past the limit of forty");
+    expect(address.length).toBeLessThanOrEqual(40);
+    expect(address.endsWith("-")).toBe(false);
+  });
+
+  it("is empty when the name has no letters or digits", () => {
+    expect(addressFromName("***")).toBe("");
   });
 });
