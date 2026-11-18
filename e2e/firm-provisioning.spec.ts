@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import pg from "pg";
 import { ANON_KEY, APP_URL, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
@@ -156,5 +157,142 @@ test("a firm is provisioned from nothing: sign-up, its own address, an admin's a
   } finally {
     await founder.close();
     await admin.close();
+  }
+});
+
+// The people of a provisioned firm (CRM-P1.2, CRM-P2.1): its owner invites someone, who creates an account from the link,
+// joins, and works in the firm; the owner sees their work; what only owners may open stays closed to them; and the owner of
+// another provisioned firm sees none of it, on the screen or over the API with their own sign-in. The invitation is made by
+// the database function the invite-member server function calls, as the owner, with the owner's own session: this stack
+// does not run that function (its handler is tested with the mail provider faked), and nothing is inserted.
+
+const TEAM_FIRM = `Tideline Brokers ${stamp}`;
+const TEAM_ADDRESS = `tideline-brokers-${stamp}`;
+const RIVAL_FIRM = `Quarry Benefits ${stamp}`;
+const RIVAL_ADDRESS = `quarry-benefits-${stamp}`;
+const OWNER = `owner-${stamp}@example.test`;
+const AGENT = `agent-${stamp}@example.test`;
+const RIVAL = `rival-${stamp}@example.test`;
+const TOKEN = `e2e-provisioned-${stamp}-abcdefghijklmnopqrstuvwxyz`;
+const ACCOUNT = `Saltmarsh Bakery ${stamp}`;
+
+/** Signs in with a password at a firm's address and sets up the second factor, reaching the console. */
+async function enterFirm(page: Page, address: string, email: string) {
+  await page.goto(`${firmUrl(address)}/advisor`);
+  await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toBeVisible();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await setUpSecondFactor(page);
+  await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
+}
+
+/** The access token of the session this page holds at its address. */
+const accessToken = (page: Page) =>
+  page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => /^sb-.*-auth-token$/.test(k));
+    return key ? (JSON.parse(localStorage.getItem(key) ?? "{}") as { access_token?: string }).access_token : undefined;
+  });
+
+test("a provisioned firm's owner invites a person, who joins and works there; another provisioned firm sees none of it", async ({ browser, request }) => {
+  test.setTimeout(180_000); // three people, each creating an account and setting up a second factor
+  const owner = await browser.newContext();
+  const agent = await browser.newContext();
+  const rival = await browser.newContext();
+  const ownerPage = await owner.newPage();
+  const agentPage = await agent.newPage();
+  const rivalPage = await rival.newPage();
+  try {
+    await test.step("two firms are provisioned by their founders, who each enter their own", async () => {
+      await signUpFirmFromNothing(ownerPage, OWNER, TEAM_FIRM, TEAM_ADDRESS);
+      await signUpFirmFromNothing(rivalPage, RIVAL, RIVAL_FIRM, RIVAL_ADDRESS);
+      await enterFirm(ownerPage, TEAM_ADDRESS, OWNER);
+      await enterFirm(rivalPage, RIVAL_ADDRESS, RIVAL);
+    });
+
+    await test.step("the owner invites a person as an agent, with their own session", async () => {
+      const firm = await withDb((c) => c.query("SELECT id FROM public.firms WHERE address = $1", [TEAM_ADDRESS]));
+      const res = await request.post(`${GATEWAY_URL}/rest/v1/rpc/invite_member`, {
+        headers: { apikey: ANON_KEY, Authorization: `Bearer ${await accessToken(ownerPage)}`, "x-firm-address": TEAM_ADDRESS },
+        data: { p_firm_id: firm.rows[0].id, p_email: AGENT, p_role: "agent", p_team_id: null, p_token_hash: createHash("sha256").update(TOKEN).digest("hex") },
+      });
+      expect(res.status(), await res.text()).toBe(200);
+      // The other firm's owner cannot invite into this firm.
+      const refused = await request.post(`${GATEWAY_URL}/rest/v1/rpc/invite_member`, {
+        headers: { apikey: ANON_KEY, Authorization: `Bearer ${await accessToken(rivalPage)}`, "x-firm-address": RIVAL_ADDRESS },
+        data: { p_firm_id: firm.rows[0].id, p_email: `planted-${stamp}@example.test`, p_role: "owner", p_team_id: null, p_token_hash: createHash("sha256").update(`${TOKEN}-x`).digest("hex") },
+      });
+      expect(refused.status()).toBeGreaterThanOrEqual(400);
+    });
+
+    await test.step("the invited person creates an account from the link and joins as an agent", async () => {
+      await agentPage.goto(`${firmUrl(TEAM_ADDRESS)}/join#token=${TOKEN}`);
+      await expect(agentPage.getByRole("heading", { name: `Join ${TEAM_FIRM}` })).toBeVisible();
+      await agentPage.getByRole("button", { name: "Sign in or create an account" }).click();
+      await agentPage.getByLabel("Email").fill(AGENT);
+      await agentPage.getByLabel("Password").fill(PASSWORD);
+      await agentPage.getByRole("button", { name: "Create Account" }).click();
+      await agentPage.getByRole("button", { name: `Join ${TEAM_FIRM}` }).click();
+      await expect(agentPage.getByRole("heading", { name: `You've joined ${TEAM_FIRM}` })).toBeVisible();
+      const members = await withDb((c) =>
+        c.query(
+          "SELECT u.email, m.role FROM public.firm_memberships m JOIN auth.users u ON u.id = m.user_id JOIN public.firms f ON f.id = m.firm_id WHERE f.address = $1 AND m.valid_until IS NULL ORDER BY m.role",
+          [TEAM_ADDRESS],
+        ),
+      );
+      expect(members.rows).toEqual([{ email: AGENT, role: "agent" }, { email: OWNER, role: "owner" }]);
+    });
+
+    await test.step("the agent works in the firm: they add an account", async () => {
+      await agentPage.getByRole("link", { name: "Continue" }).click();
+      await setUpSecondFactor(agentPage);
+      await expect(agentPage.getByRole("heading", { name: "Submissions" })).toBeVisible();
+      await agentPage.goto(`${firmUrl(TEAM_ADDRESS)}/accounts`);
+      await agentPage.getByRole("button", { name: "New account" }).first().click();
+      const dialog = agentPage.getByRole("dialog");
+      await dialog.getByLabel("Account name").fill(ACCOUNT);
+      await dialog.getByRole("button", { name: "Save account" }).click();
+      await expect(agentPage.getByRole("heading", { level: 1, name: ACCOUNT })).toBeVisible();
+    });
+
+    await test.step("what only owners may open stays closed to the agent", async () => {
+      await agentPage.goto(`${firmUrl(TEAM_ADDRESS)}/firm/invitations`);
+      await expect(agentPage.getByText("Only an owner of the firm can invite people.")).toBeVisible();
+      // And the database refuses the agent's own attempt, whatever the page shows.
+      const firm = await withDb((c) => c.query("SELECT id FROM public.firms WHERE address = $1", [TEAM_ADDRESS]));
+      const refused = await request.post(`${GATEWAY_URL}/rest/v1/rpc/invite_member`, {
+        headers: { apikey: ANON_KEY, Authorization: `Bearer ${await accessToken(agentPage)}`, "x-firm-address": TEAM_ADDRESS },
+        data: { p_firm_id: firm.rows[0].id, p_email: `friend-${stamp}@example.test`, p_role: "owner", p_team_id: null, p_token_hash: createHash("sha256").update(`${TOKEN}-y`).digest("hex") },
+      });
+      expect(refused.status()).toBeGreaterThanOrEqual(400);
+      const pending = await withDb((c) => c.query("SELECT count(*)::int AS n FROM public.firm_invitations WHERE firm_id = $1 AND email <> $2", [firm.rows[0].id, AGENT]));
+      expect(pending.rows[0].n).toBe(0);
+    });
+
+    await test.step("the owner sees the agent's account", async () => {
+      await ownerPage.goto(`${firmUrl(TEAM_ADDRESS)}/accounts`);
+      await expect(ownerPage.getByRole("link", { name: ACCOUNT })).toBeVisible();
+    });
+
+    await test.step("the other firm's owner sees no account, on the screen or over the API with their own sign-in", async () => {
+      await rivalPage.goto(`${firmUrl(RIVAL_ADDRESS)}/accounts`);
+      await expect(rivalPage.getByRole("heading", { level: 1, name: "Accounts" })).toBeVisible();
+      await expect(rivalPage.getByRole("link", { name: ACCOUNT })).toHaveCount(0);
+      const token = await accessToken(rivalPage);
+      for (const address of [RIVAL_ADDRESS, TEAM_ADDRESS]) {
+        const res = await request.get(`${GATEWAY_URL}/rest/v1/accounts?select=name`, { headers: { apikey: ANON_KEY, Authorization: `Bearer ${token}`, "x-firm-address": address } });
+        expect(res.status()).toBe(200);
+        expect(await res.json()).toEqual([]);
+      }
+      // The same read with the agent's sign-in gives the account, so the empty answers above are the rule's doing.
+      const mine = await request.get(`${GATEWAY_URL}/rest/v1/accounts?select=name`, {
+        headers: { apikey: ANON_KEY, Authorization: `Bearer ${await accessToken(agentPage)}`, "x-firm-address": TEAM_ADDRESS },
+      });
+      expect(await mine.json()).toEqual([{ name: ACCOUNT }]);
+    });
+  } finally {
+    await owner.close();
+    await agent.close();
+    await rival.close();
   }
 });
