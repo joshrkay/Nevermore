@@ -95,9 +95,25 @@ describe("SignUpFirmPage", () => {
     await waitFor(() => expect(signUpFirm).toHaveBeenCalledWith("Fresh Benefits", "Fresh-Benefits"));
     expect(await screen.findByRole("heading", { name: "Fresh Benefits is set up" })).toBeInTheDocument();
     expect(screen.getByText(/waiting for approval/)).toBeInTheDocument();
-    const link = screen.getByRole("link", { name: "https://fresh-benefits.nevermorepeo.com" });
-    expect(link).toHaveAttribute("href", "https://fresh-benefits.nevermorepeo.com");
+    // The address is on the site the page is served from: <address>.localhost here, as in development.
+    const { protocol, port } = window.location;
+    const local = `${protocol}//fresh-benefits.localhost${port ? `:${port}` : ""}`;
+    expect(screen.getByRole("link", { name: local })).toHaveAttribute("href", local);
     expect(screen.getByText(/Sign in there/)).toBeInTheDocument();
+  });
+
+  it("on the site's own domain, the firm's address is <address>.nevermorepeo.com", async () => {
+    const original = window.location;
+    Object.defineProperty(window, "location", { value: { ...original, hostname: "nevermorepeo.com", protocol: "https:", port: "" }, configurable: true });
+    try {
+      renderPage();
+      fill("Fresh Benefits", "Fresh-Benefits");
+      fireEvent.click(screen.getByRole("button", { name: "Sign up your firm" }));
+      const link = await screen.findByRole("link", { name: "https://fresh-benefits.nevermorepeo.com" });
+      expect(link).toHaveAttribute("href", "https://fresh-benefits.nevermorepeo.com");
+    } finally {
+      Object.defineProperty(window, "location", { value: original, configurable: true });
+    }
   });
 
   it("shows the reason when the database refuses, and keeps what was typed", async () => {
