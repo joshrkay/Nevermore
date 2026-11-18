@@ -5,7 +5,7 @@ import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { SITE_DOMAIN } from "@/data/site";
 import { useAuth } from "@/hooks/useAuth";
-import { addressFromName, firmUrl } from "@/lib/firmHost";
+import { addressFromName, firmUrlFrom } from "@/lib/firmHost";
 import { signUpFirm } from "@/lib/firmApi";
 
 const input = "w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm";
@@ -38,7 +38,8 @@ const SignUpFirmPage = () => {
     setError(null);
     try {
       await signUpFirm(name, address);
-      setDone({ name: name.trim(), url: firmUrl(address) });
+      // The firm's address on the site this page is served from: the production domain there, <address>.localhost in development.
+      setDone({ name: name.trim(), url: firmUrlFrom(address) });
     } catch (err) {
       setError((err as Error).message);
     }
