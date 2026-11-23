@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
-import pg from "pg";
-import { ANON_KEY, APP_URL, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
-import { totpCode } from "./stack/totp.mjs";
+import { expect, test } from "@playwright/test";
+import { ANON_KEY, APP_URL, firmUrl, GATEWAY_URL } from "./stack/config.mjs";
+import { accessToken, enterFirm, PASSWORD, setUpSecondFactor, signUpFirmFromNothing, withDb } from "./support/firms";
 
 // A firm is provisioned from nothing, through the screens a broker and a platform admin use (story CRM-P1.1 with Q-1.2,
 // "Creating a firm end to end"). Every other spec here inserts its firm and its memberships in the database; this one
@@ -11,7 +10,6 @@ import { totpCode } from "./stack/totp.mjs";
 // waiting and approves it; the founder is still in, and a second firm provisioned the same way cannot be entered by them.
 // The only database writes are the platform admin's role (the setup script's --grant-admin) and reads to check the result.
 
-const PASSWORD = "correct-horse-battery-staple";
 const stamp = Date.now();
 const FIRM = `Provisioned Brokers ${stamp}`;
 const ADDRESS = `provisioned-brokers-${stamp}`;
@@ -20,44 +18,6 @@ const OTHER_ADDRESS = `neighbour-benefits-${stamp}`;
 const FOUNDER = `founder-${stamp}@example.test`;
 const OTHER_FOUNDER = `neighbour-${stamp}@example.test`;
 const ADMIN = `platform-admin-${stamp}@example.test`;
-
-async function withDb<T>(run: (client: pg.Client) => Promise<T>): Promise<T> {
-  const client = new pg.Client({ ...PG, database: DATABASE });
-  await client.connect();
-  try {
-    return await run(client);
-  } finally {
-    await client.end();
-  }
-}
-
-/** The second factor a password sign-in is asked to set up (CRM-P1.3b), turned on with a code from the secret shown. */
-async function setUpSecondFactor(page: Page) {
-  await expect(page.getByRole("heading", { name: "Add a second step to your sign-in" })).toBeVisible();
-  const secret = (await page.locator("span.font-mono").innerText()).trim();
-  await page.getByLabel(/6-digit code/).fill(totpCode(secret));
-  await page.getByRole("button", { name: "Turn on and continue" }).click();
-}
-
-/** From nothing: the sign-up page sends a visitor to create an account, brings them back, and makes the firm. */
-async function signUpFirmFromNothing(page: Page, email: string, firm: string, address: string) {
-  await page.goto(`${APP_URL}/firms/new`);
-  await expect(page.getByRole("heading", { name: "Sign up your firm" })).toBeVisible();
-  await expect(page.getByText("Create an account, then set up your firm.")).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Create Account" }).click();
-
-  // Back on the firm's form, signed in as the new account.
-  await expect(page.getByRole("form", { name: "Sign up your firm" })).toBeVisible();
-  await expect(page.getByText(`signed in as ${email}`)).toBeVisible();
-  await page.getByLabel("Firm name").fill(firm);
-  // The address is suggested from the name.
-  await expect(page.getByLabel("Firm address")).toHaveValue(address);
-  await page.getByRole("button", { name: "Sign up your firm" }).click();
-  await expect(page.getByRole("heading", { name: `${firm} is set up` })).toBeVisible();
-  await expect(page.getByRole("link", { name: firmUrl(address) })).toBeVisible();
-}
 
 test("a firm is provisioned from nothing: sign-up, its own address, an admin's approval, and nobody else's records", async ({ browser }) => {
   test.setTimeout(120_000); // three people, three sign-ins and two second factors in one journey
@@ -175,24 +135,6 @@ const AGENT = `agent-${stamp}@example.test`;
 const RIVAL = `rival-${stamp}@example.test`;
 const TOKEN = `e2e-provisioned-${stamp}-abcdefghijklmnopqrstuvwxyz`;
 const ACCOUNT = `Saltmarsh Bakery ${stamp}`;
-
-/** Signs in with a password at a firm's address and sets up the second factor, reaching the console. */
-async function enterFirm(page: Page, address: string, email: string) {
-  await page.goto(`${firmUrl(address)}/advisor`);
-  await expect(page.getByRole("heading", { name: "Advisor Sign In" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign In" }).click();
-  await setUpSecondFactor(page);
-  await expect(page.getByRole("heading", { name: "Submissions" })).toBeVisible();
-}
-
-/** The access token of the session this page holds at its address. */
-const accessToken = (page: Page) =>
-  page.evaluate(() => {
-    const key = Object.keys(localStorage).find((k) => /^sb-.*-auth-token$/.test(k));
-    return key ? (JSON.parse(localStorage.getItem(key) ?? "{}") as { access_token?: string }).access_token : undefined;
-  });
 
 test("a provisioned firm's owner invites a person, who joins and works there; another provisioned firm sees none of it", async ({ browser, request }) => {
   test.setTimeout(180_000); // three people, each creating an account and setting up a second factor
